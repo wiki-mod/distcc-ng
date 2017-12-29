@@ -254,13 +254,12 @@ static int dcc_parse_options(const char **psrc,
             rs_trace("got LZO option");
             host->compr = DCC_COMPRESS_LZO1X;
             p += 3;
-#ifdef HAVE_ZSTD
         } else if (str_startswith("zstd", p)) {
+#ifdef HAVE_ZSTD
             rs_trace("got Zstd option");
             host->compr = DCC_COMPRESS_ZSTD;
             p += 4;
 #else
-        } else if (str_startswith("zstd", p)) {
             rs_log_error("zstd support not built: %s", started);
             return EXIT_BAD_HOSTSPEC;
 #endif
