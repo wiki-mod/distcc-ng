@@ -146,40 +146,44 @@ else:
     sys.exit("""Could not cd to SRCDIR '%s'.""" % srcdir)
   srcdir_include_server = os.path.join(srcdir, 'include_server')
 
+sources = [
+    'src/clirpc.c',
+    'src/clinet.c',
+    'src/state.c',
+    'src/srvrpc.c',
+    'src/pump.c',
+    'src/rpc.c',
+    'src/io.c',
+    'src/include_server_if.c',
+    'src/include_server_sort.c',
+    'src/trace.c',
+    'src/snprintf.c',
+    'src/util.c',
+    'src/tempfile.c',
+    'src/filename.c',
+    'src/bulk.c',
+    'src/sendfile.c',
+    'src/compress-lzox1.c',
+    'src/argutil.c',
+    'src/cleanup.c',
+    'src/emaillog.c',
+    'src/timeval.c',
+    'src/netutil.c',
+    'lzo/minilzo.c',
+    'include_server/c_extensions/distcc_pump_c_extensions_module.c',
+]
+
+if os.getenv('HAVE_ZSTD'):
+  sources.append('src/compress-zstd.c')
+
 # Specify extension.
 ext = setuptools.Extension(
     name='include_server.distcc_pump_c_extensions',
-    sources=[os.path.join(srcdir, source)
-             for source in
-             ['src/clirpc.c',
-              'src/clinet.c',
-              'src/state.c',
-              'src/srvrpc.c',
-              'src/pump.c',
-              'src/rpc.c',
-              'src/io.c',
-              'src/include_server_if.c',
-              'src/include_server_sort.c',
-              'src/trace.c',
-              'src/snprintf.c',
-              'src/util.c',
-              'src/tempfile.c',
-              'src/filename.c',
-              'src/bulk.c',
-              'src/sendfile.c',
-              'src/compress.c',
-              'src/argutil.c',
-              'src/cleanup.c',
-              'src/emaillog.c',
-              'src/timeval.c',
-              'src/netutil.c',
-              'lzo/minilzo.c',
-              'include_server/c_extensions/distcc_pump_c_extensions_module.c',
-             ]],
+    sources=[os.path.join(srcdir, source) for source in sources],
     include_dirs=cpp_flags_includes,
     define_macros=[('_GNU_SOURCE', 1)],
     library_dirs=[],
-    libraries=[],
+    libraries=['zstd'] if os.getenv('HAVE_ZSTD') else [],
     runtime_library_dirs=[],
     extra_objects=[],
     extra_compile_args=[]
