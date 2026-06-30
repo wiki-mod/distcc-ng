@@ -1558,8 +1558,21 @@ large foo!
 
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
+    def _collectDaemonStartupFailure(self):
+        pid, status = os.waitpid(self.pid, os.WNOHANG)
+        if not pid:
+            return None
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return status
+
     def startDaemon(self):
         while 1:
+            try:
+                os.remove(self.daemon_pidfile)
+            except OSError:
+                pass
+
             cmd = (self.distccd() +
                    "--no-detach --daemon --verbose --log-file %s --pid-file %s "
                    "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
@@ -1571,18 +1584,18 @@ class NoDetachDaemon_Case(CompileHello_Case):
 
             # Wait until the server is ready for connections, while also
             # collecting early startup failures from the no-detach process.
+            # The pidfile check avoids accepting an unrelated listener on the
+            # same port when the daemon exits with EXIT_BIND_FAILED.
             deadline = time.time() + 10
+            retry = False
             sock = socket.socket()
             try:
                 while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
-                    pid, status = os.waitpid(self.pid, os.WNOHANG)
-                    if pid:
-                        if os.WIFEXITED(status):
-                            result = os.WEXITSTATUS(status)
-                        else:
-                            result = status
+                    result = self._collectDaemonStartupFailure()
+                    if result is not None:
                         if result == EXIT_BIND_FAILED:
                             self.server_port += 1
+                            retry = True
                             break
                         self.fail("failed to start daemon: %d" % result)
                     if time.time() > deadline:
@@ -1590,10 +1603,26 @@ class NoDetachDaemon_Case(CompileHello_Case):
                         self.fail("timed out waiting for daemon startup")
                     time.sleep(0.2)
                 else:
+                    while not os.path.exists(self.daemon_pidfile):
+                        result = self._collectDaemonStartupFailure()
+                        if result is not None:
+                            if result == EXIT_BIND_FAILED:
+                                self.server_port += 1
+                                retry = True
+                                break
+                            self.fail("failed to start daemon: %d" % result)
+                        if time.time() > deadline:
+                            self.killDaemon()
+                            self.fail("timed out waiting for daemon pidfile")
+                        time.sleep(0.2)
+                    if retry:
+                        continue
                     self.add_cleanup(self.killDaemon)
                     return
             finally:
                 sock.close()
+            if retry:
+                continue
 
     def killDaemon(self):
         # Terminate the process specified by the pidfile.  That should kill
