@@ -193,6 +193,9 @@ dcc_approximate_includes(struct dcc_hostdef *host, char **argv)
         return ret;
     }
 
+    /* Hash-backed include discovery can vary; output in path order. */
+    dcc_sort_include_server_files(files);
+
     for (i = 0; files[i]; i++) {
         if ((ret = dcc_categorize_file(files[i])))
             return ret;

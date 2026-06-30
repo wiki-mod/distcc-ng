@@ -137,6 +137,7 @@ ext = setuptools.Extension(
               'src/rpc.c',
               'src/io.c',
               'src/include_server_if.c',
+              'src/include_server_sort.c',
               'src/trace.c',
               'src/snprintf.c',
               'src/util.c',
