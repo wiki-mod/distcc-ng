@@ -3,7 +3,6 @@
 %define	_prefix	/usr
 %define _bindir %{_prefix}/bin
 %define _datadir %{_prefix}/share
-#%define _docdir %{_datadir}/doc/%{name}-%{version}
 %define _docdir %{_datadir}/doc/%{name}
 %define _libdir %{_prefix}/lib
 %define _mandir %{_datadir}/man
@@ -22,7 +21,6 @@ Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
 Provides: distcc
-Obsoletes: crosstool-distcc distcc-include-server
 
 %description
 distcc is a program to distribute compilation of C or C++ code across several
@@ -40,9 +38,9 @@ ac_cv_func_sendfile=no ac_cv_header_sys_sendfile_h=no ./configure \
   --bindir=%{_bindir} \
   --sysconfdir=%{_sysconfdir} \
   --datadir=%{_datadir} \
-  --with-docdir=%{_docdir} \
+  --docdir=%{_docdir} \
   --mandir=%{_mandir} \
-  --enable-rfc2553 --with-included-popt
+  --enable-rfc2553 --with-zstd
 # Get the list of files installed by the python install process
 # by asking make to tell setup.py to put it in python_install_record
 make RPM_OPT_FLAGS="$RPM_OPT_FLAGS" \
@@ -60,12 +58,12 @@ mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d
 install -m 644 packaging/RedHat/xinetd.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d/distcc
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/init.d
 install -m 755 packaging/RedHat/init.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/init.d/distcc
-# TODO(fergus): move the next five lines to 'make install'?
+# These links keep masquerade mode compatible with the old package layout.
 mkdir -p $RPM_BUILD_ROOT/%{_libdir}/distcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
+ln -s ../bin/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
+ln -s ../bin/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
+ln -s ../bin/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
+ln -s ../bin/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -75,6 +73,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/distcc
 %{_bindir}/distccmon-text
 %{_bindir}/lsdistcc
+%{_sbindir}/update-distcc-symlinks
 %{_libdir}/distcc
 %{_bindir}/pump
 %dir %{_sysconfdir}/distcc
@@ -91,7 +90,6 @@ rm -rf $RPM_BUILD_ROOT
 Summary: Server side program for distributed C/C++ compilations.
 Group: Development/Languages
 Provides: distccd
-Obsoletes: crosstool-distcc-server
 
 %description server
 distcc is a program to distribute compilation of C or C++ code across several
@@ -104,9 +102,8 @@ faster than a local compile.
 %{_bindir}/distccd
 %dir %{_sysconfdir}/logrotate.d
 %config %{_sysconfdir}/logrotate.d/distcc
-# Don't list init.d dir because on Red Hat it's a symlink owned by
-# chkconfig, so it causes a conflict on install.
-#%dir %{_sysconfdir}/init.d
+# Do not list the init directory itself because Red Hat owns it via chkconfig.
+# Keep the init directory ownership with the distribution.
 %config %{_sysconfdir}/init.d/distcc
 %dir %{_sysconfdir}/xinetd.d/
 %config %{_sysconfdir}/xinetd.d/distcc
@@ -235,7 +232,7 @@ fi
 
 
 %changelog
-* Sat Mar 12 2008 Craig Silverstein <opensource@google.com> 3.0-1
+* Wed Mar 12 2008 Craig Silverstein <opensource@google.com> 3.0-1
 - Updated to 3.0
 - Added include-server files
 - useradd is run in post- rather than pre-install

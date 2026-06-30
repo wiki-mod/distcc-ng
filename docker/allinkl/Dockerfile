@@ -7,8 +7,8 @@ FROM ${DEBIAN_IMAGE} AS build
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng allinkl builder" \
-      org.opencontainers.image.description="Build stage for the distcc-ng allinkl branch." \
+LABEL org.opencontainers.image.title="distcc-ng-zstd builder" \
+      org.opencontainers.image.description="Build stage for the distcc-ng zstd release branch." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -45,8 +45,8 @@ FROM ${DEBIAN_IMAGE} AS runtime
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng allinkl" \
-      org.opencontainers.image.description="distcc-ng allinkl runtime image with zstd-capable distccd." \
+LABEL org.opencontainers.image.title="distcc-ng-zstd" \
+      org.opencontainers.image.description="distcc-ng runtime image with zstd-capable distccd." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
