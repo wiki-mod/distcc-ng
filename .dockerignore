@@ -1,0 +1,16 @@
+.git
+autom4te.cache
+_testtmp
++distcheck
+*.o
+*.a
+*.so
+*.pyc
+*.tar.gz
+*.tar.bz2
+compile_commands.json
+distcc
+distccd
+lsdistcc
+pump
+include_server/build
