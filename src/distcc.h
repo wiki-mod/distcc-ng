@@ -89,7 +89,8 @@ struct dcc_hostdef;
 enum dcc_compress {
     /* weird values to catch errors */
     DCC_COMPRESS_NONE     = 69,
-    DCC_COMPRESS_LZO1X
+    DCC_COMPRESS_LZO1X,
+    DCC_COMPRESS_ZSTD
 };
 
 enum dcc_cpp_where {
@@ -101,7 +102,9 @@ enum dcc_cpp_where {
 enum dcc_protover {
     DCC_VER_1   = 1,            /**< vanilla */
     DCC_VER_2   = 2,            /**< LZO sprinkles */
-    DCC_VER_3   = 3             /**< server-side cpp */
+    DCC_VER_3   = 3,            /**< server-side cpp */
+    DCC_VER_4   = 4,            /**< zstd compression */
+    __DCC_VER_MAX = 5            /**< canary */
 };
 
 
