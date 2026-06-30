@@ -115,4 +115,14 @@ class BasicsTest(unittest.TestCase):
     finally:
       os.rmdir(os.environ['DISTCC_CLIENT_TMP'])
 
+  def test_IncludeAnalyzerTimer_WallTimeQuota(self):
+    """The request timer must fail requests that exceed wall time."""
+    timer = basics.IncludeAnalyzerTimer()
+    try:
+      timer.start_wall_time -= basics.REQUEST_WALL_TIME_QUOTA + 1
+      self.assertRaises(basics.NotCoveredTimeOutError,
+                        timer._TimeIsUp, None, None)
+    finally:
+      timer.Cancel()
+
 unittest.main()
