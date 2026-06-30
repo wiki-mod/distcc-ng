@@ -307,6 +307,7 @@ h_hosts_obj = src/h_hosts.o $(common_obj)
 h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
 h_strip_obj = src/h_strip.o $(common_obj) src/strip.o
+h_dopt_obj = src/h_dopt.o $(common_obj) src/dopt.o src/access.o
 h_stats_obj = src/h_stats.o src/h_stats_stats.o $(common_obj) src/srvnet.o \
 	      src/access.o
 h_parsemask_obj = src/h_parsemask.o $(common_obj) src/access.o
@@ -423,6 +424,7 @@ sbin_PROGRAMS = \
 
 check_PROGRAMS = \
 	h_argvtostr@EXEEXT@ \
+	h_dopt@EXEEXT@ \
 	h_exten@EXEEXT@ \
 	h_fix_debug_info@EXEEXT@ \
 	h_hosts@EXEEXT@ \
@@ -543,6 +545,9 @@ h_ssh@EXEEXT@: $(h_ssh_obj)
 
 h_argvtostr@EXEEXT@: $(h_argvtostr_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_argvtostr_obj) $(LIBS)
+
+h_dopt@EXEEXT@: $(h_dopt_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
 
 h_parsemask@EXEEXT@: $(h_parsemask_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_parsemask_obj) $(LIBS)

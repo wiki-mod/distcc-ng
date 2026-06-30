@@ -816,7 +816,10 @@ static int dcc_run_job(int in_fd,
             job_result = STATS_COMPILE_ERROR;
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0 */
-        dcc_x_token_int(out_fd, "DOTO", 0);
+        if (protover == DCC_VER_4)
+            dcc_x_token_2int(out_fd, "DOTO", 0, 0);
+        else
+            dcc_x_token_int(out_fd, "DOTO", 0);
 
         if (job_result == -1)
             job_result = STATS_COMPILE_ERROR;
