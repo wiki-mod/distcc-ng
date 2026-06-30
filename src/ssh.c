@@ -193,7 +193,7 @@ int dcc_ssh_connect(char *ssh_cmd,
                     pid_t *ssh_pid)
 {
     pid_t ret;
-    const int max_ssh_args = 12;
+    enum { max_ssh_args = 12 };
     char *ssh_args[max_ssh_args];
     char *child_argv[11+max_ssh_args];
     int i,j;
