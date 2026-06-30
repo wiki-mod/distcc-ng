@@ -1558,6 +1558,12 @@ large foo!
 
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
+    def _readDaemonLog(self):
+        try:
+            return open(self.daemon_logfile, 'rt').read()
+        except IOError as e:
+            return "could not read daemon log: %s" % e
+
     def _collectDaemonStartupFailure(self):
         pid, status = os.waitpid(self.pid, os.WNOHANG)
         if not pid:
@@ -1604,6 +1610,8 @@ class NoDetachDaemon_Case(CompileHello_Case):
                             break
                         self.fail("failed to start daemon: %d" % result)
                     if time.time() > deadline:
+                        self.log("distccd log before startup timeout:\n%s" %
+                                 self._readDaemonLog())
                         self.killDaemon()
                         self.server_port += 1
                         retry = True
@@ -1619,6 +1627,8 @@ class NoDetachDaemon_Case(CompileHello_Case):
                                 break
                             self.fail("failed to start daemon: %d" % result)
                         if time.time() > deadline:
+                            self.log("distccd log before pidfile timeout:\n%s" %
+                                     self._readDaemonLog())
                             self.killDaemon()
                             self.server_port += 1
                             retry = True
@@ -1632,6 +1642,8 @@ class NoDetachDaemon_Case(CompileHello_Case):
                 sock.close()
             if retry:
                 continue
+        self.log("distccd log after startup attempts:\n%s" %
+                 self._readDaemonLog())
         self.fail("failed to start daemon after %d attempts" % max_start_attempts)
 
     def killDaemon(self):
