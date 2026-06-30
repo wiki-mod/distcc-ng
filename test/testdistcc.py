@@ -1567,7 +1567,10 @@ class NoDetachDaemon_Case(CompileHello_Case):
         return status
 
     def startDaemon(self):
-        while 1:
+        max_start_attempts = 5
+        attempts = 0
+        while attempts < max_start_attempts:
+            attempts += 1
             try:
                 os.remove(self.daemon_pidfile)
             except OSError:
@@ -1600,7 +1603,9 @@ class NoDetachDaemon_Case(CompileHello_Case):
                         self.fail("failed to start daemon: %d" % result)
                     if time.time() > deadline:
                         self.killDaemon()
-                        self.fail("timed out waiting for daemon startup")
+                        self.server_port += 1
+                        retry = True
+                        break
                     time.sleep(0.2)
                 else:
                     while not os.path.exists(self.daemon_pidfile):
@@ -1613,7 +1618,9 @@ class NoDetachDaemon_Case(CompileHello_Case):
                             self.fail("failed to start daemon: %d" % result)
                         if time.time() > deadline:
                             self.killDaemon()
-                            self.fail("timed out waiting for daemon pidfile")
+                            self.server_port += 1
+                            retry = True
+                            break
                         time.sleep(0.2)
                     if retry:
                         continue
@@ -1623,6 +1630,7 @@ class NoDetachDaemon_Case(CompileHello_Case):
                 sock.close()
             if retry:
                 continue
+        self.fail("failed to start daemon after %d attempts" % max_start_attempts)
 
     def killDaemon(self):
         # Terminate the process specified by the pidfile.  That should kill
