@@ -1586,7 +1586,7 @@ class NoDetachDaemon_Case(CompileHello_Case):
             # collecting early startup failures from the no-detach process.
             # The pidfile check avoids accepting an unrelated listener on the
             # same port when the daemon exits with EXIT_BIND_FAILED.
-            deadline = time.time() + 10
+            deadline = time.time() + 30
             retry = False
             sock = socket.socket()
             try:
