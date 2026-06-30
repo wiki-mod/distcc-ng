@@ -28,6 +28,7 @@ CPPFLAGS = @CPPFLAGS@ ${DIR_DEFS} \
 	   -Isrc -I"$(srcdir)/src" -I"$(srcdir)/lzo"
 
 PYTHON = @PYTHON@
+HAVE_ZSTD = @HAVE_ZSTD@
 
 srcdir = @srcdir@
 top_srcdir = @top_srcdir@
@@ -318,7 +319,7 @@ SRC =	src/stats.c							\
 	src/backoff.c src/bulk.c					\
 	src/cleanup.c							\
 	src/climasq.c src/clinet.c src/clirpc.c src/compile.c		\
-	src/compress-lzo1x.c src/compress-zstd.c src/cpp.c		\
+	src/compress-lzox1.c src/compress-zstd.c src/cpp.c		\
 	src/daemon.c src/distcc.c src/dsignal.c				\
 	src/dopt.c src/dparent.c src/exec.c src/filename.c		\
 	src/h_argvtostr.c						\
@@ -571,6 +572,7 @@ include-server:
 	  mkdir -p "$(include_server_builddir)" &&      \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
@@ -931,6 +933,7 @@ clean-include-server:
 	if test -n "$(PYTHON)"; then	\
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
@@ -1060,6 +1063,7 @@ install-include-server: include-server pump
 	  DESTDIR=`cd "$(DESTDIR)/" && pwd` &&            \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
@@ -1080,7 +1084,7 @@ install-include-server: include-server pump
 	  fi; \
 	  $(mkinstalldirs) "$(DESTDIR)$(bindir)" && \
 	  INCLUDE_SERVER=`grep '/include_server.py$$' "$(include_server_builddir)/install.log"` && \
-	  sed "s,^include_server='@include_server@',include_server='$$INCLUDE_SERVER'," \
+	  sed "s,^include_server='',include_server='$$INCLUDE_SERVER'," \
 	    pump > "$(include_server_builddir)/pump" && \
 	  $(INSTALL_SCRIPT) "$(include_server_builddir)/pump" "$(DESTDIR)$(bindir)"; \
 	fi
