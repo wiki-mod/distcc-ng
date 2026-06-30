@@ -33,6 +33,6 @@ compressed and uncompressed, in that order.
 As a special case, if the uncompressed form is zero bytes, then it is
 not compressed but rather sent directly as zero bytes.
 
-A DDWO token is send after DOTO, comprising the debug information (.dwo),
+A DDWO token is sent after DOTO, comprising the debug information (.dwo),
 if available. See https://gcc.gnu.org/wiki/DebugFission It is compressed
 with Zstd.
