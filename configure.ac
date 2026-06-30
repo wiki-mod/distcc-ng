@@ -173,6 +173,8 @@ AC_SUBST(GNOME_LIBS)
 AC_SUBST(INSTALL_GNOME)
 AC_SUBST(UNINSTALL_GNOME)
 
+PKG_PROG_PKG_CONFIG
+
 AC_ARG_WITH(zstd,
         AS_HELP_STRING([--with-zstd], [build with zstd compression]))
 
