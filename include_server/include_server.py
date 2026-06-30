@@ -30,6 +30,7 @@ import getopt
 import glob
 import os
 import re
+import select
 import shutil
 import signal
 import socketserver
@@ -361,11 +362,12 @@ def DistccIncludeHandlerGenerator(include_analyzer):
        - Transmit the file and link names on the socket using the RPC protocol.
       """
       statistics.StartTiming()
-      currdir = distcc_pump_c_extensions.RCwd(self.rfile.fileno())
-      cmd = distcc_pump_c_extensions.RArgv(self.rfile.fileno())
+      include_analyzer.timer = basics.IncludeAnalyzerTimer()
 
       try:
         try:
+          currdir = distcc_pump_c_extensions.RCwd(self.rfile.fileno())
+          cmd = distcc_pump_c_extensions.RArgv(self.rfile.fileno())
           # We do timeout the include_analyzer using the crude mechanism of
           # SIGALRM. This signal is problematic if raised while Python is doing
           # I/O in the C extensions and during use of the subprocess
@@ -385,7 +387,6 @@ def DistccIncludeHandlerGenerator(include_analyzer):
           # link operations instead of actually executing them on the spot. The
           # accumulated operations can be executed after DoCompilationCommand
           # when the timer has been cancelled.
-          include_analyzer.timer = basics.IncludeAnalyzerTimer()
           files_and_links = (
               include_analyzer.
                   DoCompilationCommand(cmd, currdir,
@@ -577,6 +578,10 @@ class _IncludeServerPortReady(object):
 
    The implementation uses an unnamed pipe."""
 
+  READY = b'\n'
+  FAILED = b'!'
+  TIMEOUT_SECONDS = 30
+
   def __init__(self):
     """Constructor.
 
@@ -585,14 +590,28 @@ class _IncludeServerPortReady(object):
     (self.read_fd, self.write_fd) = os.pipe()
 
   def Acquire(self):
-    """Acquire the semaphore after fork;  blocks until a call of Release."""
-    if os.read(self.read_fd, 1) != b'\n':
+    """Acquire the semaphore after fork without waiting forever."""
+    readable, unused_writable, unused_error = select.select(
+        [self.read_fd], [], [], self.TIMEOUT_SECONDS)
+    if not readable:
+      sys.exit("Include server: timed out waiting for startup.")
+    status = os.read(self.read_fd, 1)
+    if status == self.FAILED:
+      sys.exit(1)
+    if status != self.READY:
       sys.exit("Include server: _IncludeServerPortReady.Acquire failed.")
 
   def Release(self):
     """Release the semaphore after fork."""
-    if os.write(self.write_fd, b'\n') != 1:
+    if os.write(self.write_fd, self.READY) != 1:
       sys.exit("Include server: _IncludeServerPortReady.Release failed.")
+
+  def Fail(self):
+    """Tell the parent that startup failed before the server became ready."""
+    try:
+      os.write(self.write_fd, self.FAILED)
+    except OSError:
+      pass
 
 
 def _SetUp(include_server_port):
@@ -668,7 +687,16 @@ def Main():
     # We call _Setup only now, because the process id, used in naming the client
     # root, must be that of this process, not that of the parent process. See
     # _CleanOutOthers for the importance of the process id.
-    (include_analyzer, server) = _SetUp(include_server_port)
+    include_analyzer = None
+    try:
+      (include_analyzer, server) = _SetUp(include_server_port)
+    except:
+      include_server_port_ready.Fail()
+      print("Include server: exception occurred during startup.",
+              file=sys.stderr)
+      _PrintStackTrace(sys.stderr)
+      _CleanOut(include_analyzer, include_server_port)
+      sys.exit(1)
     include_server_port_ready.Release()
     try:
       try:

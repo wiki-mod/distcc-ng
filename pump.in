@@ -247,6 +247,10 @@ StartIncludeServer() {
     # directory. Possibly there may be more than one such file; first identify
     # them all.
     so_dir=`"$distcc_srcdir/find_c_extension.sh" "$DISTCC_LOCATION"`
+    if [ $? -ne 0 ] || [ -z "$so_dir" ]; then
+      echo "__________Could not locate distcc-pump C-extension directory." 1>&2
+      return 1
+    fi
     pythonpath="$so_dir"
   fi
 
@@ -364,13 +368,43 @@ ShutDown() {
     if [ "$verbose" = 1 ]; then
       echo '__________Shutting down distcc-pump include server'
     fi
-    kill $include_server_pid
-    # Wait until it's really dead.  We need to do this because the
-    # include server may produce output after receiving SIGTERM.
-    # Note that while 'sleep 0.01' is relying on a feature of GNU sleep,
-    # that's OK; on systems that don't support it, it's effectively the
-    # same as 'sleep 0', i.e. we'll just busy-wait rather than sleeping.
-    while kill -0 $include_server_pid; do sleep 0.01; done >/dev/null 2>&1
+    if ! kill "$include_server_pid"; then
+      echo '__________Could not send SIGTERM to distcc-pump include server' 1>&2
+    else
+      # Allow a short grace period for clean exit, then force kill.
+      include_server_wait_count=0
+      include_server_wait_limit=200   # 200 * 0.01s ~= 2s
+      while ps -p "$include_server_pid" > /dev/null; do
+        if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+          echo '__________Timed out waiting for distcc-pump include server' \
+               'to stop after SIGTERM' 1>&2
+          break
+        fi
+        include_server_wait_count=`expr "$include_server_wait_count" + 1`
+        sleep 0.01
+      done
+    fi
+
+    if ps -p "$include_server_pid" > /dev/null; then
+      echo '__________Sending SIGKILL to unresponsive distcc-pump' \
+           'include server' 1>&2
+      if kill -9 "$include_server_pid"; then
+        include_server_wait_count=0
+        include_server_wait_limit=100   # 100 * 0.01s ~= 1s
+        while ps -p "$include_server_pid" > /dev/null; do
+          if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+            echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
+                 1>&2
+            break
+          fi
+          include_server_wait_count=`expr "$include_server_wait_count" + 1`
+          sleep 0.01
+        done
+      else
+        echo '__________Error: could not send SIGKILL to distcc-pump include server' \
+             1>&2
+      fi
+    fi
   fi
 
   if [ -f "$include_server_stdout" ]; then

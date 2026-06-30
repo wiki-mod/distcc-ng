@@ -26,7 +26,9 @@ ultimately the notion of an AssertionError.
 __author__ = "Nils Klarlund"
 
 import os
+import subprocess
 import sys
+import tempfile
 import traceback
 import unittest
 
@@ -178,10 +180,57 @@ class IncludeServerTest(unittest.TestCase):
     except NotCoveredError:
       pass
 
+    # Exercise 4: the request timer must already be active while the handler
+    # reads the request from the client.
+    timer_was_active = []
+
+    def TimedOutRCwd(unused_self):
+      timer_was_active.append(include_analyzer.timer is not None)
+      raise basics.NotCoveredTimeOutError('request read timed out')
+
+    def Expect4(txt, force, never):
+      self_test.assertTrue('request read timed out' in txt, txt)
+      self_test.assertEqual(never, False)
+
+    mock_email_sender.expect = Expect4
+    distcc_pump_c_extensions.RCwd = TimedOutRCwd
+    distcc_pump_c_extensions.RArgv = lambda self: [ "gcc", "parse.c" ]
+    try:
+      include_handler.handle()
+    except basics.NotCoveredTimeOutError:
+      pass
+    self.assertEqual(timer_was_active, [True])
+
     distcc_pump_c_extensions.RWcd = old_RWcd
     distcc_pump_c_extensions.RArgv = old_RArgv
     distcc_pump_c_extensions.XArgv = old_XArgv
     include_server.socketserver.StreamRequestHandler = (
       old_StreamRequestHandler)
+
+  def test_Main_reports_setup_failure_without_hanging(self):
+    """A pre-ready startup failure must not leave the parent blocked."""
+    missing_root = tempfile.mkdtemp()
+    missing_parent = os.path.join(missing_root, 'missing-parent')
+    socket_path = os.path.join(missing_parent, 'socket')
+    pid_file = tempfile.NamedTemporaryFile(delete=False)
+    pid_file.close()
+    try:
+      result = subprocess.run(
+          [sys.executable, 'include_server.py',
+           '--port', socket_path, '--pid_file', pid_file.name, '-d1'],
+          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+          timeout=5)
+      self.assertNotEqual(result.returncode, 0)
+      self.assertIn('Include server: exception occurred during startup.',
+                    result.stderr)
+    finally:
+      try:
+        os.unlink(pid_file.name)
+      except OSError:
+        pass
+      try:
+        os.rmdir(missing_root)
+      except OSError:
+        pass
 
 unittest.main()
