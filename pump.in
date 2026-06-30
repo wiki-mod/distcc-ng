@@ -217,6 +217,15 @@ PrintIncludeServerStatusMessage() {
   fi
 }
 
+PrintIncludeServerOutput() {
+  if [ -f "$include_server_stdout" ]; then
+    cat "$include_server_stdout"
+  fi
+  if [ -f "$include_server_stderr" ]; then
+    cat "$include_server_stderr" >&2
+  fi
+}
+
 Announce() {
   if [ "$verbose" = 1 ]; then
     echo "__________Using distcc-pump from $DISTCC_LOCATION"
@@ -322,6 +331,7 @@ StartIncludeServer() {
   if $TEST ! -S "$socket"; then
     echo "__________Expected a socket at '$socket'" 1>&2
     PrintIncludeServerStatusMessage 1
+    PrintIncludeServerOutput
     return 1
   fi
 
@@ -338,6 +348,7 @@ StartIncludeServer() {
     # socket is not working.
     include_server_pid=''
     PrintIncludeServerStatusMessage 1
+    PrintIncludeServerOutput
     return 1
   fi
 }
@@ -407,12 +418,7 @@ ShutDown() {
     fi
   fi
 
-  if [ -f "$include_server_stdout" ]; then
-    cat "$include_server_stdout"
-  fi
-  if [ -f "$include_server_stderr" ]; then
-    cat "$include_server_stderr" >&2
-  fi
+  PrintIncludeServerOutput
 
   if [ -n "$socket_dir" ];  then
     rm -rf "$socket_dir"

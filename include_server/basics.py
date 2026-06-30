@@ -31,6 +31,8 @@ import sys
 import tempfile
 import time
 
+_Now = getattr(time, 'monotonic', time.time)
+
 
 # MANAGEMENT OF TEMPORARY LOCATIONS FOR GENERATIONS OF COMPRESSED FILES
 
@@ -367,14 +369,14 @@ class IncludeAnalyzerTimer(object):
   """
 
   def __init__(self):
-    self.start_wall_time = time.monotonic()
+    self.start_wall_time = _Now()
     self.start_utime = resource.getrusage(resource.RUSAGE_SELF).ru_utime
     self.old = signal.signal(signal.SIGALRM, self._TimeIsUp)
     signal.alarm(USER_TIME_QUOTA_CHECK_INTERVAL_TIME)
 
   def _TimeIsUp(self, unused_sig_number, unused_frame):
     """Check request time spent and raise exception or reschedule."""
-    if time.monotonic() > self.start_wall_time + REQUEST_WALL_TIME_QUOTA:
+    if _Now() > self.start_wall_time + REQUEST_WALL_TIME_QUOTA:
       raise NotCoveredTimeOutError(('Bailing out because include server '
                                     + 'spent more than %ds wall time '
                                     + 'handling request') %
@@ -388,6 +390,11 @@ class IncludeAnalyzerTimer(object):
     else:
       # Reschedule ourselves.
       signal.alarm(USER_TIME_QUOTA_CHECK_INTERVAL_TIME)
+
+  def RemainingWallTime(self):
+    """Return seconds left before the request wall-clock quota expires."""
+    remaining = self.start_wall_time + REQUEST_WALL_TIME_QUOTA - _Now()
+    return max(0.001, remaining)
 
   def Stop(self):
     signal.alarm(0)

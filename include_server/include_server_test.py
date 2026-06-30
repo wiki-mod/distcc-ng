@@ -64,10 +64,14 @@ class IncludeServerTest(unittest.TestCase):
   def test_IncludeHandler_handle(self):
     self_test = self
     client_root_keeper = basics.ClientRootKeeper()
-    old_RWcd = distcc_pump_c_extensions.RCwd
+    old_RCwd = distcc_pump_c_extensions.RCwd
     distcc_pump_c_extensions.RCwd = None # to be set below
+    old_RCwdTimeout = distcc_pump_c_extensions.RCwdTimeout
+    distcc_pump_c_extensions.RCwdTimeout = None # to be set below
     old_RArgv = distcc_pump_c_extensions.RArgv
     distcc_pump_c_extensions.RArgv = None # to be set below
+    old_RArgvTimeout = distcc_pump_c_extensions.RArgvTimeout
+    distcc_pump_c_extensions.RArgvTimeout = None # to be set below
     old_XArgv = distcc_pump_c_extensions.XArgv
     distcc_pump_c_extensions.XArgv = lambda _, __: None
     old_StreamRequestHandler = (
@@ -109,8 +113,10 @@ class IncludeServerTest(unittest.TestCase):
 
     # Exercise 1: non-existent translation unit.
 
-    distcc_pump_c_extensions.RArgv = lambda self: [ "gcc", "parse.c" ]
-    distcc_pump_c_extensions.RCwd = lambda self: os.getcwd()
+    distcc_pump_c_extensions.RArgvTimeout = (
+        lambda unused_self, unused_timeout: [ "gcc", "parse.c" ])
+    distcc_pump_c_extensions.RCwdTimeout = (
+        lambda unused_self, unused_timeout: os.getcwd())
 
     def Expect1(txt, force, never):
       self_test.assertTrue(
@@ -130,8 +136,10 @@ class IncludeServerTest(unittest.TestCase):
     # Exercise 2: provoke assertion error in cache_basics by providing an
     # entirely false value of current directory as provided in RCwd.
 
-    distcc_pump_c_extensions.RArgv = lambda self: [ "gcc", "parse.c" ]
-    distcc_pump_c_extensions.RCwd = lambda self: "/"
+    distcc_pump_c_extensions.RArgvTimeout = (
+        lambda unused_self, unused_timeout: [ "gcc", "parse.c" ])
+    distcc_pump_c_extensions.RCwdTimeout = (
+        lambda unused_self, unused_timeout: "/")
     # The cwd will be changed because of false value.
     oldcwd = os.getcwd()
 
@@ -163,9 +171,11 @@ class IncludeServerTest(unittest.TestCase):
 
     # Exercise 3: provoke a NotCoveredError due to an absolute #include.
 
-    distcc_pump_c_extensions.RArgv = lambda self: [ "gcc",
-      "test_data/contains_abs_include.c" ]
-    distcc_pump_c_extensions.RCwd = lambda self: os.getcwd()
+    distcc_pump_c_extensions.RArgvTimeout = (
+        lambda unused_self, unused_timeout:
+            [ "gcc", "test_data/contains_abs_include.c" ])
+    distcc_pump_c_extensions.RCwdTimeout = (
+        lambda unused_self, unused_timeout: os.getcwd())
 
     def Expect3(txt, force, never):
       self_test.assertTrue(
@@ -184,25 +194,30 @@ class IncludeServerTest(unittest.TestCase):
     # reads the request from the client.
     timer_was_active = []
 
-    def TimedOutRCwd(unused_self):
+    def TimedOutRCwd(unused_self, unused_timeout):
       timer_was_active.append(include_analyzer.timer is not None)
-      raise basics.NotCoveredTimeOutError('request read timed out')
+      raise distcc_pump_c_extensions.Error(
+          'Timed out reading include server request.')
 
     def Expect4(txt, force, never):
-      self_test.assertTrue('request read timed out' in txt, txt)
+      self_test.assertTrue('Timed out reading include server request.' in txt,
+                           txt)
       self_test.assertEqual(never, False)
 
     mock_email_sender.expect = Expect4
-    distcc_pump_c_extensions.RCwd = TimedOutRCwd
-    distcc_pump_c_extensions.RArgv = lambda self: [ "gcc", "parse.c" ]
+    distcc_pump_c_extensions.RCwdTimeout = TimedOutRCwd
+    distcc_pump_c_extensions.RArgvTimeout = (
+        lambda unused_self, unused_timeout: [ "gcc", "parse.c" ])
     try:
       include_handler.handle()
     except basics.NotCoveredTimeOutError:
       pass
     self.assertEqual(timer_was_active, [True])
 
-    distcc_pump_c_extensions.RWcd = old_RWcd
+    distcc_pump_c_extensions.RCwd = old_RCwd
+    distcc_pump_c_extensions.RCwdTimeout = old_RCwdTimeout
     distcc_pump_c_extensions.RArgv = old_RArgv
+    distcc_pump_c_extensions.RArgvTimeout = old_RArgvTimeout
     distcc_pump_c_extensions.XArgv = old_XArgv
     include_server.socketserver.StreamRequestHandler = (
       old_StreamRequestHandler)
@@ -232,5 +247,28 @@ class IncludeServerTest(unittest.TestCase):
         os.rmdir(missing_root)
       except OSError:
         pass
+
+  def test_IncludeServerPortReady_timeout_stops_child(self):
+    """A startup timeout must not leave the forked child running."""
+    port_ready = include_server._IncludeServerPortReady()
+    old_timeout = port_ready.TIMEOUT_SECONDS
+    port_ready.TIMEOUT_SECONDS = 0.1
+    pid = os.fork()
+    if pid == 0:
+      try:
+        sys.exit(0 if os.read(port_ready.read_fd, 1) else 0)
+      except KeyboardInterrupt:
+        sys.exit(1)
+    try:
+      self.assertRaises(SystemExit, port_ready.Acquire, pid)
+    finally:
+      port_ready.TIMEOUT_SECONDS = old_timeout
+      try:
+        os.kill(pid, 0)
+      except OSError:
+        pass
+      else:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
 
 unittest.main()

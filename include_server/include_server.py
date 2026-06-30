@@ -36,6 +36,7 @@ import signal
 import socketserver
 import sys
 import tempfile
+import time
 import traceback
 
 # Include server imports
@@ -366,8 +367,15 @@ def DistccIncludeHandlerGenerator(include_analyzer):
 
       try:
         try:
-          currdir = distcc_pump_c_extensions.RCwd(self.rfile.fileno())
-          cmd = distcc_pump_c_extensions.RArgv(self.rfile.fileno())
+          try:
+            currdir = distcc_pump_c_extensions.RCwdTimeout(
+                self.rfile.fileno(), include_analyzer.timer.RemainingWallTime())
+            cmd = distcc_pump_c_extensions.RArgvTimeout(
+                self.rfile.fileno(), include_analyzer.timer.RemainingWallTime())
+          except distcc_pump_c_extensions.Error as inst:
+            if 'Timed out reading include server request.' in str(inst):
+              raise basics.NotCoveredTimeOutError(str(inst))
+            raise
           # We do timeout the include_analyzer using the crude mechanism of
           # SIGALRM. This signal is problematic if raised while Python is doing
           # I/O in the C extensions and during use of the subprocess
@@ -589,11 +597,37 @@ class _IncludeServerPortReady(object):
     """
     (self.read_fd, self.write_fd) = os.pipe()
 
-  def Acquire(self):
+  def _StopChild(self, child_pid):
+    """Stop a child that outlived the startup readiness deadline."""
+    if child_pid is None:
+      return
+    try:
+      os.kill(child_pid, signal.SIGTERM)
+    except OSError:
+      return
+    for unused_i in range(100):
+      try:
+        done_pid, unused_status = os.waitpid(child_pid, os.WNOHANG)
+      except OSError:
+        return
+      if done_pid == child_pid:
+        return
+      time.sleep(0.01)
+    try:
+      os.kill(child_pid, signal.SIGKILL)
+    except OSError:
+      return
+    try:
+      os.waitpid(child_pid, 0)
+    except OSError:
+      pass
+
+  def Acquire(self, child_pid=None):
     """Acquire the semaphore after fork without waiting forever."""
     readable, unused_writable, unused_error = select.select(
         [self.read_fd], [], [], self.TIMEOUT_SECONDS)
     if not readable:
+      self._StopChild(child_pid)
       sys.exit("Include server: timed out waiting for startup.")
     status = os.read(self.read_fd, 1)
     if status == self.FAILED:
@@ -679,7 +713,7 @@ def Main():
       print(pid, file=pid_file_fd)
       pid_file_fd.close()
     # Just run to completion now -- after making sure that child is ready.
-    include_server_port_ready.Acquire()
+    include_server_port_ready.Acquire(pid)
     # concerned.
   else:
     # In child.
@@ -691,10 +725,11 @@ def Main():
     try:
       (include_analyzer, server) = _SetUp(include_server_port)
     except:
-      include_server_port_ready.Fail()
       print("Include server: exception occurred during startup.",
               file=sys.stderr)
       _PrintStackTrace(sys.stderr)
+      sys.stderr.flush()
+      include_server_port_ready.Fail()
       _CleanOut(include_analyzer, include_server_port)
       sys.exit(1)
     include_server_port_ready.Release()
