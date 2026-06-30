@@ -7,8 +7,8 @@ FROM ${DEBIAN_IMAGE} AS build
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng allinkl builder" \
-      org.opencontainers.image.description="Build stage for the distcc-ng allinkl branch." \
+LABEL org.opencontainers.image.title="distcc-ng builder" \
+      org.opencontainers.image.description="Build stage for the distcc-ng release branch." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -24,7 +24,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       build-essential \
       ccache \
       libpopt-dev \
-      libzstd-dev \
       pkg-config \
       python3-dev \
       python3-setuptools && \
@@ -33,7 +32,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY . .
 
 RUN ./autogen.sh && \
-    ./configure PYTHON=python3 --prefix=/usr/local --with-zstd --enable-Werror && \
+    ./configure PYTHON=python3 --prefix=/usr/local --without-zstd --enable-Werror && \
     make -j"$(nproc)" && \
     install -D distcc /out/usr/local/bin/distcc && \
     install -D distccd /out/usr/local/bin/distccd && \
@@ -45,8 +44,8 @@ FROM ${DEBIAN_IMAGE} AS runtime
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng allinkl" \
-      org.opencontainers.image.description="distcc-ng allinkl runtime image with zstd-capable distccd." \
+LABEL org.opencontainers.image.title="distcc-ng" \
+      org.opencontainers.image.description="distcc-ng runtime image without zstd support." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -59,7 +58,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libpopt0 \
-      libzstd1 \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --shell /usr/sbin/nologin distcc
