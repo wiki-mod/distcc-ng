@@ -198,12 +198,19 @@ int dcc_ssh_connect(char *ssh_cmd,
     char *child_argv[11+max_ssh_args];
     int i,j;
     int num_ssh_args = 0;
+    char *ssh_cmd_buf = NULL;
     char *ssh_cmd_in;
 
     /* We need to cast away constness.  I promise the strings in the argv[]
      * will not be modified. */
 
     if (!ssh_cmd && (ssh_cmd_in = getenv("DISTCC_SSH"))) {
+        ssh_cmd_buf = strdup(ssh_cmd_in);
+        if (!ssh_cmd_buf) {
+            rs_log_crit("failed to duplicate DISTCC_SSH");
+            return EXIT_OUT_OF_MEMORY;
+        }
+        ssh_cmd_in = ssh_cmd_buf;
         ssh_cmd = strtok(ssh_cmd_in, " ");
         char *token = strtok(NULL, " ");
         while (token != NULL) {
@@ -246,6 +253,7 @@ int dcc_ssh_connect(char *ssh_cmd,
     /*     child_argv[i++] = (char *) "--log-stderr"; */
 
     ret = dcc_run_piped_cmd(child_argv, f_in, f_out, ssh_pid);
+    free(ssh_cmd_buf);
 
     return ret;
 }

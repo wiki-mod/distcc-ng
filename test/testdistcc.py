@@ -913,6 +913,34 @@ class ParseHostSpec_Case(SimpleDistCC_Case):
         assert out == expected, "expected %s\ngot %s" % (repr(expected), repr(out))
 
 
+class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
+    """Check that DISTCC_SSH options survive repeated Secure Shell connects."""
+    def runtest(self):
+        fake_ssh = os.path.abspath("fake-ssh")
+        fake_ssh_log = os.path.abspath("fake-ssh.log")
+
+        f = open(fake_ssh, "w")
+        try:
+            f.write("#!/bin/sh\n")
+            f.write("printf '%%s\\n' \"$*\" >> %s\n" % _ShellSafe(fake_ssh_log))
+        finally:
+            f.close()
+        os.chmod(fake_ssh, 0o700)
+
+        os.environ["DISTCC_SSH"] = "%s --distcc-test-option" % fake_ssh
+        self.runcmd("h_ssh repeat-env")
+
+        f = open(fake_ssh_log)
+        try:
+            lines = f.read().splitlines()
+        finally:
+            f.close()
+
+        expected = ("--distcc-test-option -l builduser buildhost distccd "
+                    "--inetd --enable-tcp-insecure")
+        self.assert_equal(lines, [expected, expected])
+
+
 class Compilation_Case(WithDaemon_Case):
     '''Test distcc by actually compiling a file'''
     def setup(self):
@@ -2389,6 +2417,7 @@ tests = [
          MixedServerPumpFallback_Case,
          InvalidHostSpec_Case,
          ParseHostSpec_Case,
+         SecureShellCommandEnvironment_Case,
          ImpliedOutput_Case,
          SyntaxError_Case,
          NoHosts_Case,
