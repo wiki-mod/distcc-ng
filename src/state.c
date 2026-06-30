@@ -47,6 +47,9 @@ static struct dcc_task_state *my_state = NULL;
 static struct dcc_task_state local_state, remote_state;
 
 static struct dcc_task_state *direct_my_state(const enum dcc_host target);
+static int dcc_write_state(int fd);
+static int dcc_get_state_tmp_filename(const char *fname, char **tmp_fname);
+static int dcc_write_state_file(const char *fname);
 
 /**
  * @file
@@ -150,6 +153,65 @@ static int dcc_open_state(int *p_fd,
 }
 
 
+static int dcc_get_state_tmp_filename(const char *fname, char **tmp_fname)
+{
+    const char *base = strrchr(fname, '/');
+    int ret;
+
+    if (base) {
+        ret = asprintf(tmp_fname, "%.*s/.%s.tmp",
+                       (int)(base - fname), fname, base + 1);
+    } else {
+        ret = asprintf(tmp_fname, ".%s.tmp", fname);
+    }
+
+    if (ret == -1)
+        return EXIT_OUT_OF_MEMORY;
+
+    return 0;
+}
+
+
+static int dcc_write_state_file(const char *fname)
+{
+    char *tmp_fname;
+    int fd;
+    int ret;
+
+    if ((ret = dcc_get_state_tmp_filename(fname, &tmp_fname)))
+        return ret;
+
+    if ((ret = dcc_open_state(&fd, tmp_fname))) {
+        free(tmp_fname);
+        return ret;
+    }
+
+    if ((ret = dcc_write_state(fd))) {
+        dcc_close(fd);
+        unlink(tmp_fname);
+        free(tmp_fname);
+        return ret;
+    }
+
+    if ((ret = dcc_close(fd))) {
+        unlink(tmp_fname);
+        free(tmp_fname);
+        return ret;
+    }
+
+    /* Keep monitors from observing a truncated state file during updates. */
+    if (rename(tmp_fname, fname) == -1) {
+        rs_log_error("failed to replace %s: %s", fname, strerror(errno));
+        unlink(tmp_fname);
+        free(tmp_fname);
+        return EXIT_IO_ERROR;
+    }
+
+    free(tmp_fname);
+    return 0;
+}
+
+
 /**
  * Remove the state file for this process.
  *
@@ -158,6 +220,7 @@ static int dcc_open_state(int *p_fd,
 void dcc_remove_state_file (void)
 {
     char *fname;
+    char *tmp_fname = NULL;
     int ret;
 
     if ((ret = dcc_get_state_filename(&fname)))
@@ -169,6 +232,15 @@ void dcc_remove_state_file (void)
             rs_log_warning("failed to unlink %s: %s", fname, strerror(errno));
             ret = EXIT_IO_ERROR;
         }
+    }
+
+    if (dcc_get_state_tmp_filename(fname, &tmp_fname) == 0) {
+        if (unlink(tmp_fname) == -1 && errno != ENOENT) {
+            rs_log_warning("failed to unlink %s: %s",
+                           tmp_fname, strerror(errno));
+            ret = EXIT_IO_ERROR;
+        }
+        free(tmp_fname);
     }
 
     free(fname);
@@ -203,7 +275,6 @@ int dcc_note_state(enum dcc_phase state,
                    const char *source_file,
                    const char *host, enum dcc_host target)
 {
-    int fd;
     int ret;
     char *fname;
     struct timeval tv;
@@ -239,21 +310,10 @@ int dcc_note_state(enum dcc_phase state,
              source_file ? source_file : "(NULL)",
              host ? host : "(NULL)");
 
-    if ((ret = dcc_open_state(&fd, fname))) {
-        free(fname);
-        return ret;
-    }
-
-    if ((ret = dcc_write_state(fd))) {
-        dcc_close(fd);
-        free(fname);
-        return ret;
-    }
-
-    dcc_close(fd);
+    ret = dcc_write_state_file(fname);
     free(fname);
 
-    return 0;
+    return ret;
 }
 
 
