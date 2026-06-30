@@ -1572,6 +1572,16 @@ class NoDetachDaemon_Case(CompileHello_Case):
             return os.WEXITSTATUS(status)
         return status
 
+    def _canConnectToDaemon(self):
+        # Some platforms keep a refused connection state on a socket.  Use a
+        # fresh socket for each readiness probe so later daemon readiness is
+        # observed correctly.
+        sock = socket.socket()
+        try:
+            return sock.connect_ex(('127.0.0.1', self.server_port)) == 0
+        finally:
+            sock.close()
+
     def startDaemon(self):
         max_start_attempts = 5
         attempts = 0
@@ -1599,9 +1609,24 @@ class NoDetachDaemon_Case(CompileHello_Case):
             # same port when the daemon exits with EXIT_BIND_FAILED.
             deadline = time.time() + 30
             retry = False
-            sock = socket.socket()
-            try:
-                while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
+            while not self._canConnectToDaemon():
+                result = self._collectDaemonStartupFailure()
+                if result is not None:
+                    if result == EXIT_BIND_FAILED:
+                        self.server_port += 1
+                        retry = True
+                        break
+                    self.fail("failed to start daemon: %d" % result)
+                if time.time() > deadline:
+                    self.log("distccd log before startup timeout:\n%s" %
+                             self._readDaemonLog())
+                    self.killDaemon()
+                    self.server_port += 1
+                    retry = True
+                    break
+                time.sleep(0.2)
+            else:
+                while not os.path.exists(self.daemon_pidfile):
                     result = self._collectDaemonStartupFailure()
                     if result is not None:
                         if result == EXIT_BIND_FAILED:
@@ -1610,36 +1635,17 @@ class NoDetachDaemon_Case(CompileHello_Case):
                             break
                         self.fail("failed to start daemon: %d" % result)
                     if time.time() > deadline:
-                        self.log("distccd log before startup timeout:\n%s" %
+                        self.log("distccd log before pidfile timeout:\n%s" %
                                  self._readDaemonLog())
                         self.killDaemon()
                         self.server_port += 1
                         retry = True
                         break
                     time.sleep(0.2)
-                else:
-                    while not os.path.exists(self.daemon_pidfile):
-                        result = self._collectDaemonStartupFailure()
-                        if result is not None:
-                            if result == EXIT_BIND_FAILED:
-                                self.server_port += 1
-                                retry = True
-                                break
-                            self.fail("failed to start daemon: %d" % result)
-                        if time.time() > deadline:
-                            self.log("distccd log before pidfile timeout:\n%s" %
-                                     self._readDaemonLog())
-                            self.killDaemon()
-                            self.server_port += 1
-                            retry = True
-                            break
-                        time.sleep(0.2)
-                    if retry:
-                        continue
-                    self.add_cleanup(self.killDaemon)
-                    return
-            finally:
-                sock.close()
+                if retry:
+                    continue
+                self.add_cleanup(self.killDaemon)
+                return
             if retry:
                 continue
         self.log("distccd log after startup attempts:\n%s" %
