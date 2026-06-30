@@ -1576,9 +1576,11 @@ class NoDetachDaemon_Case(CompileHello_Case):
             except OSError:
                 pass
 
+            # Bind to the same loopback address family that this test probes.
             cmd = (self.distccd() +
                    "--no-detach --daemon --verbose --log-file %s --pid-file %s "
-                   "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
+                   "--port %d --listen 127.0.0.1 --allow 127.0.0.1 "
+                   "--enable-tcp-insecure --sysroot %s" %
                    (_ShellSafe(self.daemon_logfile),
                     _ShellSafe(self.daemon_pidfile),
                     self.server_port,
