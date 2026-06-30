@@ -2363,6 +2363,7 @@ tests = [
          ExtractExtension_Case,
          ImplicitCompiler_Case,
          DaemonBadPort_Case,
+         TcpInsecureOptionOrder_Case,
          AccessDenied_Case,
          NoServer_Case,
          MixedServerPumpFallback_Case,

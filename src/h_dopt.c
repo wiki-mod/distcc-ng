@@ -58,6 +58,13 @@ static int check_tcp_insecure_order(const char *label,
     return 0;
 }
 
+#ifdef HAVE_GSSAPI
+/* The distccd test helper links dopt.c, which references dcc_auth_enabled when
+ * GSS-API support is enabled. Distcc helpers do not link the full server, so
+ * this symbol is provided locally for successful helper builds. */
+int dcc_auth_enabled = 0;
+#endif
+
 int main(int argc, char **argv) {
     const char *first_args[] = {
         "distccd",
