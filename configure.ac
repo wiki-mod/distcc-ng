@@ -173,6 +173,38 @@ AC_SUBST(GNOME_LIBS)
 AC_SUBST(INSTALL_GNOME)
 AC_SUBST(UNINSTALL_GNOME)
 
+PKG_PROG_PKG_CONFIG
+
+AC_ARG_WITH(zstd,
+        AS_HELP_STRING([--with-zstd], [build with zstd compression]))
+
+HAVE_ZSTD=
+if test x"$with_zstd" != xno; then
+    PKG_CHECK_MODULES([ZSTD], [libzstd >= 1],
+                      [have_zstd_pkg=yes],
+                      [have_zstd_pkg=no])
+    if test x"$have_zstd_pkg" = xyes; then
+        save_CPPFLAGS="$CPPFLAGS"
+        CPPFLAGS="$CPPFLAGS $ZSTD_CFLAGS"
+        AC_CHECK_HEADERS([zstd.h], [have_zstd_header=yes], [have_zstd_header=no])
+        CPPFLAGS="$save_CPPFLAGS"
+    else
+        have_zstd_header=no
+    fi
+
+    if test x"$have_zstd_pkg" = xyes -a x"$have_zstd_header" = xyes; then
+        AC_DEFINE([HAVE_ZSTD], [1], [Define to 1 if zstd support is enabled.])
+        CFLAGS="$CFLAGS $ZSTD_CFLAGS"
+        LIBS="$LIBS $ZSTD_LIBS"
+        HAVE_ZSTD=1
+    elif test x"$with_zstd" = xyes; then
+        AC_MSG_ERROR([Cannot find zstd])
+    else
+        AC_MSG_NOTICE([zstd support disabled])
+    fi
+fi
+AC_SUBST(HAVE_ZSTD)
+
 dnl Checks for programs
 AC_PROG_CC
 WERROR_CFLAGS=""

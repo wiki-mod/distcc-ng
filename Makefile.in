@@ -28,6 +28,7 @@ CPPFLAGS = @CPPFLAGS@ ${DIR_DEFS} \
 	   -Isrc -I"$(srcdir)/src" -I"$(srcdir)/lzo"
 
 PYTHON = @PYTHON@
+HAVE_ZSTD = @HAVE_ZSTD@
 
 srcdir = @srcdir@
 top_srcdir = @top_srcdir@
@@ -234,7 +235,7 @@ rpm_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.rpm
 deb_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.deb
 
 common_obj = src/arg.o src/argutil.o					\
-	src/cleanup.o src/compress.o					\
+	src/cleanup.o src/compress-zstd.o src/compress-lzox1.o		\
 	src/trace.o src/util.o src/io.o src/exec.o			\
 	src/rpc.o src/tempfile.o src/bulk.o src/help.o src/filename.o	\
 	src/lock.o							\
@@ -326,7 +327,7 @@ SRC =	src/stats.c							\
 	src/backoff.c src/bulk.c					\
 	src/cleanup.c							\
 	src/climasq.c src/clinet.c src/clirpc.c src/compile.c		\
-	src/compress.c src/cpp.c					\
+	src/compress-lzox1.c src/compress-zstd.c src/cpp.c		\
 	src/daemon.c src/distcc.c src/dsignal.c				\
 	src/dopt.c src/dparent.c src/exec.c src/filename.c		\
 	src/h_argvtostr.c						\
@@ -610,6 +611,7 @@ include-server:
 	  mkdir -p "$(include_server_builddir)" &&      \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
@@ -981,6 +983,7 @@ clean-include-server:
 	if test -n "$(PYTHON)"; then	\
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
@@ -1110,6 +1113,7 @@ install-include-server: include-server pump
 	  DESTDIR=`cd "$(DESTDIR)/" && pwd` &&            \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
