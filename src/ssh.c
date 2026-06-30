@@ -193,13 +193,13 @@ int dcc_ssh_connect(char *ssh_cmd,
                     pid_t *ssh_pid)
 {
     pid_t ret;
-    enum { max_ssh_args = 12 };
-    char *ssh_args[max_ssh_args];
-    char *child_argv[11+max_ssh_args];
-    int i,j;
-    int num_ssh_args = 0;
-    char *ssh_cmd_buf = NULL;
-    char *ssh_cmd_in;
+	enum { MAX_SSH_ARGS = 12 };
+	char *ssh_args[MAX_SSH_ARGS];
+	char *child_argv[11 + MAX_SSH_ARGS];
+	int i,j;
+	int num_ssh_args = 0;
+	char *ssh_cmd_buf = NULL;
+	char *ssh_cmd_in;
 
     /* We need to cast away constness.  I promise the strings in the argv[]
      * will not be modified. */
@@ -216,7 +216,7 @@ int dcc_ssh_connect(char *ssh_cmd,
         while (token != NULL) {
             ssh_args[num_ssh_args++] = token;
             token = strtok(NULL, " ");
-            if (num_ssh_args == max_ssh_args)
+            if (num_ssh_args == MAX_SSH_ARGS)
                 break;
         }
     }

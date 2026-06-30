@@ -29,6 +29,7 @@ __author__ = 'opensource@google.com'
 
 import os.path
 import random
+import socket
 import sys
 import time
 
@@ -95,6 +96,22 @@ def RunTest(random_filename):
   if args != darth_vader_barney:
     raise distcc_pump_c_extensions.error('internal error 4')
   fd.close()
+
+  # Deadline-bound request reads must fail quickly when a client connects but
+  # does not send the expected distcc-pump RPC data.
+  reader, writer = socket.socketpair()
+  try:
+    start = time.time()
+    try:
+      distcc_pump_c_extensions.RCwdTimeout(reader.fileno(), 0.1)
+      raise distcc_pump_c_extensions.Error('timeout was not enforced')
+    except distcc_pump_c_extensions.Error:
+      pass
+    if time.time() - start > 2.0:
+      raise distcc_pump_c_extensions.Error('timeout took too long')
+  finally:
+    reader.close()
+    writer.close()
 
   # Libc functions --- also print out how fast they are compared to
   # Python built-ins.

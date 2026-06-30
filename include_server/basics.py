@@ -29,6 +29,9 @@ import signal
 import shutil
 import sys
 import tempfile
+import time
+
+_Now = getattr(time, 'monotonic', time.time)
 
 
 # MANAGEMENT OF TEMPORARY LOCATIONS FOR GENERATIONS OF COMPRESSED FILES
@@ -181,6 +184,7 @@ MAX_EMAILS_TO_SEND = 3
 # an amount of time roughly equal to this quota is wasted before CPP is invoked
 # instead.
 USER_TIME_QUOTA = 3.8  # seconds
+REQUEST_WALL_TIME_QUOTA = 30  # seconds
 
 # How often the following question is answered: has too much user time been
 # spent in the include handler servicing the current request?
@@ -353,10 +357,11 @@ class NotCoveredTimeOutError(NotCoveredError):
 
 
 class IncludeAnalyzerTimer(object):
-  """Start a timer limiting CPU time for servicing a single request.
+  """Start a timer limiting wall and CPU time for a single request.
 
-  We use user time so that a network hiccup will not entail a cache reset if,
-  say, we are using NFS.
+  Wall time protects the single-threaded include server from a client or request
+  that stops making progress.  User time preserves the existing cache reset
+  behavior for expensive include analysis.
 
   An object of this class must be instantiated so that, no matter what, the
   Cancel method is eventually called. This reinstates the original timer (if
@@ -364,13 +369,19 @@ class IncludeAnalyzerTimer(object):
   """
 
   def __init__(self):
+    self.start_wall_time = _Now()
     self.start_utime = resource.getrusage(resource.RUSAGE_SELF).ru_utime
     self.old = signal.signal(signal.SIGALRM, self._TimeIsUp)
     signal.alarm(USER_TIME_QUOTA_CHECK_INTERVAL_TIME)
 
   def _TimeIsUp(self, unused_sig_number, unused_frame):
-    """Check CPU time spent and raise exception or reschedule."""
-    if (resource.getrusage(resource.RUSAGE_SELF).ru_utime
+    """Check request time spent and raise exception or reschedule."""
+    if _Now() > self.start_wall_time + REQUEST_WALL_TIME_QUOTA:
+      raise NotCoveredTimeOutError(('Bailing out because include server '
+                                    + 'spent more than %ds wall time '
+                                    + 'handling request') %
+                                   REQUEST_WALL_TIME_QUOTA)
+    elif (resource.getrusage(resource.RUSAGE_SELF).ru_utime
         > self.start_utime + USER_TIME_QUOTA):
       raise NotCoveredTimeOutError(('Bailing out because include server '
                                     + 'spent more than %3.1fs user time '
@@ -379,6 +390,11 @@ class IncludeAnalyzerTimer(object):
     else:
       # Reschedule ourselves.
       signal.alarm(USER_TIME_QUOTA_CHECK_INTERVAL_TIME)
+
+  def RemainingWallTime(self):
+    """Return seconds left before the request wall-clock quota expires."""
+    remaining = self.start_wall_time + REQUEST_WALL_TIME_QUOTA - _Now()
+    return max(0.001, remaining)
 
   def Stop(self):
     signal.alarm(0)
