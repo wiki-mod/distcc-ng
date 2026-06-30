@@ -222,26 +222,28 @@ int dcc_retrieve_results(int net_fd,
                 return ret;
             }
         }
+        if (host->protover == DCC_VER_4) {
+            char *dwo_fname = NULL;
+
+            if ((ret = dcc_r_token_2int(net_fd, "DDWO", &o_len, &uncompr_len)))
+                return ret;
+            if (o_len == 0)
+                return 0;
+            dwo_fname = dcc_make_dwo_fname(output_fname);
+            if (!dwo_fname)
+                return EXIT_OUT_OF_MEMORY;
+            if ((ret = dcc_r_file_timed(net_fd, dwo_fname, o_len, uncompr_len,
+                                        host->compr))) {
+                free(dwo_fname);
+                return ret;
+            }
+            free(dwo_fname);
+        }
     } else if (o_len != 0) {
         rs_log_error("remote compiler failed but also returned output: "
                      "I don't know what to do");
     }
 
-    if (host->protover == DCC_VER_4) {
-        char *dwo_fname = NULL;
-
-        if ((ret = dcc_r_token_2int(net_fd, "DDWO", &o_len, &uncompr_len)))
-            return ret;
-        dwo_fname = dcc_make_dwo_fname(output_fname);
-        if (!dwo_fname)
-            return EXIT_OUT_OF_MEMORY;
-        if ((ret = dcc_r_file_timed(net_fd, dwo_fname, o_len, uncompr_len,
-                                    host->compr))) {
-            free(dwo_fname);
-            return ret;
-        }
-        free(dwo_fname);
-    }
     return 0;
 }
 

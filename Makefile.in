@@ -545,6 +545,9 @@ h_ssh@EXEEXT@: $(h_ssh_obj)
 h_argvtostr@EXEEXT@: $(h_argvtostr_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_argvtostr_obj) $(LIBS)
 
+h_dopt@EXEEXT@: $(h_dopt_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
+
 h_parsemask@EXEEXT@: $(h_parsemask_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_parsemask_obj) $(LIBS)
 
