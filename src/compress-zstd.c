@@ -37,7 +37,7 @@
 #  include <sys/mman.h>
 #endif
 #include <zstd.h>
-// zstd hasn't always shipped with <zstd_errors.h>
+/* zstd has not always shipped with <zstd_errors.h>. */
 #define ZSTD_error_dstSize_tooSmall 70
 
 #include <netinet/in.h>
@@ -93,11 +93,7 @@ int dcc_compress_file_zstd(int in_fd,
 
 
 /**
- * Send LZO-compressed bulk data.
- *
- * The most straighforward method for miniLZO is to just send everything in
- * one big chunk.  So we just read the whole input into a buffer, build the
- * output in a buffer, and send it once its complete.
+ * Compress bulk data into one buffer for the distcc wire protocol.
  **/
 int dcc_compress_zstd_alloc(const char *in_buf,
                              size_t in_len,
@@ -117,11 +113,8 @@ int dcc_compress_zstd_alloc(const char *in_buf,
         }
     }
 
-    /* NOTE: out_size is the buffer size, out_len is the amount of actual
-     * data. */
-
-    /* In the unlikely worst case, LZO can cause the input to expand a bit. */
-    out_size = in_len + in_len/64 + 16 + 3;
+    /* Zstd can expand incompressible input, so use its documented bound. */
+    out_size = ZSTD_compressBound(in_len);
     if ((out_buf = malloc(out_size)) == NULL) {
         rs_log_error("failed to allocate compression buffer");
         return EXIT_OUT_OF_MEMORY;
@@ -153,17 +146,8 @@ int dcc_compress_zstd_alloc(const char *in_buf,
  * Receive @p in_len compressed bytes from @p in_fd, and write the
  * decompressed form to @p out_fd.
  *
- * There's no way for us to know how big the uncompressed form will be, and
- * there is also no way to grow the decompression buffer if it turns out to
- * initially be too small.  So we assume a ratio of 10x.  If it turns out to
- * be too small, we increase the buffer and try again.  Typical compression of
- * source or object is about 2x to 4x.  On modern Unix we should be able to
- * allocate (and not touch) many megabytes at little cost, since it will just
- * turn into an anonymous map.
- *
- * LZO doesn't have any way to decompress part of the input and then break to
- * get more output space, so our buffer needs to be big enough in the first
- * place or we would waste time repeatedly decompressing it.
+ * Protocol version 4 sends both compressed and uncompressed sizes, so normal
+ * zstd transfers allocate the exact output buffer before decompression.
  **/
 int dcc_r_bulk_zstd(int out_fd, int in_fd,
                      unsigned in_len, unsigned uncompr_size)
@@ -216,8 +200,7 @@ try_again_with_a_bigger_buffer:
         ret = dcc_writex(out_fd, out_buf, out_len);
 
         goto out;
-        // #include <zstd_errors.h>
-        // ZSTD_getErrorCode(out_len) == ZSTD_error_dstSize_tooSmall
+        /* ZSTD_getErrorCode(out_len) == ZSTD_error_dstSize_tooSmall. */
     } else if ((ssize_t)out_len == -ZSTD_error_dstSize_tooSmall) {
         free(out_buf);
         out_buf = 0;
