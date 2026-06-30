@@ -459,7 +459,7 @@ class CompilerOptionsPassed_Case(SimpleDistCC_Case):
 
 
 class StripArgs_Case(SimpleDistCC_Case):
-    """Test -D and -I arguments are removed"""
+    """Test local-only preprocessor arguments are removed"""
     def runtest(self):
         cases = (("gcc -c hello.c", "gcc -c hello.c"),
                  ("cc -Dhello hello.c -c", "cc hello.c -c"),
@@ -472,6 +472,8 @@ class StripArgs_Case(SimpleDistCC_Case):
                  ("cc -c -I ../include  hello.c", "cc -c hello.c"),
                  ("cc -c -I. -I.. -I../include -I/home/mbp/garnome/include -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
+                 ("cc -c hello.c -iquote .", "cc -c hello.c"),
+                 ("cc -c hello.c -iquote.", "cc -c hello.c"),
                  ("cc -c -DDEBUG -DFOO=23 -D BAR -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
 
