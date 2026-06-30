@@ -1559,31 +1559,58 @@ large foo!
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
     def startDaemon(self):
-        # FIXME: This  does not work well if it happens to get the same
-        # port as an existing server, because we can't catch the error.
-        cmd = (self.distccd() +
-               "--no-detach --daemon --verbose --log-file %s --pid-file %s "
-               "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
-               (_ShellSafe(self.daemon_logfile),
-                _ShellSafe(self.daemon_pidfile),
-                self.server_port,
-                _ShellSafe(self.daemon_sysroot)))
-        self.pid = self.runcmd_background(cmd)
-        self.add_cleanup(self.killDaemon)
-        # Wait until the server is ready for connections.
-        time.sleep(0.2)   # Give distccd chance to start listening on the port
-        sock = socket.socket()
-        while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
-            time.sleep(0.2)
+        while 1:
+            cmd = (self.distccd() +
+                   "--no-detach --daemon --verbose --log-file %s --pid-file %s "
+                   "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
+                   (_ShellSafe(self.daemon_logfile),
+                    _ShellSafe(self.daemon_pidfile),
+                    self.server_port,
+                    _ShellSafe(self.daemon_sysroot)))
+            self.pid = self.runcmd_background(cmd)
+
+            # Wait until the server is ready for connections, while also
+            # collecting early startup failures from the no-detach process.
+            deadline = time.time() + 10
+            sock = socket.socket()
+            try:
+                while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
+                    pid, status = os.waitpid(self.pid, os.WNOHANG)
+                    if pid:
+                        if os.WIFEXITED(status):
+                            result = os.WEXITSTATUS(status)
+                        else:
+                            result = status
+                        if result == EXIT_BIND_FAILED:
+                            self.server_port += 1
+                            break
+                        self.fail("failed to start daemon: %d" % result)
+                    if time.time() > deadline:
+                        self.killDaemon()
+                        self.fail("timed out waiting for daemon startup")
+                    time.sleep(0.2)
+                else:
+                    self.add_cleanup(self.killDaemon)
+                    return
+            finally:
+                sock.close()
 
     def killDaemon(self):
         # Terminate the process specified by the pidfile.  That should kill
         # the distccd process, any child distccd processes and the shell
         # process used to launch distccd.
-        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        try:
+            daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        except IOError:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+                os.waitpid(self.pid, 0)
+            except OSError:
+                pass
+            return
         os.kill(daemon_pid, signal.SIGTERM)
 
-        pid, ret = os.wait()
+        pid, ret = os.waitpid(self.pid, 0)
         self.assert_equal(self.pid, pid)
 
 
@@ -1816,7 +1843,8 @@ class Concurrent_Case(CompileHello_Case):
                                          self._cc + " -o testtmp.o -c testtmp.c")
             pids[kid] = kid
         while len(pids):
-            pid, status = os.wait()
+            pid = next(iter(pids))
+            pid, status = os.waitpid(pid, 0)
             if status:
                 self.fail("child %d failed with status %#x" % (pid, status))
             del pids[pid]
