@@ -586,6 +586,22 @@ class ScanArgs_Case(SimpleDistCC_Case):
                           (ccmd, os[2], output))
 
 
+class IncludeServerFileOrder_Case(SimpleDistCC_Case):
+    """Test deterministic include server file ordering."""
+    def runtest(self):
+        out, err = self.runcmd("h_includesort /tmp/z /tmp/a /tmp/m")
+        self.assert_equal(err, "")
+        self.assert_equal(out, "/tmp/a /tmp/m /tmp/z\n")
+
+
+class StateFileAtomicWrite_Case(SimpleDistCC_Case):
+    """Test that state writes remain readable through the monitor."""
+    def runtest(self):
+        out, err = self.runcmd("h_state atomic-write")
+        self.assert_equal(out, "")
+        self.assert_equal(err, "")
+
+
 class DotD_Case(SimpleDistCC_Case):
     '''Test the mechanism for calculating .d file names'''
 
@@ -2325,6 +2341,8 @@ tests = [
          Lsdistcc_Case,
          BadLogFile_Case,
          ScanArgs_Case,
+         IncludeServerFileOrder_Case,
+         StateFileAtomicWrite_Case,
          ParseMask_Case,
          DotD_Case,
          DashMD_DashMF_DashMT_Case,
