@@ -72,4 +72,4 @@ EXPOSE 3632/tcp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD distccd --version >/dev/null 2>&1 || exit 1
 
-CMD ["distccd", "--daemon", "--no-detach", "--log-stderr", "--allow", "127.0.0.1"]
+CMD ["distccd", "--daemon", "--no-detach", "--log-stderr", "--allow", "127.0.0.1", "--enable-tcp-insecure"]
