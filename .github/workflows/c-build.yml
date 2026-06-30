@@ -14,20 +14,54 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v4
       - uses: ConorMacBride/install-package@v1
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
-          brew: autoconf automake popt python@3.13 python-setuptools
+          brew: autoconf automake ccache popt python@3.13 python-setuptools
           # Note: no gdb on macOS because it's apparently not supported on arm64
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools
+          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache
           # brew-cask: TODO
           # choco: TODO
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.ccache
+            ./autom4te.cache
+          key: >-
+            ${{ runner.os }}-distcc-ng-${{ matrix.os }}-${{ hashFiles('**/configure.ac', '**/configure.in', '**/Makefile.in') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-distcc-ng-${{ matrix.os }}-${{ hashFiles('**/configure.ac', '**/configure.in', '**/Makefile.in') }}-
+            ${{ runner.os }}-distcc-ng-${{ matrix.os }}-
       - run: which python3.13 || which python3
-      - run: ./autogen.sh
+      - name: Bootstrap build system
+        run: |
+          ./autogen.sh
+          mkdir -p "$CCACHE_DIR"
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
-      - run: ./configure PYTHON="$(which python3.13 || which python3)"
+      - name: Configure
+        run: |
+          PYTHON_BIN="$(which python3.13 || which python3)"
+          if command -v gcc >/dev/null 2>&1; then
+            export CC="ccache gcc"
+          else
+            export CC="ccache clang"
+          fi
+          if command -v g++ >/dev/null 2>&1; then
+            export CXX="ccache g++"
+          elif command -v clang++ >/dev/null 2>&1; then
+            export CXX="ccache clang++"
+          fi
+          ./configure PYTHON="$PYTHON_BIN" CC="$CC" CXX="$CXX"
+      - run: ccache -z
       - run: make
       - run: make check
+      - run: ccache -s
