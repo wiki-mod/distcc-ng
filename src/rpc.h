@@ -40,9 +40,6 @@ int dcc_x_token_2int(int ofd, const char *token, unsigned param,
 int dcc_r_token_2int(int ifd, const char *expected,
                      unsigned *val, unsigned *val2);
 
-int dcc_x_token_2int(int ofd, const char *token, unsigned param, unsigned param2);
-int dcc_r_token_2int(int ifd, const char *expected, unsigned *val, unsigned *val2);
-
 int dcc_x_token_string(int fd,
                        const char *token,
                        const char *buf);
