@@ -39,6 +39,22 @@ RUN ./autogen.sh && \
     make -j"$(nproc)" && \
     if [ "${PUMP_VARIANT}" = "with-pump" ]; then \
       make DESTDIR=/out install-programs install-include-server; \
+      if [ ! -x /out/usr/local/bin/pump ]; then \
+        echo "with-pump variant requires /out/usr/local/bin/pump" >&2; \
+        exit 1; \
+      fi; \
+      found_include_server=""; \
+      for path in /out/usr/local/lib/python*/dist-packages/include_server/include_server.py; do \
+        if [ -f "${path}" ]; then \
+          found_include_server="${path}"; \
+          break; \
+        fi; \
+      done; \
+      if [ -z "${found_include_server}" ]; then \
+        echo "with-pump variant requires installed include_server module" >&2; \
+        exit 1; \
+      fi; \
+      echo "with-pump artifact check passed: ${found_include_server}"; \
     else \
       make DESTDIR=/out install-programs; \
     fi

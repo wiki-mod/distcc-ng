@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: ConorMacBride/install-package@v1
         with:
@@ -142,6 +142,18 @@ jobs:
               --tag "${IMAGE_TAG_V}" \
               .
           fi
+
+          if [ "${PUMP_VARIANT}" = "with-pump" ]; then
+            if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v pump >/dev/null'; then
+              echo "with-pump image ${IMAGE_TAG} does not include /usr/local/bin/pump" >&2
+              exit 1
+            fi
+            if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'python3 -c "import include_server"'; then
+              echo "with-pump image ${IMAGE_TAG} does not include importable include_server module" >&2
+              exit 1
+            fi
+          fi
+
           docker push "${IMAGE_TAG}"
           if [ "${IMAGE_TAG_V}" != "${IMAGE_TAG}" ]; then
             docker push "${IMAGE_TAG_V}"
