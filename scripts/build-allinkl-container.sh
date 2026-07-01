@@ -16,8 +16,8 @@ if [ -z "${VERSION_LABEL:-}" ]; then
 fi
 readonly VERSION_LABEL
 
-IMAGE_TAG_PREFIX="${IMAGE_TAG_PREFIX:-${IMAGE_TAG:-distcc-ng-zstd:${VERSION_LABEL}}}"
-readonly IMAGE_TAG_PREFIX
+IMAGE_REPOSITORY_PREFIX="${IMAGE_REPOSITORY_PREFIX:-${IMAGE_PREFIX:-${IMAGE_TAG_PREFIX:-distcc-ng-zstd}}}"
+readonly IMAGE_REPOSITORY_PREFIX
 readonly BUILD_PUMP_VARIANTS="${BUILD_PUMP_VARIANTS:-with-pump nopump}"
 
 log() {
@@ -26,7 +26,7 @@ log() {
 
 build_variant() {
   local pump_variant="$1"
-  local image_tag="${IMAGE_TAG_PREFIX}-${pump_variant}"
+  local image_tag="${IMAGE_REPOSITORY_PREFIX}-${pump_variant}:${VERSION_LABEL}-${pump_variant}"
   local log_file
   log_file="$(mktemp "${TMPDIR:-/tmp}/distcc-ng-container.XXXXXX.log")"
 
