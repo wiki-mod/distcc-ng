@@ -143,15 +143,36 @@ jobs:
               .
           fi
 
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'python3 -c "import include_server"'; then
+            echo "image ${IMAGE_TAG} does not include importable include_server module" >&2
+            exit 1
+          fi
+
           if [ "${PUMP_VARIANT}" = "with-pump" ]; then
             if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v pump >/dev/null'; then
               echo "with-pump image ${IMAGE_TAG} does not include /usr/local/bin/pump" >&2
               exit 1
             fi
-            if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'python3 -c "import include_server"'; then
-              echo "with-pump image ${IMAGE_TAG} does not include importable include_server module" >&2
+
+            if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v distcc-pump >/dev/null'; then
+              echo "with-pump image ${IMAGE_TAG} does not include /usr/local/bin/distcc-pump alias" >&2
               exit 1
             fi
+          fi
+
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v ps >/dev/null'; then
+            echo "image ${IMAGE_TAG} does not include ps from procps" >&2
+            exit 1
+          fi
+
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c '[ -d /usr/local/lib/distcc ]'; then
+            echo "image ${IMAGE_TAG} does not include /usr/local/lib/distcc compiler whitelist directory" >&2
+            exit 1
+          fi
+
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'for compiler in cc c++ gcc g++ x86_64-linux-gnu-gcc x86_64-linux-gnu-g++; do test -x "/usr/local/lib/distcc/$compiler"; done'; then
+            echo "image ${IMAGE_TAG} missing expected compiler whitelist symlink(s) in /usr/local/lib/distcc" >&2
+            exit 1
           fi
 
           docker push "${IMAGE_TAG}"
