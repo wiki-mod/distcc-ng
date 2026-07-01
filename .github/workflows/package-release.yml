@@ -116,6 +116,7 @@ jobs:
           VCS_REF: ${{ github.sha }}
           PUMP_VARIANT: ${{ matrix.pump_variant }}
         run: |
+          set -euo pipefail
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           IMAGE_REPOSITORY_PREFIX="${IMAGE_PREFIX}-${PUMP_VARIANT}"
           IMAGE_TAG="${IMAGE_REPOSITORY_PREFIX}:${VERSION_LABEL}"
@@ -150,6 +151,11 @@ jobs:
             exit 1
           fi
 
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v bash >/dev/null && command -v file >/dev/null'; then
+            echo "image ${IMAGE_TAG} does not include bash and file utilities" >&2
+            exit 1
+          fi
+
           if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c '[ -d /usr/local/lib/distcc ]'; then
             echo "image ${IMAGE_TAG} does not include /usr/local/lib/distcc compiler whitelist directory" >&2
             exit 1
@@ -159,6 +165,34 @@ jobs:
             echo "image ${IMAGE_TAG} missing expected compiler whitelist symlink(s) in /usr/local/lib/distcc" >&2
             exit 1
           fi
+
+          check_distccd_allow() {
+            local image_tag="$1"
+            local expected_allow="$2"
+            local run_args=()
+            local container_id
+
+            if [ "${expected_allow}" != "127.0.0.1" ]; then
+              run_args=(-e "DISTCCD_ALLOW=${expected_allow}")
+            fi
+
+            container_id="$(docker run -d "${run_args[@]}" "${image_tag}")"
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              if docker exec "${container_id}" sh -c "pid=\$(pgrep -xo distccd || true); [ -n \"\$pid\" ] && ps -p \"\$pid\" -o args= | grep -F -- '--allow ${expected_allow}' >/dev/null"; then
+                docker rm -f "${container_id}" >/dev/null
+                return 0
+              fi
+              sleep 1
+            done
+
+            docker logs "${container_id}" >&2 || true
+            docker rm -f "${container_id}" >/dev/null || true
+            echo "image ${image_tag} did not start distccd with --allow ${expected_allow}" >&2
+            exit 1
+          }
+
+          check_distccd_allow "${IMAGE_TAG}" "127.0.0.1"
+          check_distccd_allow "${IMAGE_TAG}" "192.168.1.0/24"
 
           docker push "${IMAGE_TAG}"
       - name: Publish GitHub release
