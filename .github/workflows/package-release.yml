@@ -113,13 +113,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           VERSION_LABEL: ${{ steps.meta.outputs.version }}
-          PUBLISH_RELEASE: ${{ steps.meta.outputs.publish_release }}
           VCS_REF: ${{ github.sha }}
           PUMP_VARIANT: ${{ matrix.pump_variant }}
         run: |
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           IMAGE_REPOSITORY_PREFIX="${IMAGE_PREFIX}-${PUMP_VARIANT}"
-          IMAGE_TAG="${IMAGE_REPOSITORY_PREFIX}:${VERSION_LABEL}-${PUMP_VARIANT}"
+          IMAGE_TAG="${IMAGE_REPOSITORY_PREFIX}:${VERSION_LABEL}"
 
           docker build \
             --file docker/allinkl/Dockerfile \
@@ -181,10 +180,10 @@ jobs:
 
           | Family | Pump | Container image |
           | --- | --- | --- |
-          | distcc-ng | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-nopump:${VERSION_LABEL}-nopump |
-          | distcc-ng | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-with-pump:${VERSION_LABEL}-with-pump |
-          | distcc-ng-zstd | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-nopump:${VERSION_LABEL}-nopump |
-          | distcc-ng-zstd | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-with-pump:${VERSION_LABEL}-with-pump |
+          | distcc-ng | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-nopump:${VERSION_LABEL} |
+          | distcc-ng | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-with-pump:${VERSION_LABEL} |
+          | distcc-ng-zstd | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-nopump:${VERSION_LABEL} |
+          | distcc-ng-zstd | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-with-pump:${VERSION_LABEL} |
 
           Meaning:
           - distcc-ng means no zstd support.
