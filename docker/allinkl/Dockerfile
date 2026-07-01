@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
 ARG DEBIAN_IMAGE=debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a
+ARG PUMP_VARIANT=nopump
 
 FROM ${DEBIAN_IMAGE} AS build
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng builder" \
-      org.opencontainers.image.description="Build stage for the distcc-ng release branch." \
+LABEL org.opencontainers.image.title="distcc-ng ${VERSION} builder" \
+      org.opencontainers.image.description="Build stage for the distcc-ng release branch ${VERSION} (${PUMP_VARIANT} image)." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
@@ -34,20 +37,23 @@ COPY . .
 RUN ./autogen.sh && \
     ./configure PYTHON=python3 --prefix=/usr/local --without-zstd --enable-Werror && \
     make -j"$(nproc)" && \
-    install -D distcc /out/usr/local/bin/distcc && \
-    install -D distccd /out/usr/local/bin/distccd && \
-    install -D lsdistcc /out/usr/local/bin/lsdistcc && \
-    install -D distccmon-text /out/usr/local/bin/distccmon-text
+    if [ "${PUMP_VARIANT}" = "with-pump" ]; then \
+      make DESTDIR=/out install-programs install-include-server; \
+    else \
+      make DESTDIR=/out install-programs; \
+    fi
 
 FROM ${DEBIAN_IMAGE} AS runtime
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng" \
-      org.opencontainers.image.description="distcc-ng runtime image without zstd support." \
+LABEL org.opencontainers.image.title="distcc-ng ${VERSION}" \
+      org.opencontainers.image.description="distcc-ng runtime image ${VERSION} without zstd support (${PUMP_VARIANT} image)." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
