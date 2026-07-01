@@ -147,7 +147,7 @@ jobs:
             docker push "${IMAGE_TAG_V}"
           fi
       - name: Publish GitHub release
-        if: steps.meta.outputs.publish_release == 'true'
+        if: steps.meta.outputs.publish_release == 'true' && matrix.pump_variant == 'with-pump'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
