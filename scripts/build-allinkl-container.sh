@@ -26,7 +26,7 @@ log() {
 
 build_variant() {
   local pump_variant="$1"
-  local image_tag="${IMAGE_REPOSITORY_PREFIX}-${pump_variant}:${VERSION_LABEL}-${pump_variant}"
+  local image_tag="${IMAGE_REPOSITORY_PREFIX}-${pump_variant}:${VERSION_LABEL}"
   local log_file
   log_file="$(mktemp "${TMPDIR:-/tmp}/distcc-ng-container.XXXXXX.log")"
 
