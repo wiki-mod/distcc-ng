@@ -2,6 +2,16 @@ name: Package release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional v* tag to publish. If empty, the workflow runs only a local build."
+        required: false
+        type: string
+      publish_release:
+        description: "Set true to publish release assets and container images when using release_tag."
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*"
@@ -24,6 +34,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref }}
+          fetch-depth: 0
       - uses: ConorMacBride/install-package@v1
         with:
           apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
@@ -31,17 +44,56 @@ jobs:
         id: meta
         shell: bash
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            version="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          input_publish="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release || 'false' }}"
+          input_tag="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || '' }}"
+          publish_release="false"
+          target_tag="${GITHUB_REF_NAME}"
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${input_tag}" ]; then
+            target_tag="${input_tag}"
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            target_tag="${GITHUB_REF_NAME}"
+            publish_release="true"
+          fi
+
+          if [ "${input_publish}" = "true" ]; then
+            if [ -z "${input_tag}" ]; then
+              echo "publish_release=true requires a release_tag." >&2
+              exit 1
+            fi
+            if [ "${input_tag#v}" = "${input_tag}" ]; then
+              echo "release_tag must start with v for publishing." >&2
+              exit 1
+            fi
+            if ! git rev-parse -q --verify "refs/tags/${input_tag}" >/dev/null 2>&1; then
+              echo "release_tag ${input_tag} does not exist." >&2
+              exit 1
+            fi
+            publish_release="true"
+            target_tag="${input_tag}"
+          fi
+
+          if [ "${target_tag#v}" = "${target_tag}" ] && [ "${publish_release}" = "true" ]; then
+            echo "publish release path requires a tag target like v3.4.1." >&2
+            exit 1
+          fi
+
+          if [ "${publish_release}" = "true" ]; then
+            version="${target_tag#v}"
             release_title="distcc-ng-zstd ${version}"
           else
             version="manual-${GITHUB_RUN_NUMBER}"
             release_title="distcc-ng-zstd manual-${GITHUB_RUN_NUMBER}"
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'tag_name=%s\n' "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          printf 'tag_name=%s\n' "${target_tag}" >> "$GITHUB_OUTPUT"
           printf 'release_title=%s\n' "$release_title" >> "$GITHUB_OUTPUT"
           printf 'image_prefix=%s\n' "ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd" >> "$GITHUB_OUTPUT"
+          printf 'publish_release=%s\n' "${publish_release}" >> "$GITHUB_OUTPUT"
+          printf 'target_tag=%s\n' "${target_tag}" >> "$GITHUB_OUTPUT"
       - name: Build zstd-enabled release packages
         shell: bash
         run: |
@@ -55,63 +107,72 @@ jobs:
             packaging/*.rpm
             packaging/*.deb
       - name: Publish container image
-        if: github.ref_type == 'tag'
+        if: steps.meta.outputs.publish_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           VERSION_LABEL: ${{ steps.meta.outputs.version }}
+          PUBLISH_RELEASE: ${{ steps.meta.outputs.publish_release }}
           VCS_REF: ${{ github.sha }}
           PUMP_VARIANT: ${{ matrix.pump_variant }}
         run: |
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           IMAGE_TAG="${IMAGE_PREFIX}:${VERSION_LABEL}-${PUMP_VARIANT}"
-          IMAGE_TAG_V="${IMAGE_PREFIX}:v${VERSION_LABEL}-${PUMP_VARIANT}"
-          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-            IMAGE_TAG_V="${IMAGE_TAG}"
+          IMAGE_TAG_V="${IMAGE_TAG}"
+          if [ "${PUBLISH_RELEASE}" = "true" ]; then
+            IMAGE_TAG_V="${IMAGE_PREFIX}:v${VERSION_LABEL}-${PUMP_VARIANT}"
           fi
 
-          docker build \
-            --file docker/allinkl/Dockerfile \
-            --build-arg "VCS_REF=${VCS_REF}" \
-            --build-arg "VERSION=${VERSION_LABEL}" \
-            --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
-            --tag "${IMAGE_TAG}" \
-            --tag "${IMAGE_TAG_V}" \
-            .
+          if [ "${IMAGE_TAG_V}" = "${IMAGE_TAG}" ]; then
+            docker build \
+              --file docker/allinkl/Dockerfile \
+              --build-arg "VCS_REF=${VCS_REF}" \
+              --build-arg "VERSION=${VERSION_LABEL}" \
+              --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
+              --tag "${IMAGE_TAG}" \
+              .
+          else
+            docker build \
+              --file docker/allinkl/Dockerfile \
+              --build-arg "VCS_REF=${VCS_REF}" \
+              --build-arg "VERSION=${VERSION_LABEL}" \
+              --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
+              --tag "${IMAGE_TAG}" \
+              --tag "${IMAGE_TAG_V}" \
+              .
+          fi
           docker push "${IMAGE_TAG}"
           if [ "${IMAGE_TAG_V}" != "${IMAGE_TAG}" ]; then
             docker push "${IMAGE_TAG_V}"
           fi
       - name: Publish GitHub release
-        if: github.ref_type == 'tag'
+        if: steps.meta.outputs.publish_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
-          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          TARGET_TAG: ${{ steps.meta.outputs.target_tag }}
           VERSION_LABEL: ${{ steps.meta.outputs.version }}
         run: |
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
           notes_file="$(mktemp)"
           printf '%s\n' "distcc-ng zstd-enabled release from ${GITHUB_SHA}." > "${notes_file}"
-          printf '\nContainer image tags:\n' >> "${notes_file}"
+          printf '\nContainer image variants:\n' >> "${notes_file}"
           for variant in with-pump nopump; do
-            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-              printf '- %s\n' "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" >> "${notes_file}"
-              printf '- %s\n' "${IMAGE_PREFIX}:v${VERSION_LABEL}-${variant}" >> "${notes_file}"
-            else
-              printf '- %s\n' "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" >> "${notes_file}"
-            fi
+            printf -- '- %s: %s and %s\n' \
+              "${variant}" \
+              "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" \
+              "${IMAGE_PREFIX}:v${VERSION_LABEL}-${variant}" >> "${notes_file}"
           done
 
-          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${assets[@]}" --clobber
-            gh release edit "${TAG_NAME}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}"
+          if gh release view "${TARGET_TAG}" >/dev/null 2>&1; then
+            gh release upload "${TARGET_TAG}" "${assets[@]}" --clobber
+            gh release edit "${TARGET_TAG}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}"
           else
-            gh release create "${TAG_NAME}" "${assets[@]}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}"
+            gh release create "${TARGET_TAG}" "${assets[@]}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}"
           fi
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
