@@ -24,8 +24,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       autoconf \
       automake \
+      bash \
       build-essential \
       ccache \
+      file \
       libpopt-dev \
       libzstd-dev \
       pkg-config \
@@ -109,7 +111,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+      bash \
       build-essential \
+      file \
       libpopt0 \
       libzstd1 \
       procps \
@@ -118,6 +122,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     useradd --create-home --shell /usr/sbin/nologin distcc
 
 COPY --from=build /out/ /
+COPY --chmod=0755 docker/allinkl/distccd-entrypoint.sh /usr/local/bin/distccd-entrypoint.sh
 
 RUN /usr/local/sbin/update-distcc-symlinks && \
     if [ "${PUMP_VARIANT}" = "with-pump" ] && [ -x /usr/local/bin/pump ]; then \
@@ -130,4 +135,5 @@ EXPOSE 3632/tcp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD distccd --version >/dev/null 2>&1 || exit 1
 
-CMD ["distccd", "--daemon", "--no-detach", "--log-stderr", "--allow", "127.0.0.1"]
+ENTRYPOINT ["/usr/local/bin/distccd-entrypoint.sh"]
+CMD ["--daemon", "--no-detach", "--log-stderr"]
