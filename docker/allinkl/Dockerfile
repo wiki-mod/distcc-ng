@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
 ARG DEBIAN_IMAGE=debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a
+ARG PUMP_VARIANT=nopump
 
 FROM ${DEBIAN_IMAGE} AS build
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng-zstd builder" \
-      org.opencontainers.image.description="Build stage for the distcc-ng zstd release branch." \
+LABEL org.opencontainers.image.title="distcc-ng-zstd ${VERSION} builder" \
+      org.opencontainers.image.description="Build stage for the distcc-ng zstd release branch ${VERSION} (${PUMP_VARIANT} image)." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
@@ -35,20 +38,23 @@ COPY . .
 RUN ./autogen.sh && \
     ./configure PYTHON=python3 --prefix=/usr/local --with-zstd --enable-Werror && \
     make -j"$(nproc)" && \
-    install -D distcc /out/usr/local/bin/distcc && \
-    install -D distccd /out/usr/local/bin/distccd && \
-    install -D lsdistcc /out/usr/local/bin/lsdistcc && \
-    install -D distccmon-text /out/usr/local/bin/distccmon-text
+    if [ "${PUMP_VARIANT}" = "with-pump" ]; then \
+      make DESTDIR=/out install-programs install-include-server; \
+    else \
+      make DESTDIR=/out install-programs; \
+    fi
 
 FROM ${DEBIAN_IMAGE} AS runtime
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng-zstd" \
-      org.opencontainers.image.description="distcc-ng runtime image with zstd-capable distccd." \
+LABEL org.opencontainers.image.title="distcc-ng-zstd ${VERSION}" \
+      org.opencontainers.image.description="distcc-ng-zstd runtime image ${VERSION} with zstd-capable distccd (${PUMP_VARIANT} image)." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work

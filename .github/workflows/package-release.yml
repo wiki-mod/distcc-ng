@@ -15,6 +15,12 @@ permissions:
 jobs:
   build_packages:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pump_variant:
+          - with-pump
+          - nopump
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -28,16 +34,14 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             version="${GITHUB_REF_NAME#v}"
             release_title="distcc-ng-zstd ${version}"
-            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd:${version}"
           else
             version="manual-${GITHUB_RUN_NUMBER}"
             release_title="distcc-ng-zstd manual-${GITHUB_RUN_NUMBER}"
-            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd:manual-${GITHUB_RUN_NUMBER}"
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'tag_name=%s\n' "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           printf 'release_title=%s\n' "$release_title" >> "$GITHUB_OUTPUT"
-          printf 'image_tag=%s\n' "$image_tag" >> "$GITHUB_OUTPUT"
+          printf 'image_prefix=%s\n' "ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd" >> "$GITHUB_OUTPUT"
       - name: Build zstd-enabled release packages
         shell: bash
         run: |
@@ -55,36 +59,54 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           VERSION_LABEL: ${{ steps.meta.outputs.version }}
           VCS_REF: ${{ github.sha }}
+          PUMP_VARIANT: ${{ matrix.pump_variant }}
         run: |
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          IMAGE_TAG="${IMAGE_PREFIX}:${VERSION_LABEL}-${PUMP_VARIANT}"
+          IMAGE_TAG_V="${IMAGE_PREFIX}:v${VERSION_LABEL}-${PUMP_VARIANT}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            IMAGE_TAG_V="${IMAGE_TAG}"
+          fi
+
           docker build \
             --file docker/allinkl/Dockerfile \
             --build-arg "VCS_REF=${VCS_REF}" \
             --build-arg "VERSION=${VERSION_LABEL}" \
+            --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
             --tag "${IMAGE_TAG}" \
+            --tag "${IMAGE_TAG_V}" \
             .
           docker push "${IMAGE_TAG}"
+          if [ "${IMAGE_TAG_V}" != "${IMAGE_TAG}" ]; then
+            docker push "${IMAGE_TAG_V}"
+          fi
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          VERSION_LABEL: ${{ steps.meta.outputs.version }}
         run: |
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
           notes_file="$(mktemp)"
-          cat >"${notes_file}" <<EOF
-          distcc-ng zstd-enabled release from ${GITHUB_SHA}.
+          printf '%s\n' "distcc-ng zstd-enabled release from ${GITHUB_SHA}." > "${notes_file}"
+          printf '\nContainer image tags:\n' >> "${notes_file}"
+          for variant in with-pump nopump; do
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              printf '- %s\n' "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" >> "${notes_file}"
+              printf '- %s\n' "${IMAGE_PREFIX}:v${VERSION_LABEL}-${variant}" >> "${notes_file}"
+            else
+              printf '- %s\n' "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" >> "${notes_file}"
+            fi
+          done
 
-          Container image:
-          ${IMAGE_TAG}
-          EOF
           if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
             gh release upload "${TAG_NAME}" "${assets[@]}" --clobber
             gh release edit "${TAG_NAME}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}"
