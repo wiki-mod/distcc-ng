@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY . .
 
 RUN ./autogen.sh && \
-    configure_args="--prefix=/usr/local --with-zstd --enable-Werror"; \
+    configure_args="--prefix=/usr --with-zstd --enable-Werror"; \
     if [ "${PUMP_VARIANT}" = "nopump" ]; then \
       configure_args="${configure_args} --disable-pump-mode"; \
     fi; \
@@ -47,8 +47,8 @@ RUN ./autogen.sh && \
     make DESTDIR=/out install-programs; \
     if [ "${PUMP_VARIANT}" = "with-pump" ]; then \
       make DESTDIR=/out install-include-server || exit 1; \
-      if [ ! -x /out/usr/local/bin/pump ]; then \
-        echo "with-pump variant requires /out/usr/local/bin/pump" >&2; \
+      if [ ! -x /out/usr/bin/pump ]; then \
+        echo "with-pump variant requires /out/usr/bin/pump" >&2; \
         exit 1; \
       fi; \
     else \
@@ -67,24 +67,22 @@ RUN ./autogen.sh && \
         --build-base=/tmp/include_server \
         --build-temp=/tmp/include_server \
         install \
-        --prefix=/usr/local \
+        --prefix=/usr \
+        --install-layout=deb \
         --root=/out \
         --record=/tmp/include_server/install.log.pre || exit 1; \
-      if [ -x /out/usr/local/bin/pump ]; then \
-        echo "nopump variant must not install /usr/local/bin/pump" >&2; \
+      if [ -x /out/usr/bin/pump ]; then \
+        echo "nopump variant must not install /usr/bin/pump" >&2; \
         exit 1; \
       fi; \
     fi; \
     if [ "${PUMP_VARIANT}" = "with-pump" ]; then \
-      ln -sf /out/usr/local/bin/pump /out/usr/local/bin/distcc-pump; \
+      ln -sf /out/usr/bin/pump /out/usr/bin/distcc-pump; \
     fi; \
     found_include_server=""; \
-    for path in /out/usr/local/lib/python*/dist-packages/include_server/include_server.py; do \
-      if [ -f "${path}" ]; then \
-        found_include_server="${path}"; \
-        break; \
-      fi; \
-    done; \
+    if [ -f /out/usr/lib/python3/dist-packages/include_server/include_server.py ]; then \
+      found_include_server=/out/usr/lib/python3/dist-packages/include_server/include_server.py; \
+    fi; \
     if [ -z "${found_include_server}" ]; then \
       echo "all variants require installed include_server module" >&2; \
       exit 1; \
@@ -123,9 +121,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY --from=build /out/ /
 COPY --chmod=0755 docker/allinkl/distccd-entrypoint.sh /usr/local/bin/distccd-entrypoint.sh
 
-RUN /usr/local/sbin/update-distcc-symlinks && \
-    if [ "${PUMP_VARIANT}" = "with-pump" ] && [ -x /usr/local/bin/pump ]; then \
-      ln -sf /usr/local/bin/pump /usr/local/bin/distcc-pump; \
+RUN /usr/sbin/update-distcc-symlinks && \
+    if [ "${PUMP_VARIANT}" = "with-pump" ] && [ -x /usr/bin/pump ]; then \
+      ln -sf /usr/bin/pump /usr/bin/distcc-pump; \
     fi
 
 USER distcc

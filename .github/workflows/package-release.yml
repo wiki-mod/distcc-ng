@@ -136,12 +136,12 @@ jobs:
 
           if [ "${PUMP_VARIANT}" = "with-pump" ]; then
             if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v pump >/dev/null'; then
-              echo "with-pump image ${IMAGE_TAG} does not include /usr/local/bin/pump" >&2
+              echo "with-pump image ${IMAGE_TAG} does not include /usr/bin/pump" >&2
               exit 1
             fi
 
             if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'command -v distcc-pump >/dev/null'; then
-              echo "with-pump image ${IMAGE_TAG} does not include /usr/local/bin/distcc-pump alias" >&2
+              echo "with-pump image ${IMAGE_TAG} does not include /usr/bin/distcc-pump alias" >&2
               exit 1
             fi
           fi
@@ -156,13 +156,13 @@ jobs:
             exit 1
           fi
 
-          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c '[ -d /usr/local/lib/distcc ]'; then
-            echo "image ${IMAGE_TAG} does not include /usr/local/lib/distcc compiler whitelist directory" >&2
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c '[ -d /usr/lib/distcc ]'; then
+            echo "image ${IMAGE_TAG} does not include /usr/lib/distcc compiler whitelist directory" >&2
             exit 1
           fi
 
-          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'for compiler in cc c++ gcc g++ x86_64-linux-gnu-gcc x86_64-linux-gnu-g++; do test -x "/usr/local/lib/distcc/$compiler"; done'; then
-            echo "image ${IMAGE_TAG} missing expected compiler whitelist symlink(s) in /usr/local/lib/distcc" >&2
+          if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'for compiler in cc c++ gcc g++ x86_64-linux-gnu-gcc x86_64-linux-gnu-g++; do test -x "/usr/lib/distcc/$compiler"; done'; then
+            echo "image ${IMAGE_TAG} missing expected compiler whitelist symlink(s) in /usr/lib/distcc" >&2
             exit 1
           fi
 
@@ -214,13 +214,10 @@ jobs:
 
           | Family | Pump | Container image |
           | --- | --- | --- |
-          | distcc-ng | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-nopump:${VERSION_LABEL} |
-          | distcc-ng | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-with-pump:${VERSION_LABEL} |
           | distcc-ng-zstd | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-nopump:${VERSION_LABEL} |
           | distcc-ng-zstd | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-with-pump:${VERSION_LABEL} |
 
           Meaning:
-          - distcc-ng means no zstd support.
           - distcc-ng-zstd means zstd-capable.
           - nopump means pump is not included.
           - with-pump means pump is included and the image exposes distcc-pump.
