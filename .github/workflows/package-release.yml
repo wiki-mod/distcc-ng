@@ -118,30 +118,16 @@ jobs:
           PUMP_VARIANT: ${{ matrix.pump_variant }}
         run: |
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          IMAGE_TAG="${IMAGE_PREFIX}:${VERSION_LABEL}-${PUMP_VARIANT}"
-          IMAGE_TAG_V="${IMAGE_TAG}"
-          if [ "${PUBLISH_RELEASE}" = "true" ]; then
-            IMAGE_TAG_V="${IMAGE_PREFIX}:v${VERSION_LABEL}-${PUMP_VARIANT}"
-          fi
+          IMAGE_REPOSITORY_PREFIX="${IMAGE_PREFIX}-${PUMP_VARIANT}"
+          IMAGE_TAG="${IMAGE_REPOSITORY_PREFIX}:${VERSION_LABEL}-${PUMP_VARIANT}"
 
-          if [ "${IMAGE_TAG_V}" = "${IMAGE_TAG}" ]; then
-            docker build \
-              --file docker/allinkl/Dockerfile \
-              --build-arg "VCS_REF=${VCS_REF}" \
-              --build-arg "VERSION=${VERSION_LABEL}" \
-              --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
-              --tag "${IMAGE_TAG}" \
-              .
-          else
-            docker build \
-              --file docker/allinkl/Dockerfile \
-              --build-arg "VCS_REF=${VCS_REF}" \
-              --build-arg "VERSION=${VERSION_LABEL}" \
-              --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
-              --tag "${IMAGE_TAG}" \
-              --tag "${IMAGE_TAG_V}" \
-              .
-          fi
+          docker build \
+            --file docker/allinkl/Dockerfile \
+            --build-arg "VCS_REF=${VCS_REF}" \
+            --build-arg "VERSION=${VERSION_LABEL}" \
+            --build-arg "PUMP_VARIANT=${PUMP_VARIANT}" \
+            --tag "${IMAGE_TAG}" \
+            .
 
           if ! docker run --rm --entrypoint=sh "${IMAGE_TAG}" -c 'python3 -c "import include_server"'; then
             echo "image ${IMAGE_TAG} does not include importable include_server module" >&2
@@ -176,15 +162,11 @@ jobs:
           fi
 
           docker push "${IMAGE_TAG}"
-          if [ "${IMAGE_TAG_V}" != "${IMAGE_TAG}" ]; then
-            docker push "${IMAGE_TAG_V}"
-          fi
       - name: Publish GitHub release
         if: steps.meta.outputs.publish_release == 'true' && matrix.pump_variant == 'with-pump'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
           RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
           TARGET_TAG: ${{ steps.meta.outputs.target_tag }}
           VERSION_LABEL: ${{ steps.meta.outputs.version }}
@@ -192,14 +174,26 @@ jobs:
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
           notes_file="$(mktemp)"
-          printf '%s\n' "distcc-ng release from ${GITHUB_SHA}." > "${notes_file}"
-          printf '\nContainer image variants:\n' >> "${notes_file}"
-          for variant in with-pump nopump; do
-            printf -- '- %s: %s and %s\n' \
-              "${variant}" \
-              "${IMAGE_PREFIX}:${VERSION_LABEL}-${variant}" \
-              "${IMAGE_PREFIX}:v${VERSION_LABEL}-${variant}" >> "${notes_file}"
-          done
+          cat > "${notes_file}" <<EOF
+          distcc-ng ${VERSION_LABEL} release from ${GITHUB_SHA}.
+
+          Package matrix
+
+          | Family | Pump | Container image |
+          | --- | --- | --- |
+          | distcc-ng | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-nopump:${VERSION_LABEL}-nopump |
+          | distcc-ng | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-with-pump:${VERSION_LABEL}-with-pump |
+          | distcc-ng-zstd | no | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-nopump:${VERSION_LABEL}-nopump |
+          | distcc-ng-zstd | yes | ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng-zstd-with-pump:${VERSION_LABEL}-with-pump |
+
+          Meaning:
+          - distcc-ng means no zstd support.
+          - distcc-ng-zstd means zstd-capable.
+          - nopump means pump is not included.
+          - with-pump means pump is included and the image exposes distcc-pump.
+
+          Source tarballs, RPM, DEB, and container images are attached to this release.
+          EOF
 
           if gh release view "${TARGET_TAG}" >/dev/null 2>&1; then
             gh release upload "${TARGET_TAG}" "${assets[@]}" --clobber

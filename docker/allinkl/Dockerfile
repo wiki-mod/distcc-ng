@@ -9,8 +9,8 @@ ARG VCS_REF=unknown
 ARG VERSION=allinkl
 ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng ${VERSION} builder" \
-      org.opencontainers.image.description="Build stage for the distcc-ng release branch ${VERSION} (${PUMP_VARIANT} image)." \
+LABEL org.opencontainers.image.title="distcc-ng-${PUMP_VARIANT} ${VERSION} builder" \
+      org.opencontainers.image.description="Build stage for the distcc-ng release branch ${VERSION} (${PUMP_VARIANT} package)." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
@@ -91,8 +91,8 @@ ARG VCS_REF=unknown
 ARG VERSION=allinkl
 ARG PUMP_VARIANT=nopump
 
-LABEL org.opencontainers.image.title="distcc-ng ${VERSION}" \
-      org.opencontainers.image.description="distcc-ng runtime image ${VERSION} without zstd support (${PUMP_VARIANT} image)." \
+LABEL org.opencontainers.image.title="distcc-ng-${PUMP_VARIANT} ${VERSION}" \
+      org.opencontainers.image.description="distcc-ng-${PUMP_VARIANT} runtime image ${VERSION} without zstd support." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 LABEL org.opencontainers.image.variant="${PUMP_VARIANT}"
