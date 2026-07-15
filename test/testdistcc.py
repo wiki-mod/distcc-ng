@@ -842,6 +842,13 @@ class DaemonBadPort_Case(SimpleDistCC_Case):
         self.assert_no_file("daemonpid.tmp")
 
 
+class TcpInsecureOptionOrder_Case(SimpleDistCC_Case):
+    def runtest(self):
+        """Test --enable-tcp-insecure is honored in different positions."""
+        out, err = self.runcmd("h_dopt tcp-insecure-order")
+        self.assert_equal(out.strip(), "ok")
+
+
 class InvalidHostSpec_Case(SimpleDistCC_Case):
     def runtest(self):
         """Test various invalid DISTCC_HOSTS
@@ -2478,6 +2485,7 @@ tests = [
          ExtractExtension_Case,
          ImplicitCompiler_Case,
          DaemonBadPort_Case,
+         TcpInsecureOptionOrder_Case,
          AccessDenied_Case,
          NoServer_Case,
          MixedServerPumpFallback_Case,
