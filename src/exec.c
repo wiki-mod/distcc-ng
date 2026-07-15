@@ -139,7 +139,7 @@ static DWORD dcc_execvp_cyg(char **argv, const char *input_file,
 {
     STARTUPINFO    m_siStartInfo;
     PROCESS_INFORMATION m_piProcInfo;
-    char cmdline[MAX_PATH+1]={0};
+    char *cmdline = NULL;
     HANDLE stdin_hndl=INVALID_HANDLE_VALUE;
     HANDLE stdout_hndl=INVALID_HANDLE_VALUE;
     HANDLE stderr_hndl=INVALID_HANDLE_VALUE;
@@ -198,7 +198,22 @@ static DWORD dcc_execvp_cyg(char **argv, const char *input_file,
     m_siStartInfo.hStdOutput = stdout_hndl;
     m_siStartInfo.hStdError = stderr_hndl;
 
-    /* Create command line */
+    /* Create command line.  A compiler invocation's combined argument
+     * length has no fixed upper bound (long include paths, many -D/-I
+     * flags, distcc/pump-injected arguments), so size the buffer to
+     * fit rather than using a fixed-size buffer -- a fixed 261-byte
+     * (MAX_PATH) buffer here previously overflowed on any invocation
+     * whose arguments exceeded that, silently corrupting the stack. */
+    {
+        size_t cmdline_len = 1; /* for the trailing NUL */
+        for (ptr=argv;*ptr!=NULL;ptr++)
+            cmdline_len += strlen(*ptr) + 1; /* +1 for the separating space */
+        cmdline = calloc(cmdline_len, 1);
+        if (!cmdline) {
+            exit_code = ERROR_NOT_ENOUGH_MEMORY;
+            goto cleanup;
+        }
+    }
     for (ptr=argv;*ptr!=NULL;ptr++)
     {
         strcat(cmdline, *ptr);
@@ -228,6 +243,7 @@ static DWORD dcc_execvp_cyg(char **argv, const char *input_file,
 
     /* We can get here only if process creation failed */
     cleanup:
+    free(cmdline);
     if (stdin_hndl != INVALID_HANDLE_VALUE) CloseHandle(stdin_hndl);
     if (stdout_hndl != INVALID_HANDLE_VALUE) CloseHandle(stdout_hndl);
     if (stderr_hndl != INVALID_HANDLE_VALUE) CloseHandle(stderr_hndl);
