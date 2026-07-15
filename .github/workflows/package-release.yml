@@ -2,6 +2,11 @@ name: Package release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_container:
+        description: "Build (and push) the container image even without a real release tag, for testing"
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -55,8 +60,16 @@ jobs:
             packaging/*.rpm
             packaging/*.deb
 
+      - name: Set up QEMU (for the arm64 leg of the multi-platform build)
+        if: github.ref_type == 'tag' || inputs.publish_container
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        if: github.ref_type == 'tag' || inputs.publish_container
+        uses: docker/setup-buildx-action@v3
+
       - name: Publish container image
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.publish_container
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,13 +78,16 @@ jobs:
           VCS_REF: ${{ github.sha }}
         run: |
           printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          docker build \
+          # amd64 is required; arm64 rides along on the same multi-arch
+          # manifest via QEMU emulation (no native arm64 runner needed).
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --file docker/release/Dockerfile \
             --build-arg "VCS_REF=${VCS_REF}" \
             --build-arg "VERSION=${VERSION_LABEL}" \
             --tag "${IMAGE_TAG}" \
+            --push \
             .
-          docker push "${IMAGE_TAG}"
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
