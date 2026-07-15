@@ -169,14 +169,15 @@ static void dcc_stats_update_compile_times(struct statsdata *sd) {
     curr_sd = dcc_stats.sd_root;
     while (curr_sd != NULL) {
         if (curr_sd->stop.tv_sec < two_min_ago) {
+            struct statsdata *next_sd = curr_sd->next;
             /* delete the stat */
             if (prev_sd == NULL) {
-                dcc_stats.sd_root = curr_sd->next;
+                dcc_stats.sd_root = next_sd;
             } else {
-                prev_sd->next = curr_sd->next;
+                prev_sd->next = next_sd;
             }
             free(curr_sd);
-            curr_sd = prev_sd->next;
+            curr_sd = next_sd;
         } else {
             /* we didn't delete anything. move forward by one */
             prev_sd = curr_sd;
@@ -184,6 +185,54 @@ static void dcc_stats_update_compile_times(struct statsdata *sd) {
         }
     }
 }
+
+#ifdef TEST
+int dcc_stats_test_prune_old_head(void);
+
+int dcc_stats_test_prune_old_head(void) {
+    struct statsdata newer_sd;
+    struct statsdata older_sd;
+    time_t now = time(NULL);
+    int ret = 0;
+
+    memset(&dcc_stats, 0, sizeof(dcc_stats));
+
+    memset(&newer_sd, 0, sizeof(newer_sd));
+    newer_sd.type = STATS_COMPILE_OK;
+    newer_sd.start.tv_sec = now - 10;
+    newer_sd.stop.tv_sec = now - 5;
+    newer_sd.time = 1;
+    strncpy(newer_sd.filename, "newer.c", MAX_FILENAME_LEN - 1);
+    strncpy(newer_sd.compiler, "cc", MAX_FILENAME_LEN - 1);
+
+    memset(&older_sd, 0, sizeof(older_sd));
+    older_sd.type = STATS_COMPILE_OK;
+    older_sd.start.tv_sec = now - 200;
+    older_sd.stop.tv_sec = now - 180;
+    older_sd.time = 2;
+    strncpy(older_sd.filename, "older.c", MAX_FILENAME_LEN - 1);
+    strncpy(older_sd.compiler, "cc", MAX_FILENAME_LEN - 1);
+
+    dcc_stats_update_compile_times(&newer_sd);
+    dcc_stats_update_compile_times(&older_sd);
+
+    if (dcc_stats.sd_root == NULL) {
+        ret = 1;
+    } else if (dcc_stats.sd_root->next != NULL) {
+        ret = 2;
+    } else if (strcmp(dcc_stats.sd_root->filename, "newer.c") != 0) {
+        ret = 3;
+    }
+
+    while (dcc_stats.sd_root != NULL) {
+        struct statsdata *next_sd = dcc_stats.sd_root->next;
+        free(dcc_stats.sd_root);
+        dcc_stats.sd_root = next_sd;
+    }
+
+    return ret;
+}
+#endif
 
 /* caclulate the avg kids used */
 static void dcc_stats_calc_kid_avg(void) {

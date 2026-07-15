@@ -201,6 +201,7 @@ man8dir = $(mandir)/man8
 
 test_SOURCE = test/comfychair.py \
 	test/onetest.py \
+	test/pump_include_server_path_test.py \
 	test/testdistcc.py \
 	find_c_extension.sh
 
@@ -301,8 +302,12 @@ h_scanargs_obj = src/h_scanargs.o $(common_obj)
 h_includesort_obj = src/h_includesort.o $(common_obj)
 h_state_obj = src/h_state.o $(common_obj) src/state.o src/mon.o
 h_hosts_obj = src/h_hosts.o $(common_obj)
+h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
 h_strip_obj = src/h_strip.o $(common_obj) src/strip.o
+h_dopt_obj = src/h_dopt.o $(common_obj) src/dopt.o src/access.o
+h_stats_obj = src/h_stats.o src/h_stats_stats.o $(common_obj) src/srvnet.o \
+	      src/access.o
 h_parsemask_obj = src/h_parsemask.o $(common_obj) src/access.o
 h_sa2str_obj = src/h_sa2str.o $(common_obj) src/srvnet.o src/access.o
 h_ccvers_obj = src/h_ccvers.o $(common_obj)
@@ -325,10 +330,10 @@ SRC =	src/stats.c							\
 	src/daemon.c src/distcc.c src/dsignal.c				\
 	src/dopt.c src/dparent.c src/exec.c src/filename.c		\
 	src/h_argvtostr.c						\
-	src/h_exten.c src/h_hosts.c src/h_includesort.c			\
-	src/h_issource.c src/h_parsemask.c				\
+	src/h_dopt.c src/h_exten.c src/h_hosts.c src/h_ssh.c		\
+	src/h_includesort.c src/h_issource.c src/h_parsemask.c		\
 	src/h_sa2str.c src/h_scanargs.c src/h_state.c src/h_strip.c	\
-	src/h_dotd.c src/h_compile.c src/h_getline.c			\
+	src/h_stats.c src/h_dotd.c src/h_compile.c src/h_getline.c	\
 	src/help.c src/history.c src/hosts.c src/hostfile.c		\
 	src/implicit.c src/include_server_sort.c src/io.c		\
 	src/loadfile.c src/lock.c 					\
@@ -415,15 +420,18 @@ sbin_PROGRAMS = \
 
 check_PROGRAMS = \
 	h_argvtostr@EXEEXT@ \
+	h_dopt@EXEEXT@ \
 	h_exten@EXEEXT@ \
 	h_fix_debug_info@EXEEXT@ \
 	h_hosts@EXEEXT@ \
+	h_ssh@EXEEXT@ \
 	h_issource@EXEEXT@ \
 	h_parsemask@EXEEXT@ \
 	h_sa2str@EXEEXT@ \
 	h_scanargs@EXEEXT@ \
 	h_includesort@EXEEXT@ \
 	h_state@EXEEXT@ \
+	h_stats@EXEEXT@ \
 	h_strip@EXEEXT@ \
 	h_dotd@EXEEXT@ \
 	h_compile@EXEEXT@ \
@@ -528,6 +536,9 @@ h_state@EXEEXT@: $(h_state_obj)
 h_hosts@EXEEXT@: $(h_hosts_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_hosts_obj) $(LIBS)
 
+h_ssh@EXEEXT@: $(h_ssh_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_ssh_obj) $(LIBS)
+
 h_argvtostr@EXEEXT@: $(h_argvtostr_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_argvtostr_obj) $(LIBS)
 
@@ -536,6 +547,12 @@ h_parsemask@EXEEXT@: $(h_parsemask_obj)
 
 h_strip@EXEEXT@: $(h_strip_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_strip_obj) $(LIBS)
+
+h_dopt@EXEEXT@: $(h_dopt_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
+
+h_stats@EXEEXT@: $(h_stats_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_stats_obj) $(LIBS)
 
 h_ccvers@EXEEXT@: $(h_ccvers_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_ccvers_obj) $(LIBS)
@@ -557,6 +574,11 @@ src/h_fix_debug_info.o: src/fix_debug_info.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \
 		-DTEST \
 		$(srcdir)/src/fix_debug_info.c
+
+src/h_stats_stats.o: src/stats.c
+	$(CC) -c -o $@ $(CPPFLAGS) $(WERROR_CFLAGS) $(CFLAGS) \
+		-DTEST \
+		$(srcdir)/src/stats.c
 
 src/mon-gnome.o: src/mon-gnome.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \
@@ -709,7 +731,7 @@ TESTDISTCC_OPTS =
 # TODO(klarlund): the outermost if assumes that the include-server target may be
 # satisfied w/o actually building an include server (or rather the C extension);
 # this logic needs to be verified or amended.
-maintainer-check-no-set-path:
+maintainer-check-no-set-path: pump
 	@if ! $(PYTHON) -c 'import sys; print(sys.version)'; then \
 	  echo "WARNING: python not found; tests skipped"; \
 	else \
@@ -720,7 +742,9 @@ maintainer-check-no-set-path:
 	    echo "Please change RESTRICTED_PATH to change this PATH value."; \
 	    exit 1; \
 	  fi; \
-	  $(PYTHON) "$(srcdir)/test/testdistcc.py" $(TESTDISTCC_OPTS); \
+	  $(PYTHON) "$(srcdir)/test/testdistcc.py" $(TESTDISTCC_OPTS) && \
+	  $(PYTHON) "$(srcdir)/test/pump_include_server_path_test.py" \
+	    "$(builddir)/pump" "$(PYTHON)"; \
 	fi
 
 distcc-maintainer-check: check_programs

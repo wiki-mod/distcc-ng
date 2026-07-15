@@ -217,6 +217,91 @@ PrintIncludeServerStatusMessage() {
   fi
 }
 
+PythonMajorMinorVersion() {
+  "$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+}
+
+PythonIncludeServerCandidatePaths() {
+  "$PYTHON" - "$python_version" "$prefix" "$exec_prefix" "$distcc_parent" <<'PY'
+import sys
+import sysconfig
+
+version = sys.argv[1]
+roots = sys.argv[2:]
+python_version = "python%s" % version
+python_path_suffix = "/%s/" % python_version
+
+for root in roots:
+  if not root:
+    continue
+  for location in ("purelib", "platlib"):
+    libdir = sysconfig.get_path(
+        location, vars={"base": root, "platbase": root, "data": root})
+    if not libdir:
+      continue
+    print("%s/include_server/include_server.py" % libdir)
+    split_point = libdir.find(python_path_suffix)
+    if split_point == -1:
+      continue
+    python_root = libdir[:split_point]
+    remainder = libdir[split_point + len(python_path_suffix):]
+    if remainder:
+      print(
+          "%s/distcc-pump/%s/%s/include_server/include_server.py" %
+          (python_root.rstrip("/"), python_version, remainder))
+    else:
+      print("%s/distcc-pump/%s/include_server/include_server.py" %
+            (python_root.rstrip("/"), python_version))
+PY
+}
+
+ResolveInstalledIncludeServer() {
+  if [ -n "$include_server" ] && [ -f "$include_server" ]; then
+    return 0
+  fi
+
+  python_version=`PythonMajorMinorVersion` || {
+    echo "$program_name: error: can't determine Python version from $PYTHON" \
+      1>&2
+    return 1
+  }
+
+  distcc_parent=`dirname "$distcc_location"`
+
+  candidate_file=`mktemp "${TMPDIR:-/tmp}/distcc-pump-candidates.XXXXXX"` || {
+    echo "$program_name: error: can't create include_server candidate list" \
+      1>&2
+    return 1
+  }
+  if ! PythonIncludeServerCandidatePaths > "$candidate_file"; then
+    rm -f "$candidate_file"
+    echo "$program_name: error: can't query Python include_server paths" 1>&2
+    return 1
+  fi
+
+  # Prefer the Python version used to configure this pump script.  Reading the
+  # generated list line-by-line keeps paths with whitespace intact.
+  while IFS= read -r candidate
+  do
+    if [ -f "$candidate" ]; then
+      include_server="$candidate"
+      rm -f "$candidate_file"
+      return 0
+    fi
+  done < "$candidate_file"
+  rm -f "$candidate_file"
+
+  if [ -n "$include_server" ]; then
+    echo "$program_name: error: can't find include_server.py at" \
+      "'$include_server' or under the Python $python_version install paths" \
+      1>&2
+  else
+    echo "$program_name: error: can't find include_server.py under the" \
+      "Python $python_version install paths" 1>&2
+  fi
+  return 1
+}
+
 Announce() {
   if [ "$verbose" = 1 ]; then
     echo "__________Using distcc-pump from $DISTCC_LOCATION"
@@ -232,6 +317,7 @@ StartIncludeServer() {
   # installed pump (in /usr/local/bin somewhere or something), and
   # include_server points to the installed include_server.py.
   if [ -n "$include_server" ]; then
+    ResolveInstalledIncludeServer || return 1
     pythonpath=`dirname "$include_server"`
   else
     # We assume this script is run from the build directory.  We pick up .py
