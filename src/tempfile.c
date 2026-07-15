@@ -369,6 +369,60 @@ int dcc_get_state_dir(char **dir_ret)
 
 
 /**
+ * Return a well-distributed 32-bit value for use in a temp-file name.
+ *
+ * This used to mix getpid() with gettimeofday(), following the same
+ * approach glibc's __gen_tempname() took at the time this code was
+ * written (2002-2004, before getrandom()/a fast userspace CSPRNG was
+ * available anywhere): both pid and microseconds were shifted left by
+ * 16 bits before the value was truncated to a 32-bit (8 hex digit)
+ * name, so only their low 16 bits actually survived into the printed
+ * suffix -- and callers that fork close together in time (exactly the
+ * case under a concurrent distcc/distccd/pump build) get correlated
+ * (pid, usec) pairs, collapsing the effective entropy to well under
+ * 32 bits under real concurrent load.
+ *
+ * glibc itself hit the same class of problem and now seeds from a real
+ * random source instead of pid/time mixing (glibc bug 32214). Do the
+ * same here directly via /dev/urandom -- present on every platform
+ * this project supports (Linux, the BSDs, macOS, Solaris) -- rather
+ * than reintroduce a pid/time-correlated value.
+ **/
+static unsigned long dcc_random_u32(void)
+{
+    unsigned long val;
+    int fd;
+
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd != -1) {
+        ssize_t n = read(fd, &val, sizeof(val));
+        close(fd);
+        if (n == (ssize_t) sizeof(val))
+            return val;
+    }
+
+    /* /dev/urandom missing or unreadable (some exotic/sandboxed
+     * environment) -- fall back to the old, weaker pid/time mixing
+     * rather than fail the caller outright, but say so; this path
+     * should essentially never be taken on any real deployment. */
+    rs_log_warning("could not read /dev/urandom for a temp-file name; "
+                    "falling back to a weaker pid/time-based value");
+
+    val = (unsigned long) getpid() << 16;
+# if HAVE_GETTIMEOFDAY
+    {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        val ^= tv.tv_usec << 16;
+        val ^= tv.tv_sec;
+    }
+# else
+    val ^= time(NULL);
+# endif
+    return val;
+}
+
+/**
  * Create a file inside the temporary directory and register it for
  * later cleanup, and return its name.
  *
@@ -393,22 +447,7 @@ int dcc_make_tmpnam(const char *prefix,
         return EXIT_IO_ERROR;
     }
 
-    random_bits = (unsigned long) getpid() << 16;
-
-# if HAVE_GETTIMEOFDAY
-    {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        random_bits ^= tv.tv_usec << 16;
-        random_bits ^= tv.tv_sec;
-    }
-# else
-    random_bits ^= time(NULL);
-# endif
-
-#if 0
-    random_bits = 0;            /* FOR TESTING */
-#endif
+    random_bits = dcc_random_u32();
 
     do {
         free(s);
@@ -427,9 +466,12 @@ int dcc_make_tmpnam(const char *prefix,
          * and our children should do anything with it. */
         fd = open(s, O_WRONLY | O_CREAT | O_EXCL, 0600);
         if (fd == -1) {
-            /* try again */
+            /* Try again with a freshly drawn value, not a fixed
+             * increment -- a fixed step just marches every caller
+             * that collided on this value through the same sequence
+             * in lockstep, rather than actually spreading them out. */
             rs_trace("failed to create %s: %s", s, strerror(errno));
-            random_bits += 7777; /* fairly prime */
+            random_bits = dcc_random_u32();
             continue;
         }
 
