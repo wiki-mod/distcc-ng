@@ -392,6 +392,16 @@ static unsigned long dcc_random_u32(void)
 {
     unsigned long val;
     int fd;
+    /* Only used on the degraded fallback path below. A fresh call to
+     * /dev/urandom always differs from the last one on its own, but
+     * pid/time mixing does not: if /dev/urandom stays unavailable
+     * across a whole EEXIST retry loop, getpid() never changes and
+     * the clock may not visibly advance either (coarse time(NULL)
+     * resolution, or simply a very fast retry loop) -- without this,
+     * dcc_make_tmpnam() could redraw the exact same fallback value
+     * forever and never make progress, unlike the old fixed +7777
+     * step it replaced, which always did. */
+    static unsigned long fallback_retries;
 
     fd = open("/dev/urandom", O_RDONLY);
     if (fd != -1) {
@@ -419,6 +429,8 @@ static unsigned long dcc_random_u32(void)
 # else
     val ^= time(NULL);
 # endif
+    fallback_retries += 7777;
+    val += fallback_retries;
     return val;
 }
 
