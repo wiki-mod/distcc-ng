@@ -35,7 +35,10 @@ local compile, is simple to install and use, and is often two or more times
 faster than a local compile.
 
 %prep
-%setup
+# The dist tarball's top-level directory uses the full, hyphenated
+# FULLVERSION (matching this fork's real release-tag naming), not the
+# RPM-sanitized %{version} -- tell %setup the real directory name.
+%setup -n %{NAME}-%{FULLVERSION}
 
 %build
 # Work around broken sendfile in 32 bit apps on some x86_64 systems
