@@ -483,23 +483,37 @@ ShutDown() {
     fi
 
     if ps -p "$include_server_pid" > /dev/null; then
-      echo '__________Sending SIGKILL to unresponsive distcc-pump' \
-           'include server' 1>&2
-      if kill -9 "$include_server_pid"; then
-        include_server_wait_count=0
-        include_server_wait_limit=100   # 100 * 0.01s ~= 1s
-        while ps -p "$include_server_pid" > /dev/null; do
-          if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
-            echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
-                 1>&2
-            break
-          fi
-          include_server_wait_count=`expr "$include_server_wait_count" + 1`
-          sleep 0.01
-        done
+      # SIGKILL is unrecoverable, unlike the SIGTERM sent above, so a
+      # stale/reused pid is worse here: if the include server already
+      # exited during the grace period above and the OS quickly recycled
+      # its pid for an unrelated process, we must not force-kill that
+      # process. Confirm the pid still looks like the include server
+      # (its command line contains the include-server script) before
+      # escalating.
+      if ps -p "$include_server_pid" -o args= 2>/dev/null | \
+          grep -q 'include_server'; then
+        echo '__________Sending SIGKILL to unresponsive distcc-pump' \
+             'include server' 1>&2
+        if kill -9 "$include_server_pid"; then
+          include_server_wait_count=0
+          include_server_wait_limit=100   # 100 * 0.01s ~= 1s
+          while ps -p "$include_server_pid" > /dev/null; do
+            if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+              echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
+                   1>&2
+              break
+            fi
+            include_server_wait_count=`expr "$include_server_wait_count" + 1`
+            sleep 0.01
+          done
+        else
+          echo '__________Error: could not send SIGKILL to distcc-pump include server' \
+               1>&2
+        fi
       else
-        echo '__________Error: could not send SIGKILL to distcc-pump include server' \
-             1>&2
+        echo '__________Not sending SIGKILL: pid' "$include_server_pid" \
+             'no longer looks like the include server (it likely already' \
+             'exited and the pid was reused)' 1>&2
       fi
     fi
   fi

@@ -35,6 +35,26 @@ VERSION="$2"
 fullname="${PACKAGE}-${VERSION}"
 archive=../$fullname.tar.gz
 
+# rpm-version(7) forbids '-' in Version/Release: it's the NVR component
+# separator, and rpmbuild rejects a spec whose Version contains one. This
+# fork's own version scheme uses a "-NG" suffix (e.g. "3.5.0-NG"), so split
+# it into an RPM-safe numeric Version plus a suffix folded into Release,
+# instead of changing the project-wide "-NG" convention itself (same idea
+# as include_server/setup.py's PEP 440 "+NG" mapping, for a different
+# packaging ecosystem's rules). $VERSION itself is left untouched for the
+# source-tarball filename above, which follows this project's own naming,
+# not RPM's.
+case "$VERSION" in
+  *-*)
+    RPM_VERSION="${VERSION%%-*}"
+    RPM_VERSUFFIX="${VERSION#*-}"
+    ;;
+  *)
+    RPM_VERSION="$VERSION"
+    RPM_VERSUFFIX=""
+    ;;
+esac
+
 if [ -z "$1" -o -z "$2" ]
 then
   echo "Usage: $0 <package name> <package version>" 1>&2
@@ -67,18 +87,19 @@ mkdir "$RPM_BUILD_DIR"
 
 cp "$archive" "$RPM_SOURCE_DIR"
 
-rpmbuild -bb RedHat/rpm.spec \
-  --define "NAME $PACKAGE" \
-  --define "VERSION $VERSION" \
-  --define "_sourcedir $RPM_SOURCE_DIR" \
-  --define "_builddir $RPM_BUILD_DIR" \
-  --define "_rpmdir $RPM_SOURCE_DIR"
+RPMBUILD_DEFINES="--define \"NAME $PACKAGE\" --define \"VERSION $RPM_VERSION\" --define \"FULLVERSION $VERSION\" --define \"_sourcedir $RPM_SOURCE_DIR\" --define \"_builddir $RPM_BUILD_DIR\" --define \"_rpmdir $RPM_SOURCE_DIR\""
+if [ -n "$RPM_VERSUFFIX" ]; then
+  RPMBUILD_DEFINES="$RPMBUILD_DEFINES --define \"VERSUFFIX $RPM_VERSUFFIX\""
+fi
+eval rpmbuild -bb RedHat/rpm.spec $RPMBUILD_DEFINES
 
-# Clean out any existing rpms from a previous build.
-rm -f "$PACKAGE"*[-._]"$VERSION"[-._]*.rpm
+# Clean out any existing rpms from a previous build. The produced RPM's
+# actual NVR uses the sanitized $RPM_VERSION (Version can't contain the
+# original "-NG" suffix; see above), not the raw $VERSION.
+rm -f "$PACKAGE"*[-._]"$RPM_VERSION"[-._]*.rpm
 
 # We want to get not only the main package but devel etc, hence the middle *
-mv "$RPM_SOURCE_DIR"/*/"$PACKAGE"-*"$VERSION"*.rpm .
+mv "$RPM_SOURCE_DIR"/*/"$PACKAGE"-*"$RPM_VERSION"*.rpm .
 
 echo
 echo "The rpm package file(s) are located in $PWD:"

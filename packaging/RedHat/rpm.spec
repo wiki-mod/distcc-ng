@@ -11,12 +11,17 @@
 
 Name: %NAME
 Summary: Client side program for distributed C/C++ compilations.
+# Version must be RPM-safe (rpm-version(7) forbids '-', the NVR
+# separator); rpm.sh splits this fork's "-NG"-suffixed version and passes
+# the numeric part as VERSION, folding the suffix into Release below.
+# FULLVERSION keeps the original, hyphenated version for the source
+# tarball, which follows this project's own release-tag naming, not RPM's.
 Version: %VERSION
-Release: %rel
+Release: %{rel}%{?VERSUFFIX:.%{VERSUFFIX}}
 Group: Development/Languages
 Url: https://github.com/wiki-mod/distcc-ng
 License: GPL
-Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{VERSION}.tar.gz#/%{NAME}-%{VERSION}.tar.gz
+Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{FULLVERSION}.tar.gz#/%{NAME}-%{FULLVERSION}.tar.gz
 Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
