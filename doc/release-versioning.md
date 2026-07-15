@@ -61,6 +61,14 @@ automatically from commit messages or PR titles.
 - Refuse to merge into `master` without explicit maintainer approval.
 - Never delete or force-push an existing `release/*` branch or `vX.Y.Z-NG`
   tag.
+- **No release may ever be untagged.** Every published GitHub Release must
+  correspond to a real `vX.Y.Z-NG` git tag — never publish a release (or
+  move a stable/`latest`-style channel pointer, if one is introduced later)
+  from an ad-hoc or manual identifier (e.g. a `manual-<run-number>`-style
+  fallback name). A manual/`workflow_dispatch` trigger may still build and
+  upload artifacts for testing, but it must not create or update a GitHub
+  Release unless a real tag drives it. This exists so every release has an
+  unambiguous, permanent git reference behind it.
 
 ## Retention
 
