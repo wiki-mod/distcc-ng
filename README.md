@@ -58,6 +58,6 @@ distcc is distributed under the GNU General Public Licence v2.
 
 ## Resources
 
-* Repo, questions, and bugs: https://github.com/distcc/distcc
+* Repo, questions, and bugs: https://github.com/wiki-mod/distcc-ng
 
 * [Stack Overflow questions](http://stackoverflow.com/questions/tagged/distcc)
