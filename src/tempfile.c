@@ -43,6 +43,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 #include "distcc.h"
 #include "trace.h"
@@ -369,7 +371,7 @@ int dcc_get_state_dir(char **dir_ret)
 
 
 /**
- * Return a well-distributed 32-bit value for use in a temp-file name.
+ * Return a well-distributed 64-bit value for use in a temp-file name.
  *
  * This used to mix getpid() with gettimeofday(), following the same
  * approach glibc's __gen_tempname() took at the time this code was
@@ -387,10 +389,15 @@ int dcc_get_state_dir(char **dir_ret)
  * same here directly via /dev/urandom -- present on every platform
  * this project supports (Linux, the BSDs, macOS, Solaris) -- rather
  * than reintroduce a pid/time-correlated value.
+ *
+ * The value is a fixed-width uint64_t (not "unsigned long", whose
+ * width varies by platform/ABI -- e.g. 32 bits on ILP32 or LLP64
+ * targets) so the name always has the same, full 64 bits of entropy
+ * on every platform this builds on, not just LP64 ones.
  **/
-static unsigned long dcc_random_u32(void)
+static uint64_t dcc_random_u64(void)
 {
-    unsigned long val;
+    uint64_t val;
     int fd;
     /* Only used on the degraded fallback path below. A fresh call to
      * /dev/urandom always differs from the last one on its own, but
@@ -401,7 +408,7 @@ static unsigned long dcc_random_u32(void)
      * dcc_make_tmpnam() could redraw the exact same fallback value
      * forever and never make progress, unlike the old fixed +7777
      * step it replaced, which always did. */
-    static unsigned long fallback_retries;
+    static uint64_t fallback_retries;
 
     fd = open("/dev/urandom", O_RDONLY);
     if (fd != -1) {
@@ -418,16 +425,16 @@ static unsigned long dcc_random_u32(void)
     rs_log_warning("could not read /dev/urandom for a temp-file name; "
                     "falling back to a weaker pid/time-based value");
 
-    val = (unsigned long) getpid() << 16;
+    val = (uint64_t) getpid() << 16;
 # if HAVE_GETTIMEOFDAY
     {
         struct timeval tv;
         gettimeofday(&tv, NULL);
-        val ^= tv.tv_usec << 16;
-        val ^= tv.tv_sec;
+        val ^= (uint64_t) tv.tv_usec << 16;
+        val ^= (uint64_t) tv.tv_sec;
     }
 # else
-    val ^= time(NULL);
+    val ^= (uint64_t) time(NULL);
 # endif
     fallback_retries += 7777;
     val += fallback_retries;
@@ -448,7 +455,7 @@ int dcc_make_tmpnam(const char *prefix,
     char *s = NULL;
     const char *tempdir;
     int ret;
-    unsigned long random_bits;
+    uint64_t random_bits;
     int fd;
 
     if ((ret = dcc_get_tmp_top(&tempdir)))
@@ -459,15 +466,19 @@ int dcc_make_tmpnam(const char *prefix,
         return EXIT_IO_ERROR;
     }
 
-    random_bits = dcc_random_u32();
+    random_bits = dcc_random_u64();
 
     do {
         free(s);
 
-        if (asprintf(&s, "%s/%s_%08lx%s",
+        /* 16 hex digits (64 bits) rather than 8 (32 bits): the birthday
+         * bound for a same-second name collision drops by a factor of
+         * 2**32 for the same burst size, at effectively no extra cost
+         * since dcc_random_u64() already draws a full 64-bit value. */
+        if (asprintf(&s, "%s/%s_%016" PRIx64 "%s",
                      tempdir,
                      prefix,
-                     random_bits & 0xffffffffUL,
+                     random_bits,
                      suffix) == -1)
             return EXIT_OUT_OF_MEMORY;
 
@@ -483,7 +494,7 @@ int dcc_make_tmpnam(const char *prefix,
              * that collided on this value through the same sequence
              * in lockstep, rather than actually spreading them out. */
             rs_trace("failed to create %s: %s", s, strerror(errno));
-            random_bits = dcc_random_u32();
+            random_bits = dcc_random_u64();
             continue;
         }
 
