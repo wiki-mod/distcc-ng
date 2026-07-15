@@ -302,6 +302,8 @@ h_hosts_obj = src/h_hosts.o $(common_obj)
 h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
 h_strip_obj = src/h_strip.o $(common_obj) src/strip.o
+h_stats_obj = src/h_stats.o src/h_stats_stats.o $(common_obj) src/srvnet.o \
+	      src/access.o
 h_parsemask_obj = src/h_parsemask.o $(common_obj) src/access.o
 h_sa2str_obj = src/h_sa2str.o $(common_obj) src/srvnet.o src/access.o
 h_ccvers_obj = src/h_ccvers.o $(common_obj)
@@ -327,7 +329,7 @@ SRC =	src/stats.c							\
 	src/h_exten.c src/h_hosts.c src/h_ssh.c			\
 	src/h_issource.c src/h_parsemask.c				\
 	src/h_sa2str.c src/h_scanargs.c src/h_strip.c			\
-	src/h_dotd.c src/h_compile.c src/h_getline.c			\
+	src/h_stats.c src/h_dotd.c src/h_compile.c src/h_getline.c	\
 	src/help.c src/history.c src/hosts.c src/hostfile.c		\
 	src/implicit.c src/io.c						\
 	src/loadfile.c src/lock.c 					\
@@ -422,6 +424,7 @@ check_PROGRAMS = \
 	h_parsemask@EXEEXT@ \
 	h_sa2str@EXEEXT@ \
 	h_scanargs@EXEEXT@ \
+	h_stats@EXEEXT@ \
 	h_strip@EXEEXT@ \
 	h_dotd@EXEEXT@ \
 	h_compile@EXEEXT@ \
@@ -532,6 +535,9 @@ h_parsemask@EXEEXT@: $(h_parsemask_obj)
 h_strip@EXEEXT@: $(h_strip_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_strip_obj) $(LIBS)
 
+h_stats@EXEEXT@: $(h_stats_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_stats_obj) $(LIBS)
+
 h_ccvers@EXEEXT@: $(h_ccvers_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_ccvers_obj) $(LIBS)
 
@@ -552,6 +558,11 @@ src/h_fix_debug_info.o: src/fix_debug_info.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \
 		-DTEST \
 		$(srcdir)/src/fix_debug_info.c
+
+src/h_stats_stats.o: src/stats.c
+	$(CC) -c -o $@ $(CPPFLAGS) $(WERROR_CFLAGS) $(CFLAGS) \
+		-DTEST \
+		$(srcdir)/src/stats.c
 
 src/mon-gnome.o: src/mon-gnome.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \

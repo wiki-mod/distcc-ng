@@ -487,6 +487,13 @@ class StripArgs_Case(SimpleDistCC_Case):
             self.assert_equal(o, expect)
 
 
+class Stats_Case(SimpleDistCC_Case):
+    """Test distccd statistics list maintenance."""
+    def runtest(self):
+        out, err = self.runcmd("h_stats prune-old-head")
+        self.assert_equal(out.strip(), "ok")
+
+
 class IsSource_Case(SimpleDistCC_Case):
     def runtest(self):
         """Test distcc's method for working out whether a file is source"""
