@@ -3,6 +3,13 @@ name: C build
 on:
   push:
   pull_request:
+  # Lets us check a branch's build health on demand (e.g. current_dev or
+  # master) without needing a new commit/PR to trigger CI.
+  workflow_dispatch:
+  # Nightly health check on current_dev, so a break doesn't sit silently
+  # until the next PR happens to touch that branch.
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   make_check:
@@ -28,6 +35,11 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
       - uses: actions/checkout@v7
+        with:
+          # schedule always evaluates using the default branch (master);
+          # redirect the nightly run to current_dev instead of re-checking
+          # master, which push/pull_request already cover on every change.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@v1
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
