@@ -26,7 +26,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -145,10 +145,11 @@ static int
 ReadWithDeadline(int fd, void *buf, size_t len,
                  const struct timeval *deadline) {
   while (len > 0) {
-    fd_set read_fds;
     struct timeval now;
     struct timeval remaining;
-    int select_result;
+    struct pollfd pfd;
+    int timeout_ms;
+    int poll_result;
     ssize_t read_result;
 
     if (gettimeofday(&now, NULL) != 0) {
@@ -161,16 +162,26 @@ ReadWithDeadline(int fd, void *buf, size_t len,
       return 1;
     }
 
-    FD_ZERO(&read_fds);
-    FD_SET(fd, &read_fds);
-    select_result = select(fd + 1, &read_fds, NULL, NULL, &remaining);
-    if (select_result == -1 && errno == EINTR)
+    /* poll() instead of select(): select()'s fd_set is a fixed-size
+     * bitmask (FD_SETSIZE, typically 1024 descriptors). FD_SET() on a
+     * higher fd -- plausible for a long-running include-server process
+     * that has accumulated many open descriptors -- writes past the end
+     * of the bitmask, corrupting memory. poll()'s pollfd array has no
+     * such descriptor-number limit. */
+    timeout_ms = (int)(remaining.tv_sec * 1000 + remaining.tv_usec / 1000);
+    if (timeout_ms < 0)
+      timeout_ms = 0;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    poll_result = poll(&pfd, 1, timeout_ms);
+    if (poll_result == -1 && errno == EINTR)
       continue;
-    if (select_result == -1) {
+    if (poll_result == -1) {
       PyErr_SetFromErrno(distcc_pump_c_extensionsError);
       return 1;
     }
-    if (select_result == 0) {
+    if (poll_result == 0) {
       PyErr_SetString(distcc_pump_c_extensionsError,
                       "Timed out reading include server request.");
       return 1;

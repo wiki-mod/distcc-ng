@@ -56,9 +56,21 @@
  * build of the identical source does not. An attribute survives
  * preprocessing (it isn't a comment), so it works identically whether the
  * file is compiled directly or via distcc. */
-#if defined(__GNUC__) && __GNUC__ >= 7
+/* __has_attribute is the portable way to detect this: plain __GNUC__
+ * version checks misfire under Clang, which defines __GNUC__ (commonly as
+ * 4.x, for compatibility) but does support __attribute__((fallthrough))
+ * and does enforce -Wimplicit-fallthrough independently of GCC's version
+ * numbering. Fall back to the GCC-version check only for compilers old
+ * enough to lack __has_attribute itself. */
+#if defined(__has_attribute)
+#  if __has_attribute(fallthrough)
+#    define FALLTHROUGH __attribute__((fallthrough))
+#  endif
+#endif
+#if !defined(FALLTHROUGH) && defined(__GNUC__) && __GNUC__ >= 7
 #  define FALLTHROUGH __attribute__((fallthrough))
-#else
+#endif
+#if !defined(FALLTHROUGH)
 #  define FALLTHROUGH ((void) 0)
 #endif
 
