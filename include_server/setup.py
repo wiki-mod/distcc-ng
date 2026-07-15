@@ -34,10 +34,32 @@ __author__ = 'Manos Renieris and Nils Klarlund'
 import setuptools
 import doctest
 import os
+import re
 import shlex
 import sys
 
 OPTIONS_NOT_ALLOWED = ['-Iquote', '-Isystem', '-I-']
+
+
+def _pep440_version(raw_version):
+  """Sanitize DISTCC_VERSION into a version setuptools will accept.
+
+  setuptools validates 'version' against PEP 440, which does not allow
+  free-form suffixes like the project's own "-NG" fork marker (e.g.
+  "3.5.0-NG"). Translate a trailing "-<label>" into a PEP 440 local
+  version segment ("+<label>") instead, which is valid and preserves the
+  same information. If the result (or the input, e.g. the "unknown"
+  fallback when DISTCC_VERSION isn't set) still isn't a valid PEP 440
+  version, fall back to a placeholder so the include-server build never
+  fails on the project's own external version string.
+  """
+  candidate = re.sub(r'-([A-Za-z0-9]+)$', r'+\1', raw_version)
+  try:
+    import packaging.version
+    packaging.version.Version(candidate)
+  except Exception:
+    return '0.0.0+unknown'
+  return candidate
 
 # We include a partial command line parser instead of using the more the more
 # complicated one in parse_command.py.  This cuts down on dependencies in the
@@ -167,7 +189,7 @@ args = {
     'name': 'include_server',
     # The 'include_server' package is in the srcdir_include_server.
     'package_dir': {'include_server': srcdir_include_server},
-    'version': os.getenv('DISTCC_VERSION') or 'unknown',
+    'version': _pep440_version(os.getenv('DISTCC_VERSION') or 'unknown'),
     'description': """Include server for distcc's pump-mode""",
     'author': 'Nils Klarlund',
     'author_email': 'opensource@google.com',
