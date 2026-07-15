@@ -47,6 +47,21 @@
 #  define UNUSED(x) x
 #endif                /* !__GNUC__ && !__LCLINT__ */
 
+/* Marks an intentional switch-case fallthrough. A bare fallthrough
+ * comment only works when gcc's own fallthrough heuristic sees the comment
+ * in the source it is compiling -- but distcc ships a client-preprocessed,
+ * comment-free source file to the compile server, so the same code compiled
+ * through distcc loses the comment and -Wimplicit-fallthrough (part of -W /
+ * -Wextra) fires there under -Werror even though a local, non-distributed
+ * build of the identical source does not. An attribute survives
+ * preprocessing (it isn't a comment), so it works identically whether the
+ * file is compiled directly or via distcc. */
+#if defined(__GNUC__) && __GNUC__ >= 7
+#  define FALLTHROUGH __attribute__((fallthrough))
+#else
+#  define FALLTHROUGH ((void) 0)
+#endif
+
 /* According to the gcc info page, __attribute__((unused)) means "this
  * variable is *possibly* unused" (emphasis added).  So we can use it for
  * POSSIBLY_UNUSED.  This macro is used when a variable is used in one #ifdef

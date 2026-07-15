@@ -663,10 +663,10 @@ static int dcc_get_proc_meminfo_mem_available(FILE* f) {
     switch (magnitude) {
         case 'T':
             mem_available *= 1024;
-            /* fallthrough */
+            FALLTHROUGH;
         case 'G':
             mem_available *= 1024;
-            /* fallthrough */
+            FALLTHROUGH;
         case 'M':
             break;
         case 'K':
