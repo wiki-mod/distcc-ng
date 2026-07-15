@@ -243,6 +243,7 @@ common_obj = src/arg.o src/argutil.o					\
 	src/safeguard.o src/snprintf.o src/timeval.o			\
 	src/dotd.o 							\
 	src/hosts.o src/hostfile.o					\
+	src/include_server_sort.o					\
 	src/implicit.o src/loadfile.o					\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\
@@ -298,6 +299,8 @@ gnome_obj = src/history.o src/mon-gnome.o				\
 h_exten_obj = src/h_exten.o $(common_obj)
 h_issource_obj = src/h_issource.o $(common_obj)
 h_scanargs_obj = src/h_scanargs.o $(common_obj)
+h_includesort_obj = src/h_includesort.o $(common_obj)
+h_state_obj = src/h_state.o $(common_obj) src/state.o src/mon.o
 h_hosts_obj = src/h_hosts.o $(common_obj)
 h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
@@ -328,11 +331,11 @@ SRC =	src/stats.c							\
 	src/dopt.c src/dparent.c src/exec.c src/filename.c		\
 	src/h_argvtostr.c						\
 	src/h_dopt.c src/h_exten.c src/h_hosts.c src/h_ssh.c		\
-	src/h_issource.c src/h_parsemask.c				\
-	src/h_sa2str.c src/h_scanargs.c src/h_strip.c			\
+	src/h_includesort.c src/h_issource.c src/h_parsemask.c		\
+	src/h_sa2str.c src/h_scanargs.c src/h_state.c src/h_strip.c	\
 	src/h_stats.c src/h_dotd.c src/h_compile.c src/h_getline.c	\
 	src/help.c src/history.c src/hosts.c src/hostfile.c		\
-	src/implicit.c src/io.c						\
+	src/implicit.c src/include_server_sort.c src/io.c		\
 	src/loadfile.c src/lock.c 					\
 	src/mon.c src/mon-notify.c src/mon-text.c			\
 	src/mon-gnome.c							\
@@ -426,6 +429,8 @@ check_PROGRAMS = \
 	h_parsemask@EXEEXT@ \
 	h_sa2str@EXEEXT@ \
 	h_scanargs@EXEEXT@ \
+	h_includesort@EXEEXT@ \
+	h_state@EXEEXT@ \
 	h_stats@EXEEXT@ \
 	h_strip@EXEEXT@ \
 	h_dotd@EXEEXT@ \
@@ -521,6 +526,12 @@ h_sa2str@EXEEXT@: $(h_sa2str_obj)
 
 h_scanargs@EXEEXT@: $(h_scanargs_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_scanargs_obj) $(LIBS)
+
+h_includesort@EXEEXT@: $(h_includesort_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_includesort_obj) $(LIBS)
+
+h_state@EXEEXT@: $(h_state_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_state_obj) $(LIBS)
 
 h_hosts@EXEEXT@: $(h_hosts_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_hosts_obj) $(LIBS)

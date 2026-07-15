@@ -1,5 +1,8 @@
-/* -*- c-file-style: "java"; indent-tabs-mode: nil; tab-width: 4; fill-column: 78 -*-
- * Copyright 2007 Google Inc.
+/* -*- c-file-style: "java"; indent-tabs-mode: nil -*-
+ *
+ * distcc -- A simple distributed compiler system
+ *
+ * Copyright (C) 2026 distcc contributors
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -17,9 +20,27 @@
  * USA.
  */
 
-/* Author: Manos Renieris */
+#include <config.h>
 
-int dcc_talk_to_include_server(char **argv, char ***files);
-int dcc_get_original_fname(const char *fname, char **original_fname);
-void dcc_sort_include_server_files(char **files);
-int dcc_approximate_includes(struct dcc_hostdef *host, char **argv);
+#include <stdio.h>
+
+#include "distcc.h"
+#include "include_server_if.h"
+#include "trace.h"
+#include "util.h"
+
+const char *rs_program_name = __FILE__;
+
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        rs_log_error("usage: %s FILE...", argv[0]);
+        return 1;
+    }
+
+    dcc_sort_include_server_files(argv + 1);
+    printf("%s\n", dcc_argv_tostr(argv + 1));
+
+    return 0;
+}
