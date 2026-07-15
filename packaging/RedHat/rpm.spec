@@ -84,6 +84,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/lsdistcc
 %{_libdir}/distcc
 %{_bindir}/pump
+%{_sbindir}/update-distcc-symlinks
 %dir %{_sysconfdir}/distcc
 %config %{_sysconfdir}/distcc/hosts
 %doc %{_mandir}/man1/distcc.1.gz
