@@ -459,7 +459,7 @@ class CompilerOptionsPassed_Case(SimpleDistCC_Case):
 
 
 class StripArgs_Case(SimpleDistCC_Case):
-    """Test -D and -I arguments are removed"""
+    """Test local-only preprocessor arguments are removed"""
     def runtest(self):
         cases = (("gcc -c hello.c", "gcc -c hello.c"),
                  ("cc -Dhello hello.c -c", "cc hello.c -c"),
@@ -472,6 +472,8 @@ class StripArgs_Case(SimpleDistCC_Case):
                  ("cc -c -I ../include  hello.c", "cc -c hello.c"),
                  ("cc -c -I. -I.. -I../include -I/home/mbp/garnome/include -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
+                 ("cc -c hello.c -iquote .", "cc -c hello.c"),
+                 ("cc -c hello.c -iquote.", "cc -c hello.c"),
                  ("cc -c -DDEBUG -DFOO=23 -D BAR -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
 
@@ -483,6 +485,13 @@ class StripArgs_Case(SimpleDistCC_Case):
             o, err = self.runcmd("h_strip %s" % cmd)
             if o[-1] == '\n': o = o[:-1]
             self.assert_equal(o, expect)
+
+
+class Stats_Case(SimpleDistCC_Case):
+    """Test distccd statistics list maintenance."""
+    def runtest(self):
+        out, err = self.runcmd("h_stats prune-old-head")
+        self.assert_equal(out.strip(), "ok")
 
 
 class IsSource_Case(SimpleDistCC_Case):
@@ -893,6 +902,34 @@ class ParseHostSpec_Case(SimpleDistCC_Case):
         out, err = self.runcmd(("DISTCC_HOSTS=\"%s\" " % spec) + self.valgrind()
                                + "h_hosts")
         assert out == expected, "expected %s\ngot %s" % (repr(expected), repr(out))
+
+
+class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
+    """Check that DISTCC_SSH options survive repeated Secure Shell connects."""
+    def runtest(self):
+        fake_ssh = os.path.abspath("fake-ssh")
+        fake_ssh_log = os.path.abspath("fake-ssh.log")
+
+        f = open(fake_ssh, "w")
+        try:
+            f.write("#!/bin/sh\n")
+            f.write("printf '%%s\\n' \"$*\" >> %s\n" % _ShellSafe(fake_ssh_log))
+        finally:
+            f.close()
+        os.chmod(fake_ssh, 0o700)
+
+        os.environ["DISTCC_SSH"] = "%s --distcc-test-option" % fake_ssh
+        self.runcmd("h_ssh repeat-env")
+
+        f = open(fake_ssh_log)
+        try:
+            lines = f.read().splitlines()
+        finally:
+            f.close()
+
+        expected = ("--distcc-test-option -l builduser buildhost distccd "
+                    "--inetd --enable-tcp-insecure")
+        self.assert_equal(lines, [expected, expected])
 
 
 class Compilation_Case(WithDaemon_Case):
@@ -1565,32 +1602,116 @@ large foo!
 
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
-    def startDaemon(self):
-        # FIXME: This  does not work well if it happens to get the same
-        # port as an existing server, because we can't catch the error.
-        cmd = (self.distccd() +
-               "--no-detach --daemon --verbose --log-file %s --pid-file %s "
-               "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
-               (_ShellSafe(self.daemon_logfile),
-                _ShellSafe(self.daemon_pidfile),
-                self.server_port,
-                _ShellSafe(self.daemon_sysroot)))
-        self.pid = self.runcmd_background(cmd)
-        self.add_cleanup(self.killDaemon)
-        # Wait until the server is ready for connections.
-        time.sleep(0.2)   # Give distccd chance to start listening on the port
+    def _readDaemonLog(self):
+        try:
+            return open(self.daemon_logfile, 'rt').read()
+        except IOError as e:
+            return "could not read daemon log: %s" % e
+
+    def _collectDaemonStartupFailure(self):
+        pid, status = os.waitpid(self.pid, os.WNOHANG)
+        if not pid:
+            return None
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return status
+
+    def _canConnectToDaemon(self):
+        # Some platforms keep a refused connection state on a socket.  Use a
+        # fresh socket for each readiness probe so later daemon readiness is
+        # observed correctly.
         sock = socket.socket()
-        while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
-            time.sleep(0.2)
+        try:
+            return sock.connect_ex(('127.0.0.1', self.server_port)) == 0
+        finally:
+            sock.close()
+
+    def startDaemon(self):
+        max_start_attempts = 5
+        attempts = 0
+        while attempts < max_start_attempts:
+            attempts += 1
+            try:
+                os.remove(self.daemon_pidfile)
+            except OSError:
+                pass
+
+            # Bind to the same loopback address family that this test probes.
+            cmd = (self.distccd() +
+                   "--no-detach --daemon --verbose --log-file %s --pid-file %s "
+                   "--port %d --listen 127.0.0.1 --allow 127.0.0.1 "
+                   "--enable-tcp-insecure --sysroot %s" %
+                   (_ShellSafe(self.daemon_logfile),
+                    _ShellSafe(self.daemon_pidfile),
+                    self.server_port,
+                    _ShellSafe(self.daemon_sysroot)))
+            self.pid = self.runcmd_background(cmd)
+
+            # Wait until the server is ready for connections, while also
+            # collecting early startup failures from the no-detach process.
+            # The pidfile check avoids accepting an unrelated listener on the
+            # same port when the daemon exits with EXIT_BIND_FAILED.
+            deadline = time.time() + 30
+            retry = False
+            while not self._canConnectToDaemon():
+                result = self._collectDaemonStartupFailure()
+                if result is not None:
+                    if result == EXIT_BIND_FAILED:
+                        self.server_port += 1
+                        retry = True
+                        break
+                    self.fail("failed to start daemon: %d" % result)
+                if time.time() > deadline:
+                    self.log("distccd log before startup timeout:\n%s" %
+                             self._readDaemonLog())
+                    self.killDaemon()
+                    self.server_port += 1
+                    retry = True
+                    break
+                time.sleep(0.2)
+            else:
+                while not os.path.exists(self.daemon_pidfile):
+                    result = self._collectDaemonStartupFailure()
+                    if result is not None:
+                        if result == EXIT_BIND_FAILED:
+                            self.server_port += 1
+                            retry = True
+                            break
+                        self.fail("failed to start daemon: %d" % result)
+                    if time.time() > deadline:
+                        self.log("distccd log before pidfile timeout:\n%s" %
+                                 self._readDaemonLog())
+                        self.killDaemon()
+                        self.server_port += 1
+                        retry = True
+                        break
+                    time.sleep(0.2)
+                if retry:
+                    continue
+                self.add_cleanup(self.killDaemon)
+                return
+            if retry:
+                continue
+        self.log("distccd log after startup attempts:\n%s" %
+                 self._readDaemonLog())
+        self.fail("failed to start daemon after %d attempts" % max_start_attempts)
 
     def killDaemon(self):
         # Terminate the process specified by the pidfile.  That should kill
         # the distccd process, any child distccd processes and the shell
         # process used to launch distccd.
-        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        try:
+            daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        except IOError:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+                os.waitpid(self.pid, 0)
+            except OSError:
+                pass
+            return
         os.kill(daemon_pid, signal.SIGTERM)
 
-        pid, ret = os.wait()
+        pid, ret = os.waitpid(self.pid, 0)
         self.assert_equal(self.pid, pid)
 
 
@@ -1823,7 +1944,8 @@ class Concurrent_Case(CompileHello_Case):
                                          self._cc + " -o testtmp.o -c testtmp.c")
             pids[kid] = kid
         while len(pids):
-            pid, status = os.wait()
+            pid = next(iter(pids))
+            pid, status = os.waitpid(pid, 0)
             if status:
                 self.fail("child %d failed with status %#x" % (pid, status))
             del pids[pid]
@@ -2369,6 +2491,7 @@ tests = [
          MixedServerPumpFallback_Case,
          InvalidHostSpec_Case,
          ParseHostSpec_Case,
+         SecureShellCommandEnvironment_Case,
          ImpliedOutput_Case,
          SyntaxError_Case,
          NoHosts_Case,
