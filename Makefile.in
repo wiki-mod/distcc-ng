@@ -54,6 +54,8 @@ icondir = $(datarootdir)/pixmaps
 desktopdir = $(datarootdir)/applications
 
 include_server_builddir = $(builddir)/_include_server
+INCLUDE_SERVER_BUILD_REQUIRED = no
+INCLUDE_SERVER_CHECKS_STRICT = yes
 
 # These must be done from here, not from autoconf, because they can
 # contain variable expansions written in Make syntax.  Ew.
@@ -597,10 +599,17 @@ distccmon-gnome@EXEEXT@: $(mon_obj) $(gnome_obj)
 
 # The include-server is a python app, so we use Python's build system.  We pass
 # the distcc version, the source location, the CPP flags (for location of the
-# includes), and the build location.
+# includes), and the build location.  Keep a configurable strict mode because
+# some packaging paths intentionally tolerate builds without include-server,
+# while maintainer checks must fail if no include-server was actually built.
 include-server:
-	if test -z "$(PYTHON)"; then	\
-	  echo "Not building $@: No suitable python found"; \
+	if test -z "$(PYTHON)" || test "$(PYTHON)" = ":"; then	\
+	  if test "$(INCLUDE_SERVER_BUILD_REQUIRED)" = "yes"; then \
+	    echo "Cannot build $@: No suitable python found" 1>&2; \
+	    exit 1; \
+	  else \
+	    echo "Not building $@: No suitable python found"; \
+	  fi; \
 	else						\
 	  mkdir -p "$(include_server_builddir)" &&      \
 	  DISTCC_VERSION="$(VERSION)"			\
@@ -751,31 +760,42 @@ distcc-maintainer-check: check_programs
 	 $(MAKE) PATH="`pwd`:$(RESTRICTED_PATH)" \
 	   TESTDISTCC_OPTS="$(TESTDISTCC_OPTS)" maintainer-check-no-set-path
 
-# If the include server extension module was built, then run the tests include
-# server.  TODO(klarlund): the outermost if assumes that the include-server
-# target may be satisfied w/o actually building an include server (or rather the
-# C extension); this logic needs to be verified or amended.
+# If the include server extension module was built, then run the include server
+# tests.  Strict mode fails when the extension build directory is missing because
+# a successful skip can hide that no include server tests actually ran.  The
+# executed-test counter protects against an accidentally empty test list.
 # TODO(csilvers): keep track of failures instead of exiting on the first one.
+include-server-maintainer-check: INCLUDE_SERVER_BUILD_REQUIRED = $(INCLUDE_SERVER_CHECKS_STRICT)
 include-server-maintainer-check: include-server
 	@if ! test -d "$(include_server_builddir)"; then \
-	  echo "Skipped include-server check"; \
+	  if test "$(INCLUDE_SERVER_CHECKS_STRICT)" = "no"; then \
+	    echo "Skipped include-server check"; \
+	  else \
+	    echo "Missing include-server build directory: $(include_server_builddir)" 1>&2; \
+	    echo "Set INCLUDE_SERVER_CHECKS_STRICT=no to allow this check to skip." 1>&2; \
+	    exit 1; \
+	  fi; \
 	else \
 	  CURDIR=`pwd`; \
 	  include_server_loc=`"$(srcdir)/find_c_extension.sh" "$(builddir)"`; \
 	  test $$? = 0 || (echo 'Could not locate extension.' 1>&2 && exit 1); \
 	  cd "$(srcdir)/include_server"; \
+	  tests_run=0; \
 	  for p in $(check_include_server_PY); do \
 	    p_base=`basename "$$p"`; \
 	    echo "Running:" \
-              "PYTHONPATH=$$CURDIR/$$include_server_loc:$$PYTHONPATH $(PYTHON) $$p_base"; \
+	              "PYTHONPATH=$$CURDIR/$$include_server_loc:$$PYTHONPATH $(PYTHON) $$p_base"; \
+	    tests_run=$$((tests_run + 1)); \
 	    if PYTHONPATH="$$CURDIR/$$include_server_loc:$$PYTHONPATH" $(PYTHON) "$$p_base" \
 		 > "$$CURDIR/$(tempdir)/$$p_base.out" 2>&1; then \
 	      echo "PASS"; \
 	      rm "$$CURDIR/$(tempdir)/$$p_base.out"; \
             else \
-              echo "FAIL"; cat "$$CURDIR/$(tempdir)/$$p_base.out"; exit 1; \
+	              echo "FAIL"; cat "$$CURDIR/$(tempdir)/$$p_base.out"; exit 1; \
 	    fi; \
 	  done; \
+	  test "$$tests_run" -gt 0 || \
+	    (echo "No include-server tests were run." 1>&2 && exit 1); \
 	fi
 
 # Do distcc-maintainer-check in pump-mode, if possible.
