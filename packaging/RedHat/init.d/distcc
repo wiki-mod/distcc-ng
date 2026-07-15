@@ -32,7 +32,7 @@ if [ -f /etc/debian_version ]; then
 elif [ -f /etc/redhat-release ]; then
     system=redhat
 else
-    echo "$0: Unknown system, please port and contact distcc-admin@google.com" 1>&2
+    echo "$0: Unknown system, please port and contact https://github.com/wiki-mod/distcc-ng/issues" 1>&2
     exit 1
 fi
 

@@ -14,10 +14,9 @@ Summary: Client side program for distributed C/C++ compilations.
 Version: %VERSION
 Release: %rel
 Group: Development/Languages
-Url: https://code.google.com/p/distcc
+Url: https://github.com/wiki-mod/distcc-ng
 License: GPL
-Packager: Google Inc. <opensource@google.com>
-Source: http://%{NAME}.googlecode.com/files/%{NAME}-%{VERSION}.tar.gz
+Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{VERSION}.tar.gz
 Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
