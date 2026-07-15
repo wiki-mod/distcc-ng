@@ -512,6 +512,8 @@ static void dcc_rewrite_generic_compiler(char **argv)
             strcpy(m, linkbuf);
 
             ssz = readlinkat(dir, m, linkbuf, sizeof(linkbuf) - 1);
+            if (ssz < 0)
+                return;
             linkbuf[ssz] = '\0';
         }
     }
