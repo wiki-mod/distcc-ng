@@ -1,0 +1,113 @@
+name: Package release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build_packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ConorMacBride/install-package@v1
+        with:
+          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev pkg-config python3-dev python3-setuptools rpm alien
+
+      - name: Derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            release_title="distcc-ng ${GITHUB_REF_NAME}"
+            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng:${version}"
+          else
+            version="manual-${GITHUB_RUN_NUMBER}"
+            release_title="distcc-ng manual-${GITHUB_RUN_NUMBER}"
+            image_tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/distcc-ng:manual-${GITHUB_RUN_NUMBER}"
+          fi
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+          printf 'tag_name=%s\n' "${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
+          printf 'release_title=%s\n' "${release_title}" >> "${GITHUB_OUTPUT}"
+          printf 'image_tag=%s\n' "${image_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release packages
+        shell: bash
+        run: |
+          ./scripts/build-release-packages.sh
+
+      - name: Generate build attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
+
+      - name: Publish container image
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          VERSION_LABEL: ${{ steps.meta.outputs.version }}
+          VCS_REF: ${{ github.sha }}
+        run: |
+          printf '%s\n' "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker build \
+            --file docker/release/Dockerfile \
+            --build-arg "VCS_REF=${VCS_REF}" \
+            --build-arg "VERSION=${VERSION_LABEL}" \
+            --tag "${IMAGE_TAG}" \
+            .
+          docker push "${IMAGE_TAG}"
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          shopt -s nullglob
+          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+
+          notes_file="$(mktemp)"
+          {
+            printf '%s\n\n' "${RELEASE_TITLE}"
+            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n'
+            printf 'Source commit: %s\n' "${GITHUB_SHA}"
+            printf 'Tag: %s\n\n' "${TAG_NAME}"
+            printf 'Container image: %s\n' "${IMAGE_TAG}"
+          } > "${notes_file}"
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${assets[@]}" --clobber
+            gh release edit "${TAG_NAME}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          else
+            gh release create "${TAG_NAME}" "${assets[@]}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: distcc-release-packages-${{ steps.meta.outputs.version }}
+          path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
