@@ -16,7 +16,7 @@ Release: %rel
 Group: Development/Languages
 Url: https://github.com/wiki-mod/distcc-ng
 License: GPL
-Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{VERSION}.tar.gz
+Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{VERSION}.tar.gz#/%{NAME}-%{VERSION}.tar.gz
 Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
