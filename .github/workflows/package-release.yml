@@ -241,9 +241,9 @@ jobs:
             printf 'Container image: %s\n' "${IMAGE_TAG}"
           } > "${notes_file}"
 
-          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${assets[@]}" --clobber
-            gh release edit "${TAG_NAME}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
+            gh release edit "${TAG_NAME}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
           else
-            gh release create "${TAG_NAME}" "${assets[@]}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
           fi
