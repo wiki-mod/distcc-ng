@@ -1,8 +1,23 @@
 name: C build
 
 on:
+  # Restricted to the two long-lived branches: without this filter, pushing
+  # a commit to an in-repo PR branch (dev/issueNN_...) fired this AND
+  # pull_request's own synchronize event for the same commit, running the
+  # full matrix build twice per commit (found via a lancache-ng CI-cost
+  # comparison, 2026-07-16). pull_request stays unfiltered by branch --
+  # that's the one meant to cover every PR commit.
   push:
+    branches:
+      - current_dev
+      - master
+    paths-ignore:
+      - '**/*.md'
+      - 'doc/**'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'doc/**'
 
 jobs:
   make_check:
