@@ -114,6 +114,9 @@ static void dcc_show_usage(void)
 "   @HOST                      SSH connection to specified host.\n"
 "   USER@HOST                  SSH connection to specified username at host.\n"
 "   HOSTSPEC,lzo               Enable compression.\n"
+#ifdef HAVE_ZSTD
+"   HOSTSPEC,zstd              Enable Zstandard compression.\n"
+#endif
 "   HOSTSPEC,cpp,lzo           Use pump mode (remote preprocessing).\n"
 "   HOSTSPEC,auth              Enable GSS-API based mutual authenticaton.\n"
 "   --randomize                Randomize the server list before execution.\n"

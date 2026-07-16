@@ -651,6 +651,7 @@ static int dcc_run_job(int in_fd,
     char **tweaked_argv = NULL;
     int status = 0;
     char *temp_i = NULL, *temp_o = NULL;
+    char *dwo_fname = NULL;
     char *err_fname = NULL, *out_fname = NULL, *deps_fname = NULL;
     char *temp_dir = NULL; /* for receiving multiple files */
     int ret = 0, compile_ret = 0;
@@ -733,6 +734,10 @@ static int dcc_run_job(int in_fd,
     if ((ret = dcc_make_tmpnam("distccd", ".o", &temp_o)))
         goto out_cleanup;
 
+    dwo_fname = dcc_make_dwo_fname(temp_o);
+    if (!dwo_fname)
+        goto out_cleanup;
+
     /* if the protocol is multi-file, then we need to do the following
      * in a loop.
      */
@@ -811,7 +816,10 @@ static int dcc_run_job(int in_fd,
             job_result = STATS_COMPILE_ERROR;
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0 */
-        dcc_x_token_int(out_fd, "DOTO", 0);
+        if (protover == DCC_VER_4)
+            dcc_x_token_2int(out_fd, "DOTO", 0, 0);
+        else
+            dcc_x_token_int(out_fd, "DOTO", 0);
 
         if (job_result == -1)
             job_result = STATS_COMPILE_ERROR;
@@ -833,6 +841,10 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
+        if (protover == DCC_VER_4) {
+            if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
+                goto out_cleanup;
+        }
 
         if (cpp_where == DCC_CPP_ON_SERVER) {
             char *cleaned_dotd;
@@ -934,6 +946,7 @@ out_cleanup:
     free(deps_fname);
     free(err_fname);
     free(out_fname);
+    free(dwo_fname);
 
     free(client_cwd);
     free(server_cwd);

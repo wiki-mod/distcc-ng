@@ -22,6 +22,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `ccache` object cache directory persisted across runs via
   `actions/cache` (explicit `CCACHE_DIR`, since ccache's own default
   cache location differs between Linux and macOS). (#54)
+- Wire protocol version 4: optional zstd compression support alongside
+  the existing LZO, plus `-gsplit-dwarf` support. Configure-time
+  auto-detected (`PKG_CHECK_MODULES([ZSTD], [libzstd >= 1])`), builds
+  fine without libzstd present (`AC_MSG_NOTICE([zstd support disabled])`,
+  no hard dependency), per `doc/compatibility-policy.md`. Recovered and
+  rebased from this fork's own prior (unmerged) `v3.4.1-zstd` release —
+  originally distcc/distcc#232 by Shawn Landden. (fixes #67)
 
 ### Changed
 
