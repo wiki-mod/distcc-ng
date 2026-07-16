@@ -15,11 +15,12 @@ Core pieces: `distcc` (client), `distccd` (compile server daemon), `pump` (the i
 
 ## Governance
 
-**Mandatory at the start of every session/task in this repo**: read `AGENTS.md` (repo root) in full and follow it as binding rules for this repository — not optional background reading. It is not auto-loaded into context the way this file is; you must actively read it yourself. If it changes during a session (e.g. after a `git pull` or merge), re-read it before continuing work that it governs.
+**Mandatory at the start of every session/task in this repo**: read `AGENTS.md` (repo root) **completely, start to finish, no summarizing, no skipping sections, no reading only the parts that seem relevant** — and follow it as binding rules for this repository, not optional background reading. It is not auto-loaded into context the way this file is; you must actively read it yourself. This applies equally to every delegated subagent working in this repo, not just the top-level session. If it changes during a session (e.g. after a `git pull` or merge), re-read it in full again before continuing work that it governs. A `.github/AGENTS.md` pointer file exists for tools that only look there — it just redirects here, the root file is the real source.
 
 - **GitHub content language**: English.
 - **No direct pushes to `master`**: all changes go through pull requests, and merging into `master` requires the maintainer's explicit approval — this fork's hardest rule, restated because it's the one most likely to be assumed away by habit from other projects.
 - **`distcc/distcc` (upstream) is read-only, always, no exceptions.** This clone has an `upstream` remote pointing at it — never push, open/comment/edit a PR or issue, or take any write action against it; always pass `--repo wiki-mod/distcc-ng` explicitly on every `gh` command. See `AGENTS.md`'s "What Not To Do" for the full rule and the incident that made it necessary.
+- **More generally: read anywhere, write only to `wiki-mod/distcc-ng`.** Reading/searching any repo is fine, no permission needed. Writing — opening/commenting/editing/closing an issue or PR, pushing, merging — anywhere other than `wiki-mod/distcc-ng` requires the maintainer's explicit, per-action authorization first; never assume a past approval carries over, and this applies retroactively too.
 
 ## Architecture
 

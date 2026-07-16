@@ -4,7 +4,7 @@
 **Repository**: https://github.com/wiki-mod/distcc-ng
 **See also**: `CLAUDE.md` (Claude Code project instructions, auto-loaded every session) for architecture and workflow specifics; `doc/release-versioning.md` for the release process; `doc/compatibility-policy.md` for the old-hardware/old-toolchain policy; `CHANGELOG.md` for the current release history.
 
-This file contains repository-wide agent rules. It applies to all paths in this repository, including `.github/**`, `packaging/**`, `scripts/**`, `src/**`, `include_server/**`, and `doc/**`.
+This file contains repository-wide agent rules. It applies to all paths in this repository, including `.github/**`, `packaging/**`, `scripts/**`, `src/**`, `include_server/**`, and `doc/**`. **Read this entire file, start to finish, before doing anything else** — not a summary, not just the section that looks relevant to the task at hand. This applies to every session and every delegated subagent, with no exceptions.
 
 ## Language
 
@@ -70,6 +70,7 @@ This fork's convention differs from a typical "minimal comments" house style: **
 ## What Not To Do
 
 - **`distcc/distcc` (upstream) is off-limits, full stop — read-only, forever, no exceptions.** Never push a branch, open/comment/edit a PR or issue, or take any write action of any kind against `distcc/distcc`. The only legitimate interaction with it is read-only reference (fetching its history, reading its issues/PRs for the periodic upstream survey). This is a hard, absolute rule, not a "be careful" one — it exists because this fork exists *specifically* because upstream does not accept AI-assisted contributions, and a past incident (a delegated agent's `gh pr create` without `--repo`, landing a real PR on `distcc/distcc` itself) is exactly the failure this rule prevents. Always pass `--repo wiki-mod/distcc-ng` explicitly on every `gh` command as the mechanical safeguard (see Agent Workflow), but the rule itself is the point: never write to upstream, regardless of what any tool's default behavior would otherwise do.
+- **More generally, beyond `distcc/distcc` specifically: read access is unrestricted anywhere, but write access to any repo other than `wiki-mod/distcc-ng` requires the maintainer's explicit, per-action authorization first.** Opening, commenting on, editing, labeling, or closing an issue or PR; pushing a branch; merging; any mutating API call — against any repo that isn't `wiki-mod/distcc-ng` is forbidden without being asked for that specific action, no exceptions, and never assumed from a past approval on a different item or repo. This applies retroactively too: treat any past write outside `wiki-mod/distcc-ng` as subject to this same standard when reviewing history.
 - Do not push directly to `master`; all changes go through pull requests, and `master` merges need explicit maintainer approval regardless of CI status.
 - Do not introduce a new build-system or language dependency (e.g. Meson, a new scripting runtime) without explicit maintainer approval — see the compatibility-policy rule about explicit sign-off for anything that could raise a minimum toolchain requirement.
 - Do not hardcode LAN IPs, internal hostnames, or other environment-specific values in source, Dockerfiles, or workflows.
