@@ -55,6 +55,25 @@ scripts/                 # build-release-packages.sh, check-release-version.sh
 
 `make check` runs the real test suite (`test/testdistcc.py`, a comfychair-based harness) — this includes genuine daemon+compile e2e-style tests (`WithDaemon_Case`, `CompileHello_Case`: a real `distccd` is started and a real compile is distributed through it), not just unit tests of argument parsing. Treat "does `make check` pass" as a meaningful bar, but not a substitute for an actual CI run when the change touches build/test machinery itself (see `AGENTS.md`'s Required Validation section) or when a real distributed-compile validation (beyond a single "hello world") is the more honest test for the change at hand.
 
+## Changelog Maintenance
+
+CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and is maintained with the aid of [git-changelog](https://pawamoy.github.io/git-changelog/) — a tool that automatically generates changelog entries from git commits while preserving hand-written narrative entries in released versions.
+
+**Usage** (before creating a release):
+```bash
+# Install git-changelog if not already present
+pip install git-changelog
+
+# Run the tool to refresh [Unreleased] with recent commits
+git-changelog
+```
+
+This updates the `[Unreleased]` section with automatically-generated entries for all commits since the last release. Developers should review the generated entries and enhance them with narrative context (the "why" behind changes, issue/PR references, etc.) as described in the existing changelog, then commit the updated `CHANGELOG.md` as part of the release process.
+
+The tool is configured via `.git-changelog.toml` and uses the "basic" commit convention (no Conventional Commits requirement). The `<!-- insertion marker -->` comment in CHANGELOG.md marks the insertion point for new entries; do not remove this marker.
+
+See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-changelog assists with this but does not replace manual review and entry curation.
+
 ## Running (development)
 
 ```bash
