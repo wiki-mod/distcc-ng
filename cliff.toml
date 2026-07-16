@@ -37,16 +37,16 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
 
-    {% for commit in commits %}
-        - **{{ commit.message | upper_first | trim }}**\
-            {% if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
-        {% if commit.body %}\
-          {% for line in commit.body | split(pat="\n") %}
-            {% set trimmed = line | trim %}\
-            {% if trimmed | length > 0 %}  {{ trimmed }}
-            {% endif %}\
-          {% endfor %}\
-        {% endif %}
+    {% for commit in commits -%}
+        {%- set msg_lines = commit.message | trim | split(pat="\n") -%}
+        - **{{ msg_lines | first | upper_first | trim }}**{% if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
+        {% for line in msg_lines -%}
+          {%- if not loop.first -%}
+            {%- set trimmed = line | trim -%}
+            {%- if trimmed | length > 0 %}  {{ trimmed }}
+            {% endif -%}
+          {%- endif %}
+        {%- endfor %}
     {% endfor %}
 {% endfor %}
 
@@ -72,7 +72,8 @@ split_commits = false
 # - Remove trailing separator lines (squash-merge artifact from GitHub)
 commit_preprocessors = [
   { pattern = "\\(cherry picked from commit [a-f0-9]+\\)", replace = "" },
-  { pattern = "^-{5,}$", replace = "" }
+  { pattern = "(?m)^-{5,}\\s*$", replace = "" },
+  { pattern = "(?m)^Co-authored-by:.*$", replace = "" }
 ]
 
 # Commit parsers: keyword-based grouping (not Conventional Commits)

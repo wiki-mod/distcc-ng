@@ -74,7 +74,7 @@ git-cliff --unreleased
 
 This outputs a changelog section for all commits not yet assigned to a release tag. Pipe it to a file (`git-cliff --unreleased > /tmp/new-entries.md`), review the generated entries, enhance them with additional narrative context as needed, and manually merge the best entries into the `[Unreleased]` section of CHANGELOG.md. Then commit the updated `CHANGELOG.md` as part of the release process.
 
-The tool is configured via `cliff.toml` and does **not** enforce Conventional Commits (`feat:`/`fix:` prefixes) — instead, it uses keyword-based commit categorization (Fixed, Added, Changed, Removed, Security, Other) suitable for this repo's commit message style. Commit body text is automatically filtered to remove `(cherry picked from ...)` noise and git trailers that are already available in structured form.
+The tool is configured via `cliff.toml` and does **not** enforce Conventional Commits (`feat:`/`fix:` prefixes) — instead, it uses keyword-based commit categorization (Fixed, Added, Changed, Removed, Security, Other) suitable for this repo's commit message style. Commit body text is automatically filtered to remove `(cherry picked from ...)` noise, separator dashes (GitHub squash-merge artifacts), and git trailers like `Co-authored-by:` that are already tracked in structured form by GitHub.
 
 See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-cliff assists with this but does not replace manual review and entry curation.
 
