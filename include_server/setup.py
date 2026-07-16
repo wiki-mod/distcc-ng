@@ -199,6 +199,7 @@ sources = [
     'src/clinet.c',
     'src/state.c',
     'src/srvrpc.c',
+    'src/pathsafety.c',
     'src/pump.c',
     'src/rpc.c',
     'src/io.c',
