@@ -31,6 +31,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
   invocations to local-only compilation instead of attempting a remote
   dispatch. Ports upstream distcc/distcc#413.
 
+### Security
+
+- Fixed 8 of 11 `cpp/world-writable-file-creation` CodeQL alerts
+  (`src/daemon.c`, `src/dparent.c`, `src/compile.c`, `src/dotd.c`,
+  `src/state.c`, `src/zeroconf.c`) by replacing hardcoded `0666` `open()`
+  modes with explicit least-privilege modes (`0600`, or `0644` for files
+  read cross-user by design: the daemon's pid file, the process state
+  directory read by `distccmon-*`, and zeroconf's discovered-host file),
+  and by switching two `fopen()`-based file creations (which always create
+  at the umask-modified `0666` default) to `open()`+`fdopen()` with an
+  explicit mode. Three instances deliberately left unchanged, each with a
+  documented reason rather than silently tightened: `src/lock.c`'s
+  lock-slot file (shared, multi-user `DISTCC_DIR`/lock-directory support),
+  `src/bulk.c`'s received-compile-output file (must match local-compile
+  permissions — `test/testdistcc.py`'s `ModeBits_Case` asserts this), and
+  `src/traceenv.c`'s trace-env file (same "don't tighten without a concrete
+  reason" reasoning). (#157)
+
 ### Changed
 
 - **Nightly container image moved to its own package**, `distcc-ng-nightly:latest`

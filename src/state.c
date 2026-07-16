@@ -142,7 +142,10 @@ static int dcc_open_state(int *p_fd,
 {
     int fd;
 
-    fd = open(fname, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0666);
+    /* 0600: state files live under the invoking user's own DISTCC_DIR and
+     * are only ever read by that same user's own distccmon-* tools -- no
+     * other user or process needs access. */
+    fd = open(fname, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0600);
     if (fd == -1) {
         rs_log_error("failed to open %s: %s", fname, strerror(errno));
         return EXIT_IO_ERROR;

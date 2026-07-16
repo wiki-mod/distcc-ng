@@ -437,8 +437,9 @@ static int daemon_proc(const char *host_file, const char *lock_file, int n_slots
 
     rs_log_info("Zeroconf daemon running.\n");
 
-    /* Open daemon lock file and lock it */
-    if ((lock_fd = open(lock_file, O_RDWR|O_CREAT, 0666)) < 0) {
+    /* Open daemon lock file and lock it. 0600: this coordinates helper-daemon
+     * instances started by the same user; no other user needs to touch it. */
+    if ((lock_fd = open(lock_file, O_RDWR|O_CREAT, 0600)) < 0) {
         rs_log_crit("open('%s') failed: %s\n", lock_file, strerror(errno));
         goto finish;
     }
@@ -448,8 +449,9 @@ static int daemon_proc(const char *host_file, const char *lock_file, int n_slots
         goto finish;
     }
 
-    /* Open host file */
-    if ((d.fd = open(host_file, O_RDWR|O_CREAT, 0666)) < 0) {
+    /* Open host file. 0600: the discovered-host list is consumed only by
+     * this same user's own distcc client invocations. */
+    if ((d.fd = open(host_file, O_RDWR|O_CREAT, 0600)) < 0) {
         rs_log_crit("open('%s') failed: %s\n", host_file, strerror(errno));
         goto finish;
     }
@@ -579,8 +581,9 @@ int dcc_zeroconf_add_hosts(struct dcc_hostdef **ret_list, int *ret_nhosts, int n
     assert(host_file);
     sprintf(host_file, "%s/hosts", dir);
 
-    /* Open lock file */
-    if ((lock_fd = open(lock_file, O_RDWR|O_CREAT, 0666)) < 0) {
+    /* Open lock file. 0600: same rationale as the daemon-side lock file
+     * above -- this only coordinates this user's own client invocations. */
+    if ((lock_fd = open(lock_file, O_RDWR|O_CREAT, 0600)) < 0) {
         rs_log_crit("open('%s') failed: %s\n", lock_file, strerror(errno));
         goto finish;
     }
