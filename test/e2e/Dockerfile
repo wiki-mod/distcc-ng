@@ -45,12 +45,13 @@ COPY . /work
 
 # Build and install distcc-ng into /usr/local so the server runs the installed
 # distccd and the client runs the installed distcc, both independent of the
-# /work tree the client later rebuilds. --without-zstd keeps the dependency
-# surface identical to the release image; LZO is always available regardless.
+# /work tree the client later rebuilds. Build WITH zstd support (present in
+# installed libzstd-dev above) to enable real testing of zstd compression in
+# both plain and pump modes. LZO is always available regardless.
 # "make clean" leaves a configured-but-unbuilt tree so the client's self-compile
 # recompiles every object through distcc rather than reusing these artifacts.
 RUN ./autogen.sh && \
-    ./configure PYTHON=python3 --prefix=/usr/local --without-zstd && \
+    ./configure PYTHON=python3 --prefix=/usr/local && \
     make -j"$(nproc)" && \
     make install && \
     make clean

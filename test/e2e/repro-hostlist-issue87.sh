@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #
-# Reproduces (for real, not from reading code) the failure modes behind
-# issue #87: distcc/pump currently need two different host-list entries.
+# Regression test for issue #87: unified distcc+pump host-list support.
+# Verifies that a single host-list entry works correctly under both plain
+# distcc and pump mode, without requiring two different formats.
+#
 # Runs entirely inside the distcc-client container of the existing e2e
 # harness (test/e2e/docker-compose.yml), against the same distccd-server.
 # Does not touch DISTCC_HOSTS from the environment -- each scenario sets it
 # explicitly to isolate exactly one variable at a time.
 #
-# This is an investigation tool, not a permanent regression test -- it is
-# expected to demonstrate CURRENT failures, some of which issue #87 may fix.
+# Before the fix: Scenario A (bare host) would fail under pump with
+# "pump mode requested, but distcc hosts list does not contain any hosts
+# with ',cpp' option". Scenario B (,cpp without compression) would fail at
+# parse time with "invalid host options". After the fix, all scenarios
+# should succeed with real distributed compiles.
 
 set -uo pipefail  # deliberately no -e: every scenario's exit status is data
 

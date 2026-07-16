@@ -9,6 +9,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **pump mode**: unified distcc+pump host-list support (fixes #87). pump.in's
+  manual-DISTCC_HOSTS code path now auto-appends `,cpp,lzo` to hosts that don't
+  already specify `,cpp`, mirroring the behavior of the auto-discovery path.
+  This allows a single host-list entry (e.g. `distccd-server:3632` or
+  `distccd-server:3632,lzo`) to work correctly under both plain distcc
+  (which gracefully falls back to client-side preprocessing if no include-server
+  is running) and pump mode (which requires server-side preprocessing).
+  Previously, users needed two separate entries with different formats,
+  causing hard failures or silent behavior differences in real deployments. (#87)
+
 ### Added
 
 - CI: automatic failure tracking for the scheduled pipelines. A shared
