@@ -620,6 +620,7 @@ class _IncludeServerPortReady(object):
     try:
       os.waitpid(child_pid, 0)
     except OSError:
+      # Child may already be reaped during shutdown, safe to ignore
       pass
 
   def Acquire(self, child_pid=None):
@@ -645,6 +646,7 @@ class _IncludeServerPortReady(object):
     try:
       os.write(self.write_fd, self.FAILED)
     except OSError:
+      # Write failures here are intentionally ignored
       pass
 
 
@@ -724,7 +726,7 @@ def Main():
     include_analyzer = None
     try:
       (include_analyzer, server) = _SetUp(include_server_port)
-    except:
+    except Exception:
       print("Include server: exception occurred during startup.",
               file=sys.stderr)
       _PrintStackTrace(sys.stderr)

@@ -211,6 +211,7 @@ class IncludeServerTest(unittest.TestCase):
     try:
       include_handler.handle()
     except basics.NotCoveredTimeOutError:
+      # Timeout is expected for this test scenario
       pass
     self.assertEqual(timer_was_active, [True])
 
@@ -242,10 +243,12 @@ class IncludeServerTest(unittest.TestCase):
       try:
         os.unlink(pid_file.name)
       except OSError:
+        # Cleanup failures are intentionally ignored
         pass
       try:
         os.rmdir(missing_root)
       except OSError:
+        # Cleanup failures are intentionally ignored
         pass
 
   def test_IncludeServerPortReady_timeout_stops_child(self):

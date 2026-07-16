@@ -13,6 +13,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **code quality**: suppressed `github-code-quality[bot]` findings (unclosed files,
+  bare except blocks, empty exception handlers). Fixed unclosed `open()` calls in
+  `test/testdistcc.py` by wrapping them in `with` statements. Narrowed bare
+  `except:` in `include_server/include_server.py` startup to `except Exception:`
+  so `SystemExit` and `KeyboardInterrupt` propagate. Added explanatory comments
+  to intentional exception suppressions. Narrowed `OSError` handling in pidfile
+  cleanup to only suppress `ENOENT` (file already gone) and re-raise other errors.
+  All changes are behavior-preserving. (#109)
 - **pump mode**: unified distcc+pump host-list support (fixes #87). pump.in's
   manual-DISTCC_HOSTS code path now auto-appends `,cpp,lzo` to hosts that don't
   already specify `,cpp`, mirroring the behavior of the auto-discovery path.
