@@ -109,7 +109,7 @@ jobs:
         run: |
           printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push ${{ matrix.platform }} image
+      - name: Build ${{ matrix.platform }} image
         shell: bash
         env:
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
@@ -123,7 +123,32 @@ jobs:
             --build-arg "VERSION=${VERSION_LABEL}" \
             --tag "${IMAGE_TAG}" \
             .
-          docker push "${IMAGE_TAG}"
+
+      - name: Prepare local Trivy cache
+        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}"
+
+      - name: Scan image with Trivy
+        # Scans the locally-built image before it's ever pushed -- a
+        # vulnerable image never reaches the registry. Pattern and options
+        # match wiki-mod/lancache-ng's real, working setup.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          hide-progress: true
+          cache: "false"
+          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}
+          timeout: 10m
+          exit-code: "1"
+
+      - name: Push ${{ matrix.platform }} image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+        run: docker push "${IMAGE_TAG}"
 
   publish_manifest:
     needs: [setup, build_container]
