@@ -29,6 +29,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `E2E_MIN_REMOTE_JOBS`) so one proven harness drives both the nightly
   self-compile and this heartbeat. (Per-push `master` health is already covered
   by `c-build.yml`'s existing push trigger + its `distributed_e2e` job.) (#81)
+- CI: `repro_issue87` job in `c-build.yml` + `test/e2e/repro-hostlist-issue87.sh`
+  — an investigation-only, `continue-on-error` job reproducing (for real,
+  via the existing distcc+pump e2e harness) the failure modes behind #87
+  (distcc and pump currently need two different host-list entries). Added
+  as a job in the already-registered `c-build.yml` rather than a new
+  workflow file, since a brand-new workflow file isn't recognized by the
+  Actions API until it exists on the default branch (the same structural
+  limit already hit in #81). Not part of the merge gate; to be removed
+  once #87's real fix lands. (#87)
 - CI: `nightly-publish.yml` — a scheduled (and manually dispatchable) workflow
   that publishes a moving `nightly` channel from `current_dev`, but only after
   a full build + `make check` **and** the two-container distributed-compile

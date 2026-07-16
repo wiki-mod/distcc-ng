@@ -106,3 +106,37 @@ jobs:
       # docker and the compose plugin are preinstalled on ubuntu-latest.
       - name: Run distributed-compile end-to-end test
         run: bash test/e2e/run-e2e.sh
+
+  # TEMPORARY, investigation-only: reproduces the failure modes behind #87
+  # (distcc/pump currently need two different host-list entries) for real,
+  # reusing the e2e harness's Dockerfile/network unmodified. Not a pass/fail
+  # gate -- `continue-on-error` so it never blocks a PR; the point is the
+  # captured output, not a required check. Remove this job once #87 lands
+  # its real fix with proper regression coverage.
+  repro_issue87:
+    name: "[investigation] issue #87 host-list repro"
+    # push (not just pull_request) is what this branch's own runs actually
+    # show -- gating on pull_request alone left this permanently "skipped".
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Bring up distccd-server, run the repro script in distcc-client
+        working-directory: test/e2e
+        run: |
+          set -euo pipefail
+          docker compose build
+          docker compose up -d distccd-server
+          docker compose run --rm --no-deps \
+            -e DISTCC_FALLBACK=0 -e DISTCC_VERBOSE=1 \
+            distcc-client bash test/e2e/repro-hostlist-issue87.sh
+      - name: Server log (diagnostics)
+        if: always()
+        working-directory: test/e2e
+        run: docker compose logs --no-color distccd-server | tail -n 200 || true
+      - name: Tear down
+        if: always()
+        working-directory: test/e2e
+        run: docker compose down -v --remove-orphans || true
