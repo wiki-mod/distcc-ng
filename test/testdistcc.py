@@ -153,7 +153,7 @@ Example:
 # teardown kills all daemon processes and then stop using --lifetime.
 
 
-import time, sys, string, os, glob, re, socket
+import time, sys, string, os, glob, re, socket, errno
 import signal, os.path
 import comfychair
 
@@ -1708,7 +1708,8 @@ class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
     def _readDaemonLog(self):
         try:
-            return open(self.daemon_logfile, 'rt').read()
+            with open(self.daemon_logfile, 'rt') as f:
+                return f.read()
         except IOError as e:
             return "could not read daemon log: %s" % e
 
@@ -1737,8 +1738,10 @@ class NoDetachDaemon_Case(CompileHello_Case):
             attempts += 1
             try:
                 os.remove(self.daemon_pidfile)
-            except OSError:
-                pass
+            except OSError as e:
+                # Ignore ENOENT (pidfile already gone, expected on first iteration)
+                if e.errno != errno.ENOENT:
+                    raise
 
             # Bind to the same loopback address family that this test probes.
             cmd = (self.distccd() +
@@ -1805,12 +1808,14 @@ class NoDetachDaemon_Case(CompileHello_Case):
         # the distccd process, any child distccd processes and the shell
         # process used to launch distccd.
         try:
-            daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+            with open(self.daemon_pidfile, 'rt') as f:
+                daemon_pid = int(f.read())
         except IOError:
             try:
                 os.kill(self.pid, signal.SIGTERM)
                 os.waitpid(self.pid, 0)
             except OSError:
+                # Process may already be gone, ignore
                 pass
             return
         os.kill(daemon_pid, signal.SIGTERM)
