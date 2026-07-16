@@ -168,8 +168,9 @@ char *dcc_argv_tostr(char **a)
             *ss++ = ' ';
         if (needs_quotes)
             *ss++ = '"';
-        strcpy(ss, a[i]);
-        ss += strlen(a[i]);
+        size_t arg_len = strlen(a[i]);
+        memcpy(ss, a[i], arg_len);
+        ss += arg_len;
         if (needs_quotes)
             *ss++ = '"';
     }
