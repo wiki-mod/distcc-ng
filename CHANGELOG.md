@@ -15,6 +15,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
   images before they're pushed, matching wiki-mod/lancache-ng's real
   setup (severity HIGH/CRITICAL, ignore-unfixed, `.trivyignore.yaml`,
   fail-closed). (#52)
+- CI: SPDX-format SBOM (Software Bill of Materials) generated for each
+  built container image, uploaded as a workflow artifact. (#53)
 
 ## [3.5.1-NG] - 2026-07-16
 
