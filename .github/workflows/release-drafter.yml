@@ -26,15 +26,15 @@ jobs:
       # Needed for the autolabeler to assign labels to PRs.
       pull-requests: write
     steps:
-      - uses: release-drafter/release-drafter@v6
-        # release-drafter's config-loading (@probot/octokit-plugin-config)
-        # always resolves ".github/release-drafter.yml" against the repo's
-        # default branch (master) -- no config-name ref-pin syntax can
-        # override this (confirmed live: ":release-drafter.yml@current_dev"
-        # fails with "extension is not support for configuration" on every
-        # single run, push- and pull_request-triggered alike; a prior
-        # comment here claimed this syntax was "confirmed" working, which
-        # was wrong). The actual fix was giving master its own copy of the
-        # config file (#132/#133), so the plain default resolution works.
+      # Pinned to v7.5.1's commit (not the floating "v7" tag), per the
+      # unpinned-third-party-action CodeQL finding. v7 (unlike v6) declares
+      # `using: node24` in its own action.yml -- no more Node 20 deprecation
+      # warning -- and, more importantly, its config-loading resolves
+      # config-name against the *current* ref/branch automatically instead
+      # of being hardcoded to the repo's default branch. That hardcoding is
+      # what forced #132/#133's workaround (a duplicate .github/release-drafter.yml
+      # on master); v7 doesn't need it, though the duplicate is left in place
+      # as harmless redundancy rather than removed as part of this change.
+      - uses: release-drafter/release-drafter@4d75298e00d9e34c483e5ff8c68d0ea1c1940c1e # v7.5.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
