@@ -726,7 +726,7 @@ def Main():
     include_analyzer = None
     try:
       (include_analyzer, server) = _SetUp(include_server_port)
-    except Exception:
+    except (Exception, SystemExit):
       print("Include server: exception occurred during startup.",
               file=sys.stderr)
       _PrintStackTrace(sys.stderr)
