@@ -70,9 +70,13 @@ split_commits = false
 # Commit preprocessors: regex-based cleanup BEFORE parsing
 # - Remove (cherry picked from commit <sha>) noise lines (zstd recovery artifact)
 # - Remove trailing separator lines (squash-merge artifact from GitHub)
+#   Note: multiline mode (?m) required so ^/$ match per-line, not string boundaries
+# - Remove Co-authored-by and Signed-off-by trailers (already available structured)
 commit_preprocessors = [
   { pattern = "\\(cherry picked from commit [a-f0-9]+\\)", replace = "" },
-  { pattern = "^-{5,}$", replace = "" }
+  { pattern = "(?m)^-{5,}$", replace = "" },
+  { pattern = "(?m)^Co-authored-by:.*$", replace = "" },
+  { pattern = "(?m)^Signed-off-by:.*$", replace = "" }
 ]
 
 # Commit parsers: keyword-based grouping (not Conventional Commits)
