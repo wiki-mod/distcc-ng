@@ -45,3 +45,20 @@ jobs:
           E2E_MIN_REMOTE_JOBS: "20"
           E2E_SCENARIO: ccache weekly heartbeat
         run: bash test/e2e/run-e2e.sh
+
+  # Files/updates the standing nightly-broken issue on failure, closes it on
+  # success. Separate job with if: always() so it reports even when the
+  # heartbeat job itself failed.
+  report:
+    needs: [ccache_heartbeat]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/nightly-status
+        with:
+          outcome: ${{ needs.ccache_heartbeat.result == 'success' && 'success' || 'failure' }}
+          scope: weekly ccache heartbeat (master)
