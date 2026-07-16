@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- CI: automatic failure tracking for the scheduled pipelines. A shared
+  composite action (`.github/actions/nightly-status`) files or updates a single
+  standing `nightly-broken` GitHub issue when the nightly publish or the weekly
+  heartbeat fails — reusing the same open issue across consecutive failures
+  rather than opening a new one each run — and closes it automatically on the
+  next success. Wired as an `if: always()` reporting job in both workflows so
+  it fires even when a gate fails and later jobs are skipped. Both pipelines
+  feed the one standing issue (per this design), which self-corrects: a success
+  closes it and the next real failure re-files it. (#81)
 - CI: `master-heartbeat.yml` — a weekly (and manually dispatchable) heartbeat
   that builds ccache's own source (pinned to `v4.13.6`, a representative
   third-party C/C++ CMake project) fully distributed across the same

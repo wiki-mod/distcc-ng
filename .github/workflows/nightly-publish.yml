@@ -138,3 +138,28 @@ jobs:
             --prerelease \
             --latest=false \
             --target "${GITHUB_SHA}"
+
+  # --- Failure/recovery reporting -------------------------------------------
+  # Separate job with needs: on every other job and if: always(), so it fires
+  # even when a gate failed and `publish` was skipped -- a step inside publish
+  # would never run on the most important failure (build/e2e broke). Files or
+  # updates the standing nightly-broken issue on failure, closes it on success.
+  report:
+    needs: [build_check, distributed_e2e, publish]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    # Job-level permissions replace the top-level set: this job only needs to
+    # read the tree (for the composite action) and write issues.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+      - uses: ./.github/actions/nightly-status
+        with:
+          # Success only if all three jobs succeeded; any failure/skip is a
+          # failure to report.
+          outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          scope: nightly build+publish (current_dev)
