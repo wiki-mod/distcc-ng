@@ -77,11 +77,15 @@ jobs:
       # Linux-only for now: the OIDC-based attestation API needs the repo's
       # GitHub Actions identity, which is simplest to exercise from one
       # runner OS rather than duplicating the attestation per matrix leg.
-      - if: matrix.os == 'ubuntu-latest'
+      # Skipped on the nightly schedule: that run checks out current_dev while
+      # github.sha (which the attestation records) is master's tip, so a
+      # scheduled attestation would tie current_dev binaries to the wrong
+      # commit. Attestation is meaningful for the push/PR builds anyway.
+      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         run: |
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
-      - if: matrix.os == 'ubuntu-latest'
+      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: /tmp/attest-subjects/*
