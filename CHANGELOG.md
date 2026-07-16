@@ -11,20 +11,34 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
-### Fixed
-
-- **pump mode**: unified distcc+pump host-list support (fixes #87). pump.in's
-  manual-DISTCC_HOSTS code path now auto-appends `,cpp,lzo` to hosts that don't
-  already specify `,cpp`, mirroring the behavior of the auto-discovery path.
-  This allows a single host-list entry (e.g. `distccd-server:3632` or
-  `distccd-server:3632,lzo`) to work correctly under both plain distcc
-  (which gracefully falls back to client-side preprocessing if no include-server
-  is running) and pump mode (which requires server-side preprocessing).
-  Previously, users needed two separate entries with different formats,
-  causing hard failures or silent behavior differences in real deployments. (#87)
+## [3.5.1-NG] - 2026-07-16
 
 ### Added
 
+- GitHub issue and pull request templates (`.github/pull_request_template.md`,
+  `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md`). (#17)
+- Regression coverage for `distccd` option-order parsing around
+  `--enable-tcp-insecure` and `--inetd` (`TcpInsecureOptionOrder_Case`). (#5)
+- Regression coverage isolating no-detach daemon child process waits in the
+  test harness (`NoDetachDaemon_Case`). (#8)
+- `doc/release-versioning.md` and `scripts/check-release-version.sh`,
+  documenting the fork's manual, maintainer-driven versioning process and
+  enforcing (fail-closed) that a release tag isn't reused and matches
+  `configure.ac`. (#15)
+- `doc/release-versioning.md`: a release is never published without a real
+  `vX.Y.Z-NG` git tag behind it — no ad-hoc/manual-identifier releases,
+  even from a `workflow_dispatch` test run. (#27)
+- `doc/compatibility-policy.md`: this fork's explicit old-hardware/
+  old-toolchain compatibility policy (prefer compiler-feature guards and
+  configure-time optional detection over silently raising minimum
+  requirements). (fixes #28, PR #29)
+- Build-provenance attestation (`actions/attest-build-provenance`) for the
+  `distcc`/`distccd` binaries built in CI. (fixes #38, PR #39)
+- `.github/workflows/package-release.yml`, `scripts/build-release-packages.sh`,
+  `docker/release/Dockerfile`: release automation building rpm/deb packages
+  and a multi-arch (amd64 + arm64, natively via GitHub's free arm64
+  public-repo runners) container image, on a real `v*` tag push or via a
+  manual `workflow_dispatch` opt-in for testing. (fixes #44, PR #47)
 - CI: automatic failure tracking for the scheduled pipelines. A shared
   composite action (`.github/actions/nightly-status`) files or updates a single
   standing `nightly-broken` GitHub issue when the nightly publish or the weekly
@@ -43,15 +57,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `E2E_MIN_REMOTE_JOBS`) so one proven harness drives both the nightly
   self-compile and this heartbeat. (Per-push `master` health is already covered
   by `c-build.yml`'s existing push trigger + its `distributed_e2e` job.) (#81)
-- CI: `repro_issue87` job in `c-build.yml` + `test/e2e/repro-hostlist-issue87.sh`
-  — an investigation-only, `continue-on-error` job reproducing (for real,
-  via the existing distcc+pump e2e harness) the failure modes behind #87
-  (distcc and pump currently need two different host-list entries). Added
-  as a job in the already-registered `c-build.yml` rather than a new
-  workflow file, since a brand-new workflow file isn't recognized by the
-  Actions API until it exists on the default branch (the same structural
-  limit already hit in #81). Not part of the merge gate; to be removed
-  once #87's real fix lands. (#87)
 - CI: `nightly-publish.yml` — a scheduled (and manually dispatchable) workflow
   that publishes a moving `nightly` channel from `current_dev`, but only after
   a full build + `make check` **and** the two-container distributed-compile
@@ -98,91 +103,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   no hard dependency), per `doc/compatibility-policy.md`. Recovered and
   rebased from this fork's own prior (unmerged) `v3.4.1-zstd` release —
   originally distcc/distcc#232 by Shawn Landden. (fixes #67)
-
-### Security
-
-- `distccd`: reject a client-supplied `CDIR` (current working directory,
-  `dcc_r_cwd()` in `src/srvrpc.c` → `make_temp_dir_and_chdir_for_cpp()` in
-  `src/serve.c`) that contains a `..` path component, before it is
-  concatenated onto the server's per-job temp directory for the `chdir()`
-  call. Previously unvalidated, a crafted `CDIR` (e.g., `../../etc`) could
-  walk the resulting path outside that temp directory, allowing the server to
-  change into (and create) arbitrary subdirectories — discovered during #100
-  triage of CodeQL path-injection alerts. This closes the `CDIR` traversal
-  vector; it parallels the earlier `NAME` validation fix (see #93). (fixes #100)
-- `distccd`: reject a client-supplied `NAME` (`dcc_r_many_files()`,
-  `src/srvrpc.c`) that isn't rooted at `/` or contains a `..` path
-  component, before it is concatenated onto the server's per-job temp
-  directory. Previously unvalidated (a pre-existing `FIXME` acknowledged
-  the gap), a crafted `NAME` could walk the resulting path outside that
-  temp directory — the location a `FILE` gets written to, or a `LINK`
-  entry's own symlink gets created at — flagged by CodeQL on PR #37. This
-  closes the direct-`NAME` traversal vector; it does **not** close
-  traversal via a `LINK` entry's separate `link_target` (the symlink's
-  target, as opposed to its own location), which is deliberately left
-  unvalidated: unlike `NAME`, the include-server's own mirroring logic
-  legitimately relies on a leading `..` there (see
-  `_MakeLinkFromMirrorToRealLocation` in
-  `include_server/compiler_defaults.py`). Fixing that needs a
-  corresponding include-server change first and remains open, tracked
-  separately (#95) — a malicious `link_target` could still place a
-  symlink that a later, textually-clean `NAME` resolves through. New
-  `h_pathsafety` unit-test binary. (fixes #93)
-
-### Fixed
-
-- CI: the nightly publish now stamps the container image (`VCS_REF`) and the
-  release notes with the `current_dev` commit actually built, not `master`'s
-  tip. Under `schedule`/`workflow_dispatch` the workflow is evaluated from the
-  default branch, so `github.sha` is `master`; the job checks out `current_dev`,
-  so the built commit is resolved explicitly with `git rev-parse HEAD`. For the
-  same reason, `c-build.yml` no longer emits a build-provenance attestation on
-  scheduled runs, where it would otherwise tie `current_dev` binaries to
-  `master`'s SHA. (#81)
-
-### Changed
-
-- `AGENTS.md`: rebasing a branch with its own unique commits now requires
-  a throwaway-worktree rebase + `git range-diff` check before pushing the
-  real branch, to catch silent content drift from conflict resolution —
-  a clean `git rebase` exit code alone isn't proof the result is right.
-  Branches that are just a stale pointer to an ancestor of the new base
-  (no unique commits) update via a plain fast-forward instead, which has
-  no rebase/drift risk at all. (#90)
-- `doc/compatibility-policy.md`: Solaris, IRIX, HP-UX, and AIX are now
-  explicitly out of scope for this fork's compatibility commitment
-  (deliberate maintainer decision, not a silent narrowing) — these see no
-  realistic usage today and were blocking legitimate modernization work.
-  (#65)
-
-## [3.5.1-NG] - 2026-07-16
-
-### Added
-
-- GitHub issue and pull request templates (`.github/pull_request_template.md`,
-  `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md`). (#17)
-- Regression coverage for `distccd` option-order parsing around
-  `--enable-tcp-insecure` and `--inetd` (`TcpInsecureOptionOrder_Case`). (#5)
-- Regression coverage isolating no-detach daemon child process waits in the
-  test harness (`NoDetachDaemon_Case`). (#8)
-- `doc/release-versioning.md` and `scripts/check-release-version.sh`,
-  documenting the fork's manual, maintainer-driven versioning process and
-  enforcing (fail-closed) that a release tag isn't reused and matches
-  `configure.ac`. (#15)
-- `doc/release-versioning.md`: a release is never published without a real
-  `vX.Y.Z-NG` git tag behind it — no ad-hoc/manual-identifier releases,
-  even from a `workflow_dispatch` test run. (#27)
-- `doc/compatibility-policy.md`: this fork's explicit old-hardware/
-  old-toolchain compatibility policy (prefer compiler-feature guards and
-  configure-time optional detection over silently raising minimum
-  requirements). (fixes #28, PR #29)
-- Build-provenance attestation (`actions/attest-build-provenance`) for the
-  `distcc`/`distccd` binaries built in CI. (fixes #38, PR #39)
-- `.github/workflows/package-release.yml`, `scripts/build-release-packages.sh`,
-  `docker/release/Dockerfile`: release automation building rpm/deb packages
-  and a multi-arch (amd64 + arm64, natively via GitHub's free arm64
-  public-repo runners) container image, on a real `v*` tag push or via a
-  manual `workflow_dispatch` opt-in for testing. (fixes #44, PR #47)
+- `git-changelog` (`.git-changelog.toml`) now assists with `CHANGELOG.md`
+  upkeep: generates draft entries from git commits on demand (`basic`
+  convention, no Conventional Commits prefix required), inserted at the
+  `<!-- insertion marker -->` above `[Unreleased]`. Assists, doesn't
+  replace, manual curation — existing hand-written entries and
+  `changelog-check.yml`'s per-PR enforcement are unaffected. (#98)
 
 ### Changed
 
@@ -201,6 +127,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - `gh release create`/`gh release edit` now always pass `--latest`, so a
   real tagged release claims the "latest" slot instead of leaving a stale
   pre-fork release marked latest. (PR #47)
+- `AGENTS.md`: rebasing a branch with its own unique commits now requires
+  a throwaway-worktree rebase + `git range-diff` check before pushing the
+  real branch, to catch silent content drift from conflict resolution —
+  a clean `git rebase` exit code alone isn't proof the result is right.
+  Branches that are just a stale pointer to an ancestor of the new base
+  (no unique commits) update via a plain fast-forward instead, which has
+  no rebase/drift risk at all. (#90)
+- `doc/compatibility-policy.md`: Solaris, IRIX, HP-UX, and AIX are now
+  explicitly out of scope for this fork's compatibility commitment
+  (deliberate maintainer decision, not a silent narrowing) — these see no
+  realistic usage today and were blocking legitimate modernization work.
+  (#65)
 
 ### Removed
 
@@ -276,3 +214,50 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `ReadWithDeadline` used `select()`/`FD_SET` on an unbounded fd; `FD_SET`
   on a descriptor `>= FD_SETSIZE` writes past the `fd_set` bitmask.
   Replaced with `poll()`, which has no descriptor-number limit. (PR #37, #46)
+- **pump mode**: unified distcc+pump host-list support (fixes #87). pump.in's
+  manual-DISTCC_HOSTS code path now auto-appends `,cpp,lzo` to hosts that don't
+  already specify `,cpp`, mirroring the behavior of the auto-discovery path.
+  This allows a single host-list entry (e.g. `distccd-server:3632` or
+  `distccd-server:3632,lzo`) to work correctly under both plain distcc
+  (which gracefully falls back to client-side preprocessing if no include-server
+  is running) and pump mode (which requires server-side preprocessing).
+  Previously, users needed two separate entries with different formats,
+  causing hard failures or silent behavior differences in real deployments. (#87)
+- CI: the nightly publish now stamps the container image (`VCS_REF`) and the
+  release notes with the `current_dev` commit actually built, not `master`'s
+  tip. Under `schedule`/`workflow_dispatch` the workflow is evaluated from the
+  default branch, so `github.sha` is `master`; the job checks out `current_dev`,
+  so the built commit is resolved explicitly with `git rev-parse HEAD`. For the
+  same reason, `c-build.yml` no longer emits a build-provenance attestation on
+  scheduled runs, where it would otherwise tie `current_dev` binaries to
+  `master`'s SHA. (#81)
+
+### Security
+
+- `distccd`: reject a client-supplied `CDIR` (current working directory,
+  `dcc_r_cwd()` in `src/srvrpc.c` → `make_temp_dir_and_chdir_for_cpp()` in
+  `src/serve.c`) that contains a `..` path component, before it is
+  concatenated onto the server's per-job temp directory for the `chdir()`
+  call. Previously unvalidated, a crafted `CDIR` (e.g., `../../etc`) could
+  walk the resulting path outside that temp directory, allowing the server to
+  change into (and create) arbitrary subdirectories — discovered during #100
+  triage of CodeQL path-injection alerts. This closes the `CDIR` traversal
+  vector; it parallels the earlier `NAME` validation fix (see #93). (fixes #100)
+- `distccd`: reject a client-supplied `NAME` (`dcc_r_many_files()`,
+  `src/srvrpc.c`) that isn't rooted at `/` or contains a `..` path
+  component, before it is concatenated onto the server's per-job temp
+  directory. Previously unvalidated (a pre-existing `FIXME` acknowledged
+  the gap), a crafted `NAME` could walk the resulting path outside that
+  temp directory — the location a `FILE` gets written to, or a `LINK`
+  entry's own symlink gets created at — flagged by CodeQL on PR #37. This
+  closes the direct-`NAME` traversal vector; it does **not** close
+  traversal via a `LINK` entry's separate `link_target` (the symlink's
+  target, as opposed to its own location), which is deliberately left
+  unvalidated: unlike `NAME`, the include-server's own mirroring logic
+  legitimately relies on a leading `..` there (see
+  `_MakeLinkFromMirrorToRealLocation` in
+  `include_server/compiler_defaults.py`). Fixing that needs a
+  corresponding include-server change first and remains open, tracked
+  separately (#95) — a malicious `link_target` could still place a
+  symlink that a later, textually-clean `NAME` resolves through. New
+  `h_pathsafety` unit-test binary. (fixes #93)
