@@ -9,6 +9,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- CI: Trivy container vulnerability/secret scan on the built container
+  images before they're pushed, matching wiki-mod/lancache-ng's real
+  setup (severity HIGH/CRITICAL, ignore-unfixed, `.trivyignore.yaml`,
+  fail-closed). (#52)
+
 ## [3.5.1-NG] - 2026-07-16
 
 ### Added
