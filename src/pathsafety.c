@@ -32,9 +32,14 @@
 
 #include <config.h>
 
+#include <limits.h>
 #include <string.h>
 
 #include "pathsafety.h"
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 /* Reject a client-supplied absolute-style path (as received in a NAME
  * token, before it is prepended with the server's own temp dirname) that
@@ -104,4 +109,35 @@ int dcc_cdir_has_path_traversal(const char *cdir)
         return 1;
 
     return 0;
+}
+
+/* Sanity-check a filename that ultimately traces back to an environment
+ * variable (DISTCC_LOG, DISTCC_CMDLIST, DEPENDENCIES_OUTPUT/-MF, or a name
+ * built from INCLUDE_SERVER_PORT) before it is passed to open()/fopen().
+ *
+ * These paths are the invoking user's own -- there is no dirname they could
+ * be concatenated onto and escape from, so this is deliberately not a ".."
+ * check. What it does guard against is a corrupted or truncated environment
+ * (e.g. an embedded NUL that got interpreted as a terminator earlier,
+ * leaving garbage, or a control character indicating the variable was never
+ * meant to be a path at all) reaching a file-access function unexamined.
+ */
+int dcc_sane_env_path(const char *path)
+{
+    size_t i, len;
+
+    if (path == NULL || path[0] == '\0')
+        return 0;
+
+    len = strlen(path);
+    if (len >= PATH_MAX)
+        return 0;
+
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char) path[i];
+        if (c < 0x20 && c != '\t')
+            return 0;
+    }
+
+    return 1;
 }

@@ -35,6 +35,7 @@
 #include "trace.h"
 #include "exitcode.h"
 #include "util.h"
+#include "pathsafety.h"
 
 
 /**
@@ -62,7 +63,19 @@ void dcc_set_trace_from_env(void)
     rs_trace_set_level(RS_LOG_DEBUG);
 
     if ((logfile = getenv("DISTCC_LOG")) && logfile[0]) {
-        fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0666);
+        if (!dcc_sane_env_path(logfile)) {
+            /* Malformed $DISTCC_LOG (empty, too long, or containing
+             * control characters): fall through to stderr rather than
+             * handing a bogus value to open(). */
+            fd = -1;
+            errno = EINVAL;
+        } else {
+            /* Mode 0600: this is the invoking user's own trace/error log
+             * and may contain compiler command lines, file paths, and
+             * other locally-sensitive detail -- no reason for it to be
+             * group- or world-readable/writable. */
+            fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0600);
+        }
         if (fd != -1) {
             /* asked for a file, and we can open that file:
                include info messages */

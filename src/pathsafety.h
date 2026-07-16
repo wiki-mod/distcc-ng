@@ -38,4 +38,15 @@ int dcc_name_has_path_traversal(const char *name);
  * before mkdir/chdir operations. */
 int dcc_cdir_has_path_traversal(const char *cdir);
 
+/* Returns 1 if a filename taken from an environment variable (or derived
+ * from one) is sane enough to hand to open()/fopen() -- non-empty, within
+ * PATH_MAX, and free of control characters -- 0 otherwise. Unlike
+ * dcc_name_has_path_traversal(), this is not a directory-escape check: these
+ * paths are used as-is, not concatenated onto a fixed base directory, so a
+ * ".." component is not inherently unsafe here. It exists to reject
+ * pathological values (truncated/binary-garbage environment, empty string)
+ * before they reach a file-access function. See callers in compile.c,
+ * serve.c, and traceenv.c. */
+int dcc_sane_env_path(const char *path);
+
 #endif /* _DISTCC_PATHSAFETY_H */

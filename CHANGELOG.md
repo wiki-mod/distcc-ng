@@ -11,6 +11,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- Fixed 6 `cpp/path-injection` CodeQL alerts (`src/compile.c`, `src/serve.c`,
+  `src/srvrpc.c`, `src/traceenv.c`) by validating environment-variable-derived
+  filenames (`DEPENDENCIES_OUTPUT`/`-MF`, the `INCLUDE_SERVER_PORT`-derived
+  discrepancy filename, `DISTCC_CMDLIST`, `DISTCC_LOG`) with a new
+  `dcc_sane_env_path()` helper before they reach `open()`/`fopen()`, rejecting
+  empty, oversized, or control-character-laden values. The `src/srvrpc.c:158`
+  instance was already resolved by the earlier `dcc_name_has_path_traversal()`
+  fix (#93/#94) and needed no further change. `src/traceenv.c`'s log-file
+  `open()` mode stays `0666`, deliberately not tightened to `0600` (same
+  long-standing-permissions principle as `src/lock.c`, see #157/#159). (#151)
+
 ### Added
 
 - **`support-upstream/` folder** (#184) — passive, read-only documentation of
