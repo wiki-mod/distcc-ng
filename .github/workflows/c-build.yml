@@ -115,7 +115,9 @@ jobs:
   # its real fix with proper regression coverage.
   repro_issue87:
     name: "[investigation] issue #87 host-list repro"
-    if: github.event_name == 'pull_request'
+    # push (not just pull_request) is what this branch's own runs actually
+    # show -- gating on pull_request alone left this permanently "skipped".
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
