@@ -33,6 +33,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- CI: `release-drafter` — automatically maintains a draft GitHub Release,
+  refreshed on every push to `current_dev` (no manual trigger, unlike
+  `gh release create --generate-notes`). Categorized by PR label
+  (`security`/`bug`/`enhancement`/`documentation`), auto-assigned from the
+  PR title via an autolabeler, mirroring `cliff.toml`'s own keyword
+  categorization. Entries use `#N | title` (matching the format `cliff.toml`
+  now produces, #118). This is a separate, complementary artifact from
+  `CHANGELOG.md` — it doesn't touch the repo's git history, and
+  `CHANGELOG.md` (via the git-cliff pass at real release-cut time) stays
+  the authoritative changelog. New `security` label. (fixes #120)
 - CI: automatic failure tracking for the scheduled pipelines. A shared
   composite action (`.github/actions/nightly-status`) files or updates a single
   standing `nightly-broken` GitHub issue when the nightly publish or the weekly

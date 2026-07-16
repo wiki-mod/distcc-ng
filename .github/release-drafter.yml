@@ -1,0 +1,77 @@
+# release-drafter config: maintains an auto-updating draft GitHub Release
+# on every merge to current_dev (see .github/workflows/release-drafter.yml).
+#
+# This is a separate artifact from CHANGELOG.md -- it writes to the GitHub
+# Releases tab, not to any file in the repo. CHANGELOG.md stays the
+# authoritative, git-tracked changelog (Keep a Changelog format, maintained
+# via the git-cliff pass at actual release-cut time, see cliff.toml). This
+# draft is a complementary, always-current preview; the real published
+# Release body at an actual vX.Y.Z-NG tag should be sourced from
+# CHANGELOG.md's dated section, not from this draft, to avoid two
+# divergent texts. (fixes #120)
+
+name-template: 'v$RESOLVED_VERSION-NG'
+tag-template: 'v$RESOLVED_VERSION-NG'
+
+# Matches the "#N | text" format landed in cliff.toml (issue #118), for
+# consistency across both tools. $NUMBER/$TITLE/$BODY/$AUTHORS are
+# release-drafter's own first-class template variables.
+change-template: '* #$NUMBER | $TITLE'
+change-title-escapes: '\<*_&'
+
+# PRs get sorted into these sections by label. Labels are assigned
+# automatically by the autolabeler below, based on PR title keywords --
+# mirroring cliff.toml's own keyword categorization, since this repo
+# doesn't manually label every PR by type.
+categories:
+  - title: '🔒 Security'
+    labels:
+      - 'security'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'bug'
+  - title: '🚀 Enhancements'
+    labels:
+      - 'enhancement'
+  - title: '📝 Documentation'
+    labels:
+      - 'documentation'
+
+# PRs opted out of the CHANGELOG.md requirement are opted out here too.
+exclude-labels:
+  - 'no-changelog-needed'
+
+autolabeler:
+  - label: 'security'
+    title:
+      - '/^(?i)(security|traversal|vulnerab)/'
+  - label: 'bug'
+    title:
+      - '/^(?i)fix/'
+  - label: 'enhancement'
+    title:
+      - '/^(?i)(add|feat)/'
+  - label: 'documentation'
+    title:
+      - '/^(?i)doc/'
+    files:
+      - '*.md'
+      - 'doc/**'
+
+version-resolver:
+  major:
+    labels:
+      - 'major'
+  minor:
+    labels:
+      - 'enhancement'
+  patch:
+    labels:
+      - 'bug'
+      - 'security'
+  default: patch
+
+template: |
+  ## Changes
+
+  $CHANGES

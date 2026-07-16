@@ -79,6 +79,8 @@ The tool is configured via `cliff.toml` and does **not** enforce Conventional Co
 
 See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-cliff assists with this but does not replace manual review and entry curation.
 
+**`release-drafter`** (`.github/release-drafter.yml`, `.github/workflows/release-drafter.yml`) is a separate, complementary tool: it auto-maintains a draft GitHub Release (visible in the Releases tab), refreshed on every push to `current_dev`, with zero manual trigger — categorized by PR label (`security`/`bug`/`enhancement`/`documentation`, auto-assigned from the PR title). It does **not** write to `CHANGELOG.md` or the repo's git history at all. `CHANGELOG.md` stays the authoritative changelog; the release-drafter draft is an always-current preview, and the real published Release body at an actual `vX.Y.Z-NG` tag should be sourced from `CHANGELOG.md`'s dated section, not from this draft, to avoid two divergent texts.
+
 ## Running (development)
 
 ```bash
