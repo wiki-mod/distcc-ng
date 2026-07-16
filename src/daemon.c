@@ -77,6 +77,7 @@
 #include "srvnet.h"
 #include "daemon.h"
 #include "types.h"
+#include "sandbox-seccomp.h"
 #ifdef HAVE_GSSAPI
 #include "auth.h"
 #endif
@@ -246,6 +247,12 @@ int main(int argc, char *argv[])
 
     if (!opt_enable_tcp_insecure)
         dcc_warn_masquerade_whitelist();
+
+    /* One-time startup notice: tells the administrator whether remote
+     * compiler processes will actually get the seccomp sandbox (see
+     * src/sandbox-seccomp.c), rather than leaving that only discoverable
+     * later via a security review. */
+    dcc_seccomp_log_availability();
 
     if (dcc_should_be_inetd())
         ret = dcc_inetd_server();

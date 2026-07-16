@@ -817,8 +817,14 @@ static int dcc_run_job(int in_fd,
        }
     }
 
+    /* This is exactly the untrusted-input boundary the seccomp sandbox
+     * (src/sandbox-seccomp.c) exists for: argv[0] and its arguments were
+     * chosen by a remote client, already checked above (whitelist,
+     * masquerade, -fplugin/-specs) but still not fully trusted code we
+     * are about to exec with the daemon's privileges. */
     if ((compile_ret = dcc_spawn_child(argv, &cc_pid,
-                                       "/dev/null", out_fname, err_fname))
+                                       "/dev/null", out_fname, err_fname,
+                                       1 /* sandbox_seccomp */))
         || (compile_ret = dcc_collect_child("cc", cc_pid, &status, in_fd))) {
         /* We didn't get around to finding a wait status from the actual
          * compiler */

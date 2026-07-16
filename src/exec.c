@@ -75,6 +75,7 @@
 #include "lock.h"
 #include "hosts.h"
 #include "dopt.h"
+#include "sandbox-seccomp.h"
 
 const int timeout_null_fd = -1;
 int dcc_job_lifetime = 0;
@@ -82,7 +83,8 @@ int dcc_job_lifetime = 0;
 static void dcc_inside_child(char **argv,
                              const char *stdin_file,
                              const char *stdout_file,
-                             const char *stderr_file) NORETURN;
+                             const char *stderr_file,
+                             int sandbox_seccomp) NORETURN;
 
 
 static void dcc_execvp(char **argv) NORETURN;
@@ -304,11 +306,19 @@ static void dcc_execvp(char **argv)
  * localhost slots.
  *
  * @param what Type of process to be run here (cpp, cc, ...)
+ * @param sandbox_seccomp If true, install the Linux seccomp syscall
+ *        denylist (see sandbox-seccomp.h) on this process before exec'ing
+ *        -- used only for distccd's own compile spawn (src/serve.c),
+ *        where argv names a compiler chosen by a remote, untrusted
+ *        client. Plain local invocations (src/compile.c, src/cpp.c) pass
+ *        false: there is nothing to sandbox there, it's a trusted local
+ *        build.
  **/
 static void dcc_inside_child(char **argv,
                              const char *stdin_file,
                              const char *stdout_file,
-                             const char *stderr_file)
+                             const char *stderr_file,
+                             int sandbox_seccomp)
 {
     int ret;
 
@@ -352,6 +362,14 @@ static void dcc_inside_child(char **argv,
     if ((ret = dcc_redirect_fds(stdin_file, stdout_file, stderr_file)))
         goto fail;
 
+    /* Install the seccomp denylist, if requested, only after every prior
+     * step that might still need a syscall the filter could deny (fd
+     * redirection above, safeguard bookkeeping) and immediately before
+     * the exec it's meant to constrain -- the filter survives execve()
+     * and applies to the compiler process itself, which is the point. */
+    if (sandbox_seccomp)
+        dcc_seccomp_sandbox_child();
+
     dcc_execvp(argv);
 
     ret = EXIT_DISTCC_FAILED;
@@ -392,11 +410,15 @@ int dcc_new_pgrp(void)
  *
  * @warning When called on the daemon, where stdin/stdout may refer to random
  * network sockets, all of the standard file descriptors must be redirected!
+ *
+ * @param sandbox_seccomp Passed straight through to dcc_inside_child(); set
+ *        for distccd's own remote-compile spawn (src/serve.c) only.
  **/
 int dcc_spawn_child(char **argv, pid_t *pidptr,
                     const char *stdin_file,
                     const char *stdout_file,
-                    const char *stderr_file)
+                    const char *stderr_file,
+                    int sandbox_seccomp)
 {
     pid_t pid;
 
@@ -418,7 +440,8 @@ int dcc_spawn_child(char **argv, pid_t *pidptr,
             if (dcc_new_pgrp() != 0)
                 rs_trace("Unable to start a new group\n");
         }
-        dcc_inside_child(argv, stdin_file, stdout_file, stderr_file);
+        dcc_inside_child(argv, stdin_file, stdout_file, stderr_file,
+                        sandbox_seccomp);
         /* !! NEVER RETURN FROM HERE !! */
     } else {
         *pidptr = pid;

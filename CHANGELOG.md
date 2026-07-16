@@ -82,6 +82,38 @@ See `doc/release-versioning.md` for the full versioning and release process.
     regression back to the stale 1.7 tree even if it would otherwise still
     compile cleanly.
 
+### Security
+
+- **`distccd`: optional Linux seccomp sandbox for compiler child processes**
+  (#68, porting the idea behind upstream distcc/distcc#233, which was
+  never merged and could not be ported as-is). Previously, a remote
+  client's compile job ran with the daemon's full process privileges;
+  a compromised or malicious client could have the "compiler" process
+  attempt anything the daemon's own privileges allowed. `distccd` now
+  installs a Linux seccomp syscall denylist (`src/sandbox-seccomp.c`) in
+  the forked child immediately before it execs the client-supplied
+  compiler, blocking syscalls no legitimate compiler invocation needs
+  (kernel/module loading, `mount`/`reboot`, `ptrace`, raw I/O port access,
+  kernel keyring/eBPF/perf, host clock/hostname changes). This is a
+  denylist, not the allowlist upstream's PR attempted: enumerating every
+  syscall every compiler (gcc, clang, cross-compilers, and their cc1/as/
+  ld/collect2/LTO sub-processes) legitimately needs is not something that
+  can be verified by local testing, and a too-narrow allowlist silently
+  breaks real builds. Treat this as defense-in-depth layered on top of
+  the existing compiler whitelist and unsafe-option checks in
+  `src/serve.c`, not as the sole boundary between a hostile client and
+  the host. Configurable via `/etc/distcc/seccomp.conf`: `enabled`
+  (master on/off switch, default on), `deny-network` (default off),
+  `fail-open` (default on — a runtime sandbox-install failure on a
+  `--with-seccomp` build proceeds unsandboxed rather than refusing the
+  compile), `require-seccomp` (default off — a separate, independent
+  switch: when on, refuses to run any remote compile at all on a
+  `--without-seccomp` build), `extra-deny`/`allow-override` (tune the
+  built-in denylist). Optional dependency (`libseccomp`, configure-time
+  detected via `PKG_CHECK_MODULES`, `--with-seccomp`/`--without-seccomp`),
+  degrading gracefully when absent, following the same pattern as the
+  existing optional zstd support — no new hard build dependency.
+
 ### Removed
 
 - **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,

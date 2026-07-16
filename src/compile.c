@@ -399,7 +399,10 @@ static int dcc_compile_local(char *argv[],
 
     /* We don't do any redirection of file descriptors when running locally,
      * so if for example cpp is being used in a pipeline we should be fine. */
-    if ((ret = dcc_spawn_child(argv, &pid, NULL, NULL, NULL)) != 0)
+    /* Not sandboxed: this is a trusted local build, not a remote client's
+     * job -- see dcc_spawn_child()'s sandbox_seccomp parameter. */
+    if ((ret = dcc_spawn_child(argv, &pid, NULL, NULL, NULL,
+                              0 /* sandbox_seccomp */)) != 0)
         return ret;
 
     if ((ret = dcc_collect_child("cc", pid, &status, timeout_null_fd)))
