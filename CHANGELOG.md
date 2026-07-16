@@ -11,6 +11,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- `AGENTS.md`/`CLAUDE.md`: repository governance and agent-workflow rules,
+  adapted from wiki-mod/lancache-ng's established pattern — issue/PR
+  tracking discipline, worktree-per-issue workflow, required validation
+  (warnings-are-errors, real build/test verification), this fork's own
+  comment-every-function convention, and release/compatibility-policy
+  cross-references. (#82)
 - CI: Trivy container vulnerability/secret scan on the built container
   images before they're pushed, matching wiki-mod/lancache-ng's real
   setup (severity HIGH/CRITICAL, ignore-unfixed, `.trivyignore.yaml`,
