@@ -13,6 +13,10 @@ name: Nightly build and publish (current_dev)
 # current_dev explicitly, because that is the branch this nightly channel
 # tracks regardless of which branch the trigger fires from.
 
+concurrency:
+  group: nightly-publish
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   schedule:
