@@ -69,6 +69,7 @@ This fork's convention differs from a typical "minimal comments" house style: **
 
 ## What Not To Do
 
+- **`distcc/distcc` (upstream) is off-limits, full stop — read-only, forever, no exceptions.** Never push a branch, open/comment/edit a PR or issue, or take any write action of any kind against `distcc/distcc`. The only legitimate interaction with it is read-only reference (fetching its history, reading its issues/PRs for the periodic upstream survey). This is a hard, absolute rule, not a "be careful" one — it exists because this fork exists *specifically* because upstream does not accept AI-assisted contributions, and a past incident (a delegated agent's `gh pr create` without `--repo`, landing a real PR on `distcc/distcc` itself) is exactly the failure this rule prevents. Always pass `--repo wiki-mod/distcc-ng` explicitly on every `gh` command as the mechanical safeguard (see Agent Workflow), but the rule itself is the point: never write to upstream, regardless of what any tool's default behavior would otherwise do.
 - Do not push directly to `master`; all changes go through pull requests, and `master` merges need explicit maintainer approval regardless of CI status.
 - Do not introduce a new build-system or language dependency (e.g. Meson, a new scripting runtime) without explicit maintainer approval — see the compatibility-policy rule about explicit sign-off for anything that could raise a minimum toolchain requirement.
 - Do not hardcode LAN IPs, internal hostnames, or other environment-specific values in source, Dockerfiles, or workflows.

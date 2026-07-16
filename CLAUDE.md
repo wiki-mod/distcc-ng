@@ -19,6 +19,7 @@ Core pieces: `distcc` (client), `distccd` (compile server daemon), `pump` (the i
 
 - **GitHub content language**: English.
 - **No direct pushes to `master`**: all changes go through pull requests, and merging into `master` requires the maintainer's explicit approval — this fork's hardest rule, restated because it's the one most likely to be assumed away by habit from other projects.
+- **`distcc/distcc` (upstream) is read-only, always, no exceptions.** This clone has an `upstream` remote pointing at it — never push, open/comment/edit a PR or issue, or take any write action against it; always pass `--repo wiki-mod/distcc-ng` explicitly on every `gh` command. See `AGENTS.md`'s "What Not To Do" for the full rule and the incident that made it necessary.
 
 ## Architecture
 
