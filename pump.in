@@ -606,15 +606,21 @@ StartIncludeServerAndDetermineHosts() {
     else
       hosts=`$distcc_location/distcc --show-hosts`
       num_hosts=`echo "$hosts" | wc -l`
-      num_pump_hosts=`echo "$hosts" | grep ',cpp' | wc -l`
       if [ $num_hosts -eq 0 ]; then
         echo "$program_name: error: distcc hosts list is empty!" 1>&2
         exit 1
-      elif [ $num_pump_hosts -eq 0 ]; then
-        echo "$program_name: error: pump mode requested, but distcc" \
-          "hosts list does not contain any hosts with ',cpp' option" 1>&2
-        exit 1
       else
+        # Auto-append ,cpp,lzo to hosts that don't already specify ,cpp.
+        # This mirrors the behavior of ExportDISTCC_HOSTS() for the auto-discovery
+        # path. Hosts that already have ,cpp are left unchanged (may have their own
+        # compression option). This ensures a single host-list format works for both
+        # pump and plain distcc (which gracefully falls back to client-side cpp if
+        # the include-server isn't running).
+        hosts_with_cpp=`echo "$hosts" | sed '/,cpp/! s/$/,cpp,lzo/'`
+
+        export DISTCC_HOSTS="--randomize `echo "$hosts_with_cpp" | tr '\n' ' ' | sed 's/ $//'`"
+
+        num_pump_hosts=`echo "$hosts_with_cpp" | grep ',cpp' | wc -l`
         if [ "$verbose" = 1 ]; then
           server_word="servers"
           if [ $num_hosts = 1 ]; then

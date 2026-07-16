@@ -34,12 +34,14 @@ echo "plain-mode self-compile OK"
 echo
 
 # --- Distribution proof 2: pump-mode full self-compile --------------------
-# Pump mode preprocesses server-side, so the host spec must carry the ,cpp,lzo
-# options; the include server is started/stopped by the pump wrapper.
-echo "== PUMP distributed self-compile of distcc-ng =="
+# Pump mode preprocesses server-side. With the fix for issue #87, a bare host
+# entry (distccd-server:3632) should work without explicit ,cpp,lzo since
+# pump.in auto-appends it. The include server is started/stopped by the pump
+# wrapper.
+echo "== PUMP distributed self-compile of distcc-ng (bare host, auto-appended ,cpp,lzo) =="
 make clean >/dev/null 2>&1 || true
-DISTCC_HOSTS="distccd-server:3632,cpp,lzo" \
-  pump make -j"${JOBS}" CC="${CC_DISTCC}" CXX="${CXX_DISTCC}"
+# Use bare host without explicit ,cpp,lzo to prove the fix works
+pump make -j"${JOBS}" CC="${CC_DISTCC}" CXX="${CXX_DISTCC}"
 test -x ./distcc && test -x ./distccd
 echo "pump-mode self-compile OK"
 echo
