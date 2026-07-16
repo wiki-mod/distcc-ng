@@ -11,6 +11,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI: `package-release.yml`'s `publish_github_release` job failed on every
+  real tag push** (#162) — discovered live during the v3.5.1-NG release cut.
+  The job had no `actions/checkout` step and its `gh release`
+  create/view/upload/edit calls didn't pass `--repo`, so `gh` tried (and
+  failed) to infer the target repo from a nonexistent local git checkout.
+  Packages and the container image were still built and pushed correctly;
+  only the final GitHub Release page/asset-upload step failed. Added
+  explicit `--repo` to all four `gh release` invocations, matching this
+  repo's own standing rule (always pass `--repo` explicitly).
+
 ## [3.5.1-NG] - 2026-07-16
 
 ### Added
