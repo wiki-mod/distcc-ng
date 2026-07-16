@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.5.1.1-NG] - 2026-07-16
+
 ### Fixed
 
 - **CI: `package-release.yml`'s `publish_github_release` job failed on every
@@ -22,6 +24,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   only the final GitHub Release page/asset-upload step failed. Added
   explicit `--repo` to all four `gh release` invocations, matching this
   repo's own standing rule (always pass `--repo` explicitly).
+- **`v3.5.1-NG` itself is a permanently incomplete release** as a direct
+  result of the above bug: the tag, packages, and multi-arch container image
+  were all built and published correctly, but no GitHub Release page was
+  ever created, and per this fork's tag-immutability policy that tag can
+  never be moved or reused. This `3.5.1.1-NG` release exists solely to
+  re-cut a complete, correctly-published release with the fix applied; it
+  carries no other functional changes over `3.5.1-NG`.
 
 ## [3.5.1-NG] - 2026-07-16
 
