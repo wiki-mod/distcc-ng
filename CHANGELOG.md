@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- CI: `actions/stale` workflow (`.github/workflows/stale.yml`) to auto-label
+  issues and PRs stale after 90 days of inactivity and auto-close them 14
+  days later if still untouched, with a 90-day threshold explicitly chosen
+  over the tool's shorter default. A new `exempt-stale` label (alongside the
+  existing `pinned`/`security` labels) lets a long-running tracking or
+  investigation issue opt out permanently. (#56)
+
 ## [3.5.1.1-NG] - 2026-07-16
 
 ### Fixed

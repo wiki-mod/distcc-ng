@@ -1,0 +1,52 @@
+name: Mark stale issues and pull requests
+
+# Auto-labels issues/PRs stale after 90 days of inactivity and closes them
+# 14 days after that if still untouched. The 90-day threshold is a
+# deliberate, explicit choice, longer than actions/stale's own 60-day
+# default, since this fork carries genuinely long-running investigation/
+# tracking issues that shouldn't be pressured by a short default. Anything
+# labeled `pinned` or `security` is exempt from both staleness and
+# auto-close -- long-running tracking issues (e.g. the Redis-cache epic,
+# the CodeQL tracking issue) should get an `exempt-stale` label instead of
+# relying on this list, since `pinned`/`security` carry their own separate
+# meaning.
+
+on:
+  schedule:
+    # Once daily, per actions/stale's own recommended schedule.
+    - cron: "30 1 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 90
+          days-before-close: 14
+          stale-issue-label: "stale"
+          stale-pr-label: "stale"
+          exempt-issue-labels: "pinned,security,exempt-stale"
+          exempt-pr-labels: "pinned,security,exempt-stale"
+          stale-issue-message: >
+            This issue has had no activity for 90 days and is being marked
+            stale. It will be automatically closed in 14 days if no further
+            activity occurs. If this is still relevant -- especially for a
+            long-running investigation or tracking issue -- add a comment or
+            apply the `exempt-stale` label to keep it open.
+          stale-pr-message: >
+            This pull request has had no activity for 90 days and is being
+            marked stale. It will be automatically closed in 14 days if no
+            further activity occurs. Rebase, comment, or apply the
+            `exempt-stale` label to keep it open.
+          close-issue-message: >
+            Closing due to 90+14 days of inactivity. Reopen (or reference
+            this issue from a new one) if it's still relevant.
+          close-pr-message: >
+            Closing due to 90+14 days of inactivity. Reopen or resubmit if
+            this is still relevant.
