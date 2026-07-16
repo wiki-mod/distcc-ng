@@ -142,10 +142,14 @@ static int dcc_open_state(int *p_fd,
 {
     int fd;
 
-    /* 0600: state files live under the invoking user's own DISTCC_DIR and
-     * are only ever read by that same user's own distccmon-* tools -- no
-     * other user or process needs access. */
-    fd = open(fname, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0600);
+    /* 0644, not 0600: distccmon-text/distccmon-gnome (mon.c) opendir() the
+     * whole state directory and read every PID's state file in it, not
+     * just the invoking user's own -- this is what lets one user watch a
+     * large shared build cluster's in-progress compiles (see man distcc.1's
+     * shared-build-cluster section). Only the write bit was ever the real
+     * CodeQL complaint; dropping world-read here would silently break that
+     * monitoring use case instead. */
+    fd = open(fname, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0644);
     if (fd == -1) {
         rs_log_error("failed to open %s: %s", fname, strerror(errno));
         return EXIT_IO_ERROR;
