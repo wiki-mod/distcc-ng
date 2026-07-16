@@ -23,8 +23,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include "distcc.h"
 #include "exitcode.h"
@@ -104,18 +102,7 @@ int dcc_cleanup_dotd(const char *dotd_fname,
         return ret;
     }
 
-    /* *new_dotd_fname was already created by dcc_make_tmpnam() above with
-     * O_EXCL at mode 0600, so this open() intentionally omits O_CREAT: it
-     * must open that exact pre-created file, not silently create a new one
-     * (which is what a plain fopen(..., "w") would fall back to doing, at
-     * the umask-modified default mode, if the invariant above were ever
-     * broken by a future change). */
-    {
-        int tmp_fd = open(*new_dotd_fname, O_WRONLY|O_TRUNC);
-        tmp_dotd = (tmp_fd == -1) ? NULL : fdopen(tmp_fd, "w");
-        if (tmp_dotd == NULL && tmp_fd != -1)
-            close(tmp_fd);
-    }
+    tmp_dotd = fopen(*new_dotd_fname, "w");
     if (tmp_dotd == NULL) {
         fclose(dotd);
         return 1;

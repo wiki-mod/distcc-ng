@@ -180,18 +180,11 @@ static int dcc_read_number_discrepancies(const char *discrepancy_filename)
 static int dcc_note_discrepancy(const char *discrepancy_filename)
 {
     FILE *discrepancy_file;
-    int fd;
     if (!discrepancy_filename) return 0;
-    /* Open with an explicit mode rather than fopen() (which always creates
-     * at the umask-modified default of 0666): 0600, since this is just a
-     * private per-user discrepancy counter, not meant to be shared. */
-    fd = open(discrepancy_filename, O_WRONLY|O_APPEND|O_CREAT, 0600);
-    if (fd == -1 || !(discrepancy_file = fdopen(fd, "a"))) {
+    if (!(discrepancy_file = fopen(discrepancy_filename, "a"))) {
         rs_log_error("failed to open discrepancy_filename file: %s: %s",
                      discrepancy_filename,
                      strerror(errno));
-        if (fd != -1)
-            close(fd);
         return EXIT_IO_ERROR;
     }
     if (fputc('@', discrepancy_file) == EOF) {

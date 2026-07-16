@@ -292,21 +292,13 @@ static void dcc_nofork_parent(int listen_fd)
 static void dcc_save_pid(pid_t pid)
 {
     FILE *fp;
-    int fd;
 
     if (!arg_pid_file)
         return;
 
-    /* Open with an explicit mode rather than fopen() (which always creates
-     * at the umask-modified default of 0666): 0644 so unprivileged
-     * monitoring/init tooling can read the pid, but only this daemon can
-     * write it. */
-    fd = open(arg_pid_file, O_WRONLY|O_CREAT|O_TRUNC, 0644);
-    if (fd == -1 || !(fp = fdopen(fd, "wt"))) {
+    if (!(fp = fopen(arg_pid_file, "wt"))) {
         rs_log_error("failed to open pid file: %s: %s", arg_pid_file,
                      strerror(errno));
-        if (fd != -1)
-            close(fd);
         return;
     }
 
