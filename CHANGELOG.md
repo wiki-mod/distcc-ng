@@ -76,6 +76,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
   rebased from this fork's own prior (unmerged) `v3.4.1-zstd` release —
   originally distcc/distcc#232 by Shawn Landden. (fixes #67)
 
+### Fixed
+
+- CI: the nightly publish now stamps the container image (`VCS_REF`) and the
+  release notes with the `current_dev` commit actually built, not `master`'s
+  tip. Under `schedule`/`workflow_dispatch` the workflow is evaluated from the
+  default branch, so `github.sha` is `master`; the job checks out `current_dev`,
+  so the built commit is resolved explicitly with `git rev-parse HEAD`. For the
+  same reason, `c-build.yml` no longer emits a build-provenance attestation on
+  scheduled runs, where it would otherwise tie `current_dev` binaries to
+  `master`'s SHA. (#81)
+
 ### Changed
 
 - `doc/compatibility-policy.md`: Solaris, IRIX, HP-UX, and AIX are now
