@@ -1,0 +1,172 @@
+name: Nightly build and publish (current_dev)
+
+# Builds, tests, e2e-validates and only then publishes a moving "nightly"
+# channel from current_dev: source/binary packages, a GHCR :nightly image, and
+# a `nightly` GitHub pre-release, all overwritten on every successful run (the
+# Rust/Firefox-nightly pattern). This is intentionally separate from
+# package-release.yml, which owns the real vX.Y.Z-NG tagged-release path --
+# nothing here creates, moves, or depends on a v* tag.
+#
+# schedule and workflow_dispatch are honored only from the workflow file on the
+# default branch (master), so this has no effect until it is promoted there; it
+# activates on the next current_dev->master promotion. Every job checks out
+# current_dev explicitly, because that is the branch this nightly channel
+# tracks regardless of which branch the trigger fires from.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # One hour after c-build.yml's 03:00 UTC nightly health check.
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: write   # force-move the `nightly` tag and create/replace its release
+  packages: write   # push the :nightly image to GHCR
+
+env:
+  # Hardcoded and never derived: the ONLY tag this workflow may force-move, and
+  # one that must never collide with a real vX.Y.Z-NG release tag.
+  NIGHTLY_TAG: nightly
+
+jobs:
+  # --- Gate 1: real build + full make check on current_dev ------------------
+  build_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1
+        with:
+          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-nightly-${{ github.run_id }}
+          restore-keys: |
+            ccache-nightly-
+      - run: ./autogen.sh
+      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
+      - run: make
+      - run: make check
+
+  # --- Gate 2: real distributed-compile e2e (reuses the committed harness) --
+  distributed_e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+      - name: Run distributed-compile end-to-end test
+        run: bash test/e2e/run-e2e.sh
+
+  # --- Publish, only if BOTH gates passed -----------------------------------
+  publish:
+    needs: [build_check, distributed_e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+          # Full history so the nightly tag can be force-moved onto this commit.
+          fetch-depth: 0
+
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1
+        with:
+          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev pkg-config python3-dev python3-setuptools rpm alien
+
+      - name: Resolve the built commit
+        # Under schedule/workflow_dispatch the workflow is evaluated from the
+        # default branch, so github.sha is master's tip -- but we checked out
+        # and build current_dev. Stamp the image and release with the commit
+        # actually built, not master's, so the provenance metadata is honest.
+        run: echo "BUILT_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Build release packages
+        run: ./scripts/build-release-packages.sh
+
+      - name: Log in to GHCR
+        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push the :nightly container image
+        env:
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng:${{ env.NIGHTLY_TAG }}
+        run: |
+          docker build \
+            --file docker/release/Dockerfile \
+            --build-arg "VCS_REF=${BUILT_SHA}" \
+            --build-arg "VERSION=nightly" \
+            --tag "${IMAGE_TAG}" \
+            .
+          docker push "${IMAGE_TAG}"
+
+      - name: Move the nightly tag and (re)publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng:${{ env.NIGHTLY_TAG }}
+        run: |
+          set -euo pipefail
+          # Hard stop if NIGHTLY_TAG was ever mis-set to a real release tag.
+          case "${NIGHTLY_TAG}" in
+            v*) echo "refusing to force-move a v* tag" >&2; exit 1 ;;
+          esac
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "${NIGHTLY_TAG}"
+          git push -f origin "refs/tags/${NIGHTLY_TAG}"
+
+          shopt -s nullglob
+          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+
+          notes_file="$(mktemp)"
+          # The backticks are literal Markdown code spans for the release notes,
+          # not command substitution -- silence shellcheck's SC2016 for them.
+          # shellcheck disable=SC2016
+          {
+            printf 'Automated nightly build of `current_dev` (%s).\n\n' "${BUILT_SHA}"
+            printf 'Unstable nightly channel -- this is NOT a real release and carries no vX.Y.Z-NG tag. It is overwritten on every successful nightly run.\n\n'
+            printf 'Container image: %s\n' "${IMAGE_TAG}"
+          } > "${notes_file}"
+
+          # Recreate the release each run so its target follows the moved tag;
+          # --latest=false keeps it from ever outranking a real tagged release.
+          if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
+            gh release delete "${NIGHTLY_TAG}" --yes
+          fi
+          gh release create "${NIGHTLY_TAG}" "${assets[@]}" \
+            --title "distcc-ng nightly" \
+            --notes-file "${notes_file}" \
+            --prerelease \
+            --latest=false \
+            --target "${BUILT_SHA}"
+
+  # --- Failure/recovery reporting -------------------------------------------
+  # Separate job with needs: on every other job and if: always(), so it fires
+  # even when a gate failed and `publish` was skipped -- a step inside publish
+  # would never run on the most important failure (build/e2e broke). Files or
+  # updates the standing nightly-broken issue on failure, closes it on success.
+  report:
+    needs: [build_check, distributed_e2e, publish]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    # Job-level permissions replace the top-level set: this job only needs to
+    # read the tree (for the composite action) and write issues.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+      - uses: ./.github/actions/nightly-status
+        with:
+          # Success only if all three jobs succeeded; any failure/skip is a
+          # failure to report.
+          outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          scope: nightly build+publish (current_dev)

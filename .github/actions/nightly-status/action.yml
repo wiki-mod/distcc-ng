@@ -1,0 +1,25 @@
+name: Report scheduled-CI status
+description: >-
+  File, update, or close the single standing "nightly-broken" tracking issue
+  based on a scheduled run's outcome. Must be invoked from a job that has
+  issues:write and runs with if:always() so it also fires when a gate failed.
+
+inputs:
+  outcome:
+    description: "success or failure (compute from needs.*.result in the caller)"
+    required: true
+  scope:
+    description: "Human label for the pipeline, e.g. 'nightly build+publish (current_dev)'"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        OUTCOME: ${{ inputs.outcome }}
+        SCOPE: ${{ inputs.scope }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "${GITHUB_ACTION_PATH}/report.sh"

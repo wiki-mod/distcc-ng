@@ -1,0 +1,64 @@
+name: Master weekly distributed heartbeat
+
+# Weekly real-world validation for master: builds ccache's own source (a real
+# third-party C/C++ CMake project, chosen over a full kernel build for CI cost
+# while staying genuinely representative) fully distributed across the same
+# two-container distccd/distcc harness the nightly e2e uses. It runs on a fixed
+# cadence independent of whether master changed, because master moves only on
+# explicit promotion -- this is the standing "does distribution still work for
+# a real external project" signal in between those promotions.
+#
+# Per-push master health (build + make check + the distributed_e2e job) is
+# already covered by c-build.yml, which triggers on push and now includes that
+# e2e job; this workflow adds only the heavier external-project heartbeat.
+#
+# schedule and workflow_dispatch are honored only from the workflow file on the
+# default branch (master), so this has no effect until it is promoted there.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 05:00 UTC.
+    - cron: '0 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  ccache_heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # No ref override: this validates master, and schedule/dispatch already
+      # evaluate from master (the default branch).
+      - uses: actions/checkout@v7
+      # docker and the compose plugin are preinstalled on ubuntu-latest. The
+      # same run-e2e.sh orchestrator and daemon setup as the nightly job, with
+      # the client workload swapped to the ccache build via E2E_CLIENT_SCRIPT.
+      - name: Build ccache distributed across the two-container harness
+        env:
+          E2E_CLIENT_SCRIPT: test/e2e/client-heartbeat.sh
+          # A floor that proves distribution without spuriously failing a
+          # healthy build: ccache has well over this many translation units,
+          # so a genuine distributed build clears 20 easily, while a silently
+          # non-distributing build (launcher ignored) reports 0 and goes red.
+          E2E_MIN_REMOTE_JOBS: "20"
+          E2E_SCENARIO: ccache weekly heartbeat
+        run: bash test/e2e/run-e2e.sh
+
+  # Files/updates the standing nightly-broken issue on failure, closes it on
+  # success. Separate job with if: always() so it reports even when the
+  # heartbeat job itself failed.
+  report:
+    needs: [ccache_heartbeat]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/nightly-status
+        with:
+          outcome: ${{ needs.ccache_heartbeat.result == 'success' && 'success' || 'failure' }}
+          scope: weekly ccache heartbeat (master)
