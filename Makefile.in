@@ -621,6 +621,7 @@ include-server:
 	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
+	  LIBS="$(LIBS)"                                \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
 	      build 					\
 	        --build-base="$(include_server_builddir)"  \
@@ -995,6 +996,7 @@ clean-include-server:
 	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
+	  LIBS="$(LIBS)"                                \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
 	      clean	\
 	         --build-base="$(include_server_builddir)"  \

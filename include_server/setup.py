@@ -120,6 +120,48 @@ def GetIncludes(flags):
       i += 1
   return inc_dirs
 
+
+def GetLibDirs(flags):
+  """Parse a flags string for library search paths of the form -L<DIR>.
+
+  configure.ac merges pkg-config's --libs output for optional dependencies
+  (currently just zstd) into LIBS, so on platforms where the library isn't
+  on the linker's default search path (e.g. Homebrew's keg-only installs
+  under /opt/homebrew), the -L flag pkg-config emitted has to actually
+  reach this extension's link step, not just distcc/distccd's.
+
+  Args:
+    flags: a string in shell syntax denoting linker options
+  Returns:
+    a list of <DIR>s of the -L search paths
+
+  >>> GetLibDirs('-L/opt/homebrew/opt/zstd/lib -lzstd')
+  ['/opt/homebrew/opt/zstd/lib']
+  >>> GetLibDirs('-L /opt/homebrew/lib -lzstd')
+  ['/opt/homebrew/lib']
+  >>> GetLibDirs('-lpopt')
+  []
+  """
+  flags = shlex.split(flags)
+  lib_dirs = []
+  i = 0
+  while i < len(flags):
+    if flags[i].startswith('-L'):
+      lib_dir = flags[i][len('-L'):]
+      if lib_dir:
+        # "-Ldir"
+        lib_dirs.append(lib_dir)
+        i += 1
+      else:
+        # "-L dir"
+        if i == len(flags) - 1:
+          raise ValueError("Argument expected after '-L'.")
+        lib_dirs.append(flags[i+1])
+        i += 2
+    else:
+      i += 1
+  return lib_dirs
+
 cpp_flags_env = os.getenv('CPPFLAGS', '')
 if not cpp_flags_env:
   # Don't quit; perhaps the user is asking for help using '--help'.
@@ -129,6 +171,12 @@ if not cpp_flags_env:
 # will interpret.  GetInclude uses shlex to do the same kind of interpretation
 # in order to identify the include directory options.
 cpp_flags_includes = GetIncludes(cpp_flags_env)
+
+# LIBS carries configure.ac's pkg-config --libs output for optional
+# dependencies (zstd); extract just the -L search paths for the linker,
+# the actual libraries to link stay explicit below (HAVE_ZSTD-gated).
+libs_env = os.getenv('LIBS', '')
+lib_dirs = GetLibDirs(libs_env)
 
 # SRCDIR checking.
 if not os.getenv('SRCDIR'):
@@ -182,7 +230,7 @@ ext = setuptools.Extension(
     sources=[os.path.join(srcdir, source) for source in sources],
     include_dirs=cpp_flags_includes,
     define_macros=[('_GNU_SOURCE', 1)],
-    library_dirs=[],
+    library_dirs=lib_dirs,
     libraries=['zstd'] if os.getenv('HAVE_ZSTD') else [],
     runtime_library_dirs=[],
     extra_objects=[],
