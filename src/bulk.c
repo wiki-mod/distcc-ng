@@ -292,9 +292,15 @@ int dcc_r_file(int ifd, const char *filename,
         /* continue */
     }
 
-    /* 0600: this file holds received compiler input/output; nothing else
-     * on the box needs to read or write it. */
-    ofd = open(filename, O_TRUNC|O_WRONLY|O_CREAT|O_BINARY, 0600);
+    /* 0666 (subject to umask) is deliberate, not an oversight: this path
+     * writes the client's compiled output (.o files, etc.), and distcc is
+     * meant to be a drop-in replacement for a local compiler invocation --
+     * the file it produces must end up with the same permissions a real
+     * local compile would have given it, not an arbitrarily tighter mode
+     * that could surprise build systems or downstream tooling expecting
+     * normal compiler-output permissions. Covered by test/testdistcc.py's
+     * ModeBits_Case. */
+    ofd = open(filename, O_TRUNC|O_WRONLY|O_CREAT|O_BINARY, 0666);
     if (ofd == -1) {
         rs_log_error("failed to create %s: %s", filename, strerror(errno));
         return EXIT_IO_ERROR;
