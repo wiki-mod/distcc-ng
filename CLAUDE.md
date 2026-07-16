@@ -58,28 +58,15 @@ scripts/                 # build-release-packages.sh, check-release-version.sh
 
 ## Changelog Maintenance
 
-CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and is maintained with the aid of [git-cliff](https://github.com/orhun/git-cliff) — a structured, template-driven changelog generator that automatically produces changelog entries from git commits (including full commit body text for narrative context) while preserving hand-written entries in released versions.
+CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and is maintained fully automatically by a three-step chain — no manual generator run needed (this replaced an earlier git-cliff-based approach, see #122):
 
-**Key strength vs. earlier tooling**: git-cliff exposes the full `commit.body` in its Tera template context, so squash-merge commit bodies (which capture the "why" narrative across multiple original commit messages) are fully rendered in the changelog, not silently dropped.
+1. **`release-drafter`** (`.github/release-drafter.yml`, `.github/workflows/release-drafter.yml`) auto-maintains a draft GitHub Release (visible in the Releases tab), refreshed on every push to `current_dev`, zero manual trigger. PRs are categorized (`Security`/`Fixed`/`Added`/`Documentation`) by a label auto-assigned from the PR title via its `autolabeler`. Entries use `#N | title`.
+2. A maintainer publishes that release as part of the existing manual release-cut process (`doc/release-versioning.md`) — unchanged.
+3. On that `release: released` event, `.github/workflows/changelog-update-on-release.yml` runs [`stefanzweifel/changelog-updater-action`](https://github.com/marketplace/actions/changelog-updater) to insert the release's notes as a new dated section into `CHANGELOG.md`, then [`stefanzweifel/git-auto-commit-action`](https://github.com/stefanzweifel/git-auto-commit-action) commits it to `current_dev` (tags are cut from `current_dev`'s tip, so that's always where the update belongs).
 
-**Usage** (before creating a release):
-```bash
-# Install git-cliff if not already present
-# (via cargo, Homebrew, or your package manager; see https://github.com/orhun/git-cliff#installation)
-cargo install git-cliff
-# or: brew install git-cliff
+`release-drafter`'s config-loading is hardcoded to the repo's **default branch** (`master`) — this chain stays inactive (the `update_release_draft` check will show red) until `current_dev` is actually promoted to `master` for the first time after this was added. Not a bug; no workaround needed, it self-resolves on the next promotion.
 
-# Run the tool to refresh [Unreleased] with recent commits
-git-cliff --unreleased
-```
-
-This outputs a changelog section for all commits not yet assigned to a release tag. Pipe it to a file (`git-cliff --unreleased > /tmp/new-entries.md`), review the generated entries, enhance them with additional narrative context as needed, and manually merge the best entries into the `[Unreleased]` section of CHANGELOG.md. Then commit the updated `CHANGELOG.md` as part of the release process.
-
-The tool is configured via `cliff.toml` and does **not** enforce Conventional Commits (`feat:`/`fix:` prefixes) — instead, it uses keyword-based commit categorization (Fixed, Added, Changed, Removed, Security, Other) suitable for this repo's commit message style. Commit body text is automatically filtered to remove `(cherry picked from ...)` noise, separator dashes (GitHub squash-merge artifacts), and git trailers like `Co-authored-by:` that are already tracked in structured form by GitHub.
-
-See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-cliff assists with this but does not replace manual review and entry curation.
-
-**`release-drafter`** (`.github/release-drafter.yml`, `.github/workflows/release-drafter.yml`) is a separate, complementary tool: it auto-maintains a draft GitHub Release (visible in the Releases tab), refreshed on every push to `current_dev`, with zero manual trigger — categorized by PR label (`security`/`bug`/`enhancement`/`documentation`, auto-assigned from the PR title). It does **not** write to `CHANGELOG.md` or the repo's git history at all. `CHANGELOG.md` stays the authoritative changelog; the release-drafter draft is an always-current preview, and the real published Release body at an actual `vX.Y.Z-NG` tag should be sourced from `CHANGELOG.md`'s dated section, not from this draft, to avoid two divergent texts.
+The existing `changelog-check.yml` workflow still requires PRs to touch `CHANGELOG.md` (or carry `no-changelog-needed`) — with this automated chain, that per-PR requirement may no longer be the right gate (the file now only changes automatically at release-publish time), but relaxing it is a separate, not-yet-made decision.
 
 ## Running (development)
 
