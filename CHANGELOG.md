@@ -92,13 +92,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   component, before it is concatenated onto the server's per-job temp
   directory. Previously unvalidated (a pre-existing `FIXME` acknowledged
   the gap), a crafted `NAME` could walk the resulting path outside that
-  temp directory for both the `FILE`-write and `LINK`-create cases —
-  flagged by CodeQL on PR #37. The `LINK` token's separate `link_target`
-  value is deliberately left as-is: unlike `NAME`, the include-server's own
-  mirroring logic legitimately relies on a leading `..` there (see
+  temp directory — the location a `FILE` gets written to, or a `LINK`
+  entry's own symlink gets created at — flagged by CodeQL on PR #37. This
+  closes the direct-`NAME` traversal vector; it does **not** close
+  traversal via a `LINK` entry's separate `link_target` (the symlink's
+  target, as opposed to its own location), which is deliberately left
+  unvalidated: unlike `NAME`, the include-server's own mirroring logic
+  legitimately relies on a leading `..` there (see
   `_MakeLinkFromMirrorToRealLocation` in
-  `include_server/compiler_defaults.py`), and fixing that needs a
-  corresponding include-server change first (tracked separately). New
+  `include_server/compiler_defaults.py`). Fixing that needs a
+  corresponding include-server change first and remains open, tracked
+  separately (#95) — a malicious `link_target` could still place a
+  symlink that a later, textually-clean `NAME` resolves through. New
   `h_pathsafety` unit-test binary. (fixes #93)
 
 ### Fixed
