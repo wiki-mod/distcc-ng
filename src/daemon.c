@@ -290,7 +290,10 @@ static void dcc_setup_real_log(void)
     if (arg_log_file) {
         /* Don't remove loggers yet, in case this fails and needs to go to the
          * default. */
-        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0666)) == -1) {
+        /* 0600: the daemon's log can contain client hostnames, compiler
+         * command lines, and file paths -- no reason for other local users
+         * to read or write it. */
+        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0600)) == -1) {
             rs_log_error("failed to open %s: %s", arg_log_file,
                          strerror(errno));
             /* continue and use syslog */

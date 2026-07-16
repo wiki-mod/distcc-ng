@@ -13,6 +13,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- Fixed 9 of 11 `cpp/world-writable-file-creation` CodeQL alerts
+  (`src/daemon.c`, `src/dparent.c`, `src/compile.c`,
+  `src/dotd.c`, `src/state.c`, `src/zeroconf.c`) by dropping only the
+  world-*write* bit CodeQL actually flags, not blanket-tightening every
+  mode to owner-only. Two files needed to keep world-*read* to avoid
+  breaking this project's documented shared-build-cluster deployment (see
+  `man distcc.1`): `src/state.c`'s per-process state file (read
+  cross-user by `distccmon-text`/`distccmon-gnome`, which `opendir()` the
+  whole state directory) is `0644`, and `src/zeroconf.c`'s discovered-host
+  file (read by every user's `distcc` client invocations on a machine
+  running the zeroconf daemon) is also `0644`. Everything else with no
+  cross-user reader (per-invocation temp/lock files, the daemon's own log)
+  is `0600`, or `0644` for the daemon's world-readable pid file. `fopen()`
+  calls were switched to `open()`+`fdopen()` with an explicit mode, since
+  `fopen()` always creates at the umask-modified `0666` default. Two
+  instances deliberately kept `0666`: `src/lock.c`'s lock-slot file, since a
+  code comment already documents this as intentional support for a shared,
+  multi-user `DISTCC_DIR`/lock directory (tightening it would break that
+  deployment); and `src/bulk.c`'s received-compiler-output file, since
+  distcc must reproduce the same permissions a real local compile would
+  have given that file (verified by `test/testdistcc.py`'s `ModeBits_Case`,
+  which asserts the received `.o` file's mode is exactly `0666`).  (#157)
 - Fixed 5 `cpp/unbounded-write` CodeQL alerts (`src/argutil.c`, `src/compile.c`,
   `src/include_server_if.c`, `src/lsdistcc.c`, `src/serve.c`) by replacing
   `strcpy`/`sprintf`/`strcat` calls with bounded equivalents (`memcpy` with an

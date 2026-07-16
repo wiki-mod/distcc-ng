@@ -246,7 +246,13 @@ int dcc_open_lockfile(const char *fname, int *plockfd)
      *
      * The file is created with the loosest permissions allowed by the user's
      * umask, to give the best chance of avoiding problems if they should
-     * happen to use a shared lock dir. */
+     * happen to use a shared lock dir. This 0666 is deliberate, not an
+     * oversight: DISTCC_DIR (and so this lock dir) can be pointed at a
+     * location shared across multiple local users on the same build host,
+     * and each of them needs to be able to create/open/lock slot files the
+     * others created first. Tightening this to a private mode would make
+     * that shared-lock-dir deployment fail outright for every user but the
+     * one who happened to create a given slot file first. */
     /* FIXME: If we fail to open with EPERM or something similar, try deleting
      * the file and try again.  That might fix problems with root-owned files
      * in user home directories. */
