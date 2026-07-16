@@ -449,9 +449,14 @@ static int daemon_proc(const char *host_file, const char *lock_file, int n_slots
         goto finish;
     }
 
-    /* Open host file. 0600: the discovered-host list is consumed only by
-     * this same user's own distcc client invocations. */
-    if ((d.fd = open(host_file, O_RDWR|O_CREAT, 0600)) < 0) {
+    /* Open host file. 0644, not 0600: this zeroconf daemon typically runs
+     * once per machine (or once per shared build cluster host), but its
+     * discovered-host list is meant to be read by every user's distcc
+     * client invocations on that machine -- restricting to owner-only
+     * would silently break zeroconf-based discovery for every user except
+     * whichever one the daemon happens to run as. Only the write bit was
+     * the real CodeQL complaint; only this daemon process ever writes it. */
+    if ((d.fd = open(host_file, O_RDWR|O_CREAT, 0644)) < 0) {
         rs_log_crit("open('%s') failed: %s\n", host_file, strerror(errno));
         goto finish;
     }
