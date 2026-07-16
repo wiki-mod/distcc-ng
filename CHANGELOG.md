@@ -23,6 +23,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `actions/cache` (explicit `CCACHE_DIR`, since ccache's own default
   cache location differs between Linux and macOS). (#54)
 
+### Changed
+
+- `doc/compatibility-policy.md`: Solaris, IRIX, HP-UX, and AIX are now
+  explicitly out of scope for this fork's compatibility commitment
+  (deliberate maintainer decision, not a silent narrowing) — these see no
+  realistic usage today and were blocking legitimate modernization work.
+  (#65)
+
 ## [3.5.1-NG] - 2026-07-16
 
 ### Added
