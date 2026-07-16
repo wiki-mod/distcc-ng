@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
 #
-# Orchestrates the two-container distributed-compile end-to-end test on the CI
-# runner (or a developer's machine with docker + compose). It brings the stack
-# up, lets the client self-compile distcc-ng across the network, and then
-# independently confirms from the *server's* own log that real compile jobs
-# landed there -- so a silently-local build cannot pass even if the client
-# script were somehow fooled. Logs are always dumped and the stack always torn
-# down, whatever the outcome.
+# Orchestrates a two-container distributed-compile validation on the CI runner
+# (or a developer's machine with docker + compose). It brings the stack up, has
+# the client build a project across the network, and then independently
+# confirms from the *server's* own log that real compile jobs landed there --
+# so a silently-local build cannot pass even if the client script were somehow
+# fooled. Logs are always dumped and the stack always torn down.
+#
+# The client-side workload is pluggable so the same orchestrator drives both
+# the nightly distcc-ng self-compile and the weekly ccache heartbeat:
+#   E2E_CLIENT_SCRIPT   repo-relative client script to run in the client
+#                       container (default: the distcc-ng self-compile).
+#   E2E_MIN_REMOTE_JOBS floor on remote compiles the server must report.
+#   E2E_SCENARIO        human label for log output.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Minimum number of remote compiles we insist on seeing in the server log.
-# distcc-ng has far more than this many source files, and the run compiles the
-# whole tree twice (plain + pump); the floor only guards against a degenerate
-# "one job slipped through, the rest fell back" result. It is intentionally a
-# floor, not the exact count, so it stays robust as the source tree grows.
-readonly MIN_REMOTE_JOBS=5
+# Exported so docker-compose interpolates it into the client service's command.
+export E2E_CLIENT_SCRIPT="${E2E_CLIENT_SCRIPT:-test/e2e/client-build.sh}"
+readonly SCENARIO="${E2E_SCENARIO:-distcc-ng self-compile}"
+
+# Minimum number of remote compiles we insist on seeing in the server log. The
+# default suits the distcc-ng self-compile (far more than this many files, built
+# twice for plain + pump); the floor only guards against a degenerate "one job
+# slipped through, the rest fell back" result, so it stays robust as a tree
+# grows. Heartbeat runs raise it via the environment.
+readonly MIN_REMOTE_JOBS="${E2E_MIN_REMOTE_JOBS:-5}"
 
 # distccd's per-job summary for a successful compile is
 #   "... client: <ip>:<port> COMPILE_OK ..."
@@ -40,6 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "== Scenario: ${SCENARIO} (client script: ${E2E_CLIENT_SCRIPT}) =="
 echo "== Bringing up client+server and running the distributed build =="
 # --abort-on-container-exit stops the long-running server as soon as the client
 # finishes; --exit-code-from propagates the client's exit status. Captured
@@ -70,4 +81,4 @@ if [ "${remote_jobs}" -lt "${MIN_REMOTE_JOBS}" ]; then
   exit 1
 fi
 
-echo "SUCCESS: distributed compile validated (${remote_jobs} remote jobs from the client subnet)"
+echo "SUCCESS: ${SCENARIO} validated (${remote_jobs} remote jobs from the client subnet)"

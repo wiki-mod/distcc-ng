@@ -56,7 +56,9 @@ services:
       DISTCC_FALLBACK: "0"
       DISTCC_VERBOSE: "1"
     working_dir: /work
-    command: ["bash", "test/e2e/client-build.sh"]
+    # Pluggable client workload: run-e2e.sh exports E2E_CLIENT_SCRIPT (the
+    # distcc-ng self-compile by default, the ccache heartbeat when set).
+    command: ["bash", "${E2E_CLIENT_SCRIPT:-test/e2e/client-build.sh}"]
 
 networks:
   distccnet:

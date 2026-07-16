@@ -19,13 +19,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 # needed both to build distcc-ng here and for the client's self-compile
 # (pump mode's include server is a Python C extension). procps provides ps,
 # which the pump wrapper calls during shutdown -- without it pump prints a
-# "ps: not found" warning.
+# "ps: not found" warning. cmake/git/ca-certificates and the zstd/hiredis dev
+# libraries let the weekly heartbeat client clone and build ccache's own CMake
+# project distributed through the same daemon.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       autoconf \
       automake \
       build-essential \
+      ca-certificates \
+      cmake \
+      git \
+      libhiredis-dev \
       libpopt-dev \
+      libzstd-dev \
       pkg-config \
       procps \
       python3 \
