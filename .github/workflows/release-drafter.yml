@@ -7,6 +7,10 @@ name: Release Drafter
 # autolabeler assigns each PR's category label (bug/enhancement/security/
 # documentation) as soon as it's opened, not only once merged.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:

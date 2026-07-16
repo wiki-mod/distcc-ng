@@ -7,6 +7,10 @@ name: Changelog check
 # investigation/design docs, internal refactors with no user-visible
 # effect, etc).
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
