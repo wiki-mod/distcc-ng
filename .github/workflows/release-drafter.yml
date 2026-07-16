@@ -1,0 +1,33 @@
+name: Release Drafter
+
+# Maintains an auto-updating draft GitHub Release, refreshed on every push
+# to current_dev, so there's always a current, zero-effort preview of
+# what's pending -- separate from CHANGELOG.md, see .github/release-drafter.yml
+# for how the two relate. Also runs on pull_request events so the
+# autolabeler assigns each PR's category label (bug/enhancement/security/
+# documentation) as soon as it's opened, not only once merged.
+
+on:
+  push:
+    branches:
+      - current_dev
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to create/update the draft release.
+      contents: write
+      # Needed for the autolabeler to assign labels to PRs.
+      pull-requests: write
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
