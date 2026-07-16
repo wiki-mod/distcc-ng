@@ -1,39 +1,37 @@
 # release-drafter config: maintains an auto-updating draft GitHub Release
 # on every merge to current_dev (see .github/workflows/release-drafter.yml).
-#
-# This is a separate artifact from CHANGELOG.md -- it writes to the GitHub
-# Releases tab, not to any file in the repo. CHANGELOG.md stays the
-# authoritative, git-tracked changelog (Keep a Changelog format, maintained
-# via the git-cliff pass at actual release-cut time, see cliff.toml). This
-# draft is a complementary, always-current preview; the real published
-# Release body at an actual vX.Y.Z-NG tag should be sourced from
-# CHANGELOG.md's dated section, not from this draft, to avoid two
-# divergent texts. (fixes #120)
+# When that draft is actually published, its body is what
+# .github/workflows/changelog-update-on-release.yml inserts into
+# CHANGELOG.md (via changelog-updater-action) -- so this config's
+# category titles are written to match Keep a Changelog's own section
+# names (Security/Fixed/Added/Documentation), not release-drafter's usual
+# emoji defaults, so the synced CHANGELOG.md section reads the same as
+# every hand-written section before it. (fixes #122; supersedes the
+# git-cliff-based approach from #113/#118, see #122 for why)
 
 name-template: 'v$RESOLVED_VERSION-NG'
 tag-template: 'v$RESOLVED_VERSION-NG'
 
-# Matches the "#N | text" format landed in cliff.toml (issue #118), for
-# consistency across both tools. $NUMBER/$TITLE/$BODY/$AUTHORS are
-# release-drafter's own first-class template variables.
+# $NUMBER/$TITLE/$BODY/$AUTHORS are release-drafter's own first-class
+# template variables -- no regex needed, unlike the git-cliff Tera
+# template this replaces.
 change-template: '* #$NUMBER | $TITLE'
 change-title-escapes: '\<*_&'
 
 # PRs get sorted into these sections by label. Labels are assigned
-# automatically by the autolabeler below, based on PR title keywords --
-# mirroring cliff.toml's own keyword categorization, since this repo
-# doesn't manually label every PR by type.
+# automatically by the autolabeler below, based on PR title keywords,
+# since this repo doesn't manually label every PR by type.
 categories:
-  - title: '🔒 Security'
+  - title: 'Security'
     labels:
       - 'security'
-  - title: '🐛 Bug Fixes'
+  - title: 'Fixed'
     labels:
       - 'bug'
-  - title: '🚀 Enhancements'
+  - title: 'Added'
     labels:
       - 'enhancement'
-  - title: '📝 Documentation'
+  - title: 'Documentation'
     labels:
       - 'documentation'
 
@@ -71,7 +69,12 @@ version-resolver:
       - 'security'
   default: patch
 
-template: |
-  ## Changes
+# release-drafter's own default is "## $TITLE" (H2) for category headings.
+# Overridden to H3 here: changelog-update-on-release.yml's
+# changelog-updater-action inserts this whole body under its own H2
+# "## [tag] - date" heading, so category sub-sections need to be H3 to
+# nest correctly, matching Keep a Changelog's own "### Added" style.
+category-template: '### $TITLE'
 
+template: |
   $CHANGES

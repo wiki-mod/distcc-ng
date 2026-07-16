@@ -33,16 +33,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- CI: `release-drafter` — automatically maintains a draft GitHub Release,
-  refreshed on every push to `current_dev` (no manual trigger, unlike
-  `gh release create --generate-notes`). Categorized by PR label
-  (`security`/`bug`/`enhancement`/`documentation`), auto-assigned from the
-  PR title via an autolabeler, mirroring `cliff.toml`'s own keyword
-  categorization. Entries use `#N | title` (matching the format `cliff.toml`
-  now produces, #118). This is a separate, complementary artifact from
-  `CHANGELOG.md` — it doesn't touch the repo's git history, and
-  `CHANGELOG.md` (via the git-cliff pass at real release-cut time) stays
-  the authoritative changelog. New `security` label. (fixes #120)
+- CI: fully automated changelog chain, replacing the earlier git-cliff-based
+  approach (removes `cliff.toml`, #113/#118). `release-drafter` (#120)
+  automatically maintains a draft GitHub Release, refreshed on every push to
+  `current_dev` (no manual trigger, unlike `gh release create
+  --generate-notes`), categorized by PR label (`security`/`fixed`/`added`/
+  `documentation`) auto-assigned from the PR title via an autolabeler, with
+  entries in `#N | title` format. Once a maintainer publishes that release
+  (the existing manual release-cut step, unchanged), a new workflow
+  (`changelog-update-on-release.yml`) inserts its notes into `CHANGELOG.md`
+  via `changelog-updater-action` and commits the result via
+  `git-auto-commit-action` — no manual generator run needed anymore. New
+  `security` label. Note: inactive (the `update_release_draft` check stays
+  red) until `current_dev` is first promoted to `master`, since
+  release-drafter's config-loading is hardcoded to the default branch — not
+  a bug, self-resolves on the next promotion. (fixes #120, fixes #122)
 - CI: automatic failure tracking for the scheduled pipelines. A shared
   composite action (`.github/actions/nightly-status`) files or updates a single
   standing `nightly-broken` GitHub issue when the nightly publish or the weekly

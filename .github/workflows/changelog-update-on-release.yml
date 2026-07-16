@@ -1,0 +1,44 @@
+name: Update CHANGELOG.md on release
+
+# Completes the automated changelog chain: release-drafter (see
+# release-drafter.yml) keeps a draft GitHub Release current on every push
+# to current_dev; once a maintainer actually publishes that release, this
+# workflow inserts its notes into CHANGELOG.md and commits the result --
+# no manual git-cliff pass needed anymore (see #122, which replaced that
+# approach).
+#
+# Tags are cut from current_dev's tip (doc/release-versioning.md), so the
+# published release's commit is on current_dev's history -- this workflow
+# checks out and commits to current_dev explicitly, regardless of which
+# ref GitHub resolves the release event against, since current_dev is
+# where the changelog needs to keep accumulating.
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+
+jobs:
+  update_changelog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: current_dev
+
+      - name: Insert release notes into CHANGELOG.md
+        uses: stefanzweifel/changelog-updater-action@v1
+        with:
+          latest-version: ${{ github.event.release.tag_name }}
+          release-notes: ${{ github.event.release.body }}
+
+      - name: Commit updated CHANGELOG.md
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "CHANGELOG.md: add ${{ github.event.release.tag_name }}"
+          file_pattern: CHANGELOG.md
+          branch: current_dev
