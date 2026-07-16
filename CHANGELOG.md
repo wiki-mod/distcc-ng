@@ -22,6 +22,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **CI: concurrency/cancel-in-progress gates** (#150): Added `concurrency:` blocks
+  to all GitHub Actions workflows to prevent redundant runner-minute waste on
+  superseded CI runs. Pure CI/test workflows (`c-build.yml`, `actionlint.yml`,
+  `changelog-check.yml`, `release-drafter.yml`, `master-heartbeat.yml`) safely
+  use `cancel-in-progress: true` to cancel older runs when a newer commit
+  supersedes them. Publish-ish workflows (`nightly-publish.yml`,
+  `package-release.yml`) use `cancel-in-progress: false` to queue overlapping
+  triggers instead, preventing race conditions during Docker pushes and tag
+  creation.
+- **CI: build+test gate for real releases** (#150): Added mandatory `build_check`
+  and `distributed_e2e` jobs to `package-release.yml` so tagged releases cannot
+  proceed without passing the full build and e2e-validation suite first.
+  Previously, a tagged commit that never passed `make check` could still be
+  packaged and published. The pattern mirrors the existing gates in
+  `nightly-publish.yml`.
 - **code quality**: suppressed `github-code-quality[bot]` findings (unclosed files,
   bare except blocks, empty exception handlers). Fixed unclosed `open()` calls in
   `test/testdistcc.py` by wrapping them in `with` statements. Narrowed bare

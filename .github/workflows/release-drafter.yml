@@ -18,6 +18,10 @@ name: Release Drafter
 # warning, since a PR merge ref was never a valid release target to begin
 # with -- avoided entirely by only running the draft-update job on push.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:

@@ -15,6 +15,10 @@ name: Master weekly distributed heartbeat
 # schedule and workflow_dispatch are honored only from the workflow file on the
 # default branch (master), so this has no effect until it is promoted there.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   schedule:
