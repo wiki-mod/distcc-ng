@@ -107,7 +107,17 @@ int poptReadConfigFile(poptContext con, const char * fn)
 	return (errno == ENOENT ? 0 : POPT_ERROR_ERRNO);
 
     fileLength = lseek(fd, 0, SEEK_END);
-    if (fileLength == -1 || lseek(fd, 0, 0) == -1) {
+    /* Reject any negative lseek() result, not just the documented -1 error
+     * value. This is a real bug fix, not just warning-suppression: with the
+     * original "== -1" check, a modern glibc/gcc (_FORTIFY_SOURCE + range
+     * analysis) cannot prove fileLength is non-negative going into the
+     * read() call below, and reports a hardening warning
+     * (-Werror=stringop-overflow=) about read() being passed a huge size_t
+     * if fileLength were some other negative value. Excluding all negative
+     * values here, not just -1, gives the compiler (and any future caller)
+     * an actual guarantee that fileLength is a valid, non-negative size
+     * before it's used as a read()/alloca() length. */
+    if (fileLength < 0 || lseek(fd, 0, 0) == -1) {
 	rc = errno;
 	(void) close(fd);
 	/*@-mods@*/
@@ -117,7 +127,7 @@ int poptReadConfigFile(poptContext con, const char * fn)
     }
 
     file = alloca(fileLength + 1);
-    if (read(fd, (char *)file, fileLength) != fileLength) {
+    if (read(fd, (char *)file, (size_t)fileLength) != fileLength) {
 	rc = errno;
 	(void) close(fd);
 	/*@-mods@*/

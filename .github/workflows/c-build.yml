@@ -151,7 +151,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: ConorMacBride/install-package@v1
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
           # this job. pkg-config *is* installed (unlike libpopt-dev) so this
@@ -169,6 +169,8 @@ jobs:
             || { echo "::error::configure did not report falling back to bundled popt -- is libpopt-dev leaking in from the base image?"; exit 1; }
       - run: make
       - run: make check
+
+  # Real distributed-compile validation: distcc-ng's own source tree is built
   # across two containers (a distccd server + a distcc client) over a bridge
   # network, in both plain and pump mode, and a distributed compile is checked
   # byte-for-byte against a local-only one. make check already exercises a
