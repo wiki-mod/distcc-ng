@@ -46,16 +46,17 @@ RUN ./autogen.sh && \
     make clean
 
 # Masquerade whitelist. Without --enable-tcp-insecure, distccd requires the
-# requested compiler name to resolve inside LIBDIR/distcc or /usr/lib/distcc
-# (see src/serve.c dcc_check_compiler_whitelist and src/daemon.c
-# dcc_warn_masquerade_whitelist, which both consult /usr/lib/distcc as the
-# hardcoded fallback). This directory is a name whitelist only -- it is
-# deliberately NOT placed on distccd's PATH, so the server execs the real
-# /usr/bin/gcc rather than recursing back into distcc.
-RUN mkdir -p /usr/lib/distcc && \
-    for c in cc c++ gcc g++; do \
-      ln -sf /usr/local/bin/distcc "/usr/lib/distcc/${c}"; \
-    done
+# requested compiler name to resolve inside LIBDIR/distcc (here
+# /usr/local/lib/distcc) -- see src/serve.c dcc_check_compiler_whitelist and
+# src/daemon.c dcc_warn_masquerade_whitelist. The client sends the arch-triplet
+# name it resolved (e.g. x86_64-linux-gnu-gcc), not a bare "gcc", so the
+# whitelist must contain that exact variant. The project's own
+# update-distcc-symlinks discovers every gcc/g++ variant under /usr/lib/gcc and
+# symlinks it into the masquerade dir, which gets this right independent of the
+# host architecture. The dir is a name whitelist only -- it is deliberately NOT
+# on distccd's PATH, so the daemon execs the real /usr/bin compiler rather than
+# recursing back into distcc.
+RUN /usr/local/sbin/update-distcc-symlinks
 
 # distccd refuses to run as root unless handed --user; running the whole
 # container as an unprivileged user avoids that and matches how the daemon is
