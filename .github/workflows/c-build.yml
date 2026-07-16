@@ -22,7 +22,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ConorMacBride/install-package@v1
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
@@ -47,6 +47,6 @@ jobs:
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
       - if: matrix.os == 'ubuntu-latest'
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: /tmp/attest-subjects/*
