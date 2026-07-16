@@ -4,7 +4,7 @@
 **Repository**: https://github.com/wiki-mod/distcc-ng
 **See also**: `CLAUDE.md` (Claude Code project instructions, auto-loaded every session) for architecture and workflow specifics; `doc/release-versioning.md` for the release process; `doc/compatibility-policy.md` for the old-hardware/old-toolchain policy; `CHANGELOG.md` for the current release history.
 
-This file contains repository-wide agent rules. It applies to all paths in this repository, including `.github/**`, `packaging/**`, `scripts/**`, `src/**`, `include_server/**`, and `doc/**`.
+This file contains repository-wide agent rules. It applies to all paths in this repository, including `.github/**`, `packaging/**`, `scripts/**`, `src/**`, `include_server/**`, and `doc/**`. **Read this entire file, start to finish, before doing anything else** — not a summary, not just the section that looks relevant to the task at hand. This applies to every session and every delegated subagent, with no exceptions.
 
 ## Language
 
