@@ -28,6 +28,12 @@ jobs:
     steps:
       - uses: release-drafter/release-drafter@v6
         with:
-          config-name: release-drafter.yml
+          # Pinned to current_dev explicitly: release-drafter otherwise
+          # resolves its config against the repo's default branch (master),
+          # which doesn't carry this file -- current_dev is not the default
+          # branch here (see AGENTS.md's branching model). Confirmed via a
+          # real CI failure ("must reside in your default branch") before
+          # adding this pin.
+          config-name: release-drafter.yml@current_dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
