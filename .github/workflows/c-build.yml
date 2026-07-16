@@ -85,3 +85,24 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: /tmp/attest-subjects/*
+
+  # Real distributed-compile validation: distcc-ng's own source tree is built
+  # across two containers (a distccd server + a distcc client) over a bridge
+  # network, in both plain and pump mode, and a distributed compile is checked
+  # byte-for-byte against a local-only one. make check already exercises a
+  # localhost daemon, but only this proves a compile genuinely crosses the
+  # network and is not silently completed by distcc's local-fallback path.
+  # Linux/docker-only, so it is a standalone job rather than a macOS matrix leg.
+  distributed_e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Same schedule redirect as make_check: the nightly run evaluates
+          # from master but must validate current_dev.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      # docker and the compose plugin are preinstalled on ubuntu-latest.
+      - name: Run distributed-compile end-to-end test
+        run: bash test/e2e/run-e2e.sh

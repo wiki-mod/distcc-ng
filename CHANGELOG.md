@@ -11,6 +11,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- CI: on-demand (`workflow_dispatch`) and nightly (`schedule`) triggers for
+  `c-build.yml`, so `current_dev`'s build health is checked continuously
+  rather than only when a PR happens to touch it (schedule-triggered runs
+  check out `current_dev`, since GitHub evaluates `schedule` only from the
+  default branch). Plus a real two-container distributed-compile end-to-end
+  job (`test/e2e/`): distcc-ng's own source tree is built across a distccd
+  server + distcc client over a bridge network, in both plain and pump mode,
+  with `DISTCC_FALLBACK=0` so a silent local fallback fails the build, and a
+  distributed object is compared byte-for-byte against a local-only one.
+  Distribution is independently confirmed from the server's own job log.
+  Uses masquerade-whitelist mode (no `--enable-tcp-insecure`). (#32, #81)
 - `AGENTS.md`/`CLAUDE.md`: repository governance and agent-workflow rules,
   adapted from wiki-mod/lancache-ng's established pattern — issue/PR
   tracking discipline, worktree-per-issue workflow, required validation
