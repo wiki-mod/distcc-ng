@@ -72,6 +72,17 @@ jobs:
           key: ccache-release-${{ github.run_id }}
           restore-keys: |
             ccache-release-
+      # Same autom4te.cache caching as c-build.yml's make_check job -- see
+      # that job for why restoring a stale entry here is safe, and why
+      # configure's own config.cache is deliberately NOT cached (its cached
+      # dependency-detection results aren't safely invalidated by a
+      # configure.ac/m4 hash alone).
+      - uses: actions/cache@v4
+        with:
+          path: autom4te.cache
+          key: autoconf-release-${{ hashFiles('configure.ac', 'm4/*.m4') }}
+          restore-keys: |
+            autoconf-release-
       - run: ./autogen.sh
       - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
       - run: make
