@@ -1,9 +1,18 @@
 # Old Hardware / Old Toolchain Compatibility Policy
 
 distcc has historically supported a wide range of platforms and ages of
-hardware and toolchains (see e.g. the project's own history of FreeBSD,
-Solaris, and old macOS compatibility fixes). This fork continues that
-commitment: **a change must not silently narrow platform/toolchain support**.
+hardware and toolchains (see e.g. the project's own history of FreeBSD
+and old macOS compatibility fixes). This fork continues that commitment
+for platforms still in real use today: **a change must not silently
+narrow platform/toolchain support**.
+
+**Explicitly out of scope:** Solaris, IRIX, HP-UX, and AIX. These see no
+realistic usage today, and treating them as compatibility targets would
+block or complicate legitimate modernization work (e.g. a build-system
+migration, tracked separately in issue #64) for no practical benefit.
+This is a deliberate, one-time maintainer decision (issue #65, 2026-07-16)
+carving out these specific platforms — not a precedent for silently
+narrowing support for anything else still in real use.
 
 ## The rule
 
