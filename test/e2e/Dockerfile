@@ -17,7 +17,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # build-essential brings gcc/g++/cc/c++, which the server actually execs once
 # a job passes the compiler whitelist; the autotools + python packages are
 # needed both to build distcc-ng here and for the client's self-compile
-# (pump mode's include server is a Python C extension).
+# (pump mode's include server is a Python C extension). procps provides ps,
+# which the pump wrapper calls during shutdown -- without it pump prints a
+# "ps: not found" warning.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       autoconf \
@@ -25,6 +27,7 @@ RUN apt-get update && \
       build-essential \
       libpopt-dev \
       pkg-config \
+      procps \
       python3 \
       python3-dev \
       python3-setuptools && \

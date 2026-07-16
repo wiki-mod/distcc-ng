@@ -19,11 +19,14 @@ cd "$(dirname "$0")"
 # floor, not the exact count, so it stays robust as the source tree grows.
 readonly MIN_REMOTE_JOBS=5
 
-# The token distccd's per-job summary prints for a successful compile (see
-# STATS_COMPILE_OK / dcc_job_summary in src/stats.c and src/serve.c), and the
-# compose subnet the client must appear to originate from.
-readonly OK_TOKEN="COMPILE_OK"
-readonly CLIENT_SUBNET_PREFIX="10.88.0."
+# distccd's per-job summary for a successful compile is
+#   "... client: <ip>:<port> COMPILE_OK ..."
+# (see dcc_job_summary in src/serve.c and STATS_COMPILE_OK in src/stats.c).
+# Matching a successful compile *paired with the client's compose-subnet
+# address* proves, in a single pattern, both that real jobs completed and that
+# they arrived over the network from the client container -- not a localhost
+# self-connection. The dots are escaped so they are literal, not regex "any".
+readonly REMOTE_OK_RE='client: 10\.88\.0\.[0-9]+:[0-9]+ COMPILE_OK'
 
 server_log="$(mktemp)"
 
@@ -53,22 +56,18 @@ fi
 echo "== Verifying real distribution from the server log =="
 docker compose logs --no-color distccd-server > "${server_log}" 2>&1
 
-remote_jobs="$(grep -c "${OK_TOKEN}" "${server_log}" || true)"
-echo "server reported ${remote_jobs} successful remote compile(s)"
+# Single grep -c, deliberately not `grep ... | grep -q`: under `set -o
+# pipefail` the reader (`grep -q`) exits on first match and SIGPIPEs the
+# writer, so the pipeline reports failure even on a match -- which would
+# falsely read as "no remote jobs".
+remote_jobs="$(grep -Ec "${REMOTE_OK_RE}" "${server_log}" || true)"
+echo "server reported ${remote_jobs} successful remote compile(s) from the client subnet"
 
 if [ "${remote_jobs}" -lt "${MIN_REMOTE_JOBS}" ]; then
-  echo "ERROR: expected at least ${MIN_REMOTE_JOBS} remote compiles on the" \
-       "server, saw ${remote_jobs} -- the build likely fell back to local" \
-       "compilation instead of distributing." >&2
+  echo "ERROR: expected at least ${MIN_REMOTE_JOBS} remote compiles from the" \
+       "client subnet, saw ${remote_jobs} -- the build likely fell back to" \
+       "local compilation instead of distributing." >&2
   exit 1
 fi
 
-# Confirm the jobs genuinely arrived from the client container over the network
-# (its compose-subnet address), not from a localhost self-connection.
-if ! grep "${OK_TOKEN}" "${server_log}" | grep -q "${CLIENT_SUBNET_PREFIX}"; then
-  echo "ERROR: no successful compile in the server log originated from the" \
-       "client subnet ${CLIENT_SUBNET_PREFIX}0/24 -- distribution not proven." >&2
-  exit 1
-fi
-
-echo "SUCCESS: distributed compile validated (${remote_jobs} remote jobs, from the client subnet)"
+echo "SUCCESS: distributed compile validated (${remote_jobs} remote jobs from the client subnet)"
