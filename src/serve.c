@@ -88,6 +88,7 @@
 #include "stringmap.h"
 #include "dotd.h"
 #include "fix_debug_info.h"
+#include "pathsafety.h"
 #ifdef HAVE_GSSAPI
 #include "auth.h"
 
@@ -615,6 +616,9 @@ static int tweak_arguments_for_server(char **argv,
  *   @p client_side_cwd: the current directory on the client
  *   @p server_side_cwd: the corresponding directory on the server;
  *                server_side_cwd = temp_dir + client_side_cwd
+ *
+ * Rejects CDIR tokens containing ".." path components that could allow
+ * directory traversal (see dcc_cdir_has_path_traversal()).
  **/
 static int make_temp_dir_and_chdir_for_cpp(int in_fd,
         char **temp_dir, char **client_side_cwd, char **server_side_cwd)
@@ -626,6 +630,16 @@ static int make_temp_dir_and_chdir_for_cpp(int in_fd,
             return ret;
         if ((ret = dcc_r_cwd(in_fd, client_side_cwd)))
             return ret;
+
+        /* Validate the client-supplied working directory to prevent
+         * directory traversal attacks. If the CDIR token contains "..",
+         * reject the request immediately. */
+        if (dcc_cdir_has_path_traversal(*client_side_cwd)) {
+            rs_log_error("rejected CDIR with a path-traversal sequence "
+                         "(must not contain '..'): %s",
+                         *client_side_cwd);
+            return EXIT_PROTOCOL_ERROR;
+        }
 
         checked_asprintf(server_side_cwd, "%s%s", *temp_dir, *client_side_cwd);
         if (*server_side_cwd == NULL) {

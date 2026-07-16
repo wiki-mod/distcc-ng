@@ -526,11 +526,21 @@ class IsSource_Case(SimpleDistCC_Case):
 
 class PathSafety_Case(SimpleDistCC_Case):
     def runtest(self):
-        """Test dcc_name_has_path_traversal(), which guards the NAME token
-        in dcc_r_many_files() (src/srvrpc.c) against a client-supplied path
-        that could escape the server's per-job temp directory (issue #93)."""
-        cases = (
-                 # Safe: rooted at '/', no ".." component anywhere.
+        """Test dcc_name_has_path_traversal() and dcc_cdir_has_path_traversal(),
+        which guard the NAME and CDIR tokens respectively.
+
+        NAME validation guards dcc_r_many_files() (src/srvrpc.c) against a
+        client-supplied path that could escape the server's per-job temp
+        directory (issue #93).
+
+        CDIR validation guards make_temp_dir_and_chdir_for_cpp() (src/serve.c)
+        against a client-supplied current working directory that could allow
+        directory traversal when concatenated with the server's temp directory
+        (CDIR path-traversal issue found during #100 triage).
+        """
+        # Test dcc_name_has_path_traversal() behavior (NAME token):
+        # Safe: rooted at '/', no ".." component anywhere.
+        name_cases = (
                  ( "/usr/include/stdio.h",  "safe" ),
                  ( "/a/b/c.h",              "safe" ),
                  ( "/",                     "safe" ),
@@ -549,12 +559,56 @@ class PathSafety_Case(SimpleDistCC_Case):
                  ( "/foo/..",               "unsafe" ),
                  ( "/..",                   "unsafe" ),
                 )
-        for name, expected_safety in cases:
+        for name, expected_safety in name_cases:
             o, err = self.runcmd("h_pathsafety '%s'" % name)
             expected = ("%s %s\n" % (expected_safety, name))
             if o != expected:
                 raise AssertionError("h_pathsafety %s gave %s, expected %s" %
                                      (repr(name), repr(o), repr(expected)))
+
+        # Test dcc_cdir_has_path_traversal() behavior (CDIR token):
+        # Safe: absolute paths without "..", relative paths without "..".
+        cdir_cases = (
+                 # Safe: absolute paths without ".."
+                 ( "/usr/local",            "safe" ),
+                 ( "/home/user",            "safe" ),
+                 ( "/",                     "safe" ),
+                 # Safe: relative paths without ".." (CDIR allows relative paths)
+                 ( "src",                   "safe" ),
+                 ( "a/b/c",                 "safe" ),
+                 ( "subdir/nested/dir",     "safe" ),
+                 ( ".",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "foo/..bar",             "safe" ),
+                 ( "foo/bar..",             "safe" ),
+                 ( "foo..bar/baz",          "safe" ),
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 # Edge case: "/..bar" is NOT a traversal — ".." is just part
+                 # of the directory name, not a path component by itself.
+                 # Unlike "/..", which would be traversal, "/..bar" is safe.
+                 ( "/..bar",                "safe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component (leading).
+                 ( "..",                    "unsafe" ),
+                 ( "../etc/passwd",         "unsafe" ),
+                 ( "/../etc/passwd",        "unsafe" ),
+                 # Unsafe: ".." as an embedded path component.
+                 ( "a/../b",                "unsafe" ),
+                 ( "a/../../c",             "unsafe" ),
+                 ( "foo/../../etc/passwd",  "unsafe" ),
+                 # Unsafe: ".." as a trailing path component.
+                 ( "a/..",                  "unsafe" ),
+                 ( "/a/..",                 "unsafe" ),
+                 ( "a/b/..",                "unsafe" ),
+                )
+        for cdir, expected_safety in cdir_cases:
+            o, err = self.runcmd("h_pathsafety --cdir '%s'" % cdir)
+            expected = ("%s %s\n" % (expected_safety, cdir))
+            if o != expected:
+                raise AssertionError("h_pathsafety --cdir %s gave %s, expected %s" %
+                                     (repr(cdir), repr(o), repr(expected)))
 
 
 
