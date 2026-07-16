@@ -274,6 +274,7 @@ distccd_obj = src/access.o						\
 	src/serve.o src/setuid.o src/srvnet.o src/srvrpc.o src/state.o	\
 	src/stats.o							\
 	src/fix_debug_info.o						\
+	src/pathsafety.o						\
 	@ZEROCONF_DISTCCD_OBJS@						\
 	@AUTH_DISTCCD_OBJS@						\
 	$(common_obj)
@@ -321,6 +322,9 @@ h_compile_obj = src/h_compile.o $(common_obj) src/compile.o src/timefile.o \
 	        src/clirpc.o src/include_server_if.o src/state.o src/where.o \
 		src/ssh.o src/strip.o src/cpp.o @AUTH_DISTCC_OBJS@
 h_getline_obj = src/h_getline.o $(common_obj)
+# No common_obj: pathsafety.c is deliberately dependency-free (see its file
+# comment), so this test binary links only the two objects it needs.
+h_pathsafety_obj = src/h_pathsafety.o src/pathsafety.o
 
 # All source files, for the purposes of building the distribution
 SRC =	src/stats.c							\
@@ -343,6 +347,7 @@ SRC =	src/stats.c							\
 	src/mon.c src/mon-notify.c src/mon-text.c			\
 	src/mon-gnome.c							\
 	src/ncpus.c src/netutil.c					\
+	src/h_pathsafety.c src/pathsafety.c				\
 	src/prefork.c src/pump.c					\
 	src/remote.c src/renderer.c src/rpc.c				\
 	src/safeguard.c src/sendfile.c src/setuid.c src/serve.c		\
@@ -381,7 +386,8 @@ HEADERS = src/stats.h							\
 	src/dotd.h src/include_server_if.h				\
 	src/emaillog.h 							\
 	src/va_copy.h 							\
-	src/zeroconf.h
+	src/zeroconf.h							\
+	src/pathsafety.h
 
 conf_dir = packaging/RedHat/conf
 conf_files = $(conf_dir)/hosts \
@@ -438,7 +444,8 @@ check_PROGRAMS = \
 	h_strip@EXEEXT@ \
 	h_dotd@EXEEXT@ \
 	h_compile@EXEEXT@ \
-	h_getline@EXEEXT@
+	h_getline@EXEEXT@ \
+	h_pathsafety@EXEEXT@
 
 check_include_server_PY = \
 	include_server/c_extensions_test.py \
@@ -574,6 +581,9 @@ h_compile@EXEEXT@: $(h_compile_obj)
 
 h_getline@EXEEXT@: $(h_getline_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_getline_obj) $(LIBS)
+
+h_pathsafety@EXEEXT@: $(h_pathsafety_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_pathsafety_obj) $(LIBS)
 
 
 src/h_fix_debug_info.o: src/fix_debug_info.c
