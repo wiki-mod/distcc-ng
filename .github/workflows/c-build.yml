@@ -1,5 +1,9 @@
 name: C build
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   # Restricted to the two long-lived branches: without this filter, pushing
   # a commit to an in-repo PR branch (dev/issueNN_...) fired this AND
