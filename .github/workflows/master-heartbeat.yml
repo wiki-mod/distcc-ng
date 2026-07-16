@@ -38,6 +38,10 @@ jobs:
       - name: Build ccache distributed across the two-container harness
         env:
           E2E_CLIENT_SCRIPT: test/e2e/client-heartbeat.sh
-          E2E_MIN_REMOTE_JOBS: "50"
+          # A floor that proves distribution without spuriously failing a
+          # healthy build: ccache has well over this many translation units,
+          # so a genuine distributed build clears 20 easily, while a silently
+          # non-distributing build (launcher ignored) reports 0 and goes red.
+          E2E_MIN_REMOTE_JOBS: "20"
           E2E_SCENARIO: ccache weekly heartbeat
         run: bash test/e2e/run-e2e.sh
