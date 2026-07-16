@@ -78,6 +78,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Changed
 
+- `AGENTS.md`: rebasing a branch with its own unique commits now requires
+  a throwaway-worktree rebase + `git range-diff` check before pushing the
+  real branch, to catch silent content drift from conflict resolution —
+  a clean `git rebase` exit code alone isn't proof the result is right.
+  Branches that are just a stale pointer to an ancestor of the new base
+  (no unique commits) update via a plain fast-forward instead, which has
+  no rebase/drift risk at all. (#90)
 - `doc/compatibility-policy.md`: Solaris, IRIX, HP-UX, and AIX are now
   explicitly out of scope for this fork's compatibility commitment
   (deliberate maintainer decision, not a silent narrowing) — these see no
