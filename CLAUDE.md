@@ -21,6 +21,7 @@ Core pieces: `distcc` (client), `distccd` (compile server daemon), `pump` (the i
 - **No direct pushes to `master`**: all changes go through pull requests, and merging into `master` requires the maintainer's explicit approval — this fork's hardest rule, restated because it's the one most likely to be assumed away by habit from other projects.
 - **`distcc/distcc` (upstream) is read-only, always, no exceptions.** This clone has an `upstream` remote pointing at it — never push, open/comment/edit a PR or issue, or take any write action against it; always pass `--repo wiki-mod/distcc-ng` explicitly on every `gh` command. See `AGENTS.md`'s "What Not To Do" for the full rule and the incident that made it necessary.
 - **More generally: read anywhere, write only to `wiki-mod/distcc-ng`.** Reading/searching any repo is fine, no permission needed. Writing — opening/commenting/editing/closing an issue or PR, pushing, merging — anywhere other than `wiki-mod/distcc-ng` requires the maintainer's explicit, per-action authorization first; never assume a past approval carries over, and this applies retroactively too.
+- **The local git hooks enforcing this (`.git/hooks/pre-commit`, `commit-msg`, `pre-push` — untracked by design) must never be bypassed**, by me or any delegated agent: no `--no-verify`, no editing/disabling/deleting the hook files, no `core.hooksPath` override, no hookless clone, no API-based write that skips a normal push. See `AGENTS.md`'s "What Not To Do" for the full rule.
 
 ## Architecture
 
