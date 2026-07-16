@@ -53,6 +53,13 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
+      # Trial run (#58): audit-only egress monitoring, does not block any
+      # traffic yet. Must be the very first step -- it can't retroactively
+      # cover network calls made by steps that already ran.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
         with:
           # schedule always evaluates using the default branch (master);
@@ -143,6 +150,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the make_check
+      # job's identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
         with:
           # Same schedule redirect as make_check: the nightly run evaluates
