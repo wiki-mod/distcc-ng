@@ -318,7 +318,10 @@ h_hosts_obj = src/h_hosts.o $(common_obj)
 h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
 h_strip_obj = src/h_strip.o $(common_obj) src/strip.o
-h_dopt_obj = src/h_dopt.o $(common_obj) src/dopt.o src/access.o
+# src/dopt.o needs popt, same as distccd_obj above: pull in the bundled
+# popt objects here too when configure fell back to them, or this test
+# helper fails to link with undefined poptGetContext()/etc. references.
+h_dopt_obj = src/h_dopt.o $(common_obj) src/dopt.o src/access.o @BUILD_POPT@
 h_stats_obj = src/h_stats.o src/h_stats_stats.o $(common_obj) src/srvnet.o \
 	      src/access.o
 h_parsemask_obj = src/h_parsemask.o $(common_obj) src/access.o
