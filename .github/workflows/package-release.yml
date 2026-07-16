@@ -38,15 +38,18 @@ jobs:
             version="manual-${GITHUB_RUN_NUMBER}"
             release_title="distcc-ng manual-${GITHUB_RUN_NUMBER}"
           fi
-          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
-          printf 'tag_name=%s\n' "${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
-          printf 'release_title=%s\n' "${release_title}" >> "${GITHUB_OUTPUT}"
-          printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}" >> "${GITHUB_OUTPUT}"
           if [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "${{ inputs.publish_container }}" = "true" ]; then
-            printf 'do_container=true\n' >> "${GITHUB_OUTPUT}"
+            do_container=true
           else
-            printf 'do_container=false\n' >> "${GITHUB_OUTPUT}"
+            do_container=false
           fi
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'tag_name=%s\n' "${GITHUB_REF_NAME}"
+            printf 'release_title=%s\n' "${release_title}"
+            printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
+            printf 'do_container=%s\n' "${do_container}"
+          } >> "${GITHUB_OUTPUT}"
 
   build_packages:
     needs: setup
