@@ -153,7 +153,7 @@ Example:
 # teardown kills all daemon processes and then stop using --lifetime.
 
 
-import time, sys, string, os, glob, re, socket, errno
+import time, sys, os, glob, re, socket, errno
 import signal, os.path
 import comfychair
 
