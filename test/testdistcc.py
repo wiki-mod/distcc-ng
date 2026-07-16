@@ -524,6 +524,39 @@ class IsSource_Case(SimpleDistCC_Case):
                                      (f, repr(o), repr(expected)))
 
 
+class PathSafety_Case(SimpleDistCC_Case):
+    def runtest(self):
+        """Test dcc_name_has_path_traversal(), which guards the NAME token
+        in dcc_r_many_files() (src/srvrpc.c) against a client-supplied path
+        that could escape the server's per-job temp directory (issue #93)."""
+        cases = (
+                 # Safe: rooted at '/', no ".." component anywhere.
+                 ( "/usr/include/stdio.h",  "safe" ),
+                 ( "/a/b/c.h",              "safe" ),
+                 ( "/",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 ( "/foo..bar/baz",         "safe" ),
+                 # Unsafe: not rooted at '/'.
+                 ( "usr/include/stdio.h",   "unsafe" ),
+                 ( "",                      "unsafe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component.
+                 ( "/../etc/passwd",        "unsafe" ),
+                 ( "/foo/../../etc/passwd", "unsafe" ),
+                 ( "/foo/..",               "unsafe" ),
+                 ( "/..",                   "unsafe" ),
+                )
+        for name, expected_safety in cases:
+            o, err = self.runcmd("h_pathsafety '%s'" % name)
+            expected = ("%s %s\n" % (expected_safety, name))
+            if o != expected:
+                raise AssertionError("h_pathsafety %s gave %s, expected %s" %
+                                     (repr(name), repr(o), repr(expected)))
+
+
 
 class ScanArgs_Case(SimpleDistCC_Case):
     '''Test understanding of gcc command lines.'''

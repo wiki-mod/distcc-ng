@@ -48,7 +48,10 @@
 #include "hosts.h"
 #include "bulk.h"
 #include "snprintf.h"
+#include "pathsafety.h"
 
+/* Read the client's initial "DIST" version token and validate it against
+ * the range of protocol versions this build understands. */
 int dcc_r_request_header(int ifd,
                          enum dcc_protover *ver_ret)
 {
@@ -83,6 +86,10 @@ int dcc_r_cwd(int ifd, char **cwd)
  * Replaces **path with a pointer to a string containing
  * dirname + path.
  * path must be absolute.
+ *
+ * Callers are responsible for rejecting a *path that could make the
+ * concatenated result escape dirname (see dcc_name_has_path_traversal()) --
+ * this function itself does no such validation, it only concatenates.
  */
 static int prepend_dir_to_name(const char *dirname, char **path)
 {
@@ -96,6 +103,24 @@ static int prepend_dir_to_name(const char *dirname, char **path)
         return 0;
 }
 
+/* Receive NFIL files and/or symlinks sent by the client (protocol tokens
+ * NAME, then either LINK+target or FILE+contents, repeated NFIL times) and
+ * materialize them under dirname, the server's own per-job temp directory.
+ *
+ * Each entry's NAME is validated by dcc_name_has_path_traversal() before
+ * use (see that function's comment) since it is otherwise fully
+ * client-controlled and gets prepended with dirname to form the on-disk
+ * path for both the FILE-write and the LINK-create cases.
+ *
+ * A LINK entry's link_target (the symlink's target, as opposed to its own
+ * path/name) is deliberately NOT validated the same way: unlike NAME, the
+ * include-server's own mirroring logic legitimately relies on a leading
+ * ".." in link_target to reference real system directories from a mirror
+ * tree (see _MakeLinkFromMirrorToRealLocation in
+ * include_server/compiler_defaults.py). Rejecting ".." there would break
+ * that existing, intended behavior; fixing it needs a corresponding
+ * include-server change first and is tracked separately.
+ */
 int dcc_r_many_files(int in_fd,
                      const char *dirname,
                      enum dcc_compress compr)
@@ -117,7 +142,14 @@ int dcc_r_many_files(int in_fd,
         if ((ret = dcc_r_token_string(in_fd, "NAME", &name)))
             goto out_cleanup;
 
-        /* FIXME: verify that name starts with '/' and doesn't contain '..'. */
+        if (dcc_name_has_path_traversal(name)) {
+            rs_log_error("rejected NAME with a path-traversal sequence "
+                         "(must start with '/' and contain no '..'): %s",
+                         name);
+            ret = EXIT_PROTOCOL_ERROR;
+            goto out_cleanup;
+        }
+
         if ((ret = prepend_dir_to_name(dirname, &name)))
             goto out_cleanup;
 

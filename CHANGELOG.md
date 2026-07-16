@@ -85,6 +85,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
   rebased from this fork's own prior (unmerged) `v3.4.1-zstd` release —
   originally distcc/distcc#232 by Shawn Landden. (fixes #67)
 
+### Security
+
+- `distccd`: reject a client-supplied `NAME` (`dcc_r_many_files()`,
+  `src/srvrpc.c`) that isn't rooted at `/` or contains a `..` path
+  component, before it is concatenated onto the server's per-job temp
+  directory. Previously unvalidated (a pre-existing `FIXME` acknowledged
+  the gap), a crafted `NAME` could walk the resulting path outside that
+  temp directory for both the `FILE`-write and `LINK`-create cases —
+  flagged by CodeQL on PR #37. The `LINK` token's separate `link_target`
+  value is deliberately left as-is: unlike `NAME`, the include-server's own
+  mirroring logic legitimately relies on a leading `..` there (see
+  `_MakeLinkFromMirrorToRealLocation` in
+  `include_server/compiler_defaults.py`), and fixing that needs a
+  corresponding include-server change first (tracked separately). New
+  `h_pathsafety` unit-test binary. (fixes #93)
+
 ### Fixed
 
 - CI: the nightly publish now stamps the container image (`VCS_REF`) and the
