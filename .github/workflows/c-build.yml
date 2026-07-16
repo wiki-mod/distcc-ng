@@ -21,22 +21,40 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    # ccache's own default cache_dir differs by platform (~/.cache/ccache
+    # on Linux, ~/Library/Caches/ccache on macOS) -- pin it explicitly so
+    # the actions/cache path below is right on both matrix legs.
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
       - uses: actions/checkout@v7
       - uses: ConorMacBride/install-package@v1
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
-          brew: autoconf automake popt python@3.13 python-setuptools
+          brew: autoconf automake popt python@3.13 python-setuptools ccache
           # Note: no gdb on macOS because it's apparently not supported on arm64
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools
+          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache
           # brew-cask: TODO
           # choco: TODO
       - run: which python3.13 || which python3
+      # Cache ccache's own object cache, not distcc's source -- content-
+      # addressed, so a stale/missing cache never produces wrong results,
+      # only a slower build. Rolling key: always restore the latest for
+      # this OS, always save a new one (actions/cache no-ops a save on an
+      # exact key collision, so bumping github.run_id into the key avoids
+      # that and keeps the cache warm across runs).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-
       - run: ./autogen.sh
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
-      - run: ./configure PYTHON="$(which python3.13 || which python3)"
+      - run: ./configure CC="ccache cc" PYTHON="$(which python3.13 || which python3)"
       - run: make
+      - run: ccache --show-stats
       - run: make check
       # Build-provenance attestation for the actual shipped binaries.
       # Linux-only for now: the OIDC-based attestation API needs the repo's
