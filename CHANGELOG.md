@@ -99,6 +99,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- `distccd`: reject a client-supplied `CDIR` (current working directory,
+  `dcc_r_cwd()` in `src/srvrpc.c` → `make_temp_dir_and_chdir_for_cpp()` in
+  `src/serve.c`) that contains a `..` path component, before it is
+  concatenated onto the server's per-job temp directory for the `chdir()`
+  call. Previously unvalidated, a crafted `CDIR` (e.g., `../../etc`) could
+  walk the resulting path outside that temp directory, allowing the server to
+  change into (and create) arbitrary subdirectories — discovered during #100
+  triage of CodeQL path-injection alerts. This closes the `CDIR` traversal
+  vector; it parallels the earlier `NAME` validation fix (see #93). (fixes #100)
 - `distccd`: reject a client-supplied `NAME` (`dcc_r_many_files()`,
   `src/srvrpc.c`) that isn't rooted at `/` or contains a `..` path
   component, before it is concatenated onto the server's per-job temp
