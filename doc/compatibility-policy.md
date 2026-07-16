@@ -71,3 +71,14 @@ this reason.
   fully optional (configure-detected, `--without-zstd` fallback) exactly as
   the explored branches already do, and must not make libzstd a hard
   dependency of the base build.
+- **popt fallback** (issue #63 fix): `libpopt` was, before this fix, a hard
+  `PKG_CHECK_MODULES` requirement with no fallback -- an existing hard
+  dependency, not a new one, but one this policy's "prefer graceful
+  degradation" rule applies to just as much as a newly-proposed one.
+  `configure.ac` now tries system libpopt >= 1.7 first and falls back to
+  building the bundled copy in `popt/` (recovered from the last upstream
+  distcc release that still carried one, before it was dropped in favor of
+  system libpopt exclusively) when the system package isn't found, gated by
+  `--with-system-popt`/`--without-system-popt` for forcing one path or the
+  other. This reduces, rather than removes, a pre-existing hard requirement,
+  and does not raise any minimum version.

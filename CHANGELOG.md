@@ -36,6 +36,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
   now (`publish_results: false`); making the score publicly visible on the
   OpenSSF Scorecard site is a separate decision left for the maintainer.
 
+- **`configure` falls back to a bundled popt when system libpopt is
+  unavailable** (#63) — `PKG_CHECK_MODULES(POPT, [popt >= 1.7])` previously
+  had no fallback, so `configure` failed outright on minimal containers,
+  embedded/cross-compilation environments, or older/unusual distros without
+  a packaged popt. `configure.ac` now tries the system library first and,
+  if it isn't found, builds a bundled copy from `popt/` (vendored from the
+  real, current popt 1.19 release) instead of erroring out, mirroring this
+  fork's existing zstd configure-time optional-detection pattern. New
+  `--with-system-popt`/`--without-system-popt` configure flags force one
+  path or the other when needed.
+
 ### Removed
 
 - **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,

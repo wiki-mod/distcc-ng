@@ -1,0 +1,19 @@
+This is a perfectly ordinary copy of libpopt 1.7, except that the
+configure scripts have been munged to make them fit with distcc.  NLS
+support has been removed, because distcc currently does not use it.
+
+It is only built and used as a fallback, when `configure` cannot find a
+system libpopt >= 1.7 via pkg-config.  If you build distcc on a
+platform which already has popt, this directory is not compiled at
+all.  You can force one path or the other with the
+`--with-system-popt`/`--without-system-popt` configure flags (see
+`configure.ac`).
+
+popt has no apparent home page, but the source can be retrieved from
+
+ftp://ftp.rpm.org/pub/rpm/dist/rpm-4.1.x
+
+or from the current maintained mirror at
+https://github.com/rpm-software-management/popt
+
+License: MIT (Red Hat Software, 1998) — see COPYING in this directory.

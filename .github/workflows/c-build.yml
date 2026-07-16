@@ -138,7 +138,37 @@ jobs:
         with:
           subject-path: /tmp/attest-subjects/*
 
-  # Real distributed-compile validation: distcc-ng's own source tree is built
+  # Proves the bundled-popt fallback (configure.ac, popt/) actually builds and
+  # passes the test suite, not just that it's syntactically present: this
+  # runner deliberately never installs libpopt-dev, so popt.pc is absent and
+  # PKG_CHECK_MODULES(POPT, ...) must fail over to the bundled copy. The
+  # explicit grep on configure's own notice guards against this job silently
+  # turning into a no-op validation if a future base image ships popt.pc by
+  # default.
+  popt_fallback_build:
+    name: Bundled popt fallback build (no system libpopt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ConorMacBride/install-package@v1
+        with:
+          # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
+          # this job. pkg-config *is* installed (unlike libpopt-dev) so this
+          # exercises the realistic case -- pkg-config present, popt.pc
+          # simply absent -- rather than the less representative case of
+          # pkg-config itself being missing. libavahi-client-dev is still
+          # needed so the default zeroconf-enabled build configures the same
+          # as the main matrix.
+          apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
+      - run: ./autogen.sh
+      - name: configure (must report the bundled-popt fallback)
+        run: |
+          ./configure PYTHON="$(which python3)" 2>&1 | tee configure.log
+          grep -q "system libpopt not found (or disabled); building bundled popt" configure.log \
+            || { echo "::error::configure did not report falling back to bundled popt -- is libpopt-dev leaking in from the base image?"; exit 1; }
+      - run: make
+      - run: make check
   # across two containers (a distccd server + a distcc client) over a bridge
   # network, in both plain and pump mode, and a distributed compile is checked
   # byte-for-byte against a local-only one. make check already exercises a
