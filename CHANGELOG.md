@@ -11,6 +11,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- CI: `nightly-publish.yml` — a scheduled (and manually dispatchable) workflow
+  that publishes a moving `nightly` channel from `current_dev`, but only after
+  a full build + `make check` **and** the two-container distributed-compile
+  end-to-end harness both pass (in-workflow `needs:` gate, so a failing build
+  or a broken distribution path can never produce a published artifact). On
+  success it builds the release packages and the container image, pushes
+  `ghcr.io/wiki-mod/distcc-ng:nightly`, force-moves the single `nightly` git
+  tag, and replaces the `nightly` GitHub pre-release (marked pre-release and
+  never "latest"). This is a distinct, explicitly-unstable channel — it does
+  not create, move, or depend on any `vX.Y.Z-NG` tag and leaves
+  `package-release.yml`'s real-release path untouched. (#81)
 - CI: on-demand (`workflow_dispatch`) and nightly (`schedule`) triggers for
   `c-build.yml`, so `current_dev`'s build health is checked continuously
   rather than only when a PR happens to touch it (schedule-triggered runs
