@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #include "distcc.h"
 #include "exitcode.h"
