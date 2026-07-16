@@ -256,6 +256,21 @@ int dcc_open_lockfile(const char *fname, int *plockfd)
         return EXIT_IO_ERROR;
     }
 
+    /* open()'s mode argument is masked by the creating process's umask --
+     * under a typical umask of 022 or 002, the 0666 above actually lands
+     * on disk as 0644 or 0664, silently defeating the shared-lock-dir
+     * support the comment above describes (verified live: a second user
+     * outside the file's group got EACCES trying to reopen an existing
+     * slot file O_RDWR). fchmod() is not subject to umask, so it's the
+     * only way to actually get the requested 0666 regardless of who
+     * created the file first. Best-effort: if this fails (e.g. the file
+     * is owned by a different user and we don't have permission to
+     * rechmod it), fall through and let the lock attempt itself succeed
+     * or fail on its own terms rather than treating this as fatal. */
+    if (*plockfd != -1 && fchmod(*plockfd, 0666) == -1) {
+        rs_log_warning("failed to chmod %s to 0666: %s", fname, strerror(errno));
+    }
+
     return 0;
 }
 
