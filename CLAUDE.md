@@ -57,22 +57,26 @@ scripts/                 # build-release-packages.sh, check-release-version.sh
 
 ## Changelog Maintenance
 
-CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and is maintained with the aid of [git-changelog](https://pawamoy.github.io/git-changelog/) — a tool that automatically generates changelog entries from git commits while preserving hand-written narrative entries in released versions.
+CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and is maintained with the aid of [git-cliff](https://github.com/orhun/git-cliff) — a structured, template-driven changelog generator that automatically produces changelog entries from git commits (including full commit body text for narrative context) while preserving hand-written entries in released versions.
+
+**Key strength vs. earlier tooling**: git-cliff exposes the full `commit.body` in its Tera template context, so squash-merge commit bodies (which capture the "why" narrative across multiple original commit messages) are fully rendered in the changelog, not silently dropped.
 
 **Usage** (before creating a release):
 ```bash
-# Install git-changelog if not already present
-pip install git-changelog
+# Install git-cliff if not already present
+# (via cargo, Homebrew, or your package manager; see https://github.com/orhun/git-cliff#installation)
+cargo install git-cliff
+# or: brew install git-cliff
 
 # Run the tool to refresh [Unreleased] with recent commits
-git-changelog
+git-cliff --unreleased
 ```
 
-This updates the `[Unreleased]` section with automatically-generated entries for all commits since the last release. Developers should review the generated entries and enhance them with narrative context (the "why" behind changes, issue/PR references, etc.) as described in the existing changelog, then commit the updated `CHANGELOG.md` as part of the release process.
+This outputs a changelog section for all commits not yet assigned to a release tag. Pipe it to a file (`git-cliff --unreleased > /tmp/new-entries.md`), review the generated entries, enhance them with additional narrative context as needed, and manually merge the best entries into the `[Unreleased]` section of CHANGELOG.md. Then commit the updated `CHANGELOG.md` as part of the release process.
 
-The tool is configured via `.git-changelog.toml` and uses the "basic" commit convention (no Conventional Commits requirement). The `<!-- insertion marker -->` comment in CHANGELOG.md marks the insertion point for new entries; do not remove this marker.
+The tool is configured via `cliff.toml` and does **not** enforce Conventional Commits (`feat:`/`fix:` prefixes) — instead, it uses keyword-based commit categorization (Fixed, Added, Changed, Removed, Security, Other) suitable for this repo's commit message style. Commit body text is automatically filtered to remove `(cherry picked from ...)` noise and git trailers that are already available in structured form.
 
-See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-changelog assists with this but does not replace manual review and entry curation.
+See `doc/release-versioning.md` for the overall release workflow. The existing `changelog-check.yml` workflow still enforces that PRs touch CHANGELOG.md; git-cliff assists with this but does not replace manual review and entry curation.
 
 ## Running (development)
 
