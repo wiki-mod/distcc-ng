@@ -1,0 +1,66 @@
+# Two-container distributed-compile harness: one distccd compile server, one
+# distcc client. They talk over a dedicated bridge network so the compile
+# genuinely crosses a network boundary rather than staying on localhost.
+#
+# The subnet below is an ephemeral, compose-scoped test network -- not a real
+# LAN or internal host -- and exists only so the daemon's --allow can be given
+# a concrete CIDR that provably matches the client. Service-name DNS
+# ("distccd-server") is used for DISTCC_HOSTS so no container IP is hardcoded.
+
+services:
+  distccd-server:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile
+    image: distcc-ng-e2e:latest
+    networks:
+      - distccnet
+    # --verbose raises the log level so the per-job "COMPILE_OK" summary
+    # (logged with the originating client IP) reaches stderr, which run-e2e.sh
+    # greps as proof that compiles actually landed here. --allow restricts
+    # accepted clients to the compose subnet; no --enable-tcp-insecure -- the
+    # masquerade whitelist baked into the image handles the compiler check.
+    command:
+      - distccd
+      - --no-detach
+      - --daemon
+      - --verbose
+      - --log-stderr
+      - --port
+      - "3632"
+      - --allow
+      - 10.88.0.0/24
+      - --jobs
+      - "4"
+    healthcheck:
+      test: ["CMD", "distccd", "--version"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+  distcc-client:
+    image: distcc-ng-e2e:latest
+    depends_on:
+      distccd-server:
+        condition: service_healthy
+    networks:
+      - distccnet
+    environment:
+      # Plain-mode host; the client script overrides this for the pump-mode
+      # pass (which needs the ,cpp,lzo options).
+      DISTCC_HOSTS: "distccd-server:3632"
+      # A discrepancy must fail the build loudly instead of silently
+      # recompiling locally -- that silent fallback is exactly what this test
+      # exists to catch.
+      DISTCC_FALLBACK: "0"
+      DISTCC_VERBOSE: "1"
+    working_dir: /work
+    command: ["bash", "test/e2e/client-build.sh"]
+
+networks:
+  distccnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.88.0.0/24
