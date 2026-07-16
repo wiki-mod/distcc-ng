@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- Fixed 5 `cpp/unbounded-write` CodeQL alerts (`src/argutil.c`, `src/compile.c`,
+  `src/include_server_if.c`, `src/lsdistcc.c`, `src/serve.c`) by replacing
+  `strcpy`/`sprintf`/`strcat` calls with bounded equivalents (`memcpy` with an
+  explicit length, `snprintf`, `strncat`) at each flagged call site. Also
+  resolves the `cpp/unsafe-strcat` alert on the same `src/lsdistcc.c:891` line.
+  (#145, #148)
+
 ### Fixed
 
 - **code quality**: suppressed `github-code-quality[bot]` findings (unclosed files,

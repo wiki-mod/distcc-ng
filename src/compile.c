@@ -130,18 +130,21 @@ int dcc_discrepancy_filename(char **filename)
         int delta = strlen(discrepancy_suffix) -
             strlen(include_server_port_suffix);
         assert (delta > 0);
-        *filename = malloc(strlen(include_server_port) + 1 + delta);
+        size_t include_server_port_len = strlen(include_server_port);
+        *filename = malloc(include_server_port_len + 1 + delta);
         if (!*filename) {
             rs_log_error("failed to allocate space for filename");
             return EXIT_OUT_OF_MEMORY;
         }
-        strcpy(*filename, include_server_port);
-        int slash_pos = strlen(include_server_port)
+        memcpy(*filename, include_server_port, include_server_port_len);
+        int slash_pos = include_server_port_len
                         - strlen(include_server_port_suffix);
         /* Because include_server_port_suffix is a suffix of include_server_port
          * we expect to find a '/' at slash_pos in filename. */
         assert((*filename)[slash_pos] == '/');
-        (void) strcpy(*filename + slash_pos, discrepancy_suffix);
+        size_t discrepancy_suffix_len = strlen(discrepancy_suffix);
+        memcpy(*filename + slash_pos, discrepancy_suffix, discrepancy_suffix_len);
+        (*filename)[slash_pos + discrepancy_suffix_len] = '\0';
         return 0;
     } else
         return 0;

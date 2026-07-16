@@ -798,8 +798,9 @@ static int dcc_run_job(int in_fd,
             int fail = 1;
             if (arg_sysroot) {
                 char *spec_file = strchr(a, '=') + 1;
-                char *spec_path = alloca(strlen(spec_file) + strlen(arg_sysroot) + 8);
-                sprintf(spec_path, "%s/%s", arg_sysroot, spec_file);
+                size_t spec_path_size = strlen(spec_file) + strlen(arg_sysroot) + 8;
+                char *spec_path = alloca(spec_path_size);
+                snprintf(spec_path, spec_path_size, "%s/%s", arg_sysroot, spec_file);
                 struct stat spec_stat;
                 if (stat(spec_path, &spec_stat) != -1 && (spec_stat.st_mode & S_IFMT) == S_IFREG) {
                   fail = 0;
