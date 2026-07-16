@@ -292,7 +292,9 @@ int dcc_r_file(int ifd, const char *filename,
         /* continue */
     }
 
-    ofd = open(filename, O_TRUNC|O_WRONLY|O_CREAT|O_BINARY, 0666);
+    /* 0600: this file holds received compiler input/output; nothing else
+     * on the box needs to read or write it. */
+    ofd = open(filename, O_TRUNC|O_WRONLY|O_CREAT|O_BINARY, 0600);
     if (ofd == -1) {
         rs_log_error("failed to create %s: %s", filename, strerror(errno));
         return EXIT_IO_ERROR;

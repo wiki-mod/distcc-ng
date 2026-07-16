@@ -13,6 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- Fixed 10 of 11 `cpp/world-writable-file-creation` CodeQL alerts
+  (`src/bulk.c`, `src/daemon.c`, `src/dparent.c`, `src/compile.c`,
+  `src/dotd.c`, `src/state.c`, `src/zeroconf.c`) by replacing hardcoded
+  `0666` `open()` modes with explicit least-privilege modes (`0600`, or
+  `0644` for the daemon's world-readable pid file), and by switching two
+  `fopen()`-based file creations (which always create at the
+  umask-modified `0666` default) to `open()`+`fdopen()` with an explicit
+  mode. One instance (`src/lock.c`'s lock-slot file) was deliberately left
+  at `0666`, since a code comment already documents this as intentional
+  support for a shared, multi-user `DISTCC_DIR`/lock directory — tightening
+  it would break that deployment. (#157)
 - Fixed 5 `cpp/unbounded-write` CodeQL alerts (`src/argutil.c`, `src/compile.c`,
   `src/include_server_if.c`, `src/lsdistcc.c`, `src/serve.c`) by replacing
   `strcpy`/`sprintf`/`strcat` calls with bounded equivalents (`memcpy` with an
