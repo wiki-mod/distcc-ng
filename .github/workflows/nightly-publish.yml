@@ -118,6 +118,9 @@ jobs:
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
 
           notes_file="$(mktemp)"
+          # The backticks are literal Markdown code spans for the release notes,
+          # not command substitution -- silence shellcheck's SC2016 for them.
+          # shellcheck disable=SC2016
           {
             printf 'Automated nightly build of `current_dev` (%s).\n\n' "${GITHUB_SHA}"
             printf 'Unstable nightly channel -- this is NOT a real release and carries no vX.Y.Z-NG tag. It is overwritten on every successful nightly run.\n\n'
