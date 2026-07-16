@@ -57,6 +57,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **CI**: switched CodeQL scanning from GitHub's Default Setup (master-only) to
+  Advanced Setup with a custom workflow (`codeql.yml`) that scans both
+  `current_dev` and `master` branches. Ensures that CodeQL alerts respect the
+  active development branch's actual code state, not just `master`'s, so fixes
+  committed to `current_dev` clear corresponding alerts immediately rather than
+  waiting for promotion to `master`. Uses extended query suite (`security-extended`)
+  over 3 languages (`c-cpp`, `python`, `actions`); `c-cpp` builds manually
+  (`autogen.sh && ./configure && make`) since CodeQL's autobuild is unreliable
+  with autoconf/automake projects. Weekly schedule (Sunday 05:00 UTC) plus
+  push/PR triggers. (#155)
 - CI: fully automated changelog chain, replacing the earlier git-cliff-based
   approach (removes `cliff.toml`, #113/#118). `release-drafter` (#120)
   automatically maintains a draft GitHub Release, refreshed on every push to
