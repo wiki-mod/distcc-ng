@@ -52,7 +52,12 @@ jobs:
             ccache-${{ matrix.os }}-
       - run: ./autogen.sh
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
-      - run: ./configure CC="ccache cc" PYTHON="$(which python3.13 || which python3)"
+      # CC must reference ccache by absolute path: `make check`'s
+      # maintainer-check-no-set-path target runs `$(CC) --version` under a
+      # restricted PATH (/usr/local/bin:/bin:/usr/bin, Makefile.in's
+      # RESTRICTED_PATH) that deliberately excludes Homebrew's /opt/homebrew/bin
+      # on the arm64 macOS runner -- a bare "ccache" would fail to resolve there.
+      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
       - run: make
       - run: ccache --show-stats
       - run: make check
