@@ -9,6 +9,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.5.1-NG] - 2026-07-16
+
 ### Added
 
 - GitHub issue and pull request templates (`.github/pull_request_template.md`,
@@ -21,17 +23,44 @@ See `doc/release-versioning.md` for the full versioning and release process.
   documenting the fork's manual, maintainer-driven versioning process and
   enforcing (fail-closed) that a release tag isn't reused and matches
   `configure.ac`. (#15)
+- `doc/release-versioning.md`: a release is never published without a real
+  `vX.Y.Z-NG` git tag behind it — no ad-hoc/manual-identifier releases,
+  even from a `workflow_dispatch` test run. (#27)
+- `doc/compatibility-policy.md`: this fork's explicit old-hardware/
+  old-toolchain compatibility policy (prefer compiler-feature guards and
+  configure-time optional detection over silently raising minimum
+  requirements). (fixes #28, PR #29)
+- Build-provenance attestation (`actions/attest-build-provenance`) for the
+  `distcc`/`distccd` binaries built in CI. (fixes #38, PR #39)
+- `.github/workflows/package-release.yml`, `scripts/build-release-packages.sh`,
+  `docker/release/Dockerfile`: release automation building rpm/deb packages
+  and a multi-arch (amd64 + arm64, natively via GitHub's free arm64
+  public-repo runners) container image, on a real `v*` tag push or via a
+  manual `workflow_dispatch` opt-in for testing. (fixes #44, PR #47)
 
 ### Changed
 
 - Adopted this fork's own versioning scheme, `<version>-NG` (currently
-  `3.5.0-NG`), continuing distcc's numbering rather than starting
-  independently. (#15)
+  `3.5.1-NG`), continuing distcc's numbering rather than starting
+  independently. (#15, #48)
 - Enforce LF line endings repo-wide via `.gitattributes` (`* text=auto
   eol=lf`) so Windows checkouts no longer introduce CRLF into tracked files. (#16)
 - `dcc_make_tmpnam`'s temp-file name suffix widened from 32 to 64 bits
   (16 hex digits instead of 8), using the fixed-width `uint64_t` already
   read from `/dev/urandom` in full rather than truncating it. (#19)
+- CI: `actions/checkout`, `actions/upload-artifact`, `actions/download-artifact`,
+  and `actions/attest-build-provenance` bumped to their latest major
+  releases (were 3 majors behind on all four), dropping the now-EOL
+  Node 20 runtime GitHub Actions was silently shimming them onto. (PR #47)
+- `gh release create`/`gh release edit` now always pass `--latest`, so a
+  real tagged release claims the "latest" slot instead of leaving a stale
+  pre-fork release marked latest. (PR #47)
+
+### Removed
+
+- Dead `.travis.yml` (unreferenced anywhere in the repo; real CI runs on
+  GitHub Actions) and `.github/FUNDING.yml` (pointed the Sponsor button at
+  the upstream maintainer, not this fork). (fixes #30, PR #31)
 
 ### Fixed
 
@@ -73,3 +102,31 @@ See `doc/release-versioning.md` for the full versioning and release process.
   unbounded `strcat` loop into a fixed 261-byte buffer, overflowing on any
   compiler invocation whose combined arguments exceeded that. Buffer is
   now sized to fit the actual arguments. (fixes #14, PR #25)
+- Stale upstream contact info replaced with this fork's own across all
+  actively-shipped files: `INSTALL`, `README`/`README.md`, every man
+  page's BUGS/SEE ALSO section, `doc/reporting-bugs.txt`,
+  `include_server/setup.py`, and the RedHat packaging (`rpm.spec`,
+  `init.d/distcc`) — fixes a real inconsistency where `distcc --version`'s
+  bug-report string disagreed with what the man pages told users to do. (fixes #33, PR #34)
+- `packaging/RedHat/rpm.spec`: `Version`/`Release` split into an RPM-safe
+  numeric `Version` plus the `-NG` suffix folded into `Release` —
+  rpm-version(7) forbids `-` in either field (it's the NVR separator), so
+  `rpmbuild` rejected this fork's `-NG`-suffixed version outright.
+  `%setup -n` corrected to match the real (hyphenated) dist-tarball
+  directory name, and `update-distcc-symlinks` added to `%files` (it was
+  installed but never listed, so `rpmbuild` refused to build). All three
+  verified against real `rpmbuild`/CI runs, not just synthetic specs. (PR #37, #46, #47)
+- `src/distcc.h`: `FALLTHROUGH`'s `__GNUC__ >= 7` check missed Clang
+  (which defines `__GNUC__`, commonly as 4.x, but does support
+  `__attribute__((fallthrough))` and does enforce
+  `-Wimplicit-fallthrough` independently of GCC's version numbering) —
+  silently regressed the #22 fix under Clang. Now checks
+  `__has_attribute(fallthrough)` first. (PR #37, #46)
+- `pump.in`: the SIGKILL escalation for a stuck include-server process
+  only checked `ps -p PID`, which is also true for an unrelated process if
+  the original pid was reused after the include server already exited.
+  Now verifies the pid's command line before force-killing it. (PR #37, #46)
+- `include_server/c_extensions/distcc_pump_c_extensions_module.c`:
+  `ReadWithDeadline` used `select()`/`FD_SET` on an unbounded fd; `FD_SET`
+  on a descriptor `>= FD_SETSIZE` writes past the `fd_set` bitmask.
+  Replaced with `poll()`, which has no descriptor-number limit. (PR #37, #46)
