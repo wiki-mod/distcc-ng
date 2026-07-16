@@ -31,6 +31,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `nightly-publish.yml` are not covered. Audit mode is the intended
   permanent state for this trial, not a stepping stone to `block` — kept
   log-only so it stays purely observational.
+- **Trial CI job running OpenSSF Scorecard** (`.github/workflows/scorecard.yml`)
+  (#57) — publishes results only to this repo's own code-scanning alerts for
+  now (`publish_results: false`); making the score publicly visible on the
+  OpenSSF Scorecard site is a separate decision left for the maintainer.
 
 ### Removed
 

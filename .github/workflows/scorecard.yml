@@ -1,0 +1,73 @@
+name: Scorecard analysis
+
+# Trial run of OpenSSF Scorecard -- the maintainer explicitly framed this as
+# "test it and see", not a hard commitment to keep it. Results are only
+# uploaded to this repo's own code-scanning alerts (SARIF), not published to
+# the public OpenSSF Scorecard API/badge: publish_results is false below on
+# purpose. Flipping it to true is a separate, later decision for the
+# maintainer, since it makes the score publicly visible.
+#
+# Triggers on push to both current_dev and master (matching codeql.yml's
+# precedent in this repo) rather than upstream Scorecard's own example, which
+# only watches the default branch -- this surfaces trial feedback on
+# current_dev immediately instead of only after a master promotion.
+# branch_protection_rule re-runs the analysis whenever branch protection
+# settings change, since several Scorecard checks (Branch-Protection,
+# Code-Review) score those settings directly. schedule gives a periodic
+# refresh independent of any push, same rationale as this repo's other
+# weekly-cadence workflows (c-build.yml, codeql.yml, master-heartbeat.yml).
+on:
+  push:
+    branches:
+      - current_dev
+      - master
+  branch_protection_rule:
+  schedule:
+    # Weekly, Sunday 06:00 UTC -- after codeql.yml's 05:00 UTC Sunday scan
+    # and c-build.yml's 03:00 UTC daily scan, avoiding both.
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # security-events: write lets the SARIF upload step publish to this
+      # repo's code-scanning alerts. id-token: write is unused while
+      # publish_results is false, but kept so flipping that flag later (see
+      # note above) doesn't also require a follow-up permissions change.
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Trial mode: keep the score out of the public OpenSSF API/badge
+          # until the maintainer decides to publish it.
+          publish_results: false
+
+      - name: Upload SARIF as an artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
