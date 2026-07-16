@@ -1,0 +1,71 @@
+name: CodeQL
+
+# Scan current_dev and master branches on push/PR and weekly schedule.
+# Replaces GitHub's Default Setup (which only scans master) with Advanced Setup
+# to catch issues in our active development branch (current_dev).
+# See: https://github.com/wiki-mod/distcc-ng/issues/155
+on:
+  push:
+    branches: [current_dev, master]
+  pull_request:
+    branches: [current_dev, master]
+  schedule:
+    # Weekly scan, scheduled for Sunday 05:00 UTC (does not conflict with
+    # c-build.yml's 03:00 UTC or nightly-publish.yml's 04:00 UTC schedules).
+    - cron: '0 5 * * 0'
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [c-cpp, python, actions]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Use extended query suite (security + code quality checks)
+          queries: security-extended
+
+      # For c-cpp, we must manually build since CodeQL's autobuild cannot
+      # reliably handle autoconf/automake projects. Follow the same build
+      # pattern as c-build.yml (without ccache overhead, which is not needed
+      # for a one-off CodeQL scan).
+      - name: Install dependencies (C/C++ only)
+        if: matrix.language == 'c-cpp'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake \
+            libavahi-client-dev libpopt-dev \
+            python3-dev python3-setuptools
+
+      - name: Build (C/C++ only)
+        if: matrix.language == 'c-cpp'
+        run: |
+          ./autogen.sh
+          ./configure PYTHON=python3
+          make
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
