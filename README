@@ -53,3 +53,4 @@ is nearly linearly scalable for small numbers of machines: for a
 typical case, three machines are 2.6 times faster than one.
 
 distcc is distributed under the GNU General Public Licence v2.
+
