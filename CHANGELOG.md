@@ -17,6 +17,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   fail-closed). (#52)
 - CI: SPDX-format SBOM (Software Bill of Materials) generated for each
   built container image, uploaded as a workflow artifact. (#53)
+- CI: `make`/`make check` in `c-build.yml` now build through `ccache`
+  (installed via the existing package-install step), with the actual
+  `ccache` object cache directory persisted across runs via
+  `actions/cache` (explicit `CCACHE_DIR`, since ccache's own default
+  cache location differs between Linux and macOS). (#54)
 
 ## [3.5.1-NG] - 2026-07-16
 
