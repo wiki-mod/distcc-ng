@@ -11,6 +11,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pump.in`'s `ShutDown()` could misjudge a zombie include-server process as
+  still running** (#71), because it only checked liveness with `ps -p PID`,
+  which reports true for a zombie ('Z' state) process too. A zombie can never
+  receive or act on another signal and won't actually be reaped until this
+  script itself exits, so the old check could waste a full SIGTERM-then-SIGKILL
+  escalation cycle waiting on a process that will never respond again (in the
+  worst case, deadlocking a caller that itself waits on this script to exit
+  before reaping the zombie). Added an `IncludeServerAlive()` helper that also
+  checks `ps -o state=` for `Z` and treats a zombie as already gone. The
+  `-o state=` header-suppression syntax (as opposed to GNU-only `--no-headers`)
+  is honored by both GNU procps and BSD/macOS `ps`, and falls back to the
+  previous behavior if the state check can't be read for any reason. Ported
+  from upstream distcc/distcc#324.
 ### Security
 
 - Fixed 6 `cpp/path-injection` CodeQL alerts (`src/compile.c`, `src/serve.c`,
