@@ -33,7 +33,10 @@ jobs:
           # which doesn't carry this file -- current_dev is not the default
           # branch here (see AGENTS.md's branching model). Confirmed via a
           # real CI failure ("must reside in your default branch") before
-          # adding this pin.
-          config-name: release-drafter.yml@current_dev
+          # adding this pin. Syntax per @probot/octokit-plugin-config: a
+          # bare "filename@ref" is rejected ("extension is not support for
+          # configuration") -- the leading ":" is required for the @ref
+          # suffix to be recognized, resolving relative to .github/.
+          config-name: ":release-drafter.yml@current_dev"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
