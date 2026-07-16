@@ -11,6 +11,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **lock.c: shared-DISTCC_DIR lock files now actually get 0666** (#159).
+  `dcc_open_lockfile()`'s `open(..., 0666)` was always masked by the
+  creating process's umask (typically landing as `0644`/`0664` on disk),
+  silently defeating the deliberate shared-multi-user-lock-dir support the
+  surrounding comment describes. Added an `fchmod()` call after creation,
+  which (unlike `open()`'s mode argument) isn't subject to umask. Verified
+  live in a real two-user container test: the resulting file mode is now
+  genuinely `0666`. Note: a real second-user relock still fails on hosts
+  with the kernel's `fs.protected_regular` hardening enabled — a separate,
+  pre-existing limitation of the shared-lock-dir design itself, unrelated
+  to this umask fix; see #159 for details.
+
 ### Security
 
 - Fixed 5 `cpp/unbounded-write` CodeQL alerts (`src/argutil.c`, `src/compile.c`,
