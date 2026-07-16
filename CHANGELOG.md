@@ -7,6 +7,8 @@ Versioning continues distcc's own numbering (currently based on distcc 3.4),
 with a `<version>-NG` suffix marking this fork's own releases — e.g. `3.5.0-NG`.
 See `doc/release-versioning.md` for the full versioning and release process.
 
+<!-- insertion marker -->
+
 ## [Unreleased]
 
 ### Added
