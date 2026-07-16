@@ -63,3 +63,45 @@ int dcc_name_has_path_traversal(const char *name)
 
     return 0;
 }
+
+/* Reject a client-supplied CDIR (current working directory) token that
+ * contains ".." path components which could escape the intended directory
+ * tree when concatenated with the server's temp directory.
+ *
+ * Unlike NAME tokens which must be absolute paths starting with '/', CDIR
+ * can be any path (absolute or relative) representing the client's current
+ * working directory at the time of the request. However, ".." components
+ * can cause directory traversal: concatenating temp_dir "/tmp/distccd-XXXXXX"
+ * with cdir "../../etc" would result in a path that resolves to /etc instead
+ * of a subdirectory of the temp directory.
+ *
+ * This function checks for ".." as:
+ *  - The entire CDIR string (e.g., ".."),
+ *  - A leading component (e.g., "../foo"),
+ *  - An embedded component (e.g., "a/../b", "a/../../c", "/a/../b"),
+ *  - A trailing component (e.g., "a/..", "a/b/..", "/a/..").
+ *
+ * Returns 1 (unsafe, reject) or 0 (safe to use).
+ */
+int dcc_cdir_has_path_traversal(const char *cdir)
+{
+    size_t len = strlen(cdir);
+
+    /* Reject ".." as the entire path */
+    if (strcmp(cdir, "..") == 0)
+        return 1;
+
+    /* Reject ".." as a leading path component in relative paths (e.g., "../foo") */
+    if (len >= 3 && strncmp(cdir, "../", 3) == 0)
+        return 1;
+
+    /* Reject ".." as an embedded path component (e.g., "a/../b" or "a/../../c") */
+    if (strstr(cdir, "/../") != NULL)
+        return 1;
+
+    /* Reject ".." as a trailing path component (e.g., "a/.." or "/a/..") */
+    if (len >= 3 && strcmp(cdir + len - 3, "/..") == 0)
+        return 1;
+
+    return 0;
+}

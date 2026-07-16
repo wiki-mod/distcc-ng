@@ -31,4 +31,11 @@
  * directly by h_pathsafety.c. */
 int dcc_name_has_path_traversal(const char *name);
 
+/* Returns 1 if a client-supplied CDIR (current working directory) token
+ * contains ".." path components that could allow directory traversal when
+ * the path is concatenated with the server's temp directory, 0 if safe.
+ * Used by serve.c's make_temp_dir_and_chdir_for_cpp() to validate paths
+ * before mkdir/chdir operations. */
+int dcc_cdir_has_path_traversal(const char *cdir);
+
 #endif /* _DISTCC_PATHSAFETY_H */

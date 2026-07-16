@@ -23,30 +23,56 @@
 #include <config.h>
 
 #include <stdio.h>
+#include <string.h>
 
 #include "pathsafety.h"
 
 /**
- * Test harness: make dcc_name_has_path_traversal() accessible from the
- * command line so it can be exercised by test/testdistcc.py without a full
- * client/server round trip (see src/srvrpc.c's dcc_r_many_files() for the
- * real caller and its rationale).
+ * Test harness: make dcc_name_has_path_traversal() and
+ * dcc_cdir_has_path_traversal() accessible from the command line so they
+ * can be exercised by test/testdistcc.py without a full client/server round
+ * trip (see src/srvrpc.c's dcc_r_many_files() for the real callers and their
+ * rationale).
  *
- * Prints "safe" or "unsafe" for each NAME argument given.
+ * Prints "safe" or "unsafe" for each NAME or CDIR argument given.
+ *
+ * Usage:
+ *   h_pathsafety [--cdir] PATH...
+ *
+ * If --cdir is specified, test dcc_cdir_has_path_traversal() on the remaining
+ * arguments; otherwise, test dcc_name_has_path_traversal().
  **/
 int main(int argc, char *argv[])
 {
     int i;
+    int use_cdir = 0;
 
     if (argc < 2) {
-        fprintf(stderr, "usage: h_pathsafety NAME...\n");
+        fprintf(stderr, "usage: h_pathsafety [--cdir] PATH...\n");
         return 1;
     }
 
-    for (i = 1; i < argc; i++) {
-        printf("%s %s\n",
-               dcc_name_has_path_traversal(argv[i]) ? "unsafe" : "safe",
-               argv[i]);
+    i = 1;
+    if (strcmp(argv[1], "--cdir") == 0) {
+        use_cdir = 1;
+        i = 2;
+    }
+
+    if (i >= argc) {
+        fprintf(stderr, "usage: h_pathsafety [--cdir] PATH...\n");
+        return 1;
+    }
+
+    for (; i < argc; i++) {
+        if (use_cdir) {
+            printf("%s %s\n",
+                   dcc_cdir_has_path_traversal(argv[i]) ? "unsafe" : "safe",
+                   argv[i]);
+        } else {
+            printf("%s %s\n",
+                   dcc_name_has_path_traversal(argv[i]) ? "unsafe" : "safe",
+                   argv[i]);
+        }
     }
 
     return 0;
