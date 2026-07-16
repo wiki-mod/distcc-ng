@@ -60,19 +60,25 @@ categories:
   - type: 'version-resolver'
     semver-increment: 'patch'
 
+# Regex flags go AFTER the closing slash (JS RegExp syntax, e.g. '/pattern/i'),
+# not as an inline '(?i)' modifier -- (?i) is PCRE/Python-style and isn't
+# supported by the JS RegExp engine autolabeler actually uses under the hood.
+# The inline form silently failed as "Bad autolabeler regex" on every run
+# (confirmed live 2026-07-16), meaning none of these patterns had ever
+# actually matched anything since they were introduced (#120/#121).
 autolabeler:
   - label: 'security'
     title:
-      - '/^(?i)(security|traversal|vulnerab)/'
+      - '/^(security|traversal|vulnerab)/i'
   - label: 'bug'
     title:
-      - '/^(?i)fix/'
+      - '/^fix/i'
   - label: 'enhancement'
     title:
-      - '/^(?i)(add|feat)/'
+      - '/^(add|feat)/i'
   - label: 'documentation'
     title:
-      - '/^(?i)doc/'
+      - '/^doc/i'
     files:
       - '*.md'
       - 'doc/**'
