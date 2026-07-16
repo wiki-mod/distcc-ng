@@ -6,6 +6,17 @@ name: Release Drafter
 # for how the two relate. Also runs on pull_request events so the
 # autolabeler assigns each PR's category label (bug/enhancement/security/
 # documentation) as soon as it's opened, not only once merged.
+#
+# Two separate jobs, not one combined step, because release-drafter/
+# release-drafter@v7's main action does NOT autolabel -- confirmed live by
+# running the combined single-job setup this workflow used to have (v6 and
+# early v7) and observing zero labeling activity in the run log. v7 split
+# autolabeling into its own release-drafter/release-drafter/autolabeler
+# sub-action (see its README's Autolabeler section); running only the main
+# action on a pull_request event also emits a spurious "refs/pull/N/merge
+# is not supported as release target, falling back to default branch"
+# warning, since a PR merge ref was never a valid release target to begin
+# with -- avoided entirely by only running the draft-update job on push.
 
 on:
   push:
@@ -19,12 +30,10 @@ permissions:
 
 jobs:
   update_release_draft:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      # Needed to create/update the draft release.
       contents: write
-      # Needed for the autolabeler to assign labels to PRs.
-      pull-requests: write
     steps:
       # Pinned to v7.5.1's commit (not the floating "v7" tag), per the
       # unpinned-third-party-action CodeQL finding. v7 (unlike v6) declares
@@ -36,5 +45,15 @@ jobs:
       # on master); v7 doesn't need it, though the duplicate is left in place
       # as harmless redundancy rather than removed as part of this change.
       - uses: release-drafter/release-drafter@4d75298e00d9e34c483e5ff8c68d0ea1c1940c1e # v7.5.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auto_label:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: release-drafter/release-drafter/autolabeler@4d75298e00d9e34c483e5ff8c68d0ea1c1940c1e # v7.5.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

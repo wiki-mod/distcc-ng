@@ -21,23 +21,44 @@ change-title-escapes: '\<*_&'
 # PRs get sorted into these sections by label. Labels are assigned
 # automatically by the autolabeler below, based on PR title keywords,
 # since this repo doesn't manually label every PR by type.
+#
+# v7 schema (categories[*].when / a dedicated version-resolver category
+# type) rather than the deprecated flat categories[*].labels and top-level
+# version-resolver block -- both old forms still parse under v7 as
+# compatibility shims, but emit a deprecation warning on every run, which
+# this project treats as an error to fix, not noise to ignore.
 categories:
   - title: 'Security'
-    labels:
-      - 'security'
+    semver-increment: 'patch'
+    when:
+      label: 'security'
   - title: 'Fixed'
-    labels:
-      - 'bug'
+    semver-increment: 'patch'
+    when:
+      label: 'bug'
   - title: 'Added'
-    labels:
-      - 'enhancement'
+    semver-increment: 'minor'
+    when:
+      label: 'enhancement'
   - title: 'Documentation'
-    labels:
-      - 'documentation'
-
-# PRs opted out of the CHANGELOG.md requirement are opted out here too.
-exclude-labels:
-  - 'no-changelog-needed'
+    when:
+      label: 'documentation'
+  # Replaces the old top-level exclude-labels: PRs opted out of the
+  # CHANGELOG.md requirement are opted out here too.
+  - type: 'pre-exclude'
+    when:
+      label: 'no-changelog-needed'
+  # Replaces the old top-level version-resolver block: a 'major' label
+  # (not currently used by any changelog category above) still bumps the
+  # major version, and any PR matching no category above still resolves
+  # to a patch bump by default, same as the old version-resolver's
+  # 'default: patch'.
+  - type: 'version-resolver'
+    semver-increment: 'major'
+    when:
+      label: 'major'
+  - type: 'version-resolver'
+    semver-increment: 'patch'
 
 autolabeler:
   - label: 'security'
@@ -55,19 +76,6 @@ autolabeler:
     files:
       - '*.md'
       - 'doc/**'
-
-version-resolver:
-  major:
-    labels:
-      - 'major'
-  minor:
-    labels:
-      - 'enhancement'
-  patch:
-    labels:
-      - 'bug'
-      - 'security'
-  default: patch
 
 # release-drafter's own default is "## $TITLE" (H2) for category headings.
 # Overridden to H3 here: changelog-update-on-release.yml's
