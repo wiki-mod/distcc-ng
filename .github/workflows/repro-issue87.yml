@@ -1,0 +1,41 @@
+# Investigation-only workflow for issue #87 (unified distcc+pump host-list
+# support). Reuses the existing e2e harness's Dockerfile/network (test/e2e/)
+# without modifying it, and runs test/e2e/repro-hostlist-issue87.sh to
+# reproduce the claimed failure modes for real rather than from reading code.
+# Not part of the required merge gate -- delete once #87 is resolved.
+
+name: Repro issue 87 (host-list)
+
+on:
+  pull_request:
+    paths:
+      - "test/e2e/repro-hostlist-issue87.sh"
+      - ".github/workflows/repro-issue87.yml"
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bring up distccd-server, run the repro script in distcc-client
+        working-directory: test/e2e
+        run: |
+          set -euo pipefail
+          docker compose build
+          docker compose up -d distccd-server
+          docker compose run --rm --no-deps \
+            -e DISTCC_FALLBACK=0 -e DISTCC_VERBOSE=1 \
+            distcc-client bash test/e2e/repro-hostlist-issue87.sh
+
+      - name: Server log (diagnostics)
+        if: always()
+        working-directory: test/e2e
+        run: docker compose logs --no-color distccd-server | tail -n 200 || true
+
+      - name: Tear down
+        if: always()
+        working-directory: test/e2e
+        run: docker compose down -v --remove-orphans || true
