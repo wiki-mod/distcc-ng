@@ -26,6 +26,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
   is honored by both GNU procps and BSD/macOS `ps`, and falls back to the
   previous behavior if the state check can't be read for any reason. Ported
   from upstream distcc/distcc#324.
+
 ### Security
 
 - Fixed 6 `cpp/path-injection` CodeQL alerts (`src/compile.c`, `src/serve.c`,
@@ -160,6 +161,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   required a manually-configured real distcc farm and downloaded 15-20+
   year old open-source project tarballs from largely-dead mirrors. No
   longer has any ongoing relevance to this fork.
+
+### Changed
+
+- Raised `dcc_lock_one()`'s per-scan slot-index cap in `src/where.c` from
+  10000 to 50000 (#72), porting upstream distcc/distcc#349. This only
+  affects hosts configured with an unusually large `n_slots`: the scan now
+  reaches slot indices between 10000 and 50000 in a single pass instead of
+  needing an extra pause-and-rescan cycle to get there. No other behavior
+  change — the loop never gives up and fails a build when the cap is hit
+  either way, it always falls through to a paced rescan.
 
 ## [3.5.1.1-NG] - 2026-07-16
 

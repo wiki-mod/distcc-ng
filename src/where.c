@@ -83,6 +83,14 @@ static int dcc_lock_one(struct dcc_hostdef *hostlist,
                         int *cpu_lock_fd);
 
 
+/**
+ * Parse and immediately discard the configured host list.
+ *
+ * Called before falling back to a purely local build so that a malformed
+ * DISTCC_HOSTS/hosts-file configuration is still surfaced (dcc_get_hostlist()
+ * logs its own parse errors) even on a path that otherwise never needs the
+ * remote host list.
+ **/
 void dcc_read_localslots_configuration(void)
 {
     struct dcc_hostdef *hostlist;
@@ -99,6 +107,14 @@ void dcc_read_localslots_configuration(void)
 }
 
 
+/**
+ * Build the candidate host list from configuration, drop disliked hosts,
+ * and lock a free slot on whichever host is chosen.
+ *
+ * Returns EXIT_NO_HOSTS if configuration yields no usable host at all,
+ * distinct from the retry loop inside dcc_lock_one() which is about
+ * transient contention on an otherwise-valid host list.
+ **/
 int dcc_pick_host_from_list_and_lock_it(struct dcc_hostdef **buildhost,
                             int *cpu_lock_fd)
 {
@@ -123,6 +139,12 @@ int dcc_pick_host_from_list_and_lock_it(struct dcc_hostdef **buildhost,
 }
 
 
+/**
+ * Sleep briefly before dcc_lock_one() rescans the host list.
+ *
+ * See the inline comment below for why this is a fixed pause rather than
+ * exponential backoff.
+ **/
 static void dcc_lock_pause(void)
 {
     /* This could do with some tuning.
@@ -173,7 +195,15 @@ static int dcc_lock_one(struct dcc_hostdef *hostlist,
     int ret;
 
     while (1) {
-        for (i_cpu = 0; i_cpu < 10000; i_cpu++) {
+        /* This cap only bounds a single scan across hosts for a given
+         * slot index; hitting it just falls through to dcc_lock_pause()
+         * and the outer while(1) restarts the scan from i_cpu 0, so it
+         * never aborts the build. It only matters at all when some host's
+         * n_slots exceeds it: then this loop stops scanning that host's
+         * higher slot indices early, needing an extra pause+rescan cycle
+         * to reach them. Raised from 10000 so that gap only shows up for
+         * hosts configured with an unusually large slot count. */
+        for (i_cpu = 0; i_cpu < 50000; i_cpu++) {
             char i_cpu_is_usable = 0;
 
             for (h = hostlist; h; h = h->next) {
@@ -217,6 +247,14 @@ int dcc_lock_local(int *cpu_lock_fd)
     return dcc_lock_one(dcc_hostdef_local, &chosen, cpu_lock_fd);
 }
 
+/**
+ * Lock localhost for a local preprocess (pump mode's cpp phase).
+ *
+ * Separate from dcc_lock_local() because it uses dcc_hostdef_local_cpp
+ * (the cpp-specific slot pool) and records DCC_PHASE_CPP state on success,
+ * both needed so pump mode's local cpp load doesn't compete with plain
+ * local-compile slots for the same accounting.
+ **/
 int dcc_lock_local_cpp(int *cpu_lock_fd)
 {
     int ret;
