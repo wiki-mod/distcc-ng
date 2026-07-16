@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- CI: `master-heartbeat.yml` — a weekly (and manually dispatchable) heartbeat
+  that builds ccache's own source (pinned to `v4.13.6`, a representative
+  third-party C/C++ CMake project) fully distributed across the same
+  two-container distccd/distcc harness, as a heavier real-world validation
+  than the distcc-ng self-compile and independent of whether `master` changed.
+  The `test/e2e/` orchestrator was generalized (`E2E_CLIENT_SCRIPT` /
+  `E2E_MIN_REMOTE_JOBS`) so one proven harness drives both the nightly
+  self-compile and this heartbeat. (Per-push `master` health is already covered
+  by `c-build.yml`'s existing push trigger + its `distributed_e2e` job.) (#81)
 - CI: `nightly-publish.yml` — a scheduled (and manually dispatchable) workflow
   that publishes a moving `nightly` channel from `current_dev`, but only after
   a full build + `make check` **and** the two-container distributed-compile
