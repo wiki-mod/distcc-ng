@@ -142,6 +142,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Changed
 
+- Changelog tooling: replaced `git-changelog` with `git-cliff` for better
+  narrative support. Unlike `git-changelog` which only renders commit subject
+  lines, `git-cliff` exposes full commit body text in its Tera template
+  context — this allows changelog entries to capture the complete "why"
+  narrative from squash-merge commit bodies. Configuration moved from
+  `.git-changelog.toml` to `cliff.toml` (see `CLAUDE.md`'s "Changelog
+  Maintenance" section for updated workflow). (fixes #106)
 - `AGENTS.md`: rebasing a branch with its own unique commits now requires
   a throwaway-worktree rebase + `git range-diff` check before pushing the
   real branch, to catch silent content drift from conflict resolution —
