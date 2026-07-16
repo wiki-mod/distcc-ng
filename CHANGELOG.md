@@ -21,8 +21,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   empty, oversized, or control-character-laden values. The `src/srvrpc.c:158`
   instance was already resolved by the earlier `dcc_name_has_path_traversal()`
   fix (#93/#94) and needed no further change. `src/traceenv.c`'s log-file
-  `open()` mode stays `0666`, deliberately not tightened to `0600` (same
-  long-standing-permissions principle as `src/lock.c`, see #157/#159). (#151)
+  `open()` call keeps its long-standing `0666` mode unchanged (maintainer
+  call: not tightening permissions that have worked this way for 25+ years
+  without a concrete reason, same principle as `src/lock.c`, see #157/#159)
+  — the accompanying `cpp/world-writable-file-creation` alert on that line
+  is intentionally left open, not fixed by this change. (#151)
 
 ### Added
 

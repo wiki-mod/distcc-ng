@@ -70,11 +70,14 @@ void dcc_set_trace_from_env(void)
             fd = -1;
             errno = EINVAL;
         } else {
-            /* Mode 0600: this is the invoking user's own trace/error log
-             * and may contain compiler command lines, file paths, and
-             * other locally-sensitive detail -- no reason for it to be
-             * group- or world-readable/writable. */
-            fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0600);
+            /* Mode left at 0666 deliberately, not tightened: this matches
+             * the mode every other distcc trace/lock/state file in a
+             * shared DISTCC_DIR has used for 25+ years (see src/lock.c's
+             * dcc_open_lockfile() for the fuller rationale) -- the
+             * maintainer confirmed this is intentional long-standing
+             * behavior, not an oversight, and CodeQL's world-writable
+             * complaint on this line is not being acted on. */
+            fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0666);
         }
         if (fd != -1) {
             /* asked for a file, and we can open that file:
