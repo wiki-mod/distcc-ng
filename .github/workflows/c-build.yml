@@ -138,6 +138,139 @@ jobs:
         with:
           subject-path: /tmp/attest-subjects/*
 
+  # Proves the bundled-popt fallback (configure.ac, popt/) actually builds and
+  # passes the test suite, not just that it's syntactically present: this
+  # runner deliberately never installs libpopt-dev, so popt.pc is absent and
+  # PKG_CHECK_MODULES(POPT, ...) must fail over to the bundled copy. The
+  # explicit grep on configure's own notice guards against this job silently
+  # turning into a no-op validation if a future base image ships popt.pc by
+  # default.
+  popt_fallback_build:
+    name: Bundled popt fallback build (no system libpopt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # This job only checks out and builds the tree, it doesn't need
+    # anything beyond read access to the repository contents.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
+          # this job. pkg-config *is* installed (unlike libpopt-dev) so this
+          # exercises the realistic case -- pkg-config present, popt.pc
+          # simply absent -- rather than the less representative case of
+          # pkg-config itself being missing. libavahi-client-dev is still
+          # needed so the default zeroconf-enabled build configures the same
+          # as the main matrix.
+          apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
+      - run: ./autogen.sh
+      - name: configure (must report the bundled-popt fallback)
+        run: |
+          ./configure PYTHON="$(which python3)" 2>&1 | tee configure.log
+          grep -q "system libpopt not found (or disabled); building bundled popt" configure.log \
+            || { echo "::error::configure did not report falling back to bundled popt -- is libpopt-dev leaking in from the base image?"; exit 1; }
+      - run: make
+      - run: make check
+      # Real functional smoke test of the bundled-popt-linked binary, not just
+      # a successful link: --help exercises poptGetContext()/poptGetNextOpt()
+      # end to end, and the option table below is a representative sample of
+      # src/dopt.c's actual options[] (POPT_ARG_STRING, POPT_ARG_INT, and
+      # POPT_ARG_NONE entries), so a real argInfo/argument-parsing regression
+      # in the vendored popt tree would show up as missing/garbled output
+      # here, not just a link failure.
+      - name: Functional smoke test (distccd --help against bundled popt)
+        run: |
+          ./distccd --help > distccd-help.log 2>&1
+          echo "--- distccd --help output ---"
+          cat distccd-help.log
+          for opt in '\-\-jobs' '\-\-nice' '\-\-listen' '\-\-daemon' '\-\-log-file' '\-\-allow' '\-\-user' '\-\-port'; do
+            grep -qE -- "$opt" distccd-help.log \
+              || { echo "::error::distccd --help (bundled popt build) is missing expected option matching '$opt'"; exit 1; }
+          done
+
+  # Popt-directory-specific regression gate (asked for after the bundled
+  # popt/ tree was found to be a 20+-year-old 1.7 snapshot, see #63's
+  # follow-up). This job compiles the *current* vendored popt/*.c directly
+  # with gcc, independent of the full autoconf/make machinery, at this
+  # project's own -Wall -Wextra -Werror plus the same -Wno-unused/
+  # -Wno-unused-parameter exemption Makefile.in's popt_OBJS rule applies in
+  # the real build. That exemption turned out to be load-bearing even for a
+  # correctly-vendored, completely unmodified popt 1.19 tree, not just for
+  # the old 1.7 snapshot: popt/popthelp.c's poptHelpOptions2 callback table
+  # has intentionally-unused parameters by design, and popt/poptint.c's
+  # POPT_fprintf() leaves a variable genuinely unused on the HAVE_VASPRINTF
+  # code path (the normal one on glibc) -- both are inherent to popt's own
+  # source, not something a regression here would introduce or remove. The
+  # real regression detection this job provides is the version marker and
+  # fingerprint check below: it confirms popt/POPT_VERSION and a real,
+  # version-specific API symbol actually match what this repo claims to
+  # ship, catching a stale/wrong vendored copy even if it happens to still
+  # compile cleanly.
+  popt_vendor_check:
+    name: Vendored popt/ version and compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Same rationale as popt_fallback_build above: read-only checkout and
+    # compile, no need for the default token's write access to anything.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Vendored version marker matches what this repo claims to ship
+        run: |
+          test "$(cat popt/POPT_VERSION)" = "popt-1.19-release" \
+            || { echo "::error::popt/POPT_VERSION does not read 'popt-1.19-release' -- has the vendored tree been swapped without updating the marker?"; exit 1; }
+          # poptJlu32lpair only exists in the real popt project's modern
+          # (post-1.7) hash-table implementation (src/poptint.c upstream,
+          # popt/poptint.c here) -- a real, checkable fingerprint that the
+          # vendored tree is genuinely 1.19-era code, not just a renamed
+          # marker file.
+          grep -q "poptJlu32lpair" popt/poptint.h \
+            || { echo "::error::popt/poptint.h is missing poptJlu32lpair -- vendored tree does not look like popt 1.19"; exit 1; }
+          # findme.c/.h were part of the old 1.7 snapshot and were dropped
+          # when vendoring 1.19 (upstream itself no longer ships them); their
+          # reappearance is a sign of an accidental revert to the stale tree.
+          if [ -e popt/findme.c ] || [ -e popt/findme.h ]; then
+            echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
+            exit 1
+          fi
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          # Same package set as popt_fallback_build (no libpopt-dev, so
+          # config.h ends up with the real BUILD_POPT-triggering macros this
+          # job needs a genuine config.h to reflect).
+          apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
+      # Run the real ./configure (forced onto the bundled path) so config.h
+      # reflects the actual HAVE_* results this job's compile then uses --
+      # a hand-written set of -D flags here could silently drift from what
+      # configure.ac really detects and stop testing the real thing.
+      - run: ./autogen.sh
+      - run: ./configure --without-system-popt PYTHON="$(which python3)"
+      - name: Compile vendored popt/*.c under this project's own warning flags
+        run: |
+          set -e
+          mkdir -p /tmp/popt-strict-check
+          # -Wno-unused/-Wno-unused-parameter mirror Makefile.in's popt_OBJS
+          # rule exactly -- see the job-level comment above for why even the
+          # real, unmodified popt 1.19 source needs both.
+          # -D_GNU_SOURCE, -DPOPT_SYSCONFDIR and -DPACKAGE mirror the flags
+          # Makefile.in's own CPPFLAGS/popt_OBJS rule feeds every popt object
+          # in the real build: without -D_GNU_SOURCE, glibc hides
+          # secure_getenv()'s prototype (popt/system.h's getenv() macro, used
+          # when HAVE_SECURE_GETENV is detected); POPT_SYSCONFDIR is
+          # poptReadDefaultConfig()'s compiled-in system config directory;
+          # PACKAGE is popt/popthelp.c's gettext translation-domain string,
+          # which this fork's plain-autoconf (non-automake) configure.ac
+          # never defines on its own.
+          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
+          for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
+            echo "::group::gcc ${CFLAGS[*]} -c $f"
+            gcc "${CFLAGS[@]}" -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"
+            echo "::endgroup::"
+          done
+
   # Real distributed-compile validation: distcc-ng's own source tree is built
   # across two containers (a distccd server + a distcc client) over a bridge
   # network, in both plain and pump mode, and a distributed compile is checked

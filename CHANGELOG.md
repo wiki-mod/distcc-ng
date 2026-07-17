@@ -52,6 +52,36 @@ See `doc/release-versioning.md` for the full versioning and release process.
   now (`publish_results: false`); making the score publicly visible on the
   OpenSSF Scorecard site is a separate decision left for the maintainer.
 
+- **`configure` falls back to a bundled popt when system libpopt is
+  unavailable** (#63) — `PKG_CHECK_MODULES(POPT, [popt >= 1.7])` previously
+  had no fallback, so `configure` failed outright on minimal containers,
+  embedded/cross-compilation environments, or older/unusual distros without
+  a packaged popt. `configure.ac` now tries the system library first and,
+  if it isn't found, builds a bundled copy from `popt/` instead of erroring
+  out, mirroring this fork's existing zstd configure-time optional-detection
+  pattern. New `--with-system-popt`/`--without-system-popt` configure flags
+  force one path or the other when needed.
+  - The bundled `popt/` tree is vendored from popt's own real,
+    actively-maintained upstream project
+    ([rpm-software-management/popt](https://github.com/rpm-software-management/popt)),
+    pinned to its `popt-1.19-release` tag (2022-06-07). An earlier version
+    of this change instead recovered a copy from `distcc/distcc`'s own git
+    history (the commit right before upstream's own maintainers deleted it),
+    which turned out to be libpopt 1.7 — a snapshot from roughly 1998-2001,
+    20+ years and multiple major versions behind any current
+    system-installed popt (Debian/Ubuntu ship ~1.16-1.19 today). Replaced
+    with the real 1.19 release before merging once that version gap was
+    flagged, to avoid the bundled fallback path silently missing two
+    decades of upstream bugfixes relative to the system-popt path it
+    substitutes for.
+  - New CI job `popt_vendor_check` compiles the vendored `popt/*.c` directly
+    under this project's own `-Wall -Wextra -Werror` (plus the same
+    `-Wno-unused`/`-Wno-unused-parameter` exemption the real build applies
+    to third-party code — even the unmodified 1.19 source needs it) and
+    checks a version marker/fingerprint, to catch an accidental future
+    regression back to the stale 1.7 tree even if it would otherwise still
+    compile cleanly.
+
 ### Removed
 
 - **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,

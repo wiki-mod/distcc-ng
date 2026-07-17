@@ -49,7 +49,7 @@ ac_cv_func_sendfile=no ac_cv_header_sys_sendfile_h=no ./configure \
   --datadir=%{_datadir} \
   --with-docdir=%{_docdir} \
   --mandir=%{_mandir} \
-  --enable-rfc2553 --with-included-popt
+  --enable-rfc2553
 # Get the list of files installed by the python install process
 # by asking make to tell setup.py to put it in python_install_record
 make RPM_OPT_FLAGS="$RPM_OPT_FLAGS" \
