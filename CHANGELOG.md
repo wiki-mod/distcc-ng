@@ -171,6 +171,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   needing an extra pause-and-rescan cycle to get there. No other behavior
   change — the loop never gives up and fails a build when the cap is hit
   either way, it always falls through to a paced rescan.
+- **`dcc_mkdir()` failed with `ENOENT` when a parent directory was
+  missing** (#179) — `dcc_get_top_dir()`/`dcc_get_subdir()` build paths
+  like `$HOME/.distcc` via `dcc_mkdir()`, which previously did a single
+  non-recursive `mkdir()`. If `$HOME` (or `DISTCC_DIR`'s parent) didn't
+  already exist — e.g. a minimal container or sandboxed build worker —
+  this failed outright instead of creating the missing parent(s).
+  `dcc_mkdir()` now reuses the existing `dcc_mk_tmp_ancestor_dirs()`
+  helper to create any missing ancestors first, giving it real
+  `mkdir -p` semantics. Found via a real overnight cross-project
+  evaluation of distcc-ng against wiki-mod/lancache-ng's
+  sccache+distcc-dist build pipeline
+  ([lancache-ng#919](https://github.com/wiki-mod/lancache-ng/issues/919)).
 
 ## [3.5.1.1-NG] - 2026-07-16
 
