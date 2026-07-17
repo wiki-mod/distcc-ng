@@ -101,7 +101,6 @@ dist_files =							\
 	$(SRC) $(HEADERS)					\
 	$(update_distcc_symlinks_PY)				\
 	$(test_SOURCE)						\
-	$(bench_PY)						\
 	$(include_server_PY)                                    \
 	$(dist_include_server_SH)                               \
 	$(include_server_SRC)                                   \
@@ -135,16 +134,6 @@ dist_contrib = contrib/distcc-absolutify	\
 
 dist_include_server_SH = \
 	pump.in
-
-bench_PY = bench/Build.py \
-	bench/Project.py \
-	bench/ProjectDefs.py \
-	bench/Summary.py \
-	bench/actions.py \
-	bench/benchmark.py \
-	bench/buildutil.py \
-	bench/compiler.py \
-	bench/statistics.py
 
 pkgdoc_DOCS = AUTHORS COPYING NEWS \
 	README README.pump \
@@ -951,26 +940,6 @@ daemon-installcheck:
 	    DISTCC_POTENTIAL_HOSTS=127.0.0.1 DISTCC_FALLBACK=0 \
 	        pump distcc $(CC) $(CFLAGS) -c hello.c -o hello.o && \
 	    test -f hello.o
-
-######################################################################
-## BENCHMARK targets
-
-.PHONY: benchmark
-
-benchmark:
-	@echo "The distcc macro-benchmark uses your existing distcc installation"
-	@if [ -n "$$DISTCC_HOSTS" ]; \
-	then echo "DISTCC_HOSTS=\"$$DISTCC_HOSTS\""; \
-	else echo "You must set up servers and set DISTCC_HOSTS before running the benchmark"; \
-	exit 1; \
-	fi
-	@echo "This benchmark may download a lot of source files, and it takes a "
-	@echo "long time to run.  Interrupt now if you want."
-	@echo
-	@echo "Pass BENCH_ARGS to make to specify which benchmarks to run."
-	@echo
-	@sleep 5
-	cd bench && $(PYTHON) benchmark.py $(BENCH_ARGS)
 
 
 ######################################################################
