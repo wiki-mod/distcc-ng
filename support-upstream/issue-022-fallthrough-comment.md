@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#23](https://github.com/wiki-mod/distcc-ng/pull/23)
 **Upstream location:** `src/stats.c` (`dcc_stats_process()`) and `src/util.c` (`dcc_get_proc_meminfo_mem_available()`)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `fallthrough`, `Wimplicit-fallthrough` — found [distcc/distcc#242](https://github.com/distcc/distcc/issues/242) ("-Wimplicit-fallthrough warnings", still open, describing this exact mechanism: "`-Wimplicit-fallthrough` will usually ignore lines which have comments. The way distcc works it strips those comments, which makes this warnings appear."), unaddressed since filing. Also found the historical origin of the bare-comment marker itself: [distcc/distcc#207](https://github.com/distcc/distcc/pull/207) ("Add fallthrough comment to avoid GCC 7 error", merged) — the very comment this bug shows is not actually effective for a distcc-distributed build.
 
 ## The problem
 

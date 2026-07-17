@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#94](https://github.com/wiki-mod/distcc-ng/pull/94)
 **Upstream location:** `src/srvrpc.c`, `dcc_r_many_files()`
 **Checked against upstream commit:** [`76d8dc6c`](https://github.com/distcc/distcc/commit/76d8dc6c5eb65e2b3fb151db0338566f1f55dcee) (latest commit touching `src/srvrpc.c`, `master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `dcc_r_many_files`, `srvrpc path traversal`, `NAME token path traversal`, `distccd write arbitrary file` — no matching report or fix attempt found, open or closed (beyond the in-source `FIXME` comment itself, which is not a tracked issue).
 
 ## The problem
 

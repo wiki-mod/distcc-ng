@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#6](https://github.com/wiki-mod/distcc-ng/pull/6)
 **Upstream location:** `src/state.c`, functions `dcc_open_state()` and `dcc_note_state()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `dcc_note_state`, `state file truncated`, `distccmon race`, `dcc_open_state` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 

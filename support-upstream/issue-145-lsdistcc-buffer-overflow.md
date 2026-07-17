@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#146](https://github.com/wiki-mod/distcc-ng/pull/146)
 **Upstream location:** `src/lsdistcc.c`, function `get_thename()` (called from `detect_distcc_servers()`, buffer declared there as `char thename[256]`)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `get_thename`, `lsdistcc buffer`, `thename` — no matching report or fix attempt found, open or closed. (A separate, unrelated open report, [distcc/distcc#546](https://github.com/distcc/distcc/issues/546) "Buffer Overflow Detected on aarch64", crashes in `dcc_scan_args()` during normal compile argument scanning, not in `lsdistcc`'s `get_thename()` — checked and ruled out as the same bug.)
 
 ## The problem
 

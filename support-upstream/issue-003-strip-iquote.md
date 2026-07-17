@@ -4,7 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#3](https://github.com/wiki-mod/distcc-ng/pull/3)
 **Upstream location:** `src/strip.c`, function `dcc_strip_local_args()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
-**Also reported upstream (read-only reference):** [distcc/distcc#582](https://github.com/distcc/distcc/issues/582) ("pump: local include-search arguments can leak into remote compile argv") and [distcc/distcc#504](https://github.com/distcc/distcc/issues/504) ("distcc incorrectly claims that iquote parameter is not used with clang++ 16, breaking my -Werror build") — #582 closed by its own reporter without a fix landing; #504 still open.
+**Searched upstream issues/PRs for:** `iquote`, `strip local args`, `local include-search argv` — found [distcc/distcc#582](https://github.com/distcc/distcc/issues/582) ("pump: local include-search arguments can leak into remote compile argv", closed by its own reporter without a fix landing), its apparent duplicate [distcc/distcc#589](https://github.com/distcc/distcc/issues/589) ("strip local include-search args from remote compile argv", also closed without a fix), and [distcc/distcc#504](https://github.com/distcc/distcc/issues/504) ("distcc incorrectly claims that iquote parameter is not used with clang++ 16, breaking my -Werror build", still open).
 
 ## The problem
 

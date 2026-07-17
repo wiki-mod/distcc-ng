@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#25](https://github.com/wiki-mod/distcc-ng/pull/25)
 **Upstream location:** `src/exec.c`, `dcc_execvp_cyg()`
 **Checked against upstream commit:** [`6c177fb5`](https://github.com/distcc/distcc/commit/6c177fb52ab6e66d71178df791a248683b98a4a3) (latest commit touching `src/exec.c`, `master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `dcc_execvp_cyg`, `cygwin command line buffer`, `cygwin MAX_PATH overflow` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 

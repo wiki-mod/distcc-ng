@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#7](https://github.com/wiki-mod/distcc-ng/pull/7)
 **Upstream location:** `pump.in` (`ShutDown()`) and `include_server/include_server.py` (`_IncludeServerPortReady.Acquire()`)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `pump ShutDown hang`, `include server zombie`, `IncludeServerPortReady`, `pump hangs` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 
@@ -71,3 +72,22 @@ quota, since a stalled network/filesystem read previously never tripped
 any timeout at all.
 
 Landed via [wiki-mod/distcc-ng#7](https://github.com/wiki-mod/distcc-ng/pull/7).
+
+## Related follow-up fix (not a separate upstream entry)
+
+A later fork PR, [wiki-mod/distcc-ng#173](https://github.com/wiki-mod/distcc-ng/pull/173)
+("pump.in: detect zombie include-server process in ShutDown()"), refines
+this fork's own bounded-wait `ShutDown()` (added by PR #7 above) further:
+`ps -p $include_server_pid` and `kill -0 $include_server_pid` both report
+"still alive" for a zombie process (exited but not yet reaped by its
+parent), so a naive liveness check can misjudge a zombie as running and
+waste a full wait/escalation cycle. This is not written up as a separate
+upstream entry because upstream's `ShutDown()` has no bounded-wait/
+`SIGKILL`-escalation structure at all for a zombie-detection refinement to
+attach to (see "Upstream code" above) — the exact same unbounded `kill -0`
+loop already documented in this entry is what a zombie `include_server_pid`
+would also spin against forever upstream, so the fix already proposed
+above (a real, bounded wait) is the relevant upstream-applicable
+correction; PR #173's specific zombie-vs-alive distinction only becomes a
+separate, addressable question once a bounded-wait/escalation structure
+like PR #7's exists to refine.

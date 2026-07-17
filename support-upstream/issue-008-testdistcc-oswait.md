@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#8](https://github.com/wiki-mod/distcc-ng/pull/8)
 **Upstream location:** `test/testdistcc.py`, `NoDetachDaemon_Case.killDaemon()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `killDaemon`, `os.wait testdistcc`, `NoDetachDaemon flaky` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 

@@ -4,7 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#2](https://github.com/wiki-mod/distcc-ng/pull/2)
 **Upstream location:** `src/ssh.c`, function `dcc_ssh_connect()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
-**Also reported upstream (read-only reference):** [distcc/distcc#583](https://github.com/distcc/distcc/issues/583) ("ssh: preserve DISTCC_SSH options across connections") — closed by its own reporter without a fix landing ("since it seems my efforts are not liked, i will close it"), not resolved.
+**Searched upstream issues/PRs for:** `DISTCC_SSH`, `strtok DISTCC_SSH`, `ssh preserve options` — found [distcc/distcc#583](https://github.com/distcc/distcc/issues/583) ("ssh: preserve DISTCC_SSH options across connections") and its apparent duplicate [distcc/distcc#590](https://github.com/distcc/distcc/issues/590) (same title) — both closed by their own reporter without a fix landing ("since it seems my efforts are not liked, i will close it"), not resolved.
 
 ## The problem
 

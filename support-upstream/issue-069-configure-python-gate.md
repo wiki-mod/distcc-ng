@@ -4,7 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#172](https://github.com/wiki-mod/distcc-ng/pull/172)
 **Upstream location:** `configure.ac`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
-**Also reported upstream (read-only reference):** [distcc/distcc#258](https://github.com/distcc/distcc/issues/258)
+**Searched upstream issues/PRs for:** `disable-pump-mode`, `AM_PATH_PYTHON`, `pump_mode configure` — found [distcc/distcc#258](https://github.com/distcc/distcc/pull/258) ("configure: allow disabling pump mode", merged), the original PR that introduced `--disable-pump-mode` itself; it never gated `AM_PATH_PYTHON` on the new flag, which is the gap this entry documents. No separate bug report about the gating gap itself found, open or closed.
 
 ## The problem
 

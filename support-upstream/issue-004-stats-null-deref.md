@@ -4,7 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#4](https://github.com/wiki-mod/distcc-ng/pull/4)
 **Upstream location:** `src/stats.c`, function `dcc_stats_update_compile_times()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
-**Also reported upstream (read-only reference):** [distcc/distcc#585](https://github.com/distcc/distcc/issues/585) ("distccd: stale stats entries can affect job accounting") — closed by its own reporter without a fix landing ("since it seems my efforts are not liked, i will close it").
+**Searched upstream issues/PRs for:** `stats pruning`, `distccd stats crash`, `sd_root NULL` — found [distcc/distcc#585](https://github.com/distcc/distcc/issues/585) ("distccd: stale stats entries can affect job accounting"), closed by its own reporter without a fix landing ("since it seems my efforts are not liked, i will close it").
 
 ## The problem
 

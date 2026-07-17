@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#158](https://github.com/wiki-mod/distcc-ng/pull/158)
 **Upstream location:** `src/compile.c` (`dcc_note_discrepancy()`), `src/daemon.c` (`dcc_setup_real_log()`), `src/dparent.c` (`dcc_save_pid()`), `src/state.c` (`dcc_open_state()`), `src/zeroconf.c` (three call sites: daemon lock file, daemon host file, client-side lock file)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `world-writable`, `0666`, `distccd log permission`, `pid file permission` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 

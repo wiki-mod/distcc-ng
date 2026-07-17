@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#24](https://github.com/wiki-mod/distcc-ng/pull/24)
 **Upstream location:** `src/compile.c`, function `dcc_rewrite_generic_compiler()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `readlinkat`, `dcc_rewrite_generic_compiler`, `symlink chase compiler` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 

@@ -4,6 +4,7 @@
 **Fixed by:** [wiki-mod/distcc-ng#103](https://github.com/wiki-mod/distcc-ng/pull/103)
 **Upstream location:** `src/serve.c`, `make_temp_dir_and_chdir_for_cpp()`
 **Checked against upstream commit:** [`17b29cc3`](https://github.com/distcc/distcc/commit/17b29cc3e3581abd3c6c114a7f4274b34a7f7907) (latest commit touching `src/serve.c`, `master`, checked 2026-07-17)
+**Searched upstream issues/PRs for:** `CDIR path traversal`, `make_temp_dir_and_chdir_for_cpp`, `server_side_cwd`, `distccd chdir traversal` — no matching report or fix attempt found, open or closed.
 
 ## The problem
 
