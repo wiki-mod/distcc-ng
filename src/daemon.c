@@ -117,6 +117,12 @@ static int dcc_setup_startup_log(void)
 }
 
 
+/**
+ * Decide whether the daemon should behave as an inetd-spawned, single-shot
+ * server or as a standalone, listening daemon. Falls back to sniffing
+ * stdin (socket vs tty) when neither mode was requested explicitly on the
+ * command line, since that's how inetd/xinetd actually invoke us.
+ **/
 int dcc_should_be_inetd(void)
 {
     /* Work out if we ought to serve stdin or be a standalone daemon */
@@ -137,6 +143,12 @@ int dcc_should_be_inetd(void)
 }
 
 
+/**
+ * Set PATH for the daemon and any compilers it execs. Honors an explicit
+ * DISTCCD_PATH override so operators can pin the daemon to a known-safe
+ * set of directories, distinct from whatever PATH the daemon happened to
+ * inherit from its (possibly untrusted) launch environment.
+ **/
 static int dcc_setup_daemon_path(void)
 {
     int ret;
@@ -154,12 +166,24 @@ static int dcc_setup_daemon_path(void)
     }
 }
 
+/**
+ * Warn (and, if nothing usable is found, exit) when the daemon has no way
+ * to know which compilers it is allowed to masquerade/run. Skipped entirely
+ * when DISTCC_CMDLIST is set: that env var is a documented, explicit opt-in
+ * whitelist (see dcc_remap_compiler() in serve.c), so the masquerade
+ * directory being absent or empty in that case is expected, not a
+ * misconfiguration worth nagging the operator about.
+ **/
 static void dcc_warn_masquerade_whitelist(void) {
     DIR *d, *e;
     const char *warn = "You must set up masquerade" \
-                       " (see distcc(1)) to list whitelisted compilers or pass" \
-                       " --enable-tcp-insecure. To set up masquerade automatically" \
-                       " run update-distcc-symlinks.";
+                       " (see distcc(1)) to list whitelisted compilers, set" \
+                       " DISTCC_CMDLIST, or pass --enable-tcp-insecure. To set up" \
+                       " masquerade automatically run update-distcc-symlinks.";
+
+    if (getenv("DISTCC_CMDLIST")) {
+        return;
+    }
 
     e = opendir("/usr/lib/distcc");
     d = opendir(LIBDIR "/distcc");
@@ -323,6 +347,12 @@ static void dcc_setup_real_log(void)
 }
 
 
+/**
+ * Log a single, consistently-formatted startup banner (version, host
+ * triplet, build timestamp) shared by both the inetd and standalone
+ * startup paths, so log-scraping tools have one stable line to match on
+ * regardless of which mode the daemon ends up running in.
+ **/
 int dcc_log_daemon_started(const char *role)
 {
     rs_log_info("%s started (%s %s, built %s %s)",
