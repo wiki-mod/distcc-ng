@@ -186,7 +186,7 @@ void usage(void);
 int bitcompare(const unsigned char *a, const unsigned char *b, int nbits);
 void timeout_handler(int x);
 void get_thename(const char**sformat, const char *domain_name,
-                 int i, char *thename);
+                 int i, char *thename, size_t thename_size);
 int detect_distcc_servers(const char **argv, int argc, int opti,
                           int bigtimeout, int dnstimeout, int matchbits,
                           int overlap, int dnsgap);
@@ -878,17 +878,18 @@ static int one_poll_loop(struct rslave_s* rs, struct state_s states[],
 /* Get the name based on the sformat. If the first element in sformat is a
  * format, ignore the rest, and use the format to generate the series of names;
  * otherwise, copy the name from sformat. Attach domain_name if needed.
+ * thename_size is the maximum number of bytes that can be written to thename.
  */
 void get_thename(const char**sformat, const char *domain_name, int i,
-                char *thename)
+                char *thename, size_t thename_size)
 {
     if (strstr(sformat[0], "%d") != NULL)
-        sprintf(thename, sformat[0], i);
+        snprintf(thename, thename_size, sformat[0], i);
     else
-        strcpy(thename, sformat[i-1]);
+        strncpy(thename, sformat[i-1], thename_size - 1);
     if (opt_domain) {
-        strcat(thename, ".");
-        strcat(thename, domain_name);
+        strncat(thename, ".", thename_size - strlen(thename) - 1);
+        strncat(thename, domain_name, thename_size - strlen(thename) - 1);
     }
 }
 
@@ -980,7 +981,7 @@ int detect_distcc_servers(const char **argv, int argc, int opti,
     /* all hosts start off in state 'sent 0' */
     for (i=1; i<=n; i++) {
         rslave_request_t *req = &states[i].req;
-        get_thename(sformat, domain_name, i, thename);
+        get_thename(sformat, domain_name, i, thename, sizeof(thename));
         rslave_request_init(req, thename, i);
         states[i].status = STATE_LOOKUP;
         states[i].ntries = 0;

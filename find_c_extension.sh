@@ -18,13 +18,25 @@ builddir="$1"
 # unpredictable 'ls' behavior when a glob has no matches.
 # (Side note: there is intense internal debate about whether the
 # '[sd][ol]' hack is "so ugly I can't stand it" or "kinda cute".)
-so_files=`ls $builddir/_include_server/lib.*/include_server/\
-distcc_pump_c_extensions*.[sd][ol]*`
-if [ -z "$so_files" ]; then
+so_count=0
+so_files=
+for file in "$builddir"/_include_server/lib.*/include_server/\
+distcc_pump_c_extensions*.[sd][ol]*; do
+  if [ -f "$file" ]; then
+    so_count=$((so_count + 1))
+    if [ -z "$so_files" ]; then
+      so_files=$file
+    else
+      so_files=$(printf '%s\n%s' "$so_files" "$file")
+    fi
+  fi
+done
+
+if [ "$so_count" -eq 0 ]; then
   echo \
     '__________Could not find shared libraries for distcc-pump' 1>&2
   exit 1
-elif [ `echo "$so_files" | wc -l` -ge 2 ]; then
+elif [ "$so_count" -ge 2 ]; then
   echo \
     '__________Shared libraries for multiple architectures discovered.' \
     1>&2

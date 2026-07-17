@@ -47,6 +47,33 @@
 #  define UNUSED(x) x
 #endif                /* !__GNUC__ && !__LCLINT__ */
 
+/* Marks an intentional switch-case fallthrough. A bare fallthrough
+ * comment only works when gcc's own fallthrough heuristic sees the comment
+ * in the source it is compiling -- but distcc ships a client-preprocessed,
+ * comment-free source file to the compile server, so the same code compiled
+ * through distcc loses the comment and -Wimplicit-fallthrough (part of -W /
+ * -Wextra) fires there under -Werror even though a local, non-distributed
+ * build of the identical source does not. An attribute survives
+ * preprocessing (it isn't a comment), so it works identically whether the
+ * file is compiled directly or via distcc. */
+/* __has_attribute is the portable way to detect this: plain __GNUC__
+ * version checks misfire under Clang, which defines __GNUC__ (commonly as
+ * 4.x, for compatibility) but does support __attribute__((fallthrough))
+ * and does enforce -Wimplicit-fallthrough independently of GCC's version
+ * numbering. Fall back to the GCC-version check only for compilers old
+ * enough to lack __has_attribute itself. */
+#if defined(__has_attribute)
+#  if __has_attribute(fallthrough)
+#    define FALLTHROUGH __attribute__((fallthrough))
+#  endif
+#endif
+#if !defined(FALLTHROUGH) && defined(__GNUC__) && __GNUC__ >= 7
+#  define FALLTHROUGH __attribute__((fallthrough))
+#endif
+#if !defined(FALLTHROUGH)
+#  define FALLTHROUGH ((void) 0)
+#endif
+
 /* According to the gcc info page, __attribute__((unused)) means "this
  * variable is *possibly* unused" (emphasis added).  So we can use it for
  * POSSIBLY_UNUSED.  This macro is used when a variable is used in one #ifdef
@@ -89,7 +116,8 @@ struct dcc_hostdef;
 enum dcc_compress {
     /* weird values to catch errors */
     DCC_COMPRESS_NONE     = 69,
-    DCC_COMPRESS_LZO1X
+    DCC_COMPRESS_LZO1X,
+    DCC_COMPRESS_ZSTD,
 };
 
 enum dcc_cpp_where {
@@ -101,7 +129,9 @@ enum dcc_cpp_where {
 enum dcc_protover {
     DCC_VER_1   = 1,            /**< vanilla */
     DCC_VER_2   = 2,            /**< LZO sprinkles */
-    DCC_VER_3   = 3             /**< server-side cpp */
+    DCC_VER_3   = 3,            /**< server-side cpp */
+    DCC_VER_4   = 4,            /**< Zstandard compression and split dwarf. */
+    __DCC_VER_MAX = 5            /**< canary */
 };
 
 
@@ -226,7 +256,7 @@ int dcc_backoff_is_enabled(void);
 void dcc_set_trace_from_env(void);
 
 
-/* compress.c */
+/* compress-lzo1x.c */
 int dcc_r_bulk_lzo1x(int outf_fd,
                       int in_fd,
                       unsigned in_len);
@@ -244,6 +274,24 @@ int dcc_compress_lzo1x_alloc(const char *in_buf,
                             size_t *out_len_ret);
 
 
+#ifdef HAVE_ZSTD
+/* compress-zstd.c */
+int dcc_r_bulk_zstd(int outf_fd,
+                      int in_fd,
+                      unsigned in_len,
+                      unsigned uncompr_size);
+
+
+int dcc_compress_file_zstd(int in_fd,
+                            size_t in_len,
+                            char **out_buf,
+                            size_t *out_len);
+
+int dcc_compress_zstd_alloc(const char *in_buf,
+                            size_t in_len,
+                            char **out_buf_ret,
+                            size_t *out_len_ret);
+#endif
 
 /* bulk.c */
 void dcc_calc_rate(off_t size_out,
@@ -344,6 +392,7 @@ extern const int dcc_connect_timeout;
 int dcc_r_bulk(int ofd,
                int ifd,
                unsigned f_size,
+               unsigned uncompr_size,
                enum dcc_compress compression);
 
 int dcc_pump_readwrite(int ofd, int ifd, size_t n);

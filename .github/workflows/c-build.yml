@@ -8,9 +8,9 @@ on:
   # Restricted to the two long-lived branches: without this filter, pushing
   # a commit to an in-repo PR branch (dev/issueNN_...) fired this AND
   # pull_request's own synchronize event for the same commit, running the
-  # full matrix build twice per commit (found via a lancache-ng CI-cost
-  # comparison, 2026-07-16). pull_request stays unfiltered by branch --
-  # that's the one meant to cover every PR commit.
+  # full matrix build + E2E job twice per commit (found via a lancache-ng
+  # CI-cost comparison, 2026-07-16). pull_request stays unfiltered by
+  # branch -- that's the one meant to cover every PR commit.
   push:
     branches:
       - current_dev
@@ -22,6 +22,13 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'doc/**'
+  # Lets us check a branch's build health on demand (e.g. current_dev or
+  # master) without needing a new commit/PR to trigger CI.
+  workflow_dispatch:
+  # Nightly health check on current_dev, so a break doesn't sit silently
+  # until the next PR happens to touch that branch.
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   make_check:
@@ -33,20 +40,93 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # id-token/attestations are needed for actions/attest-build-provenance
+    # below (Linux only for now); contents:read is the default we'd
+    # otherwise lose by declaring this block at all.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # ccache's own default cache_dir differs by platform (~/.cache/ccache
+    # on Linux, ~/Library/Caches/ccache on macOS) -- pin it explicitly so
+    # the actions/cache path below is right on both matrix legs.
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # schedule always evaluates using the default branch (master);
+          # redirect the nightly run to current_dev instead of re-checking
+          # master, which push/pull_request already cover on every change.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@v1
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
-          brew: autoconf automake popt python@3.13 python-setuptools
+          brew: autoconf automake popt python@3.13 python-setuptools ccache zstd
           # Note: no gdb on macOS because it's apparently not supported on arm64
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools
+          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
           # brew-cask: TODO
           # choco: TODO
       - run: which python3.13 || which python3
+      # Cache ccache's own object cache, not distcc's source -- content-
+      # addressed, so a stale/missing cache never produces wrong results,
+      # only a slower build. Rolling key: always restore the latest for
+      # this OS, always save a new one (actions/cache no-ops a save on an
+      # exact key collision, so bumping github.run_id into the key avoids
+      # that and keeps the cache warm across runs).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-
       - run: ./autogen.sh
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
-      - run: ./configure PYTHON="$(which python3.13 || which python3)"
+      # CC must reference ccache by absolute path: `make check`'s
+      # maintainer-check-no-set-path target runs `$(CC) --version` under a
+      # restricted PATH (/usr/local/bin:/bin:/usr/bin, Makefile.in's
+      # RESTRICTED_PATH) that deliberately excludes Homebrew's /opt/homebrew/bin
+      # on the arm64 macOS runner -- a bare "ccache" would fail to resolve there.
+      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
       - run: make
+      - run: ccache --show-stats
       - run: make check
+      # Build-provenance attestation for the actual shipped binaries.
+      # Linux-only for now: the OIDC-based attestation API needs the repo's
+      # GitHub Actions identity, which is simplest to exercise from one
+      # runner OS rather than duplicating the attestation per matrix leg.
+      # Skipped on the nightly schedule: that run checks out current_dev while
+      # github.sha (which the attestation records) is master's tip, so a
+      # scheduled attestation would tie current_dev binaries to the wrong
+      # commit. Attestation is meaningful for the push/PR builds anyway.
+      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
+        run: |
+          mkdir -p /tmp/attest-subjects
+          cp distcc distccd /tmp/attest-subjects/
+      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: /tmp/attest-subjects/*
+
+  # Real distributed-compile validation: distcc-ng's own source tree is built
+  # across two containers (a distccd server + a distcc client) over a bridge
+  # network, in both plain and pump mode, and a distributed compile is checked
+  # byte-for-byte against a local-only one. make check already exercises a
+  # localhost daemon, but only this proves a compile genuinely crosses the
+  # network and is not silently completed by distcc's local-fallback path.
+  # Linux/docker-only, so it is a standalone job rather than a macOS matrix leg.
+  distributed_e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Same schedule redirect as make_check: the nightly run evaluates
+          # from master but must validate current_dev.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      # docker and the compose plugin are preinstalled on ubuntu-latest.
+      - name: Run distributed-compile end-to-end test
+        run: bash test/e2e/run-e2e.sh
+

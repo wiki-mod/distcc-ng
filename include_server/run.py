@@ -104,3 +104,4 @@ except OSError:
   print("Could not run: '%s' with arguments: %s" %
     (os.path.join(directory, sys.argv[1]),
      sys.argv[1:]), file=sys.stderr)
+  sys.exit(1)

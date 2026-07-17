@@ -30,6 +30,7 @@ Options:
                           with the valgrind command, which defaults to
                           "valgrind --quiet".
   --lzo                   Run the server tests with lzo compression enabled.
+  --zstd                  Run the server tests with Zstandard compression enabled.
   --pump                  Run the server tests with remote preprocessing
                           enabled.
 Example:
@@ -152,7 +153,7 @@ Example:
 # teardown kills all daemon processes and then stop using --lifetime.
 
 
-import time, sys, string, os, glob, re, socket
+import time, sys, os, glob, re, socket, errno
 import signal, os.path
 import comfychair
 
@@ -459,7 +460,7 @@ class CompilerOptionsPassed_Case(SimpleDistCC_Case):
 
 
 class StripArgs_Case(SimpleDistCC_Case):
-    """Test -D and -I arguments are removed"""
+    """Test local-only preprocessor arguments are removed"""
     def runtest(self):
         cases = (("gcc -c hello.c", "gcc -c hello.c"),
                  ("cc -Dhello hello.c -c", "cc hello.c -c"),
@@ -472,6 +473,8 @@ class StripArgs_Case(SimpleDistCC_Case):
                  ("cc -c -I ../include  hello.c", "cc -c hello.c"),
                  ("cc -c -I. -I.. -I../include -I/home/mbp/garnome/include -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
+                 ("cc -c hello.c -iquote .", "cc -c hello.c"),
+                 ("cc -c hello.c -iquote.", "cc -c hello.c"),
                  ("cc -c -DDEBUG -DFOO=23 -D BAR -c -o foo.o foo.c",
                   "cc -c -c -o foo.o foo.c"),
 
@@ -483,6 +486,13 @@ class StripArgs_Case(SimpleDistCC_Case):
             o, err = self.runcmd("h_strip %s" % cmd)
             if o[-1] == '\n': o = o[:-1]
             self.assert_equal(o, expect)
+
+
+class Stats_Case(SimpleDistCC_Case):
+    """Test distccd statistics list maintenance."""
+    def runtest(self):
+        out, err = self.runcmd("h_stats prune-old-head")
+        self.assert_equal(out.strip(), "ok")
 
 
 class IsSource_Case(SimpleDistCC_Case):
@@ -512,6 +522,93 @@ class IsSource_Case(SimpleDistCC_Case):
             if o != expected:
                 raise AssertionError("issource %s gave %s, expected %s" %
                                      (f, repr(o), repr(expected)))
+
+
+class PathSafety_Case(SimpleDistCC_Case):
+    def runtest(self):
+        """Test dcc_name_has_path_traversal() and dcc_cdir_has_path_traversal(),
+        which guard the NAME and CDIR tokens respectively.
+
+        NAME validation guards dcc_r_many_files() (src/srvrpc.c) against a
+        client-supplied path that could escape the server's per-job temp
+        directory (issue #93).
+
+        CDIR validation guards make_temp_dir_and_chdir_for_cpp() (src/serve.c)
+        against a client-supplied current working directory that could allow
+        directory traversal when concatenated with the server's temp directory
+        (CDIR path-traversal issue found during #100 triage).
+        """
+        # Test dcc_name_has_path_traversal() behavior (NAME token):
+        # Safe: rooted at '/', no ".." component anywhere.
+        name_cases = (
+                 ( "/usr/include/stdio.h",  "safe" ),
+                 ( "/a/b/c.h",              "safe" ),
+                 ( "/",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 ( "/foo..bar/baz",         "safe" ),
+                 # Unsafe: not rooted at '/'.
+                 ( "usr/include/stdio.h",   "unsafe" ),
+                 ( "",                      "unsafe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component.
+                 ( "/../etc/passwd",        "unsafe" ),
+                 ( "/foo/../../etc/passwd", "unsafe" ),
+                 ( "/foo/..",               "unsafe" ),
+                 ( "/..",                   "unsafe" ),
+                )
+        for name, expected_safety in name_cases:
+            o, err = self.runcmd("h_pathsafety '%s'" % name)
+            expected = ("%s %s\n" % (expected_safety, name))
+            if o != expected:
+                raise AssertionError("h_pathsafety %s gave %s, expected %s" %
+                                     (repr(name), repr(o), repr(expected)))
+
+        # Test dcc_cdir_has_path_traversal() behavior (CDIR token):
+        # Safe: absolute paths without "..", relative paths without "..".
+        cdir_cases = (
+                 # Safe: absolute paths without ".."
+                 ( "/usr/local",            "safe" ),
+                 ( "/home/user",            "safe" ),
+                 ( "/",                     "safe" ),
+                 # Safe: relative paths without ".." (CDIR allows relative paths)
+                 ( "src",                   "safe" ),
+                 ( "a/b/c",                 "safe" ),
+                 ( "subdir/nested/dir",     "safe" ),
+                 ( ".",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "foo/..bar",             "safe" ),
+                 ( "foo/bar..",             "safe" ),
+                 ( "foo..bar/baz",          "safe" ),
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 # Edge case: "/..bar" is NOT a traversal — ".." is just part
+                 # of the directory name, not a path component by itself.
+                 # Unlike "/..", which would be traversal, "/..bar" is safe.
+                 ( "/..bar",                "safe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component (leading).
+                 ( "..",                    "unsafe" ),
+                 ( "../etc/passwd",         "unsafe" ),
+                 ( "/../etc/passwd",        "unsafe" ),
+                 # Unsafe: ".." as an embedded path component.
+                 ( "a/../b",                "unsafe" ),
+                 ( "a/../../c",             "unsafe" ),
+                 ( "foo/../../etc/passwd",  "unsafe" ),
+                 # Unsafe: ".." as a trailing path component.
+                 ( "a/..",                  "unsafe" ),
+                 ( "/a/..",                 "unsafe" ),
+                 ( "a/b/..",                "unsafe" ),
+                )
+        for cdir, expected_safety in cdir_cases:
+            o, err = self.runcmd("h_pathsafety --cdir '%s'" % cdir)
+            expected = ("%s %s\n" % (expected_safety, cdir))
+            if o != expected:
+                raise AssertionError("h_pathsafety --cdir %s gave %s, expected %s" %
+                                     (repr(cdir), repr(o), repr(expected)))
 
 
 
@@ -584,6 +681,22 @@ class ScanArgs_Case(SimpleDistCC_Case):
             if os[2] != output:
                 self.fail("h_scanargs %s gave %s output, expected %s" %
                           (ccmd, os[2], output))
+
+
+class IncludeServerFileOrder_Case(SimpleDistCC_Case):
+    """Test deterministic include server file ordering."""
+    def runtest(self):
+        out, err = self.runcmd("h_includesort /tmp/z /tmp/a /tmp/m")
+        self.assert_equal(err, "")
+        self.assert_equal(out, "/tmp/a /tmp/m /tmp/z\n")
+
+
+class StateFileAtomicWrite_Case(SimpleDistCC_Case):
+    """Test that state writes remain readable through the monitor."""
+    def runtest(self):
+        out, err = self.runcmd("h_state atomic-write")
+        self.assert_equal(out, "")
+        self.assert_equal(err, "")
 
 
 class DotD_Case(SimpleDistCC_Case):
@@ -833,6 +946,13 @@ class DaemonBadPort_Case(SimpleDistCC_Case):
         self.assert_no_file("daemonpid.tmp")
 
 
+class TcpInsecureOptionOrder_Case(SimpleDistCC_Case):
+    def runtest(self):
+        """Test --enable-tcp-insecure is honored in different positions."""
+        out, err = self.runcmd("h_dopt tcp-insecure-order")
+        self.assert_equal(out.strip(), "ok")
+
+
 class InvalidHostSpec_Case(SimpleDistCC_Case):
     def runtest(self):
         """Test various invalid DISTCC_HOSTS
@@ -886,6 +1006,34 @@ class ParseHostSpec_Case(SimpleDistCC_Case):
         out, err = self.runcmd(("DISTCC_HOSTS=\"%s\" " % spec) + self.valgrind()
                                + "h_hosts")
         assert out == expected, "expected %s\ngot %s" % (repr(expected), repr(out))
+
+
+class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
+    """Check that DISTCC_SSH options survive repeated Secure Shell connects."""
+    def runtest(self):
+        fake_ssh = os.path.abspath("fake-ssh")
+        fake_ssh_log = os.path.abspath("fake-ssh.log")
+
+        f = open(fake_ssh, "w")
+        try:
+            f.write("#!/bin/sh\n")
+            f.write("printf '%%s\\n' \"$*\" >> %s\n" % _ShellSafe(fake_ssh_log))
+        finally:
+            f.close()
+        os.chmod(fake_ssh, 0o700)
+
+        os.environ["DISTCC_SSH"] = "%s --distcc-test-option" % fake_ssh
+        self.runcmd("h_ssh repeat-env")
+
+        f = open(fake_ssh_log)
+        try:
+            lines = f.read().splitlines()
+        finally:
+            f.close()
+
+        expected = ("--distcc-test-option -l builduser buildhost distccd "
+                    "--inetd --enable-tcp-insecure")
+        self.assert_equal(lines, [expected, expected])
 
 
 class Compilation_Case(WithDaemon_Case):
@@ -1558,32 +1706,121 @@ large foo!
 
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
-    def startDaemon(self):
-        # FIXME: This  does not work well if it happens to get the same
-        # port as an existing server, because we can't catch the error.
-        cmd = (self.distccd() +
-               "--no-detach --daemon --verbose --log-file %s --pid-file %s "
-               "--port %d --allow 127.0.0.1 --enable-tcp-insecure --sysroot %s" %
-               (_ShellSafe(self.daemon_logfile),
-                _ShellSafe(self.daemon_pidfile),
-                self.server_port,
-                _ShellSafe(self.daemon_sysroot)))
-        self.pid = self.runcmd_background(cmd)
-        self.add_cleanup(self.killDaemon)
-        # Wait until the server is ready for connections.
-        time.sleep(0.2)   # Give distccd chance to start listening on the port
+    def _readDaemonLog(self):
+        try:
+            with open(self.daemon_logfile, 'rt') as f:
+                return f.read()
+        except IOError as e:
+            return "could not read daemon log: %s" % e
+
+    def _collectDaemonStartupFailure(self):
+        pid, status = os.waitpid(self.pid, os.WNOHANG)
+        if not pid:
+            return None
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return status
+
+    def _canConnectToDaemon(self):
+        # Some platforms keep a refused connection state on a socket.  Use a
+        # fresh socket for each readiness probe so later daemon readiness is
+        # observed correctly.
         sock = socket.socket()
-        while sock.connect_ex(('127.0.0.1', self.server_port)) != 0:
-            time.sleep(0.2)
+        try:
+            return sock.connect_ex(('127.0.0.1', self.server_port)) == 0
+        finally:
+            sock.close()
+
+    def startDaemon(self):
+        max_start_attempts = 5
+        attempts = 0
+        while attempts < max_start_attempts:
+            attempts += 1
+            try:
+                os.remove(self.daemon_pidfile)
+            except OSError as e:
+                # Ignore ENOENT (pidfile already gone, expected on first iteration)
+                if e.errno != errno.ENOENT:
+                    raise
+
+            # Bind to the same loopback address family that this test probes.
+            cmd = (self.distccd() +
+                   "--no-detach --daemon --verbose --log-file %s --pid-file %s "
+                   "--port %d --listen 127.0.0.1 --allow 127.0.0.1 "
+                   "--enable-tcp-insecure --sysroot %s" %
+                   (_ShellSafe(self.daemon_logfile),
+                    _ShellSafe(self.daemon_pidfile),
+                    self.server_port,
+                    _ShellSafe(self.daemon_sysroot)))
+            self.pid = self.runcmd_background(cmd)
+
+            # Wait until the server is ready for connections, while also
+            # collecting early startup failures from the no-detach process.
+            # The pidfile check avoids accepting an unrelated listener on the
+            # same port when the daemon exits with EXIT_BIND_FAILED.
+            deadline = time.time() + 30
+            retry = False
+            while not self._canConnectToDaemon():
+                result = self._collectDaemonStartupFailure()
+                if result is not None:
+                    if result == EXIT_BIND_FAILED:
+                        self.server_port += 1
+                        retry = True
+                        break
+                    self.fail("failed to start daemon: %d" % result)
+                if time.time() > deadline:
+                    self.log("distccd log before startup timeout:\n%s" %
+                             self._readDaemonLog())
+                    self.killDaemon()
+                    self.server_port += 1
+                    retry = True
+                    break
+                time.sleep(0.2)
+            else:
+                while not os.path.exists(self.daemon_pidfile):
+                    result = self._collectDaemonStartupFailure()
+                    if result is not None:
+                        if result == EXIT_BIND_FAILED:
+                            self.server_port += 1
+                            retry = True
+                            break
+                        self.fail("failed to start daemon: %d" % result)
+                    if time.time() > deadline:
+                        self.log("distccd log before pidfile timeout:\n%s" %
+                                 self._readDaemonLog())
+                        self.killDaemon()
+                        self.server_port += 1
+                        retry = True
+                        break
+                    time.sleep(0.2)
+                if retry:
+                    continue
+                self.add_cleanup(self.killDaemon)
+                return
+            if retry:
+                continue
+        self.log("distccd log after startup attempts:\n%s" %
+                 self._readDaemonLog())
+        self.fail("failed to start daemon after %d attempts" % max_start_attempts)
 
     def killDaemon(self):
         # Terminate the process specified by the pidfile.  That should kill
         # the distccd process, any child distccd processes and the shell
         # process used to launch distccd.
-        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        try:
+            with open(self.daemon_pidfile, 'rt') as f:
+                daemon_pid = int(f.read())
+        except IOError:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+                os.waitpid(self.pid, 0)
+            except OSError:
+                # Process may already be gone, ignore
+                pass
+            return
         os.kill(daemon_pid, signal.SIGTERM)
 
-        pid, ret = os.wait()
+        pid, ret = os.waitpid(self.pid, 0)
         self.assert_equal(self.pid, pid)
 
 
@@ -1816,7 +2053,8 @@ class Concurrent_Case(CompileHello_Case):
                                          self._cc + " -o testtmp.o -c testtmp.c")
             pids[kid] = kid
         while len(pids):
-            pid, status = os.wait()
+            pid = next(iter(pids))
+            pid, status = os.waitpid(pid, 0)
             if status:
                 self.fail("child %d failed with status %#x" % (pid, status))
             del pids[pid]
@@ -2325,6 +2563,8 @@ tests = [
          Lsdistcc_Case,
          BadLogFile_Case,
          ScanArgs_Case,
+         IncludeServerFileOrder_Case,
+         StateFileAtomicWrite_Case,
          ParseMask_Case,
          DotD_Case,
          DashMD_DashMF_DashMT_Case,
@@ -2356,11 +2596,13 @@ tests = [
          ExtractExtension_Case,
          ImplicitCompiler_Case,
          DaemonBadPort_Case,
+         TcpInsecureOptionOrder_Case,
          AccessDenied_Case,
          NoServer_Case,
          MixedServerPumpFallback_Case,
          InvalidHostSpec_Case,
          ParseHostSpec_Case,
+         SecureShellCommandEnvironment_Case,
          ImpliedOutput_Case,
          SyntaxError_Case,
          NoHosts_Case,
@@ -2393,6 +2635,9 @@ if __name__ == '__main__':
       del sys.argv[1]
     elif sys.argv[1] == "--lzo":
       _server_options = ",lzo"
+      del sys.argv[1]
+    elif sys.argv[1] == "--zstd":
+      _server_options = ",zstd"
       del sys.argv[1]
     elif sys.argv[1] == "--pump":
       _server_options = ",lzo,cpp"

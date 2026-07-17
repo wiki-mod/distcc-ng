@@ -23,6 +23,12 @@
 
 #define PY_SSIZE_T_CLEAN
 #include "Python.h"
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <poll.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 static const char *version = ".01";
 
@@ -106,6 +112,190 @@ RCwd(PyObject *dummy, PyObject *args) {
 }
 
 
+static void
+AddSecondsToTimeval(struct timeval *tv, double seconds) {
+  long whole_seconds = (long)seconds;
+  long microseconds = (long)((seconds - whole_seconds) * 1000000.0);
+
+  tv->tv_sec += whole_seconds;
+  tv->tv_usec += microseconds;
+  if (tv->tv_usec >= 1000000) {
+    tv->tv_sec += 1;
+    tv->tv_usec -= 1000000;
+  }
+}
+
+
+static int
+TimevalExpired(struct timeval *remaining,
+               const struct timeval *deadline,
+               const struct timeval *now) {
+  remaining->tv_sec = deadline->tv_sec - now->tv_sec;
+  remaining->tv_usec = deadline->tv_usec - now->tv_usec;
+  if (remaining->tv_usec < 0) {
+    remaining->tv_sec -= 1;
+    remaining->tv_usec += 1000000;
+  }
+  return remaining->tv_sec < 0 ||
+         (remaining->tv_sec == 0 && remaining->tv_usec <= 0);
+}
+
+
+static int
+ReadWithDeadline(int fd, void *buf, size_t len,
+                 const struct timeval *deadline) {
+  while (len > 0) {
+    struct timeval now;
+    struct timeval remaining;
+    struct pollfd pfd;
+    int timeout_ms;
+    int poll_result;
+    ssize_t read_result;
+
+    if (gettimeofday(&now, NULL) != 0) {
+      PyErr_SetFromErrno(distcc_pump_c_extensionsError);
+      return 1;
+    }
+    if (TimevalExpired(&remaining, deadline, &now)) {
+      PyErr_SetString(distcc_pump_c_extensionsError,
+                      "Timed out reading include server request.");
+      return 1;
+    }
+
+    /* poll() instead of select(): select()'s fd_set is a fixed-size
+     * bitmask (FD_SETSIZE, typically 1024 descriptors). FD_SET() on a
+     * higher fd -- plausible for a long-running include-server process
+     * that has accumulated many open descriptors -- writes past the end
+     * of the bitmask, corrupting memory. poll()'s pollfd array has no
+     * such descriptor-number limit. */
+    timeout_ms = (int)(remaining.tv_sec * 1000 + remaining.tv_usec / 1000);
+    if (timeout_ms < 0)
+      timeout_ms = 0;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    poll_result = poll(&pfd, 1, timeout_ms);
+    if (poll_result == -1 && errno == EINTR)
+      continue;
+    if (poll_result == -1) {
+      PyErr_SetFromErrno(distcc_pump_c_extensionsError);
+      return 1;
+    }
+    if (poll_result == 0) {
+      PyErr_SetString(distcc_pump_c_extensionsError,
+                      "Timed out reading include server request.");
+      return 1;
+    }
+
+    read_result = read(fd, buf, len);
+    if (read_result == -1 && (errno == EINTR || errno == EAGAIN))
+      continue;
+    if (read_result == -1) {
+      PyErr_SetFromErrno(distcc_pump_c_extensionsError);
+      return 1;
+    }
+    if (read_result == 0) {
+      PyErr_SetString(distcc_pump_c_extensionsError,
+                      "Unexpected EOF reading include server request.");
+      return 1;
+    }
+    buf = &((char *)buf)[read_result];
+    len -= (size_t)read_result;
+  }
+  return 0;
+}
+
+
+static int
+ReadTokenIntWithDeadline(int fd, const char *expected, unsigned *value,
+                         const struct timeval *deadline) {
+  char buf[13];
+  char *endptr;
+
+  if (strlen(expected) != 4) {
+    PyErr_SetString(distcc_pump_c_extensionsError,
+                    "Expected token name must have length 4.");
+    return 1;
+  }
+  if (ReadWithDeadline(fd, buf, 12, deadline))
+    return 1;
+  if (memcmp(buf, expected, 4)) {
+    PyErr_Format(distcc_pump_c_extensionsError,
+                 "Protocol derailment: expected token \"%s\".", expected);
+    return 1;
+  }
+  buf[12] = '\0';
+  *value = (unsigned)strtoul(&buf[4], &endptr, 16);
+  if (endptr != &buf[12]) {
+    PyErr_Format(distcc_pump_c_extensionsError,
+                 "Failed to parse parameter of token \"%s\".", expected);
+    return 1;
+  }
+  return 0;
+}
+
+
+static int
+ReadTokenStringWithDeadline(int fd, const char *expected, char **value,
+                            const struct timeval *deadline) {
+  unsigned length;
+  char *buffer;
+
+  if (ReadTokenIntWithDeadline(fd, expected, &length, deadline))
+    return 1;
+  buffer = (char *)malloc((size_t)length + 1);
+  if (buffer == NULL) {
+    PyErr_NoMemory();
+    return 1;
+  }
+  if (ReadWithDeadline(fd, buffer, (size_t)length, deadline)) {
+    free(buffer);
+    return 1;
+  }
+  buffer[length] = '\0';
+  *value = buffer;
+  return 0;
+}
+
+
+static char RCwdTimeout_doc__[] =
+"RCwdTimeout(ifd, timeout_seconds):\n"
+"   Read value of current directory with a wall-clock deadline.\n"
+"\n"
+"   Arguments:\n"
+"     ifd: an integer file descriptor\n"
+"     timeout_seconds: maximum seconds spent reading this request\n"
+"   Raises:\n"
+"     distcc_pump_c_extensions.Error\n"
+;
+static PyObject *
+RCwdTimeout(PyObject *dummy, PyObject *args) {
+  int ifd;
+  double timeout_seconds;
+  struct timeval deadline;
+  char *value_str = NULL;
+  PyObject *result;
+  UNUSED(dummy);
+  if (!PyArg_ParseTuple(args, "id", &ifd, &timeout_seconds))
+    return NULL;
+  if (timeout_seconds <= 0) {
+    PyErr_SetString(distcc_pump_c_extensionsError,
+                    "Request read timeout must be positive.");
+    return NULL;
+  }
+  if (gettimeofday(&deadline, NULL) != 0) {
+    PyErr_SetFromErrno(distcc_pump_c_extensionsError);
+    return NULL;
+  }
+  AddSecondsToTimeval(&deadline, timeout_seconds);
+  if (ReadTokenStringWithDeadline(ifd, "CDIR", &value_str, &deadline))
+    return NULL;
+  result = PyUnicode_FromString(value_str);
+  free(value_str);
+  return result;
+}
+
+
 static char RTokenString_doc__[] =
 "RTokenString(ifd, expect_token):\n"
 "   Read value of expected token.\n"
@@ -178,6 +368,67 @@ RArgv(PyObject *dummy, PyObject *args) {
     free(argv[i]);
   free(argv);
   return NULL;
+}
+
+
+static char RArgvTimeout_doc__[] =
+"RArgvTimeout(ifd, timeout_seconds):\n"
+"   Read argv values with a wall-clock deadline.\n"
+"\n"
+"   Arguments:\n"
+"     ifd: an integer file descriptor\n"
+"     timeout_seconds: maximum seconds spent reading this request\n"
+"   Raises:\n"
+"     distcc_pump_c_extensions.Error\n"
+;
+static PyObject *
+RArgvTimeout(PyObject *dummy, PyObject *args) {
+  int ifd;
+  double timeout_seconds;
+  struct timeval deadline;
+  unsigned argc;
+  unsigned i;
+  PyObject *list_object = NULL;
+  PyObject *string_object = NULL;
+  UNUSED(dummy);
+
+  if (!PyArg_ParseTuple(args, "id", &ifd, &timeout_seconds))
+    return NULL;
+  if (timeout_seconds <= 0) {
+    PyErr_SetString(distcc_pump_c_extensionsError,
+                    "Request read timeout must be positive.");
+    return NULL;
+  }
+  if (gettimeofday(&deadline, NULL) != 0) {
+    PyErr_SetFromErrno(distcc_pump_c_extensionsError);
+    return NULL;
+  }
+  AddSecondsToTimeval(&deadline, timeout_seconds);
+  if (ReadTokenIntWithDeadline(ifd, "ARGC", &argc, &deadline))
+    return NULL;
+  list_object = PyList_New(0);
+  if (list_object == NULL)
+    return NULL;
+  for (i = 0; i < argc; i++) {
+    char *arg = NULL;
+    if (ReadTokenStringWithDeadline(ifd, "ARGV", &arg, &deadline)) {
+      Py_DECREF(list_object);
+      return NULL;
+    }
+    string_object = PyUnicode_FromString(arg);
+    free(arg);
+    if (string_object == NULL) {
+      Py_DECREF(list_object);
+      return NULL;
+    }
+    if (PyList_Append(list_object, string_object) < 0) {
+      Py_DECREF(string_object);
+      Py_DECREF(list_object);
+      return NULL;
+    }
+    Py_DECREF(string_object);
+  }
+  return list_object;
 }
 
 
@@ -394,6 +645,9 @@ static PyMethodDef module_methods[] = {
    RTokenString_doc__},
   {"RCwd",        (PyCFunction)RCwd,    METH_VARARGS, RCwd_doc__},
   {"RArgv",       (PyCFunction)RArgv,   METH_VARARGS, RArgv_doc__},
+  {"RCwdTimeout", (PyCFunction)RCwdTimeout, METH_VARARGS, RCwdTimeout_doc__},
+  {"RArgvTimeout",(PyCFunction)RArgvTimeout, METH_VARARGS,
+   RArgvTimeout_doc__},
   {"XArgv",       (PyCFunction)XArgv,   METH_VARARGS, XArgv_doc__},
   {"CompressLzo1xAlloc", (PyCFunction)CompressLzo1xAlloc, METH_VARARGS,
    CompressLzo1xAlloc_doc__},
