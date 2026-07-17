@@ -77,6 +77,7 @@
 #ifdef HAVE_SECCOMP
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <seccomp.h>
@@ -113,59 +114,288 @@ static const char *const dcc_seccomp_denied_syscalls[] = {
     "sethostname", "setdomainname",
 };
 
+#define DCC_SECCOMP_BUILTIN_COUNT \
+    (sizeof(dcc_seccomp_denied_syscalls) / sizeof(dcc_seccomp_denied_syscalls[0]))
+
 /**
- * Install the syscall denylist in the calling process and load it.
+ * Syscalls that establish a network connection or move data over one.
+ * Only added to the filter when the config's `deny-network` key (default
+ * false) turns this on -- see issue #192. Not part of the always-on
+ * built-in denylist above because plenty of legitimate distcc deployments
+ * have no reason to expect their compiler child to touch the network at
+ * all, but this fork's default posture (issue #192 decision 1) is to leave
+ * that choice to the admin rather than assume it either way.
  *
- * Every failure path here logs a warning and returns rather than aborting
- * the compile (fail-open, not fail-closed): this filter is explicitly
- * defense-in-depth on top of the checks src/serve.c already performs
- * before the child is forked (compiler whitelist, -fplugin/-specs
- * rejection, compiler masquerade check), not the only thing protecting
- * the host. Refusing every remote compile because one host's kernel has
- * seccomp disabled, is missing a syscall this libseccomp version expects,
- * or is running nested inside a container that itself restricts seccomp
- * would be an availability regression far larger than the additional
- * hardening lost by letting that one compile proceed unsandboxed -- and
- * would silently turn a hardening feature into an outage. An admin who
- * wants to confirm the filter is actually active on their kernel can
- * grep the daemon's log for the failure message this emits.
+ * Deliberately does not include getsockopt/setsockopt/getsockname/
+ * getpeername/fcntl-on-a-socket: those inspect or tune an *already open*
+ * descriptor rather than establish a new connection or move data, and a
+ * compiler child has no legitimate open socket to begin with once this
+ * list below is active, so they add no real restriction of their own.
+ * Note the hard limit on what this can express at all: seccomp/BPF only
+ * sees the syscall number and scalar arguments, never the contents of a
+ * pointer argument like connect()'s sockaddr* -- so this can block "any
+ * networking" but cannot express "only same-subnet" or any other
+ * destination-aware policy. See doc/seccomp-sandbox.md.
  **/
-void dcc_seccomp_sandbox_child(void)
+static const char *const dcc_seccomp_network_syscalls[] = {
+    "socket", "socketpair", "connect", "bind", "listen",
+    "accept", "accept4", "sendto", "recvfrom", "sendmsg", "recvmsg",
+    "sendmmsg", "recvmmsg", "shutdown",
+};
+
+#define DCC_SECCOMP_NETWORK_COUNT \
+    (sizeof(dcc_seccomp_network_syscalls) / sizeof(dcc_seccomp_network_syscalls[0]))
+
+/* Cached, resolved effective configuration -- computed once by
+ * dcc_seccomp_configure() so dcc_seccomp_sandbox_child() (called once per
+ * forked child, i.e. once per remote compile) never has to re-parse a
+ * config file, re-walk allow_override/extra_deny strings, or re-log a
+ * warning that's already been logged at startup. */
+static int dcc_seccomp_cfg_enabled = 1;
+static int dcc_seccomp_cfg_deny_network = 0;
+static int dcc_seccomp_cfg_fail_open = 1;
+static int *dcc_seccomp_effective_denylist = NULL;
+static size_t dcc_seccomp_effective_denylist_count = 0;
+static int *dcc_seccomp_effective_network_list = NULL;
+static size_t dcc_seccomp_effective_network_list_count = 0;
+static int dcc_seccomp_configured = 0;
+
+/**
+ * True if @p name is one of the always-on built-in denylist entries above
+ * -- used by dcc_seccomp_configure() to tell an actual override apart from
+ * an allow-override entry that names something not in the built-in list to
+ * begin with (which is harmless but worth a different, lower-severity log
+ * message).
+ **/
+static int dcc_seccomp_name_in_builtin(const char *name)
+{
+    size_t i;
+    for (i = 0; i < DCC_SECCOMP_BUILTIN_COUNT; i++) {
+        if (strcmp(dcc_seccomp_denied_syscalls[i], name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/**
+ * Resolve @p name to a kernel syscall number via libseccomp's runtime name
+ * table, exactly as the built-in list already does (see the file comment
+ * above dcc_seccomp_denied_syscalls for why this is done by name at
+ * runtime rather than SCMP_SYS() at compile time). Returns -1 for a name
+ * that doesn't exist on this architecture/libseccomp version rather than
+ * libseccomp's own __NR_SCMP_ERROR sentinel, so callers outside this file
+ * never need to know that libseccomp-specific constant.
+ **/
+static int dcc_seccomp_resolve(const char *name)
+{
+    int nr = seccomp_syscall_resolve_name(name);
+    return (nr == __NR_SCMP_ERROR) ? -1 : nr;
+}
+
+/**
+ * Free a previously computed effective list (if any) so dcc_seccomp_configure()
+ * can be called more than once (e.g. by a future test harness) without
+ * leaking the array from an earlier call.
+ **/
+static void dcc_seccomp_free_effective_lists(void)
+{
+    free(dcc_seccomp_effective_denylist);
+    dcc_seccomp_effective_denylist = NULL;
+    dcc_seccomp_effective_denylist_count = 0;
+    free(dcc_seccomp_effective_network_list);
+    dcc_seccomp_effective_network_list = NULL;
+    dcc_seccomp_effective_network_list_count = 0;
+}
+
+/**
+ * See sandbox-seccomp.h. Computes and caches everything
+ * dcc_seccomp_sandbox_child() needs so that function stays cheap enough to
+ * call on every fork: the effective denylist (built-in list, plus
+ * config's `extra-deny`, minus config's `allow-override`, all resolved to
+ * syscall numbers up front), the resolved network-syscall group, and the
+ * enabled/deny-network/fail-open flags themselves.
+ **/
+void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
+{
+    size_t i;
+    size_t cap;
+    int *list;
+    size_t count;
+
+    dcc_seccomp_free_effective_lists();
+
+    dcc_seccomp_cfg_enabled = cfg->enabled;
+    dcc_seccomp_cfg_deny_network = cfg->deny_network;
+    dcc_seccomp_cfg_fail_open = cfg->fail_open;
+
+    /* Built-in list minus allow-override, plus room to grow for
+     * extra-deny -- sized generously up front since this only runs once
+     * at startup, not per compile. */
+    cap = DCC_SECCOMP_BUILTIN_COUNT;
+    for (i = 0; cfg->extra_deny[i] != NULL; i++)
+        cap++;
+    list = (int *) malloc((cap > 0 ? cap : 1) * sizeof(int));
+    count = 0;
+
+    for (i = 0; i < DCC_SECCOMP_BUILTIN_COUNT; i++) {
+        const char *name = dcc_seccomp_denied_syscalls[i];
+        size_t j;
+        int overridden = 0;
+
+        for (j = 0; cfg->allow_override[j] != NULL; j++) {
+            if (strcmp(cfg->allow_override[j], name) == 0) {
+                overridden = 1;
+                break;
+            }
+        }
+        if (overridden) {
+            /* Named explicitly, per issue #192, rather than just a count --
+             * an admin auditing why ptrace() suddenly works again needs
+             * this line to say so directly. */
+            rs_log_warning("seccomp config: 'allow-override' removes '%s' "
+                            "from the built-in denylist", name);
+            continue;
+        }
+
+        if (list != NULL)
+            list[count++] = dcc_seccomp_resolve(name);
+    }
+
+    for (i = 0; cfg->extra_deny[i] != NULL; i++) {
+        int nr = dcc_seccomp_resolve(cfg->extra_deny[i]);
+        if (nr < 0) {
+            rs_log_warning("seccomp config: 'extra-deny' names unknown "
+                            "syscall '%s' on this architecture; ignoring",
+                            cfg->extra_deny[i]);
+            continue;
+        }
+        if (list != NULL)
+            list[count++] = nr;
+    }
+
+    /* Warn about allow-override entries that named something harmless
+     * rather than an actual built-in syscall -- almost certainly a typo,
+     * and worth flagging distinctly from "successfully removed X". */
+    for (i = 0; cfg->allow_override[i] != NULL; i++) {
+        if (!dcc_seccomp_name_in_builtin(cfg->allow_override[i]))
+            rs_log_info("seccomp config: 'allow-override' names '%s', which "
+                        "is not in the built-in denylist; nothing to remove",
+                        cfg->allow_override[i]);
+    }
+
+    dcc_seccomp_effective_denylist = list;
+    dcc_seccomp_effective_denylist_count = count;
+
+    /* Network group: always resolved (cheap, done once), only actually
+     * applied per-child when deny_network is set -- see
+     * dcc_seccomp_sandbox_child(). */
+    list = (int *) malloc(DCC_SECCOMP_NETWORK_COUNT * sizeof(int));
+    count = 0;
+    for (i = 0; i < DCC_SECCOMP_NETWORK_COUNT; i++) {
+        int nr = dcc_seccomp_resolve(dcc_seccomp_network_syscalls[i]);
+        if (nr < 0)
+            continue;
+        if (list != NULL)
+            list[count++] = nr;
+    }
+    dcc_seccomp_effective_network_list = list;
+    dcc_seccomp_effective_network_list_count = count;
+
+    dcc_seccomp_configured = 1;
+}
+
+/**
+ * Install the effective syscall denylist (see dcc_seccomp_configure()) in
+ * the calling process and load it.
+ *
+ * Fail-open (config default) vs. fail-closed is the only thing that
+ * changes what a failure path here does: fail-open logs a warning and
+ * returns 0 so the caller proceeds to exec the compiler unsandboxed
+ * (this is the exact prior behavior of this function before issue #192);
+ * fail-closed logs a warning and returns -1, so the caller (see
+ * dcc_inside_child() in exec.c) refuses the compile via the same ordinary
+ * failure path an actual compiler error would take, rather than a new ad
+ * hoc one. Rationale for why fail-open remains the *default*: this filter
+ * is explicitly defense-in-depth on top of the checks src/serve.c already
+ * performs before the child is forked (compiler whitelist, -fplugin/
+ * -specs rejection, compiler masquerade check), not the only thing
+ * protecting the host, so an admin who hasn't opted into fail-closed
+ * shouldn't have one host's seccomp-incompatible kernel turn into a
+ * blanket compile-farm outage.
+ **/
+int dcc_seccomp_sandbox_child(void)
 {
     scmp_filter_ctx ctx;
     size_t i;
     int rc;
-    int syscall_nr;
+
+    if (!dcc_seccomp_configured) {
+        /* Defensive: dcc_seccomp_configure() should always have run by
+         * the time a compile is spawned (see src/daemon.c's main()), but
+         * if it somehow hasn't, fall back to "sandbox active with
+         * built-in defaults" rather than silently running unsandboxed. */
+        static const struct dcc_seccomp_config defaults = {
+            1, 0, 1, NULL, NULL
+        };
+        static char *empty_list[] = { NULL };
+        struct dcc_seccomp_config safe_defaults = defaults;
+        safe_defaults.extra_deny = empty_list;
+        safe_defaults.allow_override = empty_list;
+        dcc_seccomp_configure(&safe_defaults);
+    }
+
+    if (!dcc_seccomp_cfg_enabled) {
+        /* enabled = false: a genuine no-op, equivalent to
+         * --without-seccomp at configure time -- nothing is installed,
+         * nothing to fail open or closed on. */
+        return 0;
+    }
 
     ctx = seccomp_init(SCMP_ACT_ALLOW);
     if (ctx == NULL) {
-        rs_log_warning("seccomp_init() failed; running this compile without "
-                       "a seccomp sandbox");
-        return;
+        rs_log_warning("seccomp_init() failed; %s",
+                       dcc_seccomp_cfg_fail_open
+                           ? "running this compile without a seccomp sandbox"
+                           : "refusing this compile (fail-open disabled)");
+        return dcc_seccomp_cfg_fail_open ? 0 : -1;
     }
 
-    for (i = 0; i < sizeof(dcc_seccomp_denied_syscalls) /
-                    sizeof(dcc_seccomp_denied_syscalls[0]); i++) {
-        syscall_nr = seccomp_syscall_resolve_name(
-            dcc_seccomp_denied_syscalls[i]);
-        if (syscall_nr == __NR_SCMP_ERROR) {
-            /* Doesn't exist on this architecture/libseccomp version --
-             * nothing to deny, move on rather than failing the sandbox. */
-            continue;
-        }
-
+    for (i = 0; i < dcc_seccomp_effective_denylist_count; i++) {
         /* SCMP_ACT_ERRNO (not KILL): a denied call fails like an
          * unsupported/EPERM syscall normally would, rather than the
          * process dying to SIGSYS -- so if this denylist is ever wrong
          * about what a compiler needs, the failure looks like an
          * ordinary compiler error instead of an opaque crash. */
-        rc = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), syscall_nr, 0);
+        rc = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM),
+                              dcc_seccomp_effective_denylist[i], 0);
         if (rc < 0) {
-            rs_log_warning("seccomp_rule_add(%s) failed: %s; running this "
-                           "compile without a seccomp sandbox",
-                           dcc_seccomp_denied_syscalls[i], strerror(-rc));
+            rs_log_warning("seccomp_rule_add() failed: %s; %s",
+                           strerror(-rc),
+                           dcc_seccomp_cfg_fail_open
+                               ? "running this compile without a seccomp "
+                                 "sandbox"
+                               : "refusing this compile (fail-open "
+                                 "disabled)");
             seccomp_release(ctx);
-            return;
+            return dcc_seccomp_cfg_fail_open ? 0 : -1;
+        }
+    }
+
+    if (dcc_seccomp_cfg_deny_network) {
+        for (i = 0; i < dcc_seccomp_effective_network_list_count; i++) {
+            rc = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM),
+                                  dcc_seccomp_effective_network_list[i], 0);
+            if (rc < 0) {
+                rs_log_warning("seccomp_rule_add() failed for network "
+                               "syscall: %s; %s", strerror(-rc),
+                               dcc_seccomp_cfg_fail_open
+                                   ? "running this compile without a "
+                                     "seccomp sandbox"
+                                   : "refusing this compile (fail-open "
+                                     "disabled)");
+                seccomp_release(ctx);
+                return dcc_seccomp_cfg_fail_open ? 0 : -1;
+            }
         }
     }
 
@@ -174,44 +404,83 @@ void dcc_seccomp_sandbox_child(void)
      * never legitimately need to gain privileges via a setuid/setgid
      * binary, so this has no functional downside here. */
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        rs_log_warning("prctl(PR_SET_NO_NEW_PRIVS) failed: %s; running this "
-                       "compile without a seccomp sandbox",
-                       strerror(errno));
+        rs_log_warning("prctl(PR_SET_NO_NEW_PRIVS) failed: %s; %s",
+                       strerror(errno),
+                       dcc_seccomp_cfg_fail_open
+                           ? "running this compile without a seccomp sandbox"
+                           : "refusing this compile (fail-open disabled)");
         seccomp_release(ctx);
-        return;
+        return dcc_seccomp_cfg_fail_open ? 0 : -1;
     }
 
     rc = seccomp_load(ctx);
+    seccomp_release(ctx);
     if (rc < 0) {
-        rs_log_warning("seccomp_load() failed: %s; running this compile "
-                       "without a seccomp sandbox", strerror(-rc));
+        rs_log_warning("seccomp_load() failed: %s; %s", strerror(-rc),
+                       dcc_seccomp_cfg_fail_open
+                           ? "running this compile without a seccomp sandbox"
+                           : "refusing this compile (fail-open disabled)");
+        return dcc_seccomp_cfg_fail_open ? 0 : -1;
     }
 
-    /* seccomp_load() copies the compiled filter into the kernel; the
-     * userspace context is no longer needed whether or not it succeeded. */
-    seccomp_release(ctx);
+    return 0;
 }
 
 /**
  * Called once from distccd's main() so a warning shows up in the daemon's
  * own log immediately if this hardening layer is compiled in, rather than
- * only being discovered later during a security review.
+ * only being discovered later during a security review. Reflects the
+ * config's `enabled` key too, since "compiled in but administratively
+ * disabled" is just as important for an admin to see at a glance as
+ * "not compiled in at all".
  **/
 void dcc_seccomp_log_availability(void)
 {
-    rs_log_info("seccomp sandbox enabled for remote compiler processes");
+    if (dcc_seccomp_configured && !dcc_seccomp_cfg_enabled)
+        rs_log_info("seccomp sandbox compiled in but disabled via "
+                    "'enabled = false' in the seccomp config; remote "
+                    "compiler processes will run unsandboxed");
+    else
+        rs_log_info("seccomp sandbox enabled for remote compiler processes");
 }
 
 #else /* !HAVE_SECCOMP */
+
+/* Only `fail-open` matters in this build: there is no sandbox to enable/
+ * disable or to add a network denylist to, so `enabled` and
+ * `deny-network` have nothing to act on here. `fail-open = false` still
+ * has a meaningful effect, though: it means "a host that cannot sandbox
+ * at all must refuse remote compiles" rather than "run them unsandboxed
+ * regardless" -- extending the same fail-open/fail-closed choice
+ * consistently across both build configurations rather than leaving this
+ * one silently exempt from it. */
+static int dcc_seccomp_stub_fail_open = 1;
+static int dcc_seccomp_stub_configured = 0;
+
+/**
+ * See sandbox-seccomp.h. In a build without libseccomp there is nothing to
+ * resolve or cache except the fail-open flag itself.
+ **/
+void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
+{
+    dcc_seccomp_stub_fail_open = cfg->fail_open;
+    dcc_seccomp_stub_configured = 1;
+}
 
 /**
  * Built without libseccomp (see configure.ac's --with-seccomp /
  * --without-seccomp), or on a non-Linux host: nothing to install. Kept as
  * a real function (rather than requiring callers to #ifdef) so exec.c and
  * daemon.c don't need to know whether this build has seccomp support.
+ * Still honors `fail-open`/`fail-closed`: with fail-closed configured, a
+ * build that can never sandbox at all must refuse every remote compile
+ * rather than silently running every one of them unsandboxed forever.
  **/
-void dcc_seccomp_sandbox_child(void)
+int dcc_seccomp_sandbox_child(void)
 {
+    if (dcc_seccomp_stub_configured && !dcc_seccomp_stub_fail_open)
+        return -1;
+    return 0;
 }
 
 /**

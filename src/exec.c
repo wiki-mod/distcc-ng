@@ -366,9 +366,16 @@ static void dcc_inside_child(char **argv,
      * step that might still need a syscall the filter could deny (fd
      * redirection above, safeguard bookkeeping) and immediately before
      * the exec it's meant to constrain -- the filter survives execve()
-     * and applies to the compiler process itself, which is the point. */
-    if (sandbox_seccomp)
-        dcc_seccomp_sandbox_child();
+     * and applies to the compiler process itself, which is the point.
+     * A -1 return means the config's `fail-open = false` and the sandbox
+     * genuinely could not be installed: refuse the compile via the same
+     * ordinary failure path dcc_execvp() itself would take on error,
+     * rather than exec'ing an untrusted compiler completely unrestricted
+     * when the admin explicitly asked for fail-closed behavior. */
+    if (sandbox_seccomp && dcc_seccomp_sandbox_child() != 0) {
+        ret = EXIT_DISTCC_FAILED;
+        goto fail;
+    }
 
     dcc_execvp(argv);
 

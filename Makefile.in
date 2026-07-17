@@ -263,7 +263,7 @@ common_obj = src/arg.o src/argutil.o					\
 	src/include_server_sort.o					\
 	src/implicit.o src/loadfile.o					\
 	src/pathsafety.o						\
-	src/sandbox-seccomp.o						\
+	src/sandbox-config.o src/sandbox-seccomp.o			\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\
 	@AUTH_COMMON_OBJS@
@@ -369,7 +369,7 @@ SRC =	src/stats.c							\
 	src/h_pathsafety.c src/pathsafety.c				\
 	src/prefork.c src/pump.c					\
 	src/remote.c src/renderer.c src/rpc.c				\
-	src/safeguard.c src/sandbox-seccomp.c				\
+	src/safeguard.c src/sandbox-config.c src/sandbox-seccomp.c	\
 	src/sendfile.c src/setuid.c src/serve.c		\
 	src/snprintf.c src/state.c					\
 	src/srvnet.c src/srvrpc.c src/ssh.c 				\
@@ -408,7 +408,7 @@ HEADERS = src/stats.h							\
 	src/va_copy.h 							\
 	src/zeroconf.h							\
 	src/pathsafety.h						\
-	src/sandbox-seccomp.h
+	src/sandbox-config.h src/sandbox-seccomp.h
 
 conf_dir = packaging/RedHat/conf
 conf_files = $(conf_dir)/hosts \
