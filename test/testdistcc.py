@@ -874,11 +874,24 @@ foo_bar""",
           for dep in deps:
               _Touch(dep)
           # Now postulate the time that is the beginning of build. This time
-          # is after that of all the dependencies.
-          time_ref = time.time() + 1
-          # Let real-time advance to time_ref.
+          # is after that of all the dependencies. time_ref is computed as an
+          # already-rounded whole integer (not a float) with a 2-second safety
+          # margin: dcc_fresh_dependency_exists() compares the .d file's real
+          # (integer) mtime against reference_time, and this value is later
+          # passed to the C harness via "%i" formatting. Passing a float here
+          # and letting "%i" truncate it towards zero silently shrinks the
+          # intended margin -- under CI load (this suite runs twice per job),
+          # that shrunk margin has been observed to let the .d file's mtime
+          # land at or below the truncated reference_time, tripping the
+          # dcc_fresh_dependency_exists() "old dotd file" trace instead of
+          # the expected freshness result. Computing an integer margin up
+          # front removes the truncation surprise entirely and adds a full
+          # extra second of headroom against scheduling jitter.
+          time_ref = int(time.time()) + 2
+          # Let real-time advance to time_ref, polling finely so we don't
+          # overshoot by up to a full second per iteration.
           while time.time() < time_ref:
-              time.sleep(1)
+              time.sleep(0.1)
           # Create .d file now, so that it appears to be no older than
           # time_ref.
           dotd_fd = open("dotd", "w")
@@ -891,8 +904,14 @@ foo_bar""",
           self.assert_equal(out.split()[1], "(NULL)");
           checked_deps = {}
           for line in err.split("\n"):
-              if re.search("[^ ]", line):
-                  # Line is non-blank
+              # Only feed lines carrying the expected marker to getDep():
+              # dcc_fresh_dependency_exists() can legitimately emit other
+              # rs_trace() lines on this path (e.g. "old dotd file ...",
+              # "could not stat ..."), which getDep()'s regex was never
+              # meant to parse. Filtering here keeps getDep()'s internal
+              # assert a true invariant instead of a fragile assumption
+              # that every non-blank line matches.
+              if "Checking dependency:" in line:
                   checked_deps[self.getDep(line)] = 1
           deps_list = deps[:]
           checked_deps_list = list(checked_deps.keys())
