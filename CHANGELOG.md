@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **Nightly container image moved to its own package**, `distcc-ng-nightly:latest`
+  (#199), instead of a `:nightly` tag on the same `distcc-ng` package used for
+  real, versioned releases. Keeps the unstable rolling nightly build clearly
+  separated from tagged releases. The `nightly` git tag and the "distcc-ng
+  nightly" GitHub pre-release are unaffected — only the container image's
+  package name changed.
+
 ### Fixed
 
 - **Flaky `Compile_c_Case` test race under CI load** (#196):
