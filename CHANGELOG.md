@@ -13,6 +13,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`/etc/distcc/distcc.conf`** (#207): new client-side config file, sharing
+  the same `key = value` parser as the daemon's config (now factored out
+  into `src/config-parser.c`). First setting: `local-lto` (bool, default
+  `false`) — controls whether `-flto`/`-flto=` compiler invocations are
+  forced local-only (this fork's prior #74/#204 behavior) or distributed
+  normally (upstream's current, evidence-based default — see
+  `support-upstream/issue-074-lto-distribution-revert.md`). Overridable
+  per-invocation via `DISTCC_LOCAL_LTO`, which takes precedence over the
+  file in both directions.
+- **`/etc/distcc/distccd.conf`** (#207): renamed from
+  `/etc/distcc/seccomp.conf` now that a second, non-seccomp daemon
+  setting exists conceptually (even though this specific PR only touches
+  the client side) — no back-compat shim, since no real deployment of
+  the old name predates this rename.
+
 - **`doc/verification-checklist.md`**: a reusable checklist template for
   recording what was actually checked before a change lands, covering
   permission/file-mode changes, sandbox/seccomp changes, distribution/
