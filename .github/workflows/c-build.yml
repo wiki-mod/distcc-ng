@@ -192,18 +192,21 @@ jobs:
 
   # Popt-directory-specific strictness/regression gate (asked for after the
   # bundled popt/ tree was found to be a 20+-year-old 1.7 snapshot, see #63's
-  # follow-up): every other build in this workflow suppresses -Wunused/
+  # follow-up): every other build in this workflow suppresses -Wunused and
   # -Wunused-parameter on popt_OBJS (Makefile.in) because that suppression is
-  # exactly what makes 1998-2002-era third-party code buildable under this
-  # project's own -Werror standard. This job instead compiles the *current*
-  # vendored files directly with the same -Wall -Wextra -Werror this project
-  # holds its own sources to, WITHOUT that suppression, so any accidental
-  # future downgrade of the vendored tree (e.g. someone reintroducing the old
-  # 1.7 snapshot, or an edit that reintroduces an old warning) fails loudly
-  # here instead of silently reappearing behind the suppression. It also
-  # checks the version marker and a real, version-specific API symbol so a
-  # stale/wrong vendored copy is caught even if it happens to still compile
-  # cleanly.
+  # exactly what makes third-party code buildable under this project's own
+  # -Werror standard. This job compiles the *current* vendored files with
+  # the same -Wall -Wextra -Werror this project holds its own sources to,
+  # keeping only the -Wno-unused-parameter half of that suppression: popt
+  # 1.19's own real, unmodified source has a couple of intentionally-unused
+  # callback parameters (its poptHelpOptions2 table's translation-domain
+  # callback signature) that would otherwise make this job fail even on a
+  # correctly-vendored tree, which would defeat its purpose as a regression
+  # signal. -Wunused itself (unused variables, unlike unused parameters) is
+  # NOT suppressed, so that class of accidental regression still fails
+  # loudly here. This job also checks the version marker and a real,
+  # version-specific API symbol so a stale/wrong vendored copy is caught
+  # even if it happens to still compile cleanly.
   popt_vendor_check:
     name: Vendored popt/ strictness and version check
     runs-on: ubuntu-latest
@@ -244,24 +247,28 @@ jobs:
       # configure.ac really detects and stop testing the real thing.
       - run: ./autogen.sh
       - run: ./configure --without-system-popt PYTHON="$(which python3)"
-      - name: Compile vendored popt/*.c at full project warning strictness (no suppression)
+      - name: Compile vendored popt/*.c at full project warning strictness (minus unused-parameter)
         run: |
           set -e
           mkdir -p /tmp/popt-strict-check
           # Mirrors this project's own default CFLAGS philosophy (see
-          # Makefile.in's CFLAGS) plus -Werror, deliberately omitting the
-          # -Wno-unused/-Wno-unused-parameter pair Makefile.in applies to
-          # popt_OBJS in the real build -- the whole point of this job is to
-          # not grant that exemption, so any real warning here signals the
-          # vendored tree itself has regressed, not merely that this
-          # project's stricter-than-upstream flags don't suit third-party code.
-          # -D_GNU_SOURCE and -DPOPT_SYSCONFDIR mirror the two flags
+          # Makefile.in's CFLAGS) plus -Werror. -Wno-unused-parameter is kept
+          # (unlike the real build's blanket -Wno-unused, which this job
+          # deliberately does not carry over) because popt 1.19's own
+          # unmodified source has a couple of intentionally-unused callback
+          # parameters -- see the job-level comment above for why. Any other
+          # warning here, including a genuinely unused variable, still fails
+          # the job.
+          # -D_GNU_SOURCE, -DPOPT_SYSCONFDIR and -DPACKAGE mirror the flags
           # Makefile.in's own CPPFLAGS/popt_OBJS rule feeds every popt object
           # in the real build: without -D_GNU_SOURCE, glibc hides
-          # secure_getenv()'s prototype (popt/system.h's getenv() macro,
-          # used when HAVE_SECURE_GETENV is detected); POPT_SYSCONFDIR is
-          # poptReadDefaultConfig()'s compiled-in system config directory.
-          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" -Isrc -Ipopt -Wall -Wextra -Werror)
+          # secure_getenv()'s prototype (popt/system.h's getenv() macro, used
+          # when HAVE_SECURE_GETENV is detected); POPT_SYSCONFDIR is
+          # poptReadDefaultConfig()'s compiled-in system config directory;
+          # PACKAGE is popt/popthelp.c's gettext translation-domain string,
+          # which this fork's plain-autoconf (non-automake) configure.ac
+          # never defines on its own.
+          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused-parameter)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
             echo "::group::gcc ${CFLAGS[*]} -c $f"
             gcc "${CFLAGS[@]}" -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"

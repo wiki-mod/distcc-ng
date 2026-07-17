@@ -535,7 +535,14 @@ pump: pump.in config.status
 # popt/poptconfig.c); upstream's own configure.ac defines it from
 # $(sysconfdir), so reuse the same directory this tree already resolves
 # SYSCONFDIR to (DIR_DEFS above) rather than inventing a second value.
-$(popt_OBJS): CFLAGS += -Wno-unused -Wno-unused-parameter -DPOPT_SYSCONFDIR="\"$(sysconfdir)\""
+# PACKAGE is popt/popthelp.c's own gettext translation-domain string
+# (poptHelpOptions2); this fork's configure.ac uses plain AC_INIT rather
+# than AM_INIT_AUTOMAKE, so it never defines the automake-only PACKAGE
+# macro other code usually gets for free. NLS itself is intentionally not
+# wired up for this bundled tree (see popt/README.popt), so the value
+# here is never actually looked up at runtime -- it only needs to be a
+# valid string literal for popt's own source to compile as shipped.
+$(popt_OBJS): CFLAGS += -Wno-unused -Wno-unused-parameter -DPOPT_SYSCONFDIR="\"$(sysconfdir)\"" -DPACKAGE="\"distcc\""
 
 distcc@EXEEXT@: $(distcc_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(distcc_obj) $(LIBS)
