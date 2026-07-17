@@ -446,25 +446,26 @@ void dcc_seccomp_log_availability(void)
 
 #else /* !HAVE_SECCOMP */
 
-/* Only `fail-open` matters in this build: there is no sandbox to enable/
- * disable or to add a network denylist to, so `enabled` and
- * `deny-network` have nothing to act on here. `fail-open = false` still
- * has a meaningful effect, though: it means "a host that cannot sandbox
- * at all must refuse remote compiles" rather than "run them unsandboxed
- * regardless" -- extending the same fail-open/fail-closed choice
- * consistently across both build configurations rather than leaving this
- * one silently exempt from it. */
-static int dcc_seccomp_stub_fail_open = 1;
-static int dcc_seccomp_stub_configured = 0;
-
 /**
- * See sandbox-seccomp.h. In a build without libseccomp there is nothing to
- * resolve or cache except the fail-open flag itself.
+ * See sandbox-seccomp.h. `fail-open`/`fail-closed` only governs what
+ * happens when a build that *can* sandbox fails to install the filter at
+ * runtime (see the HAVE_SECCOMP branch above) -- it has no scope over
+ * "this build cannot sandbox at all" (--without-seccomp, or a non-Linux
+ * host). Those are two distinct questions ("did installing the sandbox
+ * fail?" vs. "was the sandbox ever compiled in?"), and this fork
+ * deliberately keeps them on separate switches rather than folding
+ * "refuse to run without seccomp support at all" into `fail-open` as a
+ * side effect: a combined switch means an admin setting `fail-open =
+ * false` to harden one behavior silently also changes the other, on
+ * build configurations they may not have been thinking about at all. A
+ * dedicated option for "refuse remote compiles entirely on a build
+ * without seccomp support" would need its own explicit switch as a
+ * separate, deliberate feature -- not a side effect of this one. So
+ * there is nothing to configure here.
  **/
 void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
 {
-    dcc_seccomp_stub_fail_open = cfg->fail_open;
-    dcc_seccomp_stub_configured = 1;
+    (void) cfg; /* unused in this build: see the comment above. */
 }
 
 /**
@@ -472,14 +473,13 @@ void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
  * --without-seccomp), or on a non-Linux host: nothing to install. Kept as
  * a real function (rather than requiring callers to #ifdef) so exec.c and
  * daemon.c don't need to know whether this build has seccomp support.
- * Still honors `fail-open`/`fail-closed`: with fail-closed configured, a
- * build that can never sandbox at all must refuse every remote compile
- * rather than silently running every one of them unsandboxed forever.
+ * Always returns 0 (proceed unsandboxed) regardless of `fail-open`/
+ * `fail-closed` -- see dcc_seccomp_configure() above for why that
+ * setting's scope stops at "the sandbox is supported but failed to
+ * install", and does not extend to "the sandbox was never compiled in".
  **/
 int dcc_seccomp_sandbox_child(void)
 {
-    if (dcc_seccomp_stub_configured && !dcc_seccomp_stub_fail_open)
-        return -1;
     return 0;
 }
 
