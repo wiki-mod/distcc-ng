@@ -42,6 +42,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`distccd` kept warning about the masquerade whitelist even when
+  `DISTCC_CMDLIST` was already set** (#75): `dcc_warn_masquerade_whitelist()`
+  (`src/daemon.c`) always emitted its "set up masquerade or pass
+  --enable-tcp-insecure" warning, regardless of whether the operator had
+  already opted in via `DISTCC_CMDLIST` — a documented, explicit whitelist
+  env var (see `dcc_remap_compiler()` in `src/serve.c`) that makes an empty
+  masquerade directory expected, not a misconfiguration. The warning now
+  returns early when `DISTCC_CMDLIST` is set, and mentions the variable in
+  its text for operators who haven't set it yet. Ports upstream
+  distcc/distcc#445.
+
 - **Flaky `Compile_c_Case` test race under CI load** (#196):
   `test/testdistcc.py`'s `Compile_c_Case.runtest()` computed its
   `dcc_fresh_dependency_exists()` reference timestamp as `time.time() + 1`
