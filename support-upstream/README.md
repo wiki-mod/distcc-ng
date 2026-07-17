@@ -33,3 +33,4 @@ on their part to respond either way.
 | # | Fork Issue | Fixed By | Title | Upstream Status |
 |---|---|---|---|---|
 | 1 | [#12](https://github.com/wiki-mod/distcc-ng/issues/12) | [#19](https://github.com/wiki-mod/distcc-ng/pull/19) | [Weak temp-file name entropy in `dcc_make_tmpnam`](issue-012-tempfile-entropy.md) | Still present in upstream's live source, unreported |
+| 2 | [#63](https://github.com/wiki-mod/distcc-ng/issues/63) | [#170](https://github.com/wiki-mod/distcc-ng/pull/170) | [Bundled popt fallback removed for staleness — a current-vendor alternative exists](issue-063-popt-current-vendor-alternative.md) | Not a bug — a design-reconsideration note for a deliberate past removal |
