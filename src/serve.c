@@ -726,9 +726,31 @@ static int dcc_run_job(int in_fd,
         changed_directory = 1;
     }
 
-    if ((ret = dcc_r_argv(in_fd, "ARGC", "ARGV", &argv))
-        || (ret = dcc_scan_args(argv, &orig_input_tmp, &orig_output_tmp,
-                                &tweaked_argv)))
+    if ((ret = dcc_r_argv(in_fd, "ARGC", "ARGV", &argv)))
+        goto out_cleanup;
+
+    /* This whitelist/remap check on the network-supplied argv[0] must run
+     * before dcc_scan_args(): dcc_scan_args() may itself fork+exec the
+     * compiler named in argv[0] (to resolve -march/-mtune/-mcpu=native to
+     * the server's actual CPU flags -- see dcc_resolve_march_native() in
+     * arg.c), and that exec must never run against an unvalidated,
+     * client-controlled compiler name/path. Skipping this check here would
+     * reopen the exact hole CVE-2004-2687 closed (arbitrary command
+     * execution via a crafted compiler name), just via a different call
+     * site than the actual compile job below. */
+    if (!dcc_remap_compiler(&argv[0]))
+        goto out_cleanup;
+
+    if ((ret = dcc_check_compiler_masq(argv[0])))
+        goto out_cleanup;
+
+    if (!opt_enable_tcp_insecure &&
+        !getenv("DISTCC_CMDLIST") &&
+        dcc_check_compiler_whitelist(argv[0]))
+        goto out_cleanup;
+
+    if ((ret = dcc_scan_args(argv, &orig_input_tmp, &orig_output_tmp,
+                             &tweaked_argv)))
         goto out_cleanup;
 
     /* The orig_input_tmp and orig_output_tmp values returned by dcc_scan_args()
@@ -777,17 +799,6 @@ static int dcc_run_job(int in_fd,
             || (ret = dcc_set_output(argv, temp_o)))
             goto out_cleanup;
     }
-
-    if (!dcc_remap_compiler(&argv[0]))
-        goto out_cleanup;
-
-    if ((ret = dcc_check_compiler_masq(argv[0])))
-        goto out_cleanup;
-
-    if (!opt_enable_tcp_insecure &&
-        !getenv("DISTCC_CMDLIST") &&
-        dcc_check_compiler_whitelist(argv[0]))
-        goto out_cleanup;
 
     /* unsafe compiler options. See  https://youtu.be/bSkpMdDe4g4?t=53m12s
        on securing https://godbolt.org/ */
