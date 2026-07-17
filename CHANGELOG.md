@@ -11,6 +11,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Removed
+
+- **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,
+  required a manually-configured real distcc farm and downloaded 15-20+
+  year old open-source project tarballs from largely-dead mirrors. No
+  longer has any ongoing relevance to this fork.
+
 ## [3.5.1.1-NG] - 2026-07-16
 
 ### Fixed
