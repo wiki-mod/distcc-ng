@@ -149,6 +149,10 @@ jobs:
     name: Bundled popt fallback build (no system libpopt)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # This job only checks out and builds the tree, it doesn't need
+    # anything beyond read access to the repository contents.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
@@ -204,6 +208,10 @@ jobs:
     name: Vendored popt/ strictness and version check
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Same rationale as popt_fallback_build above: read-only checkout and
+    # compile, no need for the default token's write access to anything.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - name: Vendored version marker matches what this repo claims to ship
@@ -247,7 +255,13 @@ jobs:
           # not grant that exemption, so any real warning here signals the
           # vendored tree itself has regressed, not merely that this
           # project's stricter-than-upstream flags don't suit third-party code.
-          CFLAGS=(-DHAVE_CONFIG_H -Isrc -Ipopt -Wall -Wextra -Werror)
+          # -D_GNU_SOURCE and -DPOPT_SYSCONFDIR mirror the two flags
+          # Makefile.in's own CPPFLAGS/popt_OBJS rule feeds every popt object
+          # in the real build: without -D_GNU_SOURCE, glibc hides
+          # secure_getenv()'s prototype (popt/system.h's getenv() macro,
+          # used when HAVE_SECURE_GETENV is detected); POPT_SYSCONFDIR is
+          # poptReadDefaultConfig()'s compiled-in system config directory.
+          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" -Isrc -Ipopt -Wall -Wextra -Werror)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
             echo "::group::gcc ${CFLAGS[*]} -c $f"
             gcc "${CFLAGS[@]}" -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"

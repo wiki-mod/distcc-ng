@@ -530,7 +530,12 @@ pump: pump.in config.status
 # configure fell back to it (see @BUILD_POPT@ above), and we don't want an
 # upstream popt warning to break -Werror builds of distccd on a system that
 # merely lacks a packaged libpopt.
-$(popt_OBJS): CFLAGS += -Wno-unused -Wno-unused-parameter
+# POPT_SYSCONFDIR is popt's own build-time default for where to look for its
+# system-wide /etc/popt config file (poptReadDefaultConfig() in
+# popt/poptconfig.c); upstream's own configure.ac defines it from
+# $(sysconfdir), so reuse the same directory this tree already resolves
+# SYSCONFDIR to (DIR_DEFS above) rather than inventing a second value.
+$(popt_OBJS): CFLAGS += -Wno-unused -Wno-unused-parameter -DPOPT_SYSCONFDIR="\"$(sysconfdir)\""
 
 distcc@EXEEXT@: $(distcc_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(distcc_obj) $(LIBS)
