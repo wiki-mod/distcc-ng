@@ -20,6 +20,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   artifact integrity, and cleanup — each with concrete "what counts as
   real evidence" bullet points, not just "make check passed". `AGENTS.md`
   rule 37 now points changes in these areas at it. (#202)
+- **`src/arg.c`: skip distributing `-flto`/`-flto=`-style compiler invocations**
+  (#74) — LTO defers the bulk of the optimization work to link time, so
+  distributing the per-translation-unit compile step wastes network/
+  scheduling overhead for no benefit, and some LTO intermediate
+  representations aren't valid standalone object files, so a remote
+  invocation could produce an unusable result. `dcc_scan_args()` now
+  recognizes `-flto` and `-flto=<value>` alongside the existing
+  `-march=native`/`-mtune=native` local-fallback checks and routes these
+  invocations to local-only compilation instead of attempting a remote
+  dispatch. Ports upstream distcc/distcc#413.
 
 ### Changed
 

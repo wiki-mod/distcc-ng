@@ -492,6 +492,16 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
                 rs_trace("-mcpu=native optimizes for local machine; "
                          "must be local");
                 return EXIT_DISTCC_FAILED;
+            } else if (!strcmp(a, "-flto") || str_startswith("-flto=", a)) {
+                /* LTO defers the bulk of the optimization work to link
+                 * time, so distributing the per-TU compile step wastes
+                 * network/scheduling overhead for essentially no benefit;
+                 * some LTO intermediate representations also aren't valid
+                 * standalone object files, so a remote invocation may not
+                 * even produce a usable result. */
+                rs_trace("LTO compilation is not worth distributing; "
+                         "must be local");
+                return EXIT_DISTCC_FAILED;
             } else if (str_startswith("-Wa,", a)) {
                 /* Look for assembler options that would produce output
                  * files and must be local.
