@@ -263,6 +263,7 @@ common_obj = src/arg.o src/argutil.o					\
 	src/include_server_sort.o					\
 	src/implicit.o src/loadfile.o					\
 	src/pathsafety.o						\
+	src/config-parser.o						\
 	src/sandbox-config.o src/sandbox-seccomp.o			\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\
@@ -270,6 +271,7 @@ common_obj = src/arg.o src/argutil.o					\
 
 distcc_obj = src/backoff.o						\
 	src/climasq.o src/clinet.o src/clirpc.o				\
+	src/client-config.o						\
 	src/compile.o src/cpp.o						\
 	src/distcc.o							\
 	src/remote.o							\
