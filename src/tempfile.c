@@ -127,11 +127,24 @@ int dcc_mk_tmpdir(const char *path)
 }
 
 /**
- * Create the directory @p path.  If it already exists as a directory
+ * Create the directory @p path, including any missing parent
+ * directories (like `mkdir -p`).  If it already exists as a directory
  * we succeed.
+ *
+ * Callers (dcc_get_top_dir(), dcc_get_subdir()) build paths like
+ * $HOME/.distcc -- $HOME itself is not guaranteed to already exist in
+ * every environment this runs in (minimal containers, sandboxed build
+ * workers), so a plain non-recursive mkdir() can fail with ENOENT even
+ * though creating the directory is otherwise perfectly reasonable.
  **/
 int dcc_mkdir(const char *path)
 {
+    int ret;
+
+    if ((ret = dcc_mk_tmp_ancestor_dirs(path))) {
+        return ret;
+    }
+
     if ((mkdir(path, 0777) == -1) && (errno != EEXIST)) {
         rs_log_error("mkdir '%s' failed: %s", path, strerror(errno));
         return EXIT_IO_ERROR;
