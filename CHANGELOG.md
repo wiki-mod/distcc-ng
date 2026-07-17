@@ -13,6 +13,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **Flaky `Compile_c_Case` test race under CI load** (#196):
+  `test/testdistcc.py`'s `Compile_c_Case.runtest()` computed its
+  `dcc_fresh_dependency_exists()` reference timestamp as `time.time() + 1`
+  and passed it to the C test harness via `"%i"` string formatting, which
+  silently truncates the float towards zero rather than rounding — shrinking
+  the intended one-second safety margin. Under CI load (this suite runs
+  twice per job: once for `make check`, once for
+  `maintainer-check-no-set-path`), scheduling jitter could occasionally
+  close that margin enough for the `.d` test file's real mtime to land at
+  or below the truncated reference time, tripping
+  `dcc_fresh_dependency_exists()`'s legitimate "old dotd file" trace line.
+  `getDep()`'s caller then blindly asserted every non-blank stderr line
+  matched the `"Checking dependency: ..."` pattern, turning that legitimate
+  trace line into a hard test failure. Fixed both angles: `time_ref` is now
+  computed as an already-rounded integer with a 2-second margin (polling the
+  busy-wait at 0.1s instead of 1s granularity, removing the truncation
+  surprise and adding real headroom), and the stderr-parsing loop now only
+  feeds lines containing `"Checking dependency:"` to `getDep()`, instead of
+  every non-blank line.
+
 - **`pump.in`'s `ShutDown()` could misjudge a zombie include-server process as
   still running** (#71), because it only checked liveness with `ps -p PID`,
   which reports true for a zombie ('Z' state) process too. A zombie can never
