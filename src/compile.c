@@ -60,6 +60,7 @@
 #include "include_server_if.h"
 #include "emaillog.h"
 #include "dotd.h"
+#include "pathsafety.h"
 
 /**
  * This boolean is true iff --scan-includes option is enabled.
@@ -718,6 +719,12 @@ dcc_build_somewhere(char *argv[],
 
     if ((ret = dcc_discrepancy_filename(&discrepancy_filename)))
         goto clean_up;
+    if (discrepancy_filename && !dcc_sane_env_path(discrepancy_filename)) {
+        rs_log_warning("ignoring malformed discrepancy filename derived "
+                        "from INCLUDE_SERVER_PORT");
+        free(discrepancy_filename);
+        discrepancy_filename = NULL;
+    }
 
     if (sg_level) /* Recursive distcc - run locally, and skip all locking. */
         goto run_local;
@@ -842,6 +849,13 @@ dcc_build_somewhere(char *argv[],
             char *dotd_target = NULL;
             dcc_get_dotd_info(argv, &deps_fname, &needs_dotd,
                               &sets_dotd_target, &dotd_target);
+            if (deps_fname && !dcc_sane_env_path(deps_fname)) {
+                rs_log_warning("ignoring malformed dependency filename "
+                                "derived from -MF/DEPENDENCIES_OUTPUT");
+                free(deps_fname);
+                deps_fname = NULL;
+                needs_dotd = 0;
+            }
             if ((ret = dcc_copy_argv(argv, &remotecpp_server_argv, 2)))
                 goto fallback;
             if (needs_dotd && !sets_dotd_target) {

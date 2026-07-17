@@ -260,6 +260,10 @@ static int dcc_remap_compiler(char **compiler_name)
         char *filename;
         cmdlist_checked = 1;
         filename = getenv("DISTCC_CMDLIST");
+        if (filename && !dcc_sane_env_path(filename)) {
+            rs_log_error("ignoring malformed $DISTCC_CMDLIST value");
+            filename = NULL;
+        }
         if (filename) {
             const char *nw = getenv("DISTCC_CMDLIST_NUMWORDS");
             int numFinalWordsToMatch=1;
