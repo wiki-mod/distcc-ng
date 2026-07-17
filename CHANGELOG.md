@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`doc/verification-checklist.md`**: a reusable checklist template for
+  recording what was actually checked before a change lands, covering
+  permission/file-mode changes, sandbox/seccomp changes, distribution/
+  scheduling behavior changes, external-host compatibility, downloaded-
+  artifact integrity, and cleanup — each with concrete "what counts as
+  real evidence" bullet points, not just "make check passed". `AGENTS.md`
+  rule 37 now points changes in these areas at it. (#202)
+
 ### Changed
 
 - **Nightly container image moved to its own package**, `distcc-ng-nightly:latest`
