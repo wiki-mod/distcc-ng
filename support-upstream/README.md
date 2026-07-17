@@ -30,6 +30,6 @@ on their part to respond either way.
 
 ## Index
 
-| # | Fork Issue | Title | Upstream Status |
-|---|---|---|---|
-| 1 | [#12](https://github.com/wiki-mod/distcc-ng/issues/12) | [Weak temp-file name entropy in `dcc_make_tmpnam`](issue-012-tempfile-entropy.md) | Still present in upstream's live source, unreported |
+| # | Fork Issue | Fixed By | Title | Upstream Status |
+|---|---|---|---|---|
+| 1 | [#12](https://github.com/wiki-mod/distcc-ng/issues/12) | [#19](https://github.com/wiki-mod/distcc-ng/pull/19) | [Weak temp-file name entropy in `dcc_make_tmpnam`](issue-012-tempfile-entropy.md) | Still present in upstream's live source, unreported |

@@ -1,6 +1,7 @@
 # Weak temp-file name entropy in `dcc_make_tmpnam`
 
 **Fork issue:** [wiki-mod/distcc-ng#12](https://github.com/wiki-mod/distcc-ng/issues/12)
+**Fixed by:** [wiki-mod/distcc-ng#19](https://github.com/wiki-mod/distcc-ng/pull/19)
 **Upstream location:** `src/tempfile.c`, function `dcc_make_tmpnam`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
 **Searched upstream issues/PRs for:** `dcc_make_tmpnam`, `tempnam collision`, `tmpnam random`, `temp file`, `File exists`, `race condition`, `tmpnam` — no matching report or fix attempt found, open or closed.
