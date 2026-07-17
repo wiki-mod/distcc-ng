@@ -28,6 +28,44 @@ here to read, cited with exact file:line references and real reproducible
 evidence — no upstream issue tracker noise, no pull request, no obligation
 on their part to respond either way.
 
+## Required template
+
+Every entry documenting a bug still live in upstream (the common case)
+**must** use these section headers, in this order — not a freestyle
+title of similar meaning. This keeps entries scannable and comparable
+without reading each one in full; `issue-012-tempfile-entropy.md` is the
+canonical example to copy from:
+
+```markdown
+# <short, specific title>
+
+**Fork issue:** [wiki-mod/distcc-ng#NN](...)
+**Fixed by:** [wiki-mod/distcc-ng#NN](...)
+**Upstream location:** `src/foo.c`, function `bar`
+**Checked against upstream commit:** [`<sha>`](<commit url>) (`master`, checked <date>)
+**Searched upstream issues/PRs for:** `<terms>` — <what was/wasn't found>
+
+## The problem
+
+## Upstream code (unchanged as of the commit above, upstream)
+
+## Fixed code (changed code as of the commit from distcc-ng fork)
+
+## Empirical verification
+```
+
+`## Empirical verification` may be omitted only when the finding is
+trivial enough that no build/test evidence is needed to see it's real —
+default to including it.
+
+**Exception:** an entry that isn't documenting a still-live upstream bug
+at all (e.g. `issue-063-popt-current-vendor-alternative.md`'s design-
+reconsideration note, or `issue-074-lto-distribution-revert.md`'s
+"upstream already fixed their own version of this" case) doesn't force-
+fit this template — but must say so explicitly near the top (see those
+two entries' own "Note on scope" framing) rather than silently
+deviating.
+
 ## Index
 
 | # | Fork Issue | Fixed By | Title | Upstream Status |
