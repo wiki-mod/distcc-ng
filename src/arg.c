@@ -191,6 +191,11 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
     compiler = (compiler == NULL) ? argv[0] : compiler + 1;
     is_clang = !strncmp(compiler, "clang", strlen("clang"));
 
+    /* Security: avoid PATH-based execution for this helper probe.
+     * Require an explicit executable path and execute it directly. */
+    if (strchr(argv[0], '/') == NULL)
+        return 0;
+
     for (i = 0; i < l; i++) {
         if (!strcmp(argv[i], "-march=native"))
             found_arch_native = 1;
@@ -249,12 +254,22 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
             close(devnull);
         }
 
-        execlp(compiler, compiler, "-v", "-E", "-x", "c",
-               found_arch_native ? "-march=native" : "-DDCC_MARCH_NATIVE_UNUSED",
-               found_tune_native ? "-mtune=native" : "-DDCC_MTUNE_NATIVE_UNUSED",
-               found_cpu_native  ? "-mcpu=native"  : "-DDCC_MCPU_NATIVE_UNUSED",
-               "-", (char *) NULL);
-        /* execlp() only returns on failure. */
+        {
+            char *const exec_argv[] = {
+                (char *)compiler,
+                (char *)"-v",
+                (char *)"-E",
+                (char *)"-x",
+                (char *)"c",
+                (char *)(found_arch_native ? "-march=native" : "-DDCC_MARCH_NATIVE_UNUSED"),
+                (char *)(found_tune_native ? "-mtune=native" : "-DDCC_MTUNE_NATIVE_UNUSED"),
+                (char *)(found_cpu_native  ? "-mcpu=native"  : "-DDCC_MCPU_NATIVE_UNUSED"),
+                (char *)"-",
+                NULL
+            };
+            execv(argv[0], exec_argv);
+        }
+        /* execv() only returns on failure. */
         _exit(127);
     }
 
