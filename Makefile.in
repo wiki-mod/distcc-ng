@@ -263,6 +263,7 @@ common_obj = src/arg.o src/argutil.o					\
 	src/include_server_sort.o					\
 	src/implicit.o src/loadfile.o					\
 	src/pathsafety.o						\
+	src/config-parser.o src/client-config.o			\
 	src/sandbox-config.o src/sandbox-seccomp.o			\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\

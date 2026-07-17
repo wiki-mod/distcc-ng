@@ -23,14 +23,15 @@
 #ifndef _DISTCC_SANDBOX_CONFIG_H
 #define _DISTCC_SANDBOX_CONFIG_H
 
-/* Default location of the seccomp sandbox's runtime config file. See
- * doc/seccomp-sandbox.md for the full format and the finalized design
- * (issue #192). */
-#define DCC_SECCOMP_CONFIG_DEFAULT_PATH "/etc/distcc/seccomp.conf"
+/* Default location of distccd's runtime config file. Originally
+ * seccomp.conf (issue #192), renamed to the general daemon-config name
+ * once a second, non-seccomp daemon setting was on the horizon (issue
+ * #207) -- see doc/seccomp-sandbox.md for the seccomp keys' full format. */
+#define DCC_DAEMON_CONFIG_DEFAULT_PATH "/etc/distcc/distccd.conf"
 
 /**
  * Effective seccomp sandbox configuration: compiled-in defaults, overridden
- * by whatever /etc/distcc/seccomp.conf actually sets. Populated once by
+ * by whatever /etc/distcc/distccd.conf actually sets. Populated once by
  * dcc_seccomp_config_load() and read-only from then on -- this is a
  * per-daemon-lifetime setting, not something re-read per compile.
  **/
@@ -72,7 +73,7 @@ struct dcc_seccomp_config {
 
 /**
  * Load the seccomp sandbox config file at @p path (pass NULL for the
- * default, DCC_SECCOMP_CONFIG_DEFAULT_PATH) and populate the process-wide
+ * default, DCC_DAEMON_CONFIG_DEFAULT_PATH) and populate the process-wide
  * effective configuration returned by dcc_seccomp_config_get().
  *
  * Never fails the caller: a missing, empty, or comment-only file is not an

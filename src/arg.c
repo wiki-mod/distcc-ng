@@ -90,6 +90,7 @@
 #include "util.h"
 #include "exitcode.h"
 #include "snprintf.h"
+#include "client-config.h"
 
 
 int dcc_argv_append(char **argv, char *toadd)
@@ -493,15 +494,21 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
                          "must be local");
                 return EXIT_DISTCC_FAILED;
             } else if (!strcmp(a, "-flto") || str_startswith("-flto=", a)) {
-                /* LTO defers the bulk of the optimization work to link
-                 * time, so distributing the per-TU compile step wastes
-                 * network/scheduling overhead for essentially no benefit;
-                 * some LTO intermediate representations also aren't valid
-                 * standalone object files, so a remote invocation may not
-                 * even produce a usable result. */
-                rs_trace("LTO compilation is not worth distributing; "
-                         "must be local");
-                return EXIT_DISTCC_FAILED;
+                /* Only forced local when explicitly configured to, via
+                 * distcc.conf's `local-lto` or DISTCC_LOCAL_LTO (issue
+                 * #207) -- default is to distribute normally. Upstream
+                 * tried forcing these local unconditionally too
+                 * (distcc/distcc#413) then reverted it (47a19b96) with
+                 * real evidence that distributing LTO compiles reduces
+                 * build time in practice, not wastes it; see
+                 * support-upstream/issue-074-lto-distribution-revert.md.
+                 * Falls through to normal distribution by default. */
+                if (dcc_getenv_bool("DISTCC_LOCAL_LTO",
+                                     dcc_client_config_get()->local_lto)) {
+                    rs_trace("LTO compilation forced local by "
+                             "configuration; must be local");
+                    return EXIT_DISTCC_FAILED;
+                }
             } else if (str_startswith("-Wa,", a)) {
                 /* Look for assembler options that would produce output
                  * files and must be local.
