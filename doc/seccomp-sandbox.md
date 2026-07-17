@@ -90,7 +90,7 @@ mechanism, so it was not a clean fit.
 
 This pass implements config-file-only configuration; it does **not** add
 matching `distccd` command-line flags. Issue #192 allowed for CLI flags
-"if it turns out to be natural", but doing so for all five keys (including
+"if it turns out to be natural", but doing so for all six keys (including
 the two comma-separated list keys) would have meant a second, parallel
 input path with its own precedence-merging logic for every key, which is
 significant scope beyond the config file itself. **CLI flags remain a
@@ -100,9 +100,12 @@ default, per issue #192's original design note.
 
 ### Recognized keys
 
-The exact reference file below (issue #192, maintainer-approved) is what
-this fork ships/documents as the canonical example — reproduced verbatim,
-not paraphrased:
+The reference file below is what this fork ships/documents as the
+canonical example. Five of its six keys (`extra-deny`, `allow-override`,
+`enabled`, `deny-network`, `fail-open`) are issue #192's maintainer-approved
+design, reproduced verbatim. `require-seccomp` is a sixth key added after
+#192 (a separate, later maintainer decision, not part of #192 itself) — see
+its own explanation below the file.
 
 ```
 ## /etc/distcc/seccomp.conf
@@ -159,21 +162,48 @@ deny-network = false
 ## Compile or not to Compile, this is the question!
 #
 # If the sandbox fails to install (unsupported kernel, libseccomp
-# error, etc.), let the compile proceed unsandboxed (fail-open) instead
-# of refusing it (fail-closed). Fail-closed means the compile will fail
-# when the sandbox can't be established while being enforced.
+# error, etc.) on a distccd that WAS built with libseccomp support, let
+# the compile proceed unsandboxed (fail-open) instead of refusing it
+# (fail-closed). Fail-closed means the compile will fail when the
+# sandbox can't be established while being enforced. Has no effect on
+# a distccd built without libseccomp support at all -- see
+# require-seccomp below for that separate case.
 # We tend to compile instead of blocking.
 # Default: true.
 fail-open = true
+
+## Require the sandbox to exist in the build at all
+#
+# If this distccd was built WITHOUT libseccomp support in the first
+# place (--without-seccomp, or a non-Linux host), refuse every remote
+# compile outright instead of running it unsandboxed. A separate,
+# independent switch from fail-open above: fail-open is about a
+# sandbox that exists but broke at runtime; this is about a sandbox
+# that was never compiled in to begin with. Setting this to true does
+# not change fail-open's behavior on a host that does have libseccomp,
+# and vice versa.
+# Default: false (a --without-seccomp build always runs remote
+# compiles unsandboxed, unchanged from this fork's behavior before
+# this config file existed).
+require-seccomp = false
 ```
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Master on/off switch for the whole sandbox at runtime, distinct from the `--with-seccomp`/`--without-seccomp` compile-time gate. `false` makes the sandbox a genuine no-op — the compile runs exactly as if `--without-seccomp` had been used. |
 | `deny-network` | bool | `false` | `true` additionally denies the network-syscall group (see above) in the sandboxed compiler child. |
-| `fail-open` | bool | `true` | `false` (fail-closed) means a sandbox-install failure refuses the compile instead of letting it proceed unsandboxed. Scope is deliberately narrow: this only governs a build that *can* sandbox (compiled with libseccomp, on Linux) failing to install the filter at runtime. It has **no effect** on a build compiled **without** libseccomp at all (`--without-seccomp`, or a non-Linux host) — such a build always runs remote compiles unsandboxed, exactly as before this config surface existed, regardless of `fail-open`. "The sandbox failed to install" and "the sandbox was never compiled in" are deliberately two different questions on two different switches, not one combined switch — a refuse-without-seccomp-support option, if ever wanted, would be a separate, dedicated feature. |
+| `fail-open` | bool | `true` | `false` (fail-closed) means a sandbox-install failure refuses the compile instead of letting it proceed unsandboxed. Scope is deliberately narrow: this only governs a build that *can* sandbox (compiled with libseccomp, on Linux) failing to install the filter at runtime. It has **no effect** on a build compiled **without** libseccomp at all — see `require-seccomp` for that case. |
+| `require-seccomp` | bool | `false` | `true` refuses every remote compile outright if this `distccd` was built **without** libseccomp support in the first place (`--without-seccomp`, or a non-Linux host) — "this host must have the sandbox available at all, don't even try without it." Has **no effect** on a build that does have libseccomp support (there, the sandbox is available regardless of this key — see `fail-open` for what happens if it fails at runtime on such a build). Default `false` preserves this fork's original behavior: a `--without-seccomp` build always runs remote compiles unsandboxed. |
 | `extra-deny` | comma-separated syscall names | empty | Additional syscalls to deny, beyond the built-in curated list. Unresolvable names (typo, or a syscall that doesn't exist on this architecture/libseccomp version) log a warning at startup and are skipped — never a hard failure. |
 | `allow-override` | comma-separated syscall names | empty | Removes specific syscalls from the built-in curated list, if a legitimate compiler/toolchain genuinely needs one of them. Every syscall actually removed this way is logged by name at startup (not just a count) — deliberately visible, since this weakens the sandbox. |
+
+`fail-open` and `require-seccomp` are independent switches that answer two
+different questions and can be set in any combination — e.g. `fail-open =
+false` with `require-seccomp = false` means: on a host built with
+libseccomp, a runtime sandbox-install failure refuses the compile, but a
+host built `--without-seccomp` entirely still runs compiles unsandboxed,
+same as always. Neither setting has any effect on the other's build
+configuration.
 
 Boolean values accept exactly `true`/`false`, case-insensitively (`True`,
 `TRUE`, `false`, `FALSE`, ...). Any other spelling (`yes`, `1`, `on`, ...)

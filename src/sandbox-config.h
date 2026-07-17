@@ -37,7 +37,30 @@
 struct dcc_seccomp_config {
     int enabled;           /* master on/off switch; default 1 (true) */
     int deny_network;      /* default 0 (false): network unrestricted */
-    int fail_open;         /* default 1 (true): proceed unsandboxed on failure */
+
+    /* fail_open and require_seccomp are deliberately two separate
+     * switches, not one combined setting -- they answer two different
+     * questions:
+     *   - fail_open: the sandbox *is* supported (built with libseccomp)
+     *     but genuinely failed to install/load at runtime on this host.
+     *     Does the compile proceed unsandboxed (true, default) or get
+     *     refused (false)? Has no effect at all on a build compiled
+     *     --without-seccomp -- see require_seccomp for that case.
+     *   - require_seccomp: this distccd binary was never compiled with
+     *     libseccomp support in the first place (--without-seccomp, or a
+     *     non-Linux host). Should every remote compile be refused outright
+     *     (true) or proceed unsandboxed as it always has (false, default)?
+     *     Has no effect on a build that does have libseccomp support --
+     *     see fail_open for that case.
+     * A single admin might reasonably want either combination
+     * independently (e.g. "refuse if the sandbox breaks at runtime, but
+     * don't require every host in my fleet to have libseccomp installed
+     * at all"), which a single combined switch cannot express. */
+    int fail_open;          /* default 1 (true): proceed unsandboxed on a
+                              * runtime sandbox-install failure */
+    int require_seccomp;    /* default 0 (false): a --without-seccomp build
+                              * runs remote compiles unsandboxed same as
+                              * always; true refuses them outright instead */
 
     /* NULL-terminated arrays of syscall names, owned by this struct.
      * Never NULL themselves (an empty list is a single-element array

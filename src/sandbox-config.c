@@ -223,6 +223,14 @@ static void dcc_seccomp_apply_kv(struct dcc_seccomp_config *cfg,
                             cfg->fail_open ? "true" : "false");
         else
             cfg->fail_open = parsed;
+    } else if (strcmp(key, "require-seccomp") == 0) {
+        if (!dcc_seccomp_parse_bool(value, &parsed))
+            rs_log_warning("seccomp config: invalid boolean '%s' for "
+                            "'require-seccomp' (expected true/false); "
+                            "keeping default (%s)", value,
+                            cfg->require_seccomp ? "true" : "false");
+        else
+            cfg->require_seccomp = parsed;
     } else if (strcmp(key, "extra-deny") == 0) {
         char **parsed_list = dcc_seccomp_parse_list(value);
         char **old = cfg->extra_deny;
@@ -292,6 +300,7 @@ static void dcc_seccomp_config_defaults(struct dcc_seccomp_config *cfg)
     cfg->enabled = 1;
     cfg->deny_network = 0;
     cfg->fail_open = 1;
+    cfg->require_seccomp = 0;
     cfg->extra_deny = dcc_seccomp_empty_list();
     cfg->allow_override = dcc_seccomp_empty_list();
 }

@@ -214,6 +214,12 @@ static void dcc_seccomp_free_effective_lists(void)
  * config's `extra-deny`, minus config's `allow-override`, all resolved to
  * syscall numbers up front), the resolved network-syscall group, and the
  * enabled/deny-network/fail-open flags themselves.
+ *
+ * `cfg->require_seccomp` is deliberately not read here: it answers "must
+ * this distccd have been *compiled* with libseccomp support at all",
+ * which is trivially true in this HAVE_SECCOMP build -- it only has a
+ * decision to make in the non-HAVE_SECCOMP branch below, where the
+ * sandbox was never compiled in to begin with.
  **/
 void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
 {
@@ -335,7 +341,7 @@ int dcc_seccomp_sandbox_child(void)
          * if it somehow hasn't, fall back to "sandbox active with
          * built-in defaults" rather than silently running unsandboxed. */
         static const struct dcc_seccomp_config defaults = {
-            1, 0, 1, NULL, NULL
+            1, 0, 1, 0, NULL, NULL
         };
         static char *empty_list[] = { NULL };
         struct dcc_seccomp_config safe_defaults = defaults;
@@ -446,26 +452,30 @@ void dcc_seccomp_log_availability(void)
 
 #else /* !HAVE_SECCOMP */
 
+/* `fail-open`/`fail-closed` has no scope here: it only governs a build
+ * that *can* sandbox (see the HAVE_SECCOMP branch above) genuinely
+ * failing to install the filter at runtime, which cannot happen in a
+ * build that never compiled the sandbox in to begin with. `require-
+ * seccomp` is the deliberately separate switch for *this* build
+ * configuration -- "was the sandbox ever compiled in at all" is a
+ * different question from "did installing it fail at runtime", and this
+ * fork keeps them on independent switches rather than folding one into
+ * the other: an admin who wants "refuse if the sandbox breaks at
+ * runtime" on their libseccomp hosts should not also be forced into (or
+ * exempted from) "refuse every host that never had libseccomp installed
+ * at all" as a side effect of that same setting. */
+static int dcc_seccomp_stub_require_seccomp = 0;
+static int dcc_seccomp_stub_configured = 0;
+
 /**
- * See sandbox-seccomp.h. `fail-open`/`fail-closed` only governs what
- * happens when a build that *can* sandbox fails to install the filter at
- * runtime (see the HAVE_SECCOMP branch above) -- it has no scope over
- * "this build cannot sandbox at all" (--without-seccomp, or a non-Linux
- * host). Those are two distinct questions ("did installing the sandbox
- * fail?" vs. "was the sandbox ever compiled in?"), and this fork
- * deliberately keeps them on separate switches rather than folding
- * "refuse to run without seccomp support at all" into `fail-open` as a
- * side effect: a combined switch means an admin setting `fail-open =
- * false` to harden one behavior silently also changes the other, on
- * build configurations they may not have been thinking about at all. A
- * dedicated option for "refuse remote compiles entirely on a build
- * without seccomp support" would need its own explicit switch as a
- * separate, deliberate feature -- not a side effect of this one. So
- * there is nothing to configure here.
+ * See sandbox-seccomp.h. In a build without libseccomp there is nothing to
+ * resolve or cache except the require-seccomp flag itself -- fail-open
+ * has no meaning here (see the file comment above).
  **/
 void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
 {
-    (void) cfg; /* unused in this build: see the comment above. */
+    dcc_seccomp_stub_require_seccomp = cfg->require_seccomp;
+    dcc_seccomp_stub_configured = 1;
 }
 
 /**
@@ -473,26 +483,44 @@ void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
  * --without-seccomp), or on a non-Linux host: nothing to install. Kept as
  * a real function (rather than requiring callers to #ifdef) so exec.c and
  * daemon.c don't need to know whether this build has seccomp support.
- * Always returns 0 (proceed unsandboxed) regardless of `fail-open`/
- * `fail-closed` -- see dcc_seccomp_configure() above for why that
- * setting's scope stops at "the sandbox is supported but failed to
- * install", and does not extend to "the sandbox was never compiled in".
+ * Honors only `require-seccomp` here (see the file comment above for why
+ * `fail-open` is out of scope in this build): default false preserves
+ * this build's original behavior of always proceeding unsandboxed; true
+ * refuses every remote compile outright, for an admin who wants "this
+ * host must have the sandbox available at all" enforced regardless of
+ * what any single compile's own runtime failure mode would have been.
  **/
 int dcc_seccomp_sandbox_child(void)
 {
+    if (dcc_seccomp_stub_configured && dcc_seccomp_stub_require_seccomp) {
+        rs_log_warning("refusing this compile: 'require-seccomp = true' in "
+                       "the seccomp config, but this distccd was built "
+                       "without libseccomp support (or is running on a "
+                       "non-Linux host) and cannot sandbox it");
+        return -1;
+    }
     return 0;
 }
 
 /**
  * See the HAVE_SECCOMP branch above; this is the "hardening is not
- * available" half of the same one-time startup notice.
+ * available" half of the same one-time startup notice. Also flags
+ * whether `require-seccomp` will actually turn that unavailability into
+ * refused compiles on this host, since that's the difference between an
+ * administrator's expected hardening posture and an unexpected outage.
  **/
 void dcc_seccomp_log_availability(void)
 {
-    rs_log_warning("built without libseccomp support (or non-Linux host): "
-                   "remote compiler processes will run without a seccomp "
-                   "sandbox; rebuild with libseccomp installed for this "
-                   "defense-in-depth hardening layer");
+    if (dcc_seccomp_stub_configured && dcc_seccomp_stub_require_seccomp)
+        rs_log_warning("built without libseccomp support (or non-Linux "
+                       "host), and 'require-seccomp = true' in the seccomp "
+                       "config: every remote compile on this host will be "
+                       "refused until it is rebuilt with libseccomp");
+    else
+        rs_log_warning("built without libseccomp support (or non-Linux host): "
+                       "remote compiler processes will run without a seccomp "
+                       "sandbox; rebuild with libseccomp installed for this "
+                       "defense-in-depth hardening layer");
 }
 
 #endif /* HAVE_SECCOMP */
