@@ -135,7 +135,39 @@ interop with a distccd this fork didn't build.
       Fetch the checksum from a second, independent URL/mirror if one
       exists, rather than trusting a single source.
 
-## 6. Cleanup (always required for anything that started a process/container)
+## 6. Config file / settings changes (`src/config-parser.c`, `distccd.conf`, `distcc.conf`, precedence between a config file and an environment variable)
+
+Relevant to: adding or changing a key in `/etc/distcc/distccd.conf` or
+`/etc/distcc/distcc.conf`, anything touching `src/config-parser.c`,
+`src/sandbox-config.c`, `src/client-config.c`.
+
+- [ ] Real functional test of the setting itself with a real config file
+      on disk, not just a unit-level "the parser accepts this string"
+      check — start the real client/daemon and confirm the setting's
+      actual downstream effect (e.g. a trace line, a changed exit code, a
+      changed file mode), the same bar as section 1/3's real-evidence
+      requirement.
+- [ ] If the setting has both a config-file key and an environment
+      variable, confirm the **actual precedence** in both directions with
+      real runs: env var set + file unset, file set + env var unset, and
+      both set with different values — confirm the env var wins in the
+      last case, not just documented as winning.
+- [ ] A missing config file, an empty file, and an unknown key each
+      degrade to the compiled-in default / a logged warning rather than a
+      hard failure — confirm this with a real run per case, not just by
+      reading `dcc_config_load()`'s doc comment.
+- [ ] If a new object file is added for a new config module, confirm it's
+      linked into **every binary that actually needs the symbol** — a
+      function shared between the client and the daemon (e.g. anything
+      reachable from `dcc_scan_args()`, which both `distcc` and `distccd`
+      call) needs its dependencies in `common_obj`, not just the object
+      list for the binary the change was written against. This exact
+      mistake has broken a build in this repo before (`distccd` failing
+      to link with an undefined reference) — a full `make` covering
+      **both** binaries, not just the one you were focused on, is what
+      catches it.
+
+## 7. Cleanup (always required for anything that started a process/container)
 
 - [ ] No leftover running containers (`docker ps -a` clean, or only
       pre-existing/unrelated entries explicitly identified as such).
@@ -147,6 +179,18 @@ interop with a distccd this fork didn't build.
 - [ ] Any temporarily moved/renamed system state (e.g. a masquerade
       directory moved aside to test its absence) restored to its original
       state.
+
+## Keeping this checklist current
+
+This list is not closed — it only covers the categories of change this
+repo has actually hit so far. When a change touches something none of
+the existing sections fit (a new subsystem, a new kind of external
+interaction, a new failure mode discovered the hard way), add a new
+section for it as part of that same PR, rather than stretching an
+existing section to cover it loosely or skipping real verification
+because "there's no checklist item for this." Section 6 (config file
+changes) was added this way, prompted by issue #207 introducing this
+repo's first client-side config file.
 
 ## Reporting
 
