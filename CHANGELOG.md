@@ -215,7 +215,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   same reason, `c-build.yml` no longer emits a build-provenance attestation on
   scheduled runs, where it would otherwise tie `current_dev` binaries to
   `master`'s SHA. (#81)
->>>>>>> 9c6daf4 (world-writable-file-creation fix: preserve cross-user read for state.c/zeroconf.c)
 
 ### Changed
 
