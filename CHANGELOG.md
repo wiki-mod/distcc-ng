@@ -204,6 +204,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
   sccache+distcc-dist build pipeline
   ([lancache-ng#919](https://github.com/wiki-mod/lancache-ng/issues/919)).
 
+### Added
+
+- **Auto-resolve `-march=native`/`-mtune=native`/`-mcpu=native` compiler
+  flags instead of hard-failing** (#73, porting the corrected rebase of
+  upstream distcc/distcc#350, distcc/distcc#384). These flags previously
+  forced the whole compilation to run locally, since "native" is only
+  meaningful on the machine actually doing the codegen and shipping it
+  unresolved to a remote compile server could silently miscompile for the
+  *server's* CPU instead of the client's. `dcc_resolve_march_native()`
+  (`src/arg.c`) now asks the local compiler what "native" concretely
+  expands to (via `<compiler> -v -E -x c -march=native ... -`, scraping
+  the resolved flags off gcc/clang's verbose cc1 invocation) and ships the
+  concrete, resolved flags remotely instead — working across both gcc and
+  clang (clang's flags are wrapped in `-Xclang`, since its driver won't
+  accept raw cc1-level flags directly). If local resolution fails for any
+  reason (unsupported compiler, unexpected output, subprocess failure),
+  the client falls back to the existing safe behavior of hard-failing the
+  distribution attempt, exactly as before this feature existed — a
+  compilation is never shipped remotely with an unresolved "native" flag.
+
 ## [3.5.1.1-NG] - 2026-07-16
 
 ### Fixed
