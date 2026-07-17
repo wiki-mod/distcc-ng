@@ -81,6 +81,28 @@ jobs:
           key: ccache-${{ matrix.os }}-${{ github.run_id }}
           restore-keys: |
             ccache-${{ matrix.os }}-
+      # Cache autoconf/aclocal's macro-trace cache (autom4te.cache, produced
+      # by ./autogen.sh's aclocal/autoheader/autoconf calls). Safe to restore
+      # even when stale -- like ccache above, it's content-checked, not
+      # blindly trusted wholesale: autom4te itself invalidates an individual
+      # cached macro trace when the corresponding m4 input changed, so a
+      # stale/mismatched entry only costs re-deriving that one trace, never a
+      # wrong configure script. (Unlike config.cache, which is NOT used here:
+      # its ac_cv_* entries are blindly trusted by ./configure once cached,
+      # and they encode dependency-detection results -- e.g. does libpopt/
+      # libzstd/avahi have a given header/symbol -- that can change when
+      # ConorMacBride/install-package or the runner image bumps a library
+      # version without configure.ac itself changing, which a
+      # configure.ac-only cache key would never invalidate. Caching it would
+      # risk silently reusing wrong dependency-detection results.) Key on the
+      # actual autoconf inputs so a real configure.ac/m4 change still gets a
+      # fresh (initially empty) cache instead of reusing pre-change traces.
+      - uses: actions/cache@v4
+        with:
+          path: autom4te.cache
+          key: autoconf-${{ matrix.os }}-${{ hashFiles('configure.ac', 'm4/*.m4') }}
+          restore-keys: |
+            autoconf-${{ matrix.os }}-
       - run: ./autogen.sh
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
       # CC must reference ccache by absolute path: `make check`'s
