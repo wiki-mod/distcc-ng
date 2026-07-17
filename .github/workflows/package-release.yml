@@ -31,6 +31,13 @@ jobs:
       image_base: ${{ steps.meta.outputs.image_base }}
       do_container: ${{ steps.meta.outputs.do_container }}
     steps:
+      # Trial run (#58): audit-only egress monitoring, does not block any
+      # traffic yet. Must be the very first step in every job -- it can't
+      # retroactively cover network calls made by steps that already ran.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - name: Derive release metadata
         id: meta
         shell: bash
@@ -62,6 +69,12 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
       - uses: ConorMacBride/install-package@v1
         with:
@@ -93,6 +106,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
       - name: Run distributed-compile end-to-end test
         run: bash test/e2e/run-e2e.sh
@@ -102,6 +121,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
 
       - uses: ConorMacBride/install-package@v1
@@ -148,6 +173,12 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.runs_on }}
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v7
 
       - name: Log in to GHCR
@@ -208,6 +239,12 @@ jobs:
     if: needs.setup.outputs.do_container == 'true'
     runs-on: ubuntu-latest
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - name: Log in to GHCR
         shell: bash
         run: |
@@ -228,6 +265,12 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
       - uses: actions/download-artifact@v8
         with:
           name: distcc-release-packages-${{ needs.setup.outputs.version }}

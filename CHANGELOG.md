@@ -22,6 +22,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   maintainer to read if they ever choose to. First entry documents issue #12
   (weak temp-file name entropy in `dcc_make_tmpnam`), confirmed still
   present in upstream's live source.
+- **CI: `step-security/harden-runner` added as the first step of every job in
+  `c-build.yml` and `package-release.yml`**, in `egress-policy: audit` mode
+  (log-only, blocks nothing) (#58). It monitors/logs each job's outbound
+  network traffic so a compromised third-party action elsewhere in the
+  workflow's dependency chain would show up in the audit log.
+  `changelog-check.yml`, `actionlint.yml`, `master-heartbeat.yml`, and
+  `nightly-publish.yml` are not covered. Audit mode is the intended
+  permanent state for this trial, not a stepping stone to `block` — kept
+  log-only so it stays purely observational.
 
 ### Removed
 
