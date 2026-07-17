@@ -1,8 +1,10 @@
 name: Nightly build and publish (current_dev)
 
 # Builds, tests, e2e-validates and only then publishes a moving "nightly"
-# channel from current_dev: source/binary packages, a GHCR :nightly image, and
-# a `nightly` GitHub pre-release, all overwritten on every successful run (the
+# channel from current_dev: source/binary packages, a GHCR distcc-ng-nightly
+# image (its own package, separate from the real versioned distcc-ng
+# releases), and a `nightly` GitHub pre-release, all overwritten on every
+# successful run (the
 # Rust/Firefox-nightly pattern). This is intentionally separate from
 # package-release.yml, which owns the real vX.Y.Z-NG tagged-release path --
 # nothing here creates, moves, or depends on a v* tag.
@@ -25,7 +27,7 @@ on:
 
 permissions:
   contents: write   # force-move the `nightly` tag and create/replace its release
-  packages: write   # push the :nightly image to GHCR
+  packages: write   # push the distcc-ng-nightly:latest image to GHCR
 
 env:
   # Hardcoded and never derived: the ONLY tag this workflow may force-move, and
@@ -97,9 +99,9 @@ jobs:
       - name: Log in to GHCR
         run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push the :nightly container image
+      - name: Build and push the distcc-ng-nightly:latest container image
         env:
-          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng:${{ env.NIGHTLY_TAG }}
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
         run: |
           docker build \
             --file docker/release/Dockerfile \
@@ -112,7 +114,7 @@ jobs:
       - name: Move the nightly tag and (re)publish the pre-release
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng:${{ env.NIGHTLY_TAG }}
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
         run: |
           set -euo pipefail
           # Hard stop if NIGHTLY_TAG was ever mis-set to a real release tag.
