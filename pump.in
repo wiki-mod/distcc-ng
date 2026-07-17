@@ -457,11 +457,49 @@ ReportDiscrepancies() {
        'include_server(1) man page.' 1>&2
 }
 
+# Returns success (0) if the process with pid $1 both exists and is not a
+# zombie ('Z' state); returns failure (1) otherwise. A zombie process is
+# already dead as far as ShutDown()'s SIGTERM/SIGKILL wait loops are
+# concerned: it can never receive or act on another signal, and the OS
+# won't actually reap it until this script itself exits -- so treating a
+# zombie as "still alive" (as a plain `ps -p PID` check does) makes those
+# loops wait the full timeout, or in the worst case deadlock a caller that
+# waits on this script to exit before reaping the zombie itself.
+#
+# The state field is requested as "-o state=" (an empty replacement header)
+# rather than GNU-only "--no-headers"/"-o state" or BSD's differently
+# structured header suppression, because appending "=" to a field name to
+# suppress its header is honored by both GNU procps and BSD/macOS ps --
+# this is the portable no-header idiom, not the Linux-specific one.
+# "state" (not "stat") is used because both GNU and BSD ps define it as
+# the single-letter symbolic state code (R/S/D/Z/T/...) without the extra
+# modifier characters ("+", "s", ...) that "stat"/"STAT" can append.
+#
+# If this ps invocation itself fails or returns no usable output, $state
+# stays empty and we fall through to the pre-existing "alive" behavior (the
+# plain ps -p check already passed above) rather than guessing -- a false
+# "it's a zombie" reading would be worse than the original bug, since it
+# would skip killing a process that is actually still running. Confirmed
+# this is exactly what happens on Cygwin: its minimal `ps` doesn't support
+# `-o` at all (fails with "unknown option -- o"), so $state is empty there
+# and this degrades to the old ps -p-only behavior rather than misreporting
+# a live process as a zombie.
+IncludeServerAlive() {
+  if ! ps -p "$1" > /dev/null 2>&1; then
+    return 1
+  fi
+  state=`ps -o state= -p "$1" 2>/dev/null | tr -d '[:space:]'`
+  case "$state" in
+    Z*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 ShutDown() {
   ReportDiscrepancies
   # Always -- at exit -- shut down include_server and remove $socket_dir
   if [ -n "$include_server_pid" ] && \
-    ps -p "$include_server_pid" > /dev/null; then
+    IncludeServerAlive "$include_server_pid"; then
     if [ "$verbose" = 1 ]; then
       echo '__________Shutting down distcc-pump include server'
     fi
@@ -471,7 +509,7 @@ ShutDown() {
       # Allow a short grace period for clean exit, then force kill.
       include_server_wait_count=0
       include_server_wait_limit=200   # 200 * 0.01s ~= 2s
-      while ps -p "$include_server_pid" > /dev/null; do
+      while IncludeServerAlive "$include_server_pid"; do
         if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
           echo '__________Timed out waiting for distcc-pump include server' \
                'to stop after SIGTERM' 1>&2
@@ -482,7 +520,7 @@ ShutDown() {
       done
     fi
 
-    if ps -p "$include_server_pid" > /dev/null; then
+    if IncludeServerAlive "$include_server_pid"; then
       # SIGKILL is unrecoverable, unlike the SIGTERM sent above, so a
       # stale/reused pid is worse here: if the include server already
       # exited during the grace period above and the OS quickly recycled
@@ -497,7 +535,7 @@ ShutDown() {
         if kill -9 "$include_server_pid"; then
           include_server_wait_count=0
           include_server_wait_limit=100   # 100 * 0.01s ~= 1s
-          while ps -p "$include_server_pid" > /dev/null; do
+          while IncludeServerAlive "$include_server_pid"; do
             if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
               echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
                    1>&2
