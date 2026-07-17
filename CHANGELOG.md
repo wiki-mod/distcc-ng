@@ -36,8 +36,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - Fixed 8 of 11 `cpp/world-writable-file-creation` CodeQL alerts
   (`src/daemon.c`, `src/dparent.c`, `src/compile.c`, `src/dotd.c`,
   `src/state.c`, `src/zeroconf.c`) by replacing hardcoded `0666` `open()`
-  modes with explicit least-privilege modes (`0600`, or `0644` for files
-  read cross-user by design: the daemon's pid file, the process state
+  modes with explicit least-privilege modes (`0664` for the daemon's own
+  log file — kept world-*readable*, since it's routinely read by
+  operators/monitoring tooling on a shared build host, matching what the
+  RPM/deb packaging's postinstall script already sets up; only the
+  world-*write* bit, the actual CodeQL complaint, is dropped — `0600` for
+  files with no legitimate external reader, or `0644` for files read
+  cross-user by design: the daemon's pid file, the process state
   directory read by `distccmon-*`, and zeroconf's discovered-host file),
   and by switching two `fopen()`-based file creations (which always create
   at the umask-modified `0666` default) to `open()`+`fdopen()` with an

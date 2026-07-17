@@ -305,10 +305,14 @@ static void dcc_setup_real_log(void)
     if (arg_log_file) {
         /* Don't remove loggers yet, in case this fails and needs to go to the
          * default. */
-        /* 0600: the daemon's log can contain client hostnames, compiler
-         * command lines, and file paths -- no reason for other local users
-         * to read or write it. */
-        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0600)) == -1) {
+        /* 0664, not 0600: this log is routinely read by operators/monitoring
+         * tooling on a shared build host (the same reason the RPM/deb
+         * packaging's postinstall script explicitly chowns/chmods a
+         * pre-created copy of this file to group-readable), so world-read
+         * is kept. Only the world-*write* bit is the actual CodeQL
+         * complaint -- nothing but distccd itself has any business
+         * appending to its own log. */
+        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0664)) == -1) {
             rs_log_error("failed to open %s: %s", arg_log_file,
                          strerror(errno));
             /* continue and use syslog */
