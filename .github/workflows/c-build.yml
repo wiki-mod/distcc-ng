@@ -190,25 +190,26 @@ jobs:
               || { echo "::error::distccd --help (bundled popt build) is missing expected option matching '$opt'"; exit 1; }
           done
 
-  # Popt-directory-specific strictness/regression gate (asked for after the
-  # bundled popt/ tree was found to be a 20+-year-old 1.7 snapshot, see #63's
-  # follow-up): every other build in this workflow suppresses -Wunused and
-  # -Wunused-parameter on popt_OBJS (Makefile.in) because that suppression is
-  # exactly what makes third-party code buildable under this project's own
-  # -Werror standard. This job compiles the *current* vendored files with
-  # the same -Wall -Wextra -Werror this project holds its own sources to,
-  # keeping only the -Wno-unused-parameter half of that suppression: popt
-  # 1.19's own real, unmodified source has a couple of intentionally-unused
-  # callback parameters (its poptHelpOptions2 table's translation-domain
-  # callback signature) that would otherwise make this job fail even on a
-  # correctly-vendored tree, which would defeat its purpose as a regression
-  # signal. -Wunused itself (unused variables, unlike unused parameters) is
-  # NOT suppressed, so that class of accidental regression still fails
-  # loudly here. This job also checks the version marker and a real,
-  # version-specific API symbol so a stale/wrong vendored copy is caught
-  # even if it happens to still compile cleanly.
+  # Popt-directory-specific regression gate (asked for after the bundled
+  # popt/ tree was found to be a 20+-year-old 1.7 snapshot, see #63's
+  # follow-up). This job compiles the *current* vendored popt/*.c directly
+  # with gcc, independent of the full autoconf/make machinery, at this
+  # project's own -Wall -Wextra -Werror plus the same -Wno-unused/
+  # -Wno-unused-parameter exemption Makefile.in's popt_OBJS rule applies in
+  # the real build. That exemption turned out to be load-bearing even for a
+  # correctly-vendored, completely unmodified popt 1.19 tree, not just for
+  # the old 1.7 snapshot: popt/popthelp.c's poptHelpOptions2 callback table
+  # has intentionally-unused parameters by design, and popt/poptint.c's
+  # POPT_fprintf() leaves a variable genuinely unused on the HAVE_VASPRINTF
+  # code path (the normal one on glibc) -- both are inherent to popt's own
+  # source, not something a regression here would introduce or remove. The
+  # real regression detection this job provides is the version marker and
+  # fingerprint check below: it confirms popt/POPT_VERSION and a real,
+  # version-specific API symbol actually match what this repo claims to
+  # ship, catching a stale/wrong vendored copy even if it happens to still
+  # compile cleanly.
   popt_vendor_check:
-    name: Vendored popt/ strictness and version check
+    name: Vendored popt/ version and compile check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same rationale as popt_fallback_build above: read-only checkout and
@@ -247,18 +248,13 @@ jobs:
       # configure.ac really detects and stop testing the real thing.
       - run: ./autogen.sh
       - run: ./configure --without-system-popt PYTHON="$(which python3)"
-      - name: Compile vendored popt/*.c at full project warning strictness (minus unused-parameter)
+      - name: Compile vendored popt/*.c under this project's own warning flags
         run: |
           set -e
           mkdir -p /tmp/popt-strict-check
-          # Mirrors this project's own default CFLAGS philosophy (see
-          # Makefile.in's CFLAGS) plus -Werror. -Wno-unused-parameter is kept
-          # (unlike the real build's blanket -Wno-unused, which this job
-          # deliberately does not carry over) because popt 1.19's own
-          # unmodified source has a couple of intentionally-unused callback
-          # parameters -- see the job-level comment above for why. Any other
-          # warning here, including a genuinely unused variable, still fails
-          # the job.
+          # -Wno-unused/-Wno-unused-parameter mirror Makefile.in's popt_OBJS
+          # rule exactly -- see the job-level comment above for why even the
+          # real, unmodified popt 1.19 source needs both.
           # -D_GNU_SOURCE, -DPOPT_SYSCONFDIR and -DPACKAGE mirror the flags
           # Makefile.in's own CPPFLAGS/popt_OBJS rule feeds every popt object
           # in the real build: without -D_GNU_SOURCE, glibc hides
@@ -268,7 +264,7 @@ jobs:
           # PACKAGE is popt/popthelp.c's gettext translation-domain string,
           # which this fork's plain-autoconf (non-automake) configure.ac
           # never defines on its own.
-          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused-parameter)
+          CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
             echo "::group::gcc ${CFLAGS[*]} -c $f"
             gcc "${CFLAGS[@]}" -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"

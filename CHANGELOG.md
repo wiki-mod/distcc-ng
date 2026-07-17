@@ -58,11 +58,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
     flagged, to avoid the bundled fallback path silently missing two
     decades of upstream bugfixes relative to the system-popt path it
     substitutes for.
-  - New CI job `popt_vendor_check` compiles the vendored `popt/*.c` at this
-    project's full `-Wall -Wextra -Werror` strictness (without the
-    `-Wunused`/`-Wunused-parameter` suppression the real build applies to
-    third-party code) and checks a version marker/fingerprint, to catch an
-    accidental future regression back to the stale 1.7 tree.
+  - New CI job `popt_vendor_check` compiles the vendored `popt/*.c` directly
+    under this project's own `-Wall -Wextra -Werror` (plus the same
+    `-Wno-unused`/`-Wno-unused-parameter` exemption the real build applies
+    to third-party code — even the unmodified 1.19 source needs it) and
+    checks a version marker/fingerprint, to catch an accidental future
+    regression back to the stale 1.7 tree even if it would otherwise still
+    compile cleanly.
 
 ### Removed
 
