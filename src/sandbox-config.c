@@ -21,17 +21,14 @@
 /**
  * @file
  *
- * Minimal `key = value` config file reader for the seccomp sandbox
- * (src/sandbox-seccomp.c), following the design finalized in issue #192
- * (follow-up on PR #171 / issue #68).
- *
- * Deliberately not built on popt's alias/config mechanism: that is a
- * macro/shortcut system requiring explicit invocation on the command line,
- * not a "silently apply defaults from a file at startup" mechanism, so it
- * isn't a clean fit here. This is instead a small, standalone parser with
- * no includes, no variable interpolation, and no nested structures --
- * kept deliberately minimal since the only consumer is a handful of
- * fixed, known keys, not a general-purpose config language.
+ * distccd's runtime config file (/etc/distcc/distccd.conf). Originally
+ * seccomp.conf, seccomp-only (issue #192, follow-up on PR #171/issue #68);
+ * renamed to the general daemon-config name once a second, non-seccomp
+ * daemon setting was on the horizon (issue #207) -- no back-compat shim
+ * needed, since no real deployment of the old name predates this rename.
+ * Line-parsing itself now lives in src/config-parser.c, shared with the
+ * client's distcc.conf (src/client-config.c); this file owns only the
+ * seccomp-specific struct, its keys, and its defaults.
  **/
 
 #include <config.h>
@@ -39,14 +36,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <ctype.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 #include "distcc.h"
 #include "trace.h"
+#include "config-parser.h"
 #include "sandbox-config.h"
 
 /* Process-wide effective configuration, populated once by
@@ -70,169 +63,53 @@ static char **dcc_seccomp_empty_list(void)
 }
 
 /**
- * Strip leading/trailing ASCII whitespace from @p s in place and return it,
- * so callers can chain this directly onto a line/token buffer they already
- * own without a separate copy.
+ * Apply one already-split `key = value` pair to @p cfg_ptr (a
+ * struct dcc_seccomp_config *, passed as void * to match
+ * dcc_config_apply_kv_fn). Unknown keys are warned about and ignored
+ * rather than treated as a hard parse error -- this file is meant to
+ * degrade gracefully, not make an unrelated typo on one line take down
+ * every key below it.
  **/
-static char *dcc_seccomp_trim(char *s)
+static void dcc_seccomp_apply_kv(void *cfg_ptr, const char *key,
+                                   const char *value)
 {
-    char *end;
-
-    while (*s && isspace((unsigned char) *s))
-        s++;
-
-    if (*s == '\0')
-        return s;
-
-    end = s + strlen(s) - 1;
-    while (end > s && isspace((unsigned char) *end))
-        *end-- = '\0';
-
-    return s;
-}
-
-/**
- * Parse a config boolean: exactly "true"/"false", case-insensitive. Any
- * other spelling ("yes", "1", "on", ...) is deliberately rejected rather
- * than guessed at -- issue #192 specifies these two spellings only, and
- * silently accepting near-misses would make a typo in the config file look
- * like it was honored when it wasn't. On rejection, @p out is left
- * untouched (caller should pre-set it to the compiled-in default) and 0 is
- * returned so the caller can log what was rejected.
- **/
-static int dcc_seccomp_parse_bool(const char *value, int *out)
-{
-    if (strcasecmp(value, "true") == 0) {
-        *out = 1;
-        return 1;
-    }
-    if (strcasecmp(value, "false") == 0) {
-        *out = 0;
-        return 1;
-    }
-    return 0;
-}
-
-/**
- * Split a comma-separated list of syscall names into a freshly allocated
- * NULL-terminated array of freshly allocated strings, trimming whitespace
- * around each name and dropping empty tokens (so "a, ,b" and "a,b" behave
- * identically). Returns an empty-list array (see dcc_seccomp_empty_list())
- * for a blank/whitespace-only value, never NULL, so callers can always
- * iterate without a null-check.
- **/
-static char **dcc_seccomp_parse_list(const char *value)
-{
-    char *copy, *saveptr, *tok;
-    char **list;
-    size_t count, cap;
-
-    copy = strdup(value);
-    if (copy == NULL)
-        return dcc_seccomp_empty_list();
-
-    cap = 4;
-    count = 0;
-    list = (char **) malloc(cap * sizeof(char *));
-    if (list == NULL) {
-        free(copy);
-        return dcc_seccomp_empty_list();
-    }
-
-    for (tok = strtok_r(copy, ",", &saveptr); tok != NULL;
-         tok = strtok_r(NULL, ",", &saveptr)) {
-        char *trimmed = dcc_seccomp_trim(tok);
-        if (*trimmed == '\0')
-            continue;
-
-        if (count + 1 >= cap) {
-            cap *= 2;
-            list = (char **) realloc(list, cap * sizeof(char *));
-            if (list == NULL) {
-                free(copy);
-                return dcc_seccomp_empty_list();
-            }
-        }
-        list[count++] = strdup(trimmed);
-    }
-    list[count] = NULL;
-
-    free(copy);
-    return list;
-}
-
-/**
- * Check whether @p path is a real, world-writable regular file and warn if
- * so (defense-in-depth: an unprivileged local user could otherwise flip
- * `enabled = false` or `fail-open = true` under a privileged distccd,
- * silently disabling the hardening this file configures). Mirrors this
- * codebase's existing world-writable-file finding class (issue #157 /
- * PR #158) rather than inventing a new permissions convention. Never
- * refuses to read the file over this -- only warns.
- **/
-static void dcc_seccomp_warn_if_world_writable(const char *path, FILE *fp)
-{
-    struct stat st;
-
-    if (fstat(fileno(fp), &st) != 0) {
-        rs_log_warning("seccomp config %s: fstat() failed: %s; continuing "
-                        "anyway", path, strerror(errno));
-        return;
-    }
-
-    if (st.st_mode & S_IWOTH) {
-        rs_log_warning("seccomp config %s is world-writable (mode %#o); any "
-                        "local user could change the seccomp sandbox's "
-                        "effective behavior -- consider tightening its "
-                        "permissions", path, (unsigned) (st.st_mode & 07777));
-    }
-}
-
-/**
- * Apply one already-split `key = value` pair to @p cfg. Unknown keys are
- * warned about and ignored rather than treated as a hard parse error --
- * this file is meant to degrade gracefully, not make an unrelated typo on
- * one line take down every key below it.
- **/
-static void dcc_seccomp_apply_kv(struct dcc_seccomp_config *cfg,
-                                  const char *key, const char *value)
-{
+    struct dcc_seccomp_config *cfg = (struct dcc_seccomp_config *) cfg_ptr;
     int parsed;
 
     if (strcmp(key, "enabled") == 0) {
-        if (!dcc_seccomp_parse_bool(value, &parsed))
-            rs_log_warning("seccomp config: invalid boolean '%s' for "
+        if (!dcc_config_parse_bool(value, &parsed))
+            rs_log_warning("distccd config: invalid boolean '%s' for "
                             "'enabled' (expected true/false); keeping "
                             "default (%s)", value,
                             cfg->enabled ? "true" : "false");
         else
             cfg->enabled = parsed;
     } else if (strcmp(key, "deny-network") == 0) {
-        if (!dcc_seccomp_parse_bool(value, &parsed))
-            rs_log_warning("seccomp config: invalid boolean '%s' for "
+        if (!dcc_config_parse_bool(value, &parsed))
+            rs_log_warning("distccd config: invalid boolean '%s' for "
                             "'deny-network' (expected true/false); keeping "
                             "default (%s)", value,
                             cfg->deny_network ? "true" : "false");
         else
             cfg->deny_network = parsed;
     } else if (strcmp(key, "fail-open") == 0) {
-        if (!dcc_seccomp_parse_bool(value, &parsed))
-            rs_log_warning("seccomp config: invalid boolean '%s' for "
+        if (!dcc_config_parse_bool(value, &parsed))
+            rs_log_warning("distccd config: invalid boolean '%s' for "
                             "'fail-open' (expected true/false); keeping "
                             "default (%s)", value,
                             cfg->fail_open ? "true" : "false");
         else
             cfg->fail_open = parsed;
     } else if (strcmp(key, "require-seccomp") == 0) {
-        if (!dcc_seccomp_parse_bool(value, &parsed))
-            rs_log_warning("seccomp config: invalid boolean '%s' for "
+        if (!dcc_config_parse_bool(value, &parsed))
+            rs_log_warning("distccd config: invalid boolean '%s' for "
                             "'require-seccomp' (expected true/false); "
                             "keeping default (%s)", value,
                             cfg->require_seccomp ? "true" : "false");
         else
             cfg->require_seccomp = parsed;
     } else if (strcmp(key, "extra-deny") == 0) {
-        char **parsed_list = dcc_seccomp_parse_list(value);
+        char **parsed_list = dcc_config_parse_list(value);
         char **old = cfg->extra_deny;
         cfg->extra_deny = parsed_list;
         if (old != NULL) {
@@ -244,7 +121,7 @@ static void dcc_seccomp_apply_kv(struct dcc_seccomp_config *cfg,
             free(old);
         }
     } else if (strcmp(key, "allow-override") == 0) {
-        char **parsed_list = dcc_seccomp_parse_list(value);
+        char **parsed_list = dcc_config_parse_list(value);
         char **old = cfg->allow_override;
         cfg->allow_override = parsed_list;
         if (old != NULL) {
@@ -254,38 +131,8 @@ static void dcc_seccomp_apply_kv(struct dcc_seccomp_config *cfg,
             free(old);
         }
     } else {
-        rs_log_warning("seccomp config: unknown key '%s'; ignoring", key);
+        rs_log_warning("distccd config: unknown key '%s'; ignoring", key);
     }
-}
-
-/**
- * Parse one line already known to contain a real `key = value` pair (blank
- * lines and `#` comments are filtered out by the caller before this is
- * reached). A line with no `=` is warned about and skipped rather than
- * guessed at.
- **/
-static void dcc_seccomp_parse_line(struct dcc_seccomp_config *cfg, char *line)
-{
-    char *eq = strchr(line, '=');
-    char *key, *value;
-
-    if (eq == NULL) {
-        rs_log_warning("seccomp config: ignoring malformed line (no '='): "
-                        "'%s'", line);
-        return;
-    }
-
-    *eq = '\0';
-    key = dcc_seccomp_trim(line);
-    value = dcc_seccomp_trim(eq + 1);
-
-    if (*key == '\0') {
-        rs_log_warning("seccomp config: ignoring line with empty key: "
-                        "'= %s'", value);
-        return;
-    }
-
-    dcc_seccomp_apply_kv(cfg, key, value);
 }
 
 /**
@@ -313,36 +160,14 @@ static void dcc_seccomp_config_defaults(struct dcc_seccomp_config *cfg)
  **/
 void dcc_seccomp_config_load(const char *path)
 {
-    FILE *fp;
-    char line[1024];
-
     if (path == NULL)
-        path = DCC_SECCOMP_CONFIG_DEFAULT_PATH;
+        path = DCC_DAEMON_CONFIG_DEFAULT_PATH;
 
     dcc_seccomp_config_defaults(&dcc_seccomp_cfg);
     dcc_seccomp_cfg_loaded = 1;
 
-    fp = fopen(path, "r");
-    if (fp == NULL) {
-        if (errno != ENOENT)
-            rs_log_warning("seccomp config %s: could not open (%s); using "
-                            "built-in defaults", path, strerror(errno));
-        /* ENOENT: the file is genuinely optional -- not an error, not even
-         * worth a log line, so a default install without this file doesn't
-         * spam the log every startup. */
-        return;
-    }
-
-    dcc_seccomp_warn_if_world_writable(path, fp);
-
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        char *trimmed = dcc_seccomp_trim(line);
-        if (*trimmed == '\0' || *trimmed == '#')
-            continue;
-        dcc_seccomp_parse_line(&dcc_seccomp_cfg, trimmed);
-    }
-
-    fclose(fp);
+    dcc_config_load(path, "distccd config", dcc_seccomp_apply_kv,
+                     &dcc_seccomp_cfg);
 }
 
 /**

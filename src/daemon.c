@@ -272,11 +272,12 @@ int main(int argc, char *argv[])
     if (!opt_enable_tcp_insecure)
         dcc_warn_masquerade_whitelist();
 
-    /* Load /etc/distcc/seccomp.conf (see doc/seccomp-sandbox.md and
-     * issue #192) and resolve it into the effective per-child sandbox
-     * configuration before the first remote compile can possibly be
-     * spawned. Both steps are one-time, daemon-lifetime setup -- neither
-     * re-reads the file nor re-resolves any syscall name per compile. */
+    /* Load /etc/distcc/distccd.conf (see doc/seccomp-sandbox.md and
+     * issue #192, renamed from seccomp.conf in issue #207) and resolve it
+     * into the effective per-child sandbox configuration before the first
+     * remote compile can possibly be spawned. Both steps are one-time,
+     * daemon-lifetime setup -- neither re-reads the file nor re-resolves
+     * any syscall name per compile. */
     dcc_seccomp_config_load(NULL);
     dcc_seccomp_configure(dcc_seccomp_config_get());
 
