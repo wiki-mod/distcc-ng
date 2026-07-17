@@ -11,6 +11,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`support-upstream/` folder** (#184) — passive, read-only documentation of
+  real bugs found in this fork's work that also affect upstream
+  distcc/distcc's own independently-maintained source. Since this fork
+  cannot open issues/PRs against upstream (upstream doesn't accept
+  AI-assisted contributions), each entry cites the exact upstream file:line,
+  before/after code, and empirical verification evidence for an upstream
+  maintainer to read if they ever choose to. First entry documents issue #12
+  (weak temp-file name entropy in `dcc_make_tmpnam`), confirmed still
+  present in upstream's live source.
+
 ### Removed
 
 - **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,
