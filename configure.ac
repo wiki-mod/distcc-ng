@@ -345,13 +345,13 @@ AC_SEARCH_LIBS(inet_aton, [resolv])
 
 # popt is used by distccd (src/dopt.c) for command-line parsing. Prefer the
 # system library (kept up to date with security fixes by the distro), but
-# fall back to the bundled copy in popt/ -- built from the last upstream
-# distcc release to still carry one -- when no suitable system libpopt is
-# available (minimal containers, embedded/cross-compilation environments,
-# older or unusual distros without a popt package). This mirrors the
-# configure-time optional-detection pattern used for zstd above: the
-# system package is tried first and the build degrades gracefully instead
-# of failing outright, per doc/compatibility-policy.md.
+# fall back to the bundled copy in popt/ -- vendored from popt's own real
+# upstream project's popt-1.19-release tag -- when no suitable system
+# libpopt is available (minimal containers, embedded/cross-compilation
+# environments, older or unusual distros without a popt package). This
+# mirrors the configure-time optional-detection pattern used for zstd
+# above: the system package is tried first and the build degrades
+# gracefully instead of failing outright, per doc/compatibility-policy.md.
 # --without-system-popt forces the bundled copy even if a system libpopt is
 # present; --with-system-popt (the implicit "yes" of the pair below) makes a
 # missing system libpopt a hard configure error instead of falling back.
@@ -382,6 +382,19 @@ else
     POPT_INCLUDES='-I"$(srcdir)/popt"'
     # popt_OBJS gets appended to distccd's object list (see Makefile.in).
     BUILD_POPT='$(popt_OBJS)'
+    # The vendored popt-1.19 tree (see popt/README.popt) uses a handful of
+    # additional HAVE_* feature macros beyond what this fork already
+    # detects below for its own sources -- all guarded by #ifdef in popt's
+    # own code, so their absence only disables the associated optional
+    # feature (e.g. glob(3)-based config-directory wildcard expansion, or
+    # stdalign.h-based struct alignment) rather than breaking the build.
+    # HAVE_ICONV is deliberately NOT probed for here: enabling it can pull
+    # in -liconv as a new link-time dependency on platforms where iconv
+    # isn't part of the base C library (macOS/BSD), which doc/compatibility
+    # -policy.md's "no new hard dependency" rule asks to avoid -- see
+    # popt/README.popt's "NLS" section for the full rationale.
+    AC_CHECK_HEADERS([glob.h langinfo.h stdalign.h])
+    AC_CHECK_FUNCS([stpcpy secure_getenv __secure_getenv srandom glob_pattern_p mbsrtowcs])
 fi
 AC_SUBST(POPT_CFLAGS)
 AC_SUBST(POPT_LIBS)

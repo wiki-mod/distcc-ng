@@ -129,15 +129,20 @@ dist_lzo = lzo/minilzo.c \
 # --without-system-popt was given), via @BUILD_POPT@ below, but always
 # shipped in a source dist regardless of which path configure picked on
 # the machine that ran `make dist`.
-popt_OBJS = popt/findme.o popt/popt.o popt/poptconfig.o \
-	popt/popthelp.o popt/poptparse.o
+popt_OBJS = popt/popt.o popt/poptconfig.o popt/popthelp.o \
+	popt/poptparse.o popt/poptint.o
 
-popt_SRC = popt/findme.c popt/popt.c popt/poptconfig.c \
-	popt/popthelp.c popt/poptparse.c
+popt_SRC = popt/popt.c popt/poptconfig.c popt/popthelp.c \
+	popt/poptparse.c popt/poptint.c
 
-popt_HEADERS = popt/findme.h popt/popt.h popt/poptint.h popt/system.h
+# popt/lookup3.c is not compiled as its own object: popt/poptint.c
+# #includes it directly (upstream's own build does the same -- see
+# popt's src/Makefile.am, which lists lookup3.c under EXTRA_DIST, not
+# among libpopt_la_SOURCES). It still needs to ship in a source dist and
+# be a dependency of poptint.o so a change to it triggers a rebuild.
+popt_HEADERS = popt/popt.h popt/poptint.h popt/system.h popt/lookup3.c
 
-popt_EXTRA = popt/README.popt popt/COPYING popt/.stamp-conf.in
+popt_EXTRA = popt/README.popt popt/COPYING popt/.stamp-conf.in popt/POPT_VERSION
 
 dist_contrib = contrib/distcc-absolutify	\
 	contrib/distcc.sh		\
