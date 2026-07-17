@@ -96,6 +96,10 @@ int dcc_cpp_maybe(char **argv, char *input_fname, char **cpp_fname,
 
     /* FIXME: cpp_argv is leaked */
 
+    /* Not sandboxed: this runs the client's own local preprocessor, not a
+     * remote client's job -- see dcc_spawn_child()'s sandbox_seccomp
+     * parameter. */
     return dcc_spawn_child(cpp_argv, cpp_pid,
-                           "/dev/null", *cpp_fname, NULL);
+                           "/dev/null", *cpp_fname, NULL,
+                           0 /* sandbox_seccomp */);
 }

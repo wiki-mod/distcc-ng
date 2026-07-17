@@ -17,10 +17,12 @@ AC_CONFIG_MACRO_DIRS([m4])
 
 AC_CANONICAL_HOST
 AC_MSG_CHECKING([if the host system type is Linux])
+is_linux_host=no
 case "${host_os}" in
 linux*)
 	AC_MSG_RESULT(yes)
 	AC_DEFINE(HAVE_LINUX, 1, [Define to 1 if the host system type is Linux.])
+	is_linux_host=yes
 	;;
 *)
 	AC_MSG_RESULT(no)
@@ -210,6 +212,43 @@ if test x"$with_zstd" != xno; then
     fi
 fi
 AC_SUBST(HAVE_ZSTD)
+
+dnl distccd sandboxes the compiler processes it forks/execs on behalf of
+dnl remote (potentially malicious) clients using a Linux seccomp syscall
+dnl denylist, if libseccomp is available. Linux-only (see is_linux_host
+dnl above); optional everywhere, matching the zstd pattern above, so this
+dnl never becomes a hard build dependency (see doc/compatibility-policy.md).
+AC_ARG_WITH(seccomp,
+        AS_HELP_STRING([--with-seccomp], [sandbox distccd's compiler child processes with a Linux seccomp filter (requires libseccomp)]))
+
+HAVE_SECCOMP=
+if test x"$is_linux_host" = xyes -a x"$with_seccomp" != xno; then
+    PKG_CHECK_MODULES([SECCOMP], [libseccomp >= 2.4],
+                      [have_seccomp_pkg=yes],
+                      [have_seccomp_pkg=no])
+    if test x"$have_seccomp_pkg" = xyes; then
+        save_CPPFLAGS="$CPPFLAGS"
+        CPPFLAGS="$CPPFLAGS $SECCOMP_CFLAGS"
+        AC_CHECK_HEADERS([seccomp.h], [have_seccomp_header=yes], [have_seccomp_header=no])
+        CPPFLAGS="$save_CPPFLAGS"
+    else
+        have_seccomp_header=no
+    fi
+
+    if test x"$have_seccomp_pkg" = xyes -a x"$have_seccomp_header" = xyes; then
+        AC_DEFINE([HAVE_SECCOMP], [1], [Define to 1 if the Linux libseccomp compiler sandbox is enabled.])
+        CFLAGS="$CFLAGS $SECCOMP_CFLAGS"
+        LIBS="$LIBS $SECCOMP_LIBS"
+        HAVE_SECCOMP=1
+    elif test x"$with_seccomp" = xyes; then
+        AC_MSG_ERROR([Cannot find libseccomp])
+    else
+        AC_MSG_NOTICE([libseccomp not found -- distccd will run remote compiles without a seccomp sandbox])
+    fi
+elif test x"$with_seccomp" = xyes; then
+    AC_MSG_ERROR([--with-seccomp requested but the seccomp sandbox is Linux-only])
+fi
+AC_SUBST(HAVE_SECCOMP)
 
 dnl Checks for programs
 AC_PROG_CC

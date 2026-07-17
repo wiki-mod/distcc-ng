@@ -82,6 +82,63 @@ See `doc/release-versioning.md` for the full versioning and release process.
     regression back to the stale 1.7 tree even if it would otherwise still
     compile cleanly.
 
+### Security
+
+- **`distccd`: optional Linux seccomp sandbox for compiler child processes**
+  (#68, porting the idea behind upstream distcc/distcc#233, which was
+  never merged and could not be ported as-is). Previously, a remote
+  client's compile job ran with the daemon's full process privileges;
+  a compromised or malicious client could have the "compiler" process
+  attempt anything the daemon's own privileges allowed. `distccd` now
+  installs a Linux seccomp syscall denylist (`src/sandbox-seccomp.c`) in
+  the forked child immediately before it execs the client-supplied
+  compiler, blocking syscalls no legitimate compiler invocation needs
+  (kernel/module loading, `mount`/`reboot`, `ptrace`, raw I/O port access,
+  kernel keyring/eBPF/perf, host clock/hostname changes). This is a
+  denylist, not the allowlist upstream's PR attempted: enumerating every
+  syscall every compiler (gcc, clang, cross-compilers, and their cc1/as/
+  ld/collect2/LTO sub-processes) legitimately needs is not something that
+  can be verified by local testing, and a too-narrow allowlist silently
+  breaks real builds. Treat this as defense-in-depth layered on top of
+  the existing compiler whitelist and unsafe-option checks in
+  `src/serve.c`, not as the sole boundary between a hostile client and
+  the host. Fails open: if libseccomp isn't available at build time, or
+  filter installation fails at runtime (unsupported/misconfigured
+  kernel), `distccd` logs a warning and runs the compile unsandboxed
+  rather than refusing every remote job on that host — this is a
+  hardening layer, and an availability regression across an entire host
+  would be a worse outcome than the marginal loss of defense-in-depth.
+  Optional dependency (`libseccomp`, configure-time detected via
+  `PKG_CHECK_MODULES`, `--with-seccomp`/`--without-seccomp`), degrading
+  gracefully when absent, following the same pattern as the existing
+  optional zstd support — no new hard build dependency.
+- **`distccd` seccomp sandbox: runtime config file, `/etc/distcc/seccomp.conf`**
+  (#192, follow-up on #68/#171) — makes three previously hardcoded
+  behaviors admin-configurable without a rebuild, per the maintainer's
+  review of the original PR's open questions. New minimal `key = value`
+  parser (`src/sandbox-config.c`), read once at daemon startup: `enabled`
+  (master on/off switch for the sandbox, default `true`), `deny-network`
+  (additionally denies `socket`/`connect`/`sendto`/`recvfrom`/`bind`/
+  `listen`/`accept`/`accept4`/`socketpair`/`sendmsg`/`recvmsg`/`sendmmsg`/
+  `recvmmsg`/`shutdown` in the sandboxed compiler child, default `false`),
+  `fail-open` (whether a sandbox-install failure lets the compile proceed
+  unsandboxed or refuses it, default `true`, unchanged from #171's
+  original behavior), `extra-deny`/`allow-override` (comma-separated
+  syscall names to add to/remove from the built-in denylist; every
+  actual removal is logged by name at startup). The file is optional —
+  absent, empty, or comment-only all fall back to the documented
+  defaults, not an error. A world-writable config file logs a warning
+  (matching this codebase's existing world-writable-file finding class,
+  #157/#158) but is still used. Fail-closed refuses a compile via the
+  same ordinary failure path an actual compiler error already takes
+  (`EXIT_DISTCC_FAILED` from the forked child), not a new ad hoc failure
+  mode. See `doc/seccomp-sandbox.md` for the full config reference,
+  including why a same-subnet-only network restriction is explicitly out
+  of scope (seccomp/BPF cannot inspect `connect()`'s `sockaddr*`
+  contents). Config-file-only for this pass — matching `distccd`
+  command-line flags are a documented, deferred follow-up, not an
+  oversight (see the doc for why).
+
 ### Removed
 
 - **`bench/` macro-benchmark tool** (#182) — last touched 2008, Python 2,
