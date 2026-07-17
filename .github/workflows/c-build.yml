@@ -220,8 +220,10 @@ jobs:
           # findme.c/.h were part of the old 1.7 snapshot and were dropped
           # when vendoring 1.19 (upstream itself no longer ships them); their
           # reappearance is a sign of an accidental revert to the stale tree.
-          test ! -e popt/findme.c && test ! -e popt/findme.h \
-            || { echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"; exit 1; }
+          if [ -e popt/findme.c ] || [ -e popt/findme.h ]; then
+            echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
+            exit 1
+          fi
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Same package set as popt_fallback_build (no libpopt-dev, so
@@ -245,10 +247,10 @@ jobs:
           # not grant that exemption, so any real warning here signals the
           # vendored tree itself has regressed, not merely that this
           # project's stricter-than-upstream flags don't suit third-party code.
-          CFLAGS="-DHAVE_CONFIG_H -Isrc -Ipopt -Wall -Wextra -Werror"
+          CFLAGS=(-DHAVE_CONFIG_H -Isrc -Ipopt -Wall -Wextra -Werror)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
-            echo "::group::gcc $CFLAGS -c $f"
-            gcc $CFLAGS -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"
+            echo "::group::gcc ${CFLAGS[*]} -c $f"
+            gcc "${CFLAGS[@]}" -c "$f" -o "/tmp/popt-strict-check/$(basename "$f").o"
             echo "::endgroup::"
           done
 
