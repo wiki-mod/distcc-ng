@@ -1,7 +1,7 @@
 # SSH transport command passed to `execvp()` without a plausibility check
 
 **Fork issue:** [wiki-mod/distcc-ng#143](https://github.com/wiki-mod/distcc-ng/issues/143) (Group H, CodeQL `cpp/uncontrolled-process-operation`, alert #10)
-**Fixed by:** [wiki-mod/distcc-ng#PR](https://github.com/wiki-mod/distcc-ng/pulls) (this PR)
+**Fixed by:** [wiki-mod/distcc-ng#252](https://github.com/wiki-mod/distcc-ng/pull/252)
 **Upstream location:** `src/ssh.c`, function `dcc_ssh_connect` (feeding `dcc_run_piped_cmd`'s `execvp(argv[0], argv)`)
 **Checked against upstream commit:** [`8d569d1`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `DISTCC_SSH execvp`, `uncontrolled-process-operation`, `ssh command validation` — nothing found; upstream has no CodeQL scanning and no validation of the resolved SSH command.
