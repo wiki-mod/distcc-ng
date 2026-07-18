@@ -312,7 +312,10 @@ static void generate_query(void)
                                       "ARGV00000002-o"
                                       "ARGV00000007hello.o"
                                       "DOTI%08x%s";
-        sprintf(canned_query,
+        /* opt_compiler comes straight from the -c command-line option, so its
+         * length is caller-controlled and the fixed-size canned_query buffer
+         * must be written with an explicit bound rather than a bare sprintf. */
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_1,
                  (unsigned)strlen(opt_compiler), opt_compiler,
                  (unsigned)strlen(program), program);
@@ -330,15 +333,24 @@ static void generate_query(void)
                                       "ARGV00000002-o"
                                       "ARGV00000007hello.o"
                                       "DOTI%08x";
-        sprintf(canned_query,
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_2,
                  (unsigned)strlen(opt_compiler),
                  opt_compiler,
                  (unsigned)lzod_program_len);
 
-        canned_query_len = strlen(canned_query) + lzod_program_len;
-        memcpy(canned_query + strlen(canned_query),
-               lzod_program, lzod_program_len);
+        /* Guard the trailing binary append: if a pathological opt_compiler
+         * truncated the header up against the buffer end, appending the
+         * compressed program at strlen(canned_query) could still overrun. */
+        {
+            size_t hdr_len = strlen(canned_query);
+            if (hdr_len + lzod_program_len > sizeof(canned_query)) {
+                rs_log_error("canned query exceeds buffer; compiler name too long");
+                exit(1);
+            }
+            canned_query_len = hdr_len + lzod_program_len;
+            memcpy(canned_query + hdr_len, lzod_program, lzod_program_len);
+        }
 
         break;
       }
@@ -357,15 +369,21 @@ static void generate_query(void)
                                       "NAME00000008/hello.c"
                                       "FILE%08x";
 
-        sprintf(canned_query,
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_3,
                  (unsigned)strlen(opt_compiler),
                  opt_compiler,
                  (unsigned)lzod_program_len);
 
-        canned_query_len = strlen(canned_query) + lzod_program_len;
-        memcpy(canned_query + strlen(canned_query),
-               lzod_program, lzod_program_len);
+        {
+            size_t hdr_len = strlen(canned_query);
+            if (hdr_len + lzod_program_len > sizeof(canned_query)) {
+                rs_log_error("canned query exceeds buffer; compiler name too long");
+                exit(1);
+            }
+            canned_query_len = hdr_len + lzod_program_len;
+            memcpy(canned_query + hdr_len, lzod_program, lzod_program_len);
+        }
         break;
       }
     }
