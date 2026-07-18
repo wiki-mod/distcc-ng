@@ -26,6 +26,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`AGENTS.md` rule 60**: a delegated agent doing non-trivial work must post
+  a dated progress comment on its issue/PR at least every 5 minutes of
+  active work, not only at real milestones (extends rule 10) — a
+  heartbeat when there's no new finding yet, rather than staying silent
+  through a long-running build/test step.
 - **`/etc/distcc/distcc.conf`** (#207): new client-side config file, sharing
   the same `key = value` parser as the daemon's config (now factored out
   into `src/config-parser.c`). First setting: `local-lto` (bool, default
