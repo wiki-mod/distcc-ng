@@ -827,12 +827,27 @@ static int dcc_run_job(int in_fd,
             if (arg_sysroot) {
                 char *spec_file = strchr(a, '=') + 1;
                 size_t spec_path_size = strlen(spec_file) + strlen(arg_sysroot) + 8;
-                char *spec_path = alloca(spec_path_size);
+                /* malloc(), not alloca(): this runs inside the loop over
+                 * every argument in a client-supplied compile command, and
+                 * alloca()'s allocation isn't freed until dcc_run_job()
+                 * itself returns -- not each loop iteration -- so a
+                 * compile command with many -specs= arguments would
+                 * accumulate unbounded, unfreed stack allocations bounded
+                 * only by how many such arguments the client chose to
+                 * send. free() explicitly below instead. */
+                char *spec_path = malloc(spec_path_size);
+                if (spec_path == NULL) {
+                    rs_log_error("failed to allocate %lu bytes for spec_path",
+                                 (unsigned long) spec_path_size);
+                    ret = EXIT_OUT_OF_MEMORY;
+                    goto out_cleanup;
+                }
                 snprintf(spec_path, spec_path_size, "%s/%s", arg_sysroot, spec_file);
                 struct stat spec_stat;
                 if (stat(spec_path, &spec_stat) != -1 && (spec_stat.st_mode & S_IFMT) == S_IFREG) {
                   fail = 0;
                 }
+                free(spec_path);
             }
             if (fail) {
               rs_log_warning("-specs= passed, but we cannot find the specs.");
