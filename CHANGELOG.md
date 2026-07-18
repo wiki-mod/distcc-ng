@@ -68,6 +68,34 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **Three locally-reproducible logic bugs found in a security sweep**
+  (#226): `src/sandbox-seccomp.c`'s built-in-denylist loop stored
+  `dcc_seccomp_resolve()`'s return value uncritically, unlike the
+  `extra_deny` loop 15 lines below in the same function — an
+  unresolvable built-in syscall name reached `seccomp_rule_add(...,
+  -1, ...)`, breaking seccomp setup for every compile instead of just
+  skipping that one syscall; now warns and skips, mirroring the
+  existing `extra_deny` guard. `src/lsdistcc.c`'s `get_thename()` only
+  checked that its caller-supplied format string contained `%d`
+  somewhere before passing it to `snprintf()` as the format argument —
+  a format like `%d%s%s%s%n` passed that guard and then read/wrote out
+  of bounds processing specifiers with no corresponding arguments; now
+  rejected unless it contains exactly one integer conversion and no
+  other `%` specifier. `src/serve.c`'s `-specs=` argument loop called
+  `alloca()` once per matching argument — `alloca()`'s allocation is
+  only freed when the enclosing function returns, not each loop
+  iteration, so a compile command with many `-specs=` arguments
+  accumulated unbounded, unfreed stack allocations; now uses
+  `malloc()`/`free()`, freed each iteration. Verified with real
+  before/after evidence per bug: an injected unresolvable syscall name
+  now logs one startup warning instead of refusing every compile; an
+  AddressSanitizer-instrumented pre-fix `lsdistcc` crashes (SEGV) on a
+  crafted format string that the post-fix binary rejects cleanly; a
+  real compile with 3000 `-specs=` arguments against a
+  stack-limited `distccd` crashed the worker (signal 11) before the fix
+  and completed cleanly (`sig:0 core:0`) after. `make check` passes
+  with all three fixes applied together.
+
 - **Protocol version 4 (zstd) could silently misconfigure a non-zstd
   `distccd`** (#225): `src/hosts.c`'s `dcc_get_features_from_protover()`
   mapped protover 4 to `DCC_COMPRESS_ZSTD` unconditionally, regardless of
