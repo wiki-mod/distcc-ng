@@ -36,8 +36,8 @@ main() {
   log "bootstrapping"
   ./autogen.sh
 
-  log "configuring non-zstd release build"
-  ./configure PYTHON="${PYTHON_BIN}" --without-zstd --enable-Werror
+  log "configuring release build"
+  ./configure PYTHON="${PYTHON_BIN}" --enable-Werror
 
   log "building source tarball and binary packages"
   make -j"${JOBS}" deb

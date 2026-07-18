@@ -84,7 +84,7 @@ jobs:
 
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
-          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev pkg-config python3-dev python3-setuptools rpm alien
+          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
 
       - name: Resolve the built commit
         # Under schedule/workflow_dispatch the workflow is evaluated from the

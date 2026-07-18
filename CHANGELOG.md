@@ -115,6 +115,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **Release packages built without zstd support** (#234): `scripts/build-release-packages.sh`
+  explicitly passed `--without-zstd` to `configure` (adopted from an older
+  workflow via #44, predating zstd being a maintained fork feature, never
+  revisited), and even without that flag, `package-release.yml`'s
+  `build_packages` job and `nightly-publish.yml`'s `publish` job never
+  installed `libzstd-dev`, so auto-detection would have silently degraded
+  anyway. `docker/release/Dockerfile` had the identical problem (missing
+  `libzstd-dev` at build time and `libzstd1` at runtime, plus a stale image
+  label literally documenting "without zstd support"). Fixed all four sites;
+  verified by extracting the real built `.deb` package and confirming
+  `distccd` is actually linked against `libzstd.so.1`.
 - **`Makefile.in`: `config-parser.c`/`.h` and `client-config.c`/`.h` missing
   from `SRC`/`HEADERS`** (#220): these two files (added by #207/#208) were
   correctly listed in the `common_obj`/`distcc_obj` build-object lists used
