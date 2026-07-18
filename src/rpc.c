@@ -328,19 +328,19 @@ int dcc_r_str_alloc(int fd, unsigned l, char **buf)
 {
      char *s;
 
-#if 0
-     /* never true  */
-     if (l < 0) {
-         rs_log_crit("oops, l < 0");
+     if (l > DCC_MAX_RPC_STRING_LEN) {
+         rs_log_error("string length %u from peer exceeds sanity limit "
+                      "%u, rejecting", l, DCC_MAX_RPC_STRING_LEN);
          return EXIT_PROTOCOL_ERROR;
      }
-#endif
 
 /*      rs_trace("read %d byte string", l); */
 
      s = *buf = malloc((size_t) l + 1);
-     if (!s)
+     if (!s) {
           rs_log_error("malloc failed");
+          return EXIT_OUT_OF_MEMORY;
+     }
      if (dcc_readx(fd, s, (size_t) l))
           return EXIT_OUT_OF_MEMORY;
 
@@ -406,6 +406,12 @@ int dcc_r_argv(int ifd,
 
     if (dcc_r_token_int(ifd, argc_token, &argc))
         return EXIT_PROTOCOL_ERROR;
+
+    if (argc > DCC_MAX_RPC_ARGC) {
+        rs_log_error("argument count %u from peer exceeds sanity limit "
+                     "%u, rejecting", argc, DCC_MAX_RPC_ARGC);
+        return EXIT_PROTOCOL_ERROR;
+    }
 
     rs_trace("reading %d arguments from job submission", argc);
 

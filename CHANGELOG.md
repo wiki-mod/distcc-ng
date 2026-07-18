@@ -48,6 +48,31 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **Unbounded allocation size from wire-protocol input** (#224): `src/rpc.c`'s
+  `dcc_r_str_alloc()` (backing every string field read off the network --
+  every `argv[i]`, filename, symlink target) and `dcc_r_argv()`'s argument
+  count had no upper bound before allocating, letting a corrupted or hostile
+  peer claim an arbitrary length/count and force an unbounded
+  `malloc()`/`calloc()`. Propagated into `src/compress-zstd.c`'s and
+  `src/compress-lzox1.c`'s bulk-transfer receivers (same missing bound on
+  `in_len`/`uncompr_size`), including a wrap-to-zero-then-infinite-retry-loop
+  edge case in the zstd path and a 32-bit multiplication overflow in the LZO
+  path's output-size estimate (`8 * in_len`, previously flagged with its own
+  "make sure this doesn't overflow" FIXME comment). Fixed with three new
+  sanity ceilings (`DCC_MAX_RPC_STRING_LEN` 16 MiB, `DCC_MAX_RPC_ARGC` 65536,
+  `DCC_MAX_BULK_FILE_LEN` 1 GiB -- generous enough that no legitimate request
+  is ever affected) plus fixing `dcc_r_str_alloc()`'s pre-existing
+  unchecked-`malloc()`-failure bug found while touching the same function.
+  Verified with a real before/after crafted-protocol test against two
+  parallel-built `distccd` instances: an oversized `ARGC` claim that
+  previously either raced glibc's own `calloc()` overflow check or held a
+  worker + ~800MB allocated for the life of the connection is now rejected
+  in under a millisecond with a clear log message, with zero regression on
+  `make check`'s real large-file (`BigAssFile_Case`) and compressed-compile
+  (`CompressedCompile_Case`) tests. Confirmed still present in
+  `distcc/distcc`'s current upstream source (`src/rpc.c`, `src/compress.c`)
+  -- see `support-upstream/issue-224-unbounded-rpc-allocation.md`.
+
 - Fixed 8 of 11 `cpp/world-writable-file-creation` CodeQL alerts
   (`src/daemon.c`, `src/dparent.c`, `src/compile.c`, `src/dotd.c`,
   `src/state.c`, `src/zeroconf.c`) by replacing hardcoded `0666` `open()`

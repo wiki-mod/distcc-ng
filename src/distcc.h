@@ -371,6 +371,16 @@ int dcc_readx(int fd, void *buf, size_t len);
 int dcc_pump_sendfile(int ofd, int ifd, size_t n);
 int dcc_r_str_alloc(int fd, unsigned len, char **buf);
 
+/* Sanity ceilings for allocation sizes derived from lengths read off the
+ * wire protocol (rpc.c's token/string/argv readers, and the bulk
+ * compressors' in_len/uncompr_size parameters) -- without these, a
+ * corrupted or hostile peer can claim an arbitrary length and force an
+ * unbounded malloc(), see issue #224. Deliberately generous: real values
+ * are always far smaller, so a legitimate peer never hits a ceiling. */
+#define DCC_MAX_RPC_STRING_LEN (16u * 1024u * 1024u)   /* one argv/filename entry, 16 MiB */
+#define DCC_MAX_RPC_ARGC       65536u                  /* one compile invocation's arg count */
+#define DCC_MAX_BULK_FILE_LEN  (1024u * 1024u * 1024u) /* one file's compressed/plain contents, 1 GiB */
+
 int tcp_cork_sock(int fd, int corked);
 int dcc_close(int fd);
 int dcc_get_io_timeout(void);
