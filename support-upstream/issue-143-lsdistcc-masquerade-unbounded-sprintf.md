@@ -1,7 +1,7 @@
 # lsdistcc / masquerade: unbounded `sprintf` from caller-controlled input
 
 **Fork issue:** [wiki-mod/distcc-ng#143](https://github.com/wiki-mod/distcc-ng/issues/143)
-**Fixed by:** [wiki-mod/distcc-ng#PRNUM](https://github.com/wiki-mod/distcc-ng/pull/PRNUM)
+**Fixed by:** [wiki-mod/distcc-ng#249](https://github.com/wiki-mod/distcc-ng/pull/249)
 **Upstream location:** `src/lsdistcc.c`, function `generate_query`; `src/climasq.c`, function `dcc_support_masquerade`; `src/util.c`, function `dcc_trim_path`
 **Checked against upstream commit:** [`8d569d192141615e26a3f0b65315822e7c814c3d`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `lsdistcc sprintf`, `canned_query` — no matching issue or PR found (0 results); not tracked upstream.
