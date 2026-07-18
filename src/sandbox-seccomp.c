@@ -247,6 +247,7 @@ void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
         const char *name = dcc_seccomp_denied_syscalls[i];
         size_t j;
         int overridden = 0;
+        int nr;
 
         for (j = 0; cfg->allow_override[j] != NULL; j++) {
             if (strcmp(cfg->allow_override[j], name) == 0) {
@@ -263,8 +264,21 @@ void dcc_seccomp_configure(const struct dcc_seccomp_config *cfg)
             continue;
         }
 
+        /* Mirror the extra_deny loop below: dcc_seccomp_resolve() returns
+         * -1 for a syscall name libseccomp doesn't know on this
+         * architecture. Storing that -1 uncritically would later reach
+         * seccomp_rule_add(..., -1, ...), which fails -- breaking seccomp
+         * setup for every compile because of one unresolvable built-in
+         * name, not just skipping that one syscall. */
+        nr = dcc_seccomp_resolve(name);
+        if (nr < 0) {
+            rs_log_warning("seccomp config: built-in denylist syscall '%s' "
+                            "could not be resolved on this architecture; "
+                            "skipping", name);
+            continue;
+        }
         if (list != NULL)
-            list[count++] = dcc_seccomp_resolve(name);
+            list[count++] = nr;
     }
 
     for (i = 0; cfg->extra_deny[i] != NULL; i++) {
