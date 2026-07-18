@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <ctype.h>
 
@@ -476,6 +477,74 @@ static int dcc_please_send_email_after_investigation(
 }
 
 #ifdef HAVE_FSTATAT
+/**
+ * Probe @p path -- a resolved, executable compiler binary that is not
+ * itself a symlink, so readlinkat() can't tell us anything about it -- by
+ * running "<path> --version" and checking whether it self-identifies as
+ * clang. Both gcc and clang always print their own family name in the
+ * first line of "--version" output ("gcc (...) X.Y.Z" vs. "... clang
+ * version X.Y.Z", verified against real gcc/clang output); this is a
+ * cheaper probe than dcc_resolve_march_native()'s "-v -E" trick in arg.c
+ * since only the family is needed here, not resolved CPU flags.
+ *
+ * @returns 1 if @p path self-identifies as clang, 0 if it doesn't (treated
+ *     as gcc, the only other family dcc_rewrite_generic_compiler
+ *     distinguishes), -1 if the probe itself failed (fork/exec/pipe error)
+ *     and the caller must not guess.
+ **/
+static int dcc_probe_is_clang(const char *path)
+{
+    int fds[2];
+    pid_t pid;
+    FILE *in;
+    char buff[4096];
+    int is_clang = -1;
+
+    if (pipe(fds) == -1)
+        return -1;
+
+    pid = fork();
+    if (pid == -1) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* Child. This must never return into the caller's control flow --
+         * doing so would fork the whole distcc client in two. Any failure
+         * here must terminate the child via _exit(), never "return". */
+        int devnull;
+
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+        close(fds[1]);
+        devnull = open("/dev/null", O_RDONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDIN_FILENO);
+            close(devnull);
+        }
+        execl(path, path, "--version", (char *) NULL);
+        /* execl() only returns on failure. */
+        _exit(127);
+    }
+
+    /* Parent. */
+    close(fds[1]);
+    in = fdopen(fds[0], "r");
+    if (in == NULL) {
+        close(fds[0]);
+    } else {
+        if (fgets(buff, sizeof(buff), in) != NULL)
+            is_clang = (strstr(buff, "clang") != NULL) ? 1 : 0;
+        fclose(in);          /* also closes fds[0] */
+    }
+    while (waitpid(pid, NULL, 0) == -1 && errno == EINTR)
+        ;
+    return is_clang;
+}
+
 /* Re-write "cc" to directly call gcc or clang
  */
 static void dcc_rewrite_generic_compiler(char **argv)
@@ -509,9 +578,20 @@ static void dcc_rewrite_generic_compiler(char **argv)
     ret = fstatat(dir, t + 1, &st, AT_SYMLINK_NOFOLLOW);
     if (ret < 0)
         return;
-    if ((st.st_mode & S_IFMT) != S_IFLNK)
-        /* TODO use cc -v */
+    if ((st.st_mode & S_IFMT) != S_IFLNK) {
+        /* Not a symlink -- e.g. macOS's "cc", a small dispatch binary
+         * rather than a symlink to the real compiler. There's no link
+         * target to inspect, so ask the binary itself what it is. */
+        int probed_is_clang = dcc_probe_is_clang(link);
+
+        if (probed_is_clang < 0)
+            return;
+        free(argv[0]);
+        argv[0] = strdup(probed_is_clang ? (cpp ? "clang++" : "clang")
+                                          : (cpp ? "g++" : "gcc"));
+        rs_trace("Rewriting '%s' to '%s'", cpp ? "c++" : "cc", argv[0]);
         return;
+    }
     ssz = readlinkat(dir, t + 1, linkbuf, sizeof(linkbuf) - 1);
     if (ssz < 0)
         return;

@@ -134,6 +134,13 @@ static void dcc_note_compiled(const char *input_file, const char *output_file)
  * argument list -- which is where the concrete -march=/-mtune=/-mcpu=
  * (gcc) or -target-cpu/-target-feature (clang) flags actually live.
  *
+ * Which filter applies (clang's vs gcc's) is decided by whether the backend
+ * token found on that line is the dash-prefixed "-cc1" (clang) or a bare
+ * "cc1"/"cc1plus" (gcc) -- i.e. by what the invoked compiler actually turned
+ * out to be, not by guessing by its argv[0]/basename. A dispatcher like
+ * macOS's "cc" can invoke either backend under a name that says nothing
+ * about which; this is what's actually running underneath it.
+ *
  * clang's driver does not accept raw cc1-level flags on its own
  * command line, so each flag we forward for clang must be wrapped in
  * "-Xclang". clang's cc1 invocation also contains a lot of internal
@@ -143,6 +150,14 @@ static void dcc_note_compiled(const char *input_file, const char *output_file)
  * "-target") and the value token immediately following each of them are
  * kept, mirroring what upstream distcc/distcc#384 found to be the
  * minimal correct filter after review discussion on that PR.
+ *
+ * gcc's "-v -E -march=native" output likewise mixes the resolved CPU flags
+ * in with unrelated driver internals (verified against real gcc output):
+ * only "-m"-prefixed tokens (the resolved -march=/-mtune=/-mcpu= plus one
+ * -m<feature> flag per ISA extension, e.g. -msse4.2/-mno-avx512f) are the
+ * actual resolution and get forwarded; everything else (-quiet,
+ * -imultiarch <triple>, --param <name>=<value>, -fasynchronous-unwind-tables,
+ * -dumpbase -, the trailing bare "-") is dropped.
  *
  * @param argv the (already compiler-name-prefixed) argument vector to scan.
  * @param ret_newargv on success (return 1), set to a freshly malloc'd,
@@ -188,9 +203,13 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
     if (l == 0 || !argv[0])
         return 0;
 
+    /* Only used to pick which program to exec below; the actual compiler
+     * family (is_clang) is determined later from what that program tells
+     * us about itself, not from its own invoked name -- see the fgets()
+     * loop below. */
     compiler = strrchr(argv[0], '/');
     compiler = (compiler == NULL) ? argv[0] : compiler + 1;
-    is_clang = !strncmp(compiler, "clang", strlen("clang"));
+    is_clang = 0;
 
     for (i = 0; i < l; i++) {
         if (!strcmp(argv[i], "-march=native"))
@@ -276,6 +295,15 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
 
             if (!cc1)
                 continue;
+            /* Determine the compiler family from the backend invocation
+             * we just observed, not from the compiler binary's own name:
+             * clang's driver always invokes its internal frontend as the
+             * literal dash-prefixed argument "-cc1"; gcc's cc1/cc1plus is
+             * passed as a bare token (or a full path), never dash-prefixed.
+             * This reads what is actually running, so it stays correct even
+             * when a dispatcher (e.g. macOS's "cc") invokes clang under a
+             * name that doesn't contain "clang". */
+            is_clang = (cc1 != buff && cc1[-1] == '-');
             a = strstr(cc1, " - ");
             if (!a)
                 continue;
@@ -353,6 +381,18 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
                         }
                         if ((b[j++] = strdup("-Xclang")) == NULL)
                             goto alloc_fail;
+                    } else if (tok[0] != '-' || tok[1] != 'm') {
+                        /* gcc's "-v -E -march=native" output expands the
+                         * native flag(s) into the resolved -march=/-mtune=/
+                         * -mcpu= plus one -m<feature> flag per ISA extension
+                         * (e.g. -msse4.2, -mno-avx512f, verified against real
+                         * gcc output) -- that "-m"-prefixed set IS the CPU
+                         * resolution. It's interleaved with unrelated driver
+                         * internals (-quiet, -imultiarch <triple>, --param
+                         * <name>=<value>, -fasynchronous-unwind-tables,
+                         * -dumpbase -, the trailing bare "-") that must not
+                         * be forwarded to a remote gcc invocation. */
+                        continue;
                     }
                     if ((b[j++] = strdup(tok)) == NULL)
                         goto alloc_fail;
