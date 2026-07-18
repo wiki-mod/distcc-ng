@@ -61,12 +61,16 @@ int dcc_support_masquerade(char *argv[], char *progname, int *did_masquerade)
     char *buf;
     size_t len;
     size_t findlen;
+    size_t bufsize;
 
     if (!(envpath = getenv("PATH")))
         /* strange but true*/
         return 0;
 
-    if (!(buf = malloc(strlen(envpath)+1+strlen(progname)+1))) {
+    /* Keep the allocation size in a variable so the bounded write below can
+     * name it explicitly, rather than re-deriving it inline. */
+    bufsize = strlen(envpath) + 1 + strlen(progname) + 1;
+    if (!(buf = malloc(bufsize))) {
         rs_log_error("failed to allocate buffer for new PATH");
         return EXIT_OUT_OF_MEMORY;
     }
@@ -106,7 +110,12 @@ int dcc_support_masquerade(char *argv[], char *progname, int *did_masquerade)
             /* FIXME: This gets a false match if you have a subdirectory that
              * happens to be of the right name, e.g. /usr/bin/distcc... */
             strncpy(buf, p, (size_t) len);
-            sprintf(buf + len, "/%s", progname);
+            /* len is the length of one ':'-separated PATH component, so it is
+             * always <= strlen(envpath); bufsize - len therefore always
+             * leaves room for "/<progname>\0". snprintf makes that bound
+             * explicit instead of relying on the reader (or CodeQL) to prove
+             * the unbounded sprintf could never overflow. */
+            snprintf(buf + len, bufsize - len, "/%s", progname);
             if (access(buf, X_OK) != 0)
                 continue;
         }

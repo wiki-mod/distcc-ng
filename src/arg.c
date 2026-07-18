@@ -495,6 +495,19 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
          * reinterpreted as such here. */
         if (i >= ignore_range_min && i < ignore_range_max)
             continue;
+        /* A token introduced by "-Xclang" is verbatim clang cc1 payload,
+         * not distcc option syntax, so it must not be matched against the
+         * flag tests below -- e.g. a -target-feature disable value like
+         * "-xop" would otherwise satisfy the str_startswith("-x", a)
+         * language-override check and force this compile local. The
+         * ignore_range above already covers this on the client (where
+         * dcc_resolve_march_native() built the range), but the server
+         * re-scans a received argv that no longer contains -march=native,
+         * so its range is empty [0,0) and this structural guard is what
+         * protects the pairs there. "-Xclang" itself matches no branch
+         * below, so it needs no special case. */
+        if (i > 0 && !strcmp(argv[i-1], "-Xclang"))
+            continue;
         if (a[0] == '-') {
             if (!strcmp(a, "-E")) {
                 rs_trace("-E call for cpp must be local");
