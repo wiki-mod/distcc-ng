@@ -491,6 +491,22 @@ class StripArgs_Case(SimpleDistCC_Case):
                   "g++ -g -c hello.ii -o hello.o"),
                  ("gcc -xobjective-c++ -g -c hello.mii -o hello.o",
                   "gcc -g -c hello.mii -o hello.o"),
+
+                 # A token introduced by "-Xclang" is verbatim clang cc1
+                 # payload and must survive stripping even when it looks like
+                 # a local-only flag: the -target-feature disable values
+                 # "-lwp"/"-xop" (produced by -march=native resolution)
+                 # otherwise match the "-l<lib>"/"-x<lang>" strip prefixes and
+                 # are silently dropped, corrupting the "-Xclang -target-feature
+                 # -Xclang <value>" quadruple the remote clang then rejects.
+                 ("clang -Xclang -target-feature -Xclang -lwp -c hello.c -o hello.o",
+                  "clang -Xclang -target-feature -Xclang -lwp -c hello.c -o hello.o"),
+                 ("clang -Xclang -target-feature -Xclang -xop -c hello.c -o hello.o",
+                  "clang -Xclang -target-feature -Xclang -xop -c hello.c -o hello.o"),
+                 # A bare (non-"-Xclang") token keeps its existing meaning:
+                 # "-lwp" is still treated as a "-l" link flag and stripped.
+                 ("clang -lwp -c hello.c -o hello.o",
+                  "clang -c hello.c -o hello.o"),
                  )
         for cmd, expect in cases:
             o, err = self.runcmd("h_strip %s" % cmd)
