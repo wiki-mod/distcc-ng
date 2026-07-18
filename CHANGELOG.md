@@ -13,6 +13,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`src/ssh.c`** (#143, Group H): sanity-check the resolved SSH transport
+  command before it becomes `argv[0]` to `execvp()`
+  (`cpp/uncontrolled-process-operation`, CodeQL high, alert #10). A new
+  `dcc_ssh_cmd_is_sane()` helper, called in `dcc_ssh_connect()` before
+  fork/exec, rejects an empty command token or one beginning with `-` (an
+  obviously-malformed value such as `-oProxyCommand=…`), returning a clean
+  `EXIT_DISTCC_FAILED` instead of failing deep inside the forked child.
+  This is client-side hardening (`ssh.o` is linked into `distcc` only, runs
+  as the invoking user, no privilege boundary): deliberately **not** an
+  absolute-path requirement — `execvp()`'s own `$PATH` search is atomic at
+  exec time (no TOCTOU window, unlike the `compile.c` pre-resolve path), and
+  a bare `DISTCC_SSH="ssh"` relying on that search is the intended usage.
+  Verified against the real client binary: the rejection path fires with a
+  clear error, while `DISTCC_SSH="ssh"` and whitespace-only values behave
+  exactly as before.
 - **`src/lsdistcc.c`, `src/climasq.c`** (#143): eliminate unbounded
   `sprintf` writes from caller-controlled input (`cpp/unbounded-write`,
   CodeQL critical). `lsdistcc`'s `generate_query()` formatted the `-p`
