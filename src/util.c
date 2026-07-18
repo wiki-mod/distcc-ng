@@ -349,7 +349,6 @@ int dcc_trim_path(const char *compiler_name)
     char linkbuf[MAXPATHLEN], *buf;
     struct stat sb;
     size_t len;
-    size_t bufsize;
 
     if (!(envpath = getenv("PATH"))) {
         rs_trace("PATH seems not to be defined");
@@ -361,8 +360,7 @@ int dcc_trim_path(const char *compiler_name)
 
     /* Allocate a buffer that will let us append "/cc" onto any PATH
      * element, even if there is only one item in the PATH. */
-    bufsize = strlen(envpath) + 1 + strlen(compiler_name) + 1;
-    if (!(buf = malloc(bufsize))) {
+    if (!(buf = malloc(strlen(envpath)+1+strlen(compiler_name)+1))) {
         rs_log_error("failed to allocate buffer for PATH munging");
         return EXIT_OUT_OF_MEMORY;
     }
@@ -377,11 +375,7 @@ int dcc_trim_path(const char *compiler_name)
         }
         strncpy(buf, p, len);
 
-        /* len is one PATH component's length, always <= strlen(envpath), so
-         * bufsize - len always leaves room for "/<compiler_name>\0". Bound the
-         * write explicitly rather than relying on that invariant being obvious
-         * (same idiom, and same fix, as dcc_support_masquerade in climasq.c). */
-        snprintf(buf + len, bufsize - len, "/%s", compiler_name);
+        sprintf(buf + len, "/%s", compiler_name);
         if (lstat(buf, &sb) == -1)
             continue;           /* ENOENT, EACCESS, etc */
         if (!S_ISLNK(sb.st_mode))

@@ -2,7 +2,7 @@
 
 **Fork issue:** [wiki-mod/distcc-ng#143](https://github.com/wiki-mod/distcc-ng/issues/143)
 **Fixed by:** [wiki-mod/distcc-ng#249](https://github.com/wiki-mod/distcc-ng/pull/249)
-**Upstream location:** `src/lsdistcc.c`, function `generate_query`; `src/climasq.c`, function `dcc_support_masquerade`; `src/util.c`, function `dcc_trim_path`
+**Upstream location:** `src/lsdistcc.c`, function `generate_query`; `src/climasq.c`, function `dcc_support_masquerade` (plus the same idiom in `src/util.c`, function `dcc_trim_path`, which is dead code in both trees — see below)
 **Checked against upstream commit:** [`8d569d192141615e26a3f0b65315822e7c814c3d`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `lsdistcc sprintf`, `canned_query` — no matching issue or PR found (0 results); not tracked upstream.
 
@@ -22,15 +22,20 @@ length is caller-controlled:
    (`len` is one `':'`-separated `PATH` component, always
    `<= strlen(envpath)`, and `buf` is sized
    `strlen(envpath)+1+strlen(progname)+1`), but written unboundedly.
-3. `src/util.c:378` — `dcc_trim_path()` does the identical
-   `sprintf(buf + len, "/%s", compiler_name)` masquerade idiom, same
-   provable-but-unbounded shape. Not even flagged by CodeQL; it is the
-   un-flagged twin of #2, found by grepping for the idiom rather than
-   trusting the scanner's coverage.
+3. `src/util.c:378` — `dcc_trim_path()` contains the identical
+   `sprintf(buf + len, "/%s", compiler_name)` masquerade idiom. **Noted, not
+   changed here:** in both this fork and upstream, `dcc_trim_path()`'s only
+   caller (`src/distcc.c:319`) sits inside a `#if 0 ... #endif` block, so the
+   function is currently unreachable dead code. The fork deliberately does
+   **not** modify dead code as part of a security fix (governance: don't fold
+   no-op/dead-code changes in without a separate maintainer decision). Flagged
+   for upstream awareness only: the idiom is present, and if `dcc_trim_path()`
+   is ever re-enabled it should get the same bounded treatment as site 2.
 
-Site 1 is a genuine overflow (caller controls the length). Sites 2/3 are
-defensive hardening of a provably-safe-today idiom so the bound is explicit
-rather than resting on an invariant a future edit could break.
+Site 1 is a genuine overflow (caller controls the length). Site 2 is
+defensive hardening of a provably-safe-today (but unbounded) idiom so the
+bound is explicit rather than resting on an invariant a future edit could
+break. Site 3 is dead code, documented but untouched.
 
 ## Upstream code (unchanged as of the commit above, upstream)
 
@@ -45,7 +50,8 @@ sprintf(canned_query,
 strncpy(buf, p, (size_t) len);
 sprintf(buf + len, "/%s", progname);
 
-/* src/util.c, dcc_trim_path() */
+/* src/util.c, dcc_trim_path() -- same idiom, but dead code (only caller is
+ * under #if 0 in src/distcc.c); left unchanged in this fork. */
 strncpy(buf, p, len);
 sprintf(buf + len, "/%s", compiler_name);
 ```
@@ -60,8 +66,9 @@ snprintf(canned_query, sizeof(canned_query),
          (unsigned)strlen(opt_compiler), opt_compiler,
          (unsigned)strlen(program), program);
 
-/* src/climasq.c and src/util.c: keep the allocation size in a variable and
- * bound the write with it (bufsize - len is always >= strlen(progname)+2). */
+/* src/climasq.c: keep the allocation size in a variable and bound the write
+ * with it (bufsize - len is always >= strlen(progname)+2). util.c's identical
+ * idiom is dead code and is intentionally NOT changed here. */
 size_t bufsize = strlen(envpath) + 1 + strlen(progname) + 1;
 ...
 snprintf(buf + len, bufsize - len, "/%s", progname);
@@ -90,3 +97,14 @@ Fork/fixed code — clean exit, no AddressSanitizer error (protocol 1 truncates
 safely; protocol 2/3 hit the explicit over-size guard and exit with a logged
 error). Full `make check` (comfychair suite, `test/testdistcc.py`) passes with
 the fix in place, including `ModeBits_Case`.
+
+For the `climasq.c` change (only reachable via a real masquerade symlink —
+`argv[0]` basename not containing "distcc"), a real distributed Apache httpd
+2.4.68 build (checksum-verified against downloads.apache.org and
+archive.apache.org) was run through a `cc`→`distcc` masquerade symlink on the
+`PATH`, plain and pump mode, with `DISTCC_FALLBACK=0`: 358 remote `COMPILE_OK`
+per run from the server's own log, a working `httpd -v`, and the fixed
+`dcc_set_path()` path (immediately after the changed `snprintf`) confirmed
+exercised via verbose trace. The general distributed-compile path (client and
+server) was additionally exercised across two LAN hosts, both cross-build
+directions, plain and pump, with no regression attributable to this change.

@@ -13,17 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
-- **`src/lsdistcc.c`, `src/climasq.c`, `src/util.c`** (#143): eliminate
-  unbounded `sprintf` writes from caller-controlled input
-  (`cpp/unbounded-write`, CodeQL critical). `lsdistcc`'s `generate_query()`
-  formatted the `-p` compiler-name argument into the fixed
-  `char canned_query[1000]` global with `sprintf` — a real overflow with a
-  long compiler name; now `snprintf(…, sizeof …)` with an added bounds guard
-  on the following binary `memcpy` (protocol 2/3). The masquerade
-  `sprintf(buf + len, "/%s", …)` idiom in `dcc_support_masquerade()`
-  (climasq.c) and its un-flagged twin in `dcc_trim_path()` (util.c) are made
-  explicitly bounded with `snprintf`. Verified with an AddressSanitizer
-  before/after overflow reproduction and the full `make check` suite.
+- **`src/lsdistcc.c`, `src/climasq.c`** (#143): eliminate unbounded
+  `sprintf` writes from caller-controlled input (`cpp/unbounded-write`,
+  CodeQL critical). `lsdistcc`'s `generate_query()` formatted the `-p`
+  compiler-name argument into the fixed `char canned_query[1000]` global
+  with `sprintf` — a real overflow with a long compiler name; now
+  `snprintf(…, sizeof …)` with an added bounds guard on the following binary
+  `memcpy` (protocol 2/3). The masquerade `sprintf(buf + len, "/%s", …)`
+  idiom in `dcc_support_masquerade()` (climasq.c) is made explicitly bounded
+  with `snprintf`. Verified with an AddressSanitizer before/after overflow
+  reproduction, the full `make check` suite, and a real masquerade-symlink
+  distributed compile (Apache httpd, local + LAN hosts, plain and pump).
 
 ### Fixed
 
