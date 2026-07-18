@@ -40,6 +40,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   reproduction, the full `make check` suite, and a real masquerade-symlink
   distributed compile (Apache httpd, local + LAN hosts, plain and pump).
 
+- **`src/util.c`** (#143): defence-in-depth for two `cpp/missing-check-scanf`
+  CodeQL alerts (Group G) in `dcc_get_proc_meminfo_mem_available()` and
+  `dcc_get_disk_io_stats()`. Independent control-flow analysis confirmed both
+  are false positives — the flagged reads are guarded by the `(f)scanf`
+  return check on every reachable path — so this is not a fix for a reachable
+  bug. The flagged locals (`value`/`unit`, `minor`/`dev`) are now initialised
+  at declaration with WHY-comments, keeping the functions safe against a
+  future refactor of the guard and silencing the analysis-confirmed false
+  positives. No behavioural change.
+
 ### Fixed
 
 - **`src/strip.c`, `src/arg.c`** (#246): a token introduced by `-Xclang`
