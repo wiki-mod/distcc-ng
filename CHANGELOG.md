@@ -11,6 +11,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`src/strip.c`** (#79): `dcc_strip_local_args()` now strips the `-x`
+  flag (both `-x <lang>` and combined `-xc++`-style forms) before
+  sending an already-preprocessed compile (`.ii`/`.mi`/`.mii`) to a
+  remote host. GCC honors an explicit `-x` override over the input
+  file's embedded `#line` directives, which corrupted DWARF debug info
+  — confirmed via a real before/after `readelf --debug-dump=info`
+  comparison: with `-x` present, the compile unit's `DW_AT_name` was the
+  ephemeral remote temp path (e.g. `distccd_12345.ii`); with it
+  stripped, `DW_AT_name` is the real original source path. Ported from
+  upstream distcc/distcc#577.
+
 ### Added
 
 - **`/etc/distcc/distcc.conf`** (#207): new client-side config file, sharing

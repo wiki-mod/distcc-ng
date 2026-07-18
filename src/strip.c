@@ -57,6 +57,14 @@
  * passed directly to cpp.  When given to gcc they have different
  * meanings.
  *
+ * -x is stripped too: when the input is already preprocessed (.ii/.mi/
+ * .mii, produced by client-side cpp), GCC treats an explicit -x language
+ * override as reason to ignore the file's embedded #line directives,
+ * which corrupts debug info by recording the remote temp filename
+ * instead of the real source path. The file extension alone is already
+ * sufficient for GCC to identify the language, so dropping -x here is
+ * safe and fixes the corruption without needing -x's information at all.
+ *
  * The value stored in '*out_argv' is malloc'd, but the arguments that
  * are pointed to by that array are aliased with the values pointed
  * to by 'from'.  The caller is responsible for calling free() on
@@ -95,7 +103,8 @@ int dcc_strip_local_args(char **from, char ***out_argv)
             || str_equal("-iwithprefixbefore", from[from_i])
             || str_equal("-idirafter", from[from_i])
             || str_equal("-iquote", from[from_i])
-            || str_equal("-Xpreprocessor", from[from_i])) {
+            || str_equal("-Xpreprocessor", from[from_i])
+            || str_equal("-x", from[from_i])) {
             /* skip next word, being option argument */
             if (from[from_i+1])
                 from_i++;
@@ -112,8 +121,9 @@ int dcc_strip_local_args(char **from, char ***out_argv)
                  || str_startswith("-MQ", from[from_i])
                  || str_startswith("-isystem", from[from_i])
                  || str_startswith("-iquote", from[from_i])
-                 || str_startswith("-stdlib", from[from_i])) {
-            /* Something like "-DNDEBUG" or
+                 || str_startswith("-stdlib", from[from_i])
+                 || str_startswith("-x", from[from_i])) {
+            /* Something like "-DNDEBUG", "-xc++", or
              * "-Wp,-MD,.deps/nsinstall.pp".  Just skip this word */
             ;
         }
