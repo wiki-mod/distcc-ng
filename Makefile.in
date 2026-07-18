@@ -371,6 +371,7 @@ SRC =	src/stats.c							\
 	src/prefork.c src/pump.c					\
 	src/remote.c src/renderer.c src/rpc.c				\
 	src/safeguard.c src/sandbox-config.c src/sandbox-seccomp.c	\
+	src/config-parser.c src/client-config.c			\
 	src/sendfile.c src/setuid.c src/serve.c		\
 	src/snprintf.c src/state.c					\
 	src/srvnet.c src/srvrpc.c src/ssh.c 				\
@@ -409,7 +410,8 @@ HEADERS = src/stats.h							\
 	src/va_copy.h 							\
 	src/zeroconf.h							\
 	src/pathsafety.h						\
-	src/sandbox-config.h src/sandbox-seccomp.h
+	src/sandbox-config.h src/sandbox-seccomp.h			\
+	src/config-parser.h src/client-config.h
 
 conf_dir = packaging/RedHat/conf
 conf_files = $(conf_dir)/hosts \

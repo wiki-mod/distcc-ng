@@ -71,6 +71,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`Makefile.in`: `config-parser.c`/`.h` and `client-config.c`/`.h` missing
+  from `SRC`/`HEADERS`** (#220): these two files (added by #207/#208) were
+  correctly listed in the `common_obj`/`distcc_obj` build-object lists used
+  by the normal `make` build, but never added to the `SRC`/`HEADERS`
+  variables `make dist` uses to build the source tarball packaging consumes.
+  `./configure && make && make check` (what CI runs) built fine regardless,
+  but any downstream RPM/deb/nightly build extracting and rebuilding from
+  the `make dist` tarball failed with `client-config.h: No such file or
+  directory` — discovered via a real nightly-publish run failing on
+  `master` right after #201 merged.
 - **CI: concurrency/cancel-in-progress gates** (#150): Added `concurrency:` blocks
   to all GitHub Actions workflows to prevent redundant runner-minute waste on
   superseded CI runs. Pure CI/test workflows (`c-build.yml`, `actionlint.yml`,
