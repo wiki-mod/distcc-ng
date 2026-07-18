@@ -170,6 +170,13 @@ int dcc_r_bulk_zstd(int out_fd, int in_fd,
     if (in_len == 0)
         return 0;               /* just check */
 
+    if (in_len > DCC_MAX_BULK_FILE_LEN || uncompr_size > DCC_MAX_BULK_FILE_LEN) {
+        rs_log_error("bulk transfer size (in_len=%u, uncompr_size=%u) from "
+                     "peer exceeds sanity limit %u, rejecting",
+                     in_len, uncompr_size, DCC_MAX_BULK_FILE_LEN);
+        return EXIT_PROTOCOL_ERROR;
+    }
+
     if ((in_buf = malloc(in_len)) == NULL) {
         rs_log_error("failed to allocate decompression input");
         ret = EXIT_OUT_OF_MEMORY;

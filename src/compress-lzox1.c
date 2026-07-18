@@ -194,6 +194,13 @@ int dcc_r_bulk_lzo1x(int out_fd, int in_fd,
     if (in_len == 0)
         return 0;               /* just check */
 
+    if (in_len > DCC_MAX_BULK_FILE_LEN) {
+        rs_log_error("bulk transfer size %u from peer exceeds sanity "
+                     "limit %u, rejecting", in_len, DCC_MAX_BULK_FILE_LEN);
+        ret = EXIT_PROTOCOL_ERROR;
+        goto out;
+    }
+
     if ((in_buf = malloc(in_len)) == NULL) {
         rs_log_error("failed to allocate decompression input");
         ret = EXIT_OUT_OF_MEMORY;
@@ -207,9 +214,15 @@ int dcc_r_bulk_lzo1x(int out_fd, int in_fd,
     /* Initial estimate for output buffer.  This is intentionally quite low to
      * exercise the resizing code -- if it works OK then we can scale this
      * up. */
-    out_size = 2 * in_len;
+    out_size = 2 * (size_t) in_len;
 #else
-    out_size = 8 * in_len;
+    /* Cast to size_t before multiplying: in_len is `unsigned` (32-bit on
+     * every real platform), so "8 * in_len" was computed in 32-bit
+     * arithmetic and could silently wrap for a large-but-now-sanity-capped
+     * in_len (see DCC_MAX_BULK_FILE_LEN above) before ever reaching a
+     * 64-bit size_t. This previously carried a "make sure this doesn't
+     * overflow" FIXME; the in_len ceiling above plus this cast resolves it. */
+    out_size = (size_t) in_len * 8;
 #endif
 
     try_again_with_a_bigger_buffer:
