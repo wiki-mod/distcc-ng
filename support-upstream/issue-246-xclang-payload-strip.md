@@ -62,7 +62,7 @@ Neither function has any special-casing of `-Xclang`, so a `-Xclang`-introduced 
 
 A uniform structural guard: a token immediately preceded by `-Xclang` is opaque cc1 payload and is passed through / skipped without matching any flag test.
 
-`dcc_strip_local_args()` (and, as defense-in-depth for the class, `dcc_strip_dasho()`):
+`dcc_strip_local_args()`:
 
 ```c
         if (str_equal("-Xclang", from[from_i]) && from[from_i+1]) {

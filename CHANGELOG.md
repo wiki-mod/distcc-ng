@@ -14,9 +14,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
 ### Fixed
 
 - **`src/strip.c`, `src/arg.c`** (#246): a token introduced by `-Xclang`
-  is now passed through verbatim by every argv scanner that sees the
-  resolved argv, instead of being matched against distcc's own
-  flag-prefix tests. The `-march=native` clang resolution (#73/#175)
+  is now passed through verbatim by `dcc_strip_local_args()` (client) and
+  skipped by `dcc_scan_args()` (server re-scan + pump mode), instead of
+  being matched against distcc's own flag-prefix tests. The
+  `-march=native` clang resolution (#73/#175)
   emits `-Xclang -target-feature -Xclang <value>` quadruples, and the
   disable values `-lwp`/`-xop` (present on any modern non-Bulldozer CPU)
   collided with `dcc_strip_local_args()`'s `-l<lib>`/`-x<lang>` strip

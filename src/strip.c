@@ -191,17 +191,6 @@ int dcc_strip_dasho(char **from, char ***out_argv)
     /* skip through argv, copying all arguments but skipping ones that
      * ought to be omitted */
     for (from_i = to_i = 0; from[from_i]; ) {
-        /* Same invariant as dcc_strip_local_args(): a "-Xclang <arg>" pair
-         * is opaque clang cc1 payload and must never be reinterpreted here.
-         * No current -march=native value collides with "-o", but keeping
-         * the guard consistent across every argv scanner that sees the
-         * resolved argv closes the whole misread class rather than the one
-         * token pair that happens to bite today. */
-        if (str_equal("-Xclang", from[from_i]) && from[from_i+1]) {
-            to[to_i++] = from[from_i++];        /* "-Xclang" */
-            to[to_i++] = from[from_i++];        /* its verbatim payload */
-            continue;
-        }
         if (!strcmp(from[from_i], "-o")) {
             /* skip "-o  FILE" */
             from_i += 2;
