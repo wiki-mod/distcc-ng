@@ -182,7 +182,37 @@ Relevant to: adding or changing a key in `/etc/distcc/distccd.conf` or
       **both** binaries, not just the one you were focused on, is what
       catches it.
 
-## 7. Cleanup (always required for anything that started a process/container)
+## 7. Input / argument validation (CLI argument parsing, config value parsing, format strings)
+
+Relevant to: any change validating or rejecting a caller-supplied string
+before it is used as a format string, size, path, or other structurally-
+significant value — `lsdistcc`'s `get_thename()`, `dcc_sane_env_path()`,
+`src/config-parser.c`, anything parsing a `-specs=`/`-M*`-style compiler
+flag value.
+
+- [ ] A "contains X" check is not the same as "is exactly X" or "consists
+      only of X" — a validator that only confirms a required token's
+      *presence* (e.g. `strstr(fmt, "%d")`) can still let attacker-
+      controlled extra content through alongside it. State explicitly
+      which of the two the validator actually enforces.
+- [ ] Real before/after exploit attempt with a deliberately malicious
+      input crafted to pass a *naive* version of the check — not just a
+      well-formed valid input and a completely unrelated invalid one.
+      Build an AddressSanitizer- or Valgrind-instrumented binary if the
+      failure mode is a memory-safety issue, and show the crash/
+      violation before the fix and its absence after (see issue #226's
+      `lsdistcc` format-string fix for the pattern).
+- [ ] Confirm the fix doesn't reject realistic valid input that
+      legitimately varies (e.g. printf flags/width/precision before a
+      conversion specifier) — a validator strict enough to reject an
+      attack but wrong enough to also reject normal use is a regression,
+      not a fix.
+- [ ] If the same unvalidated input can also reach a *different* code
+      path (a second caller, an alternate encoding), confirm the fix
+      covers that path too, not just the one exercised by the specific
+      proof-of-concept used to find the bug.
+
+## 8. Cleanup (always required for anything that started a process/container)
 
 - [ ] No leftover running containers (`docker ps -a` clean, or only
       pre-existing/unrelated entries explicitly identified as such).
@@ -205,7 +235,9 @@ section for it as part of that same PR, rather than stretching an
 existing section to cover it loosely or skipping real verification
 because "there's no checklist item for this." Section 6 (config file
 changes) was added this way, prompted by issue #207 introducing this
-repo's first client-side config file.
+repo's first client-side config file. Section 7 (input/argument
+validation) was added the same way, prompted by issue #226's `lsdistcc`
+format-string fix having no matching section to verify against.
 
 ## Reporting
 
