@@ -155,11 +155,28 @@ static int dcc_x_file_compressed(int out_fd,
         }
 #ifdef HAVE_ZSTD
           else if (compression == DCC_COMPRESS_ZSTD) {
-            if ((ret = dcc_compress_file_zstd(in_fd, in_len, 
+            if ((ret = dcc_compress_file_zstd(in_fd, in_len,
                                                &out_buf, &out_len)))
                 goto out;
         }
+#else
+          else if (compression == DCC_COMPRESS_ZSTD) {
+            /* Defense in depth: this build has no zstd support, so
+             * DCC_COMPRESS_ZSTD should never reach this function -- see
+             * hosts.c's dcc_get_features_from_protover(), which now
+             * rejects protover 4 outright when HAVE_ZSTD is undefined.
+             * If it does anyway (e.g. a future negotiation path forgets
+             * the same guard), fail cleanly here rather than falling
+             * through to dcc_x_token_int()/dcc_writex() below with
+             * out_buf/out_len never set. See issue #225. */
+            rs_log_error("zstd compression selected, but this build has "
+                         "no zstd support");
+            ret = EXIT_PROTOCOL_ERROR;
+            goto out;
+        }
+#endif
 
+#ifdef HAVE_ZSTD
         if (compression == DCC_COMPRESS_ZSTD) {
             if ((ret = dcc_x_token_2int(out_fd, token, out_len, in_len)))
                 goto out;

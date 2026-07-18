@@ -439,7 +439,25 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
     if (protover == 2 || protover == 3) {
         *compr = DCC_COMPRESS_LZO1X;
     } else if (protover == 4) {
+#ifdef HAVE_ZSTD
         *compr = DCC_COMPRESS_ZSTD;
+#else
+        /* A peer claiming protover 4 (zstd) against a distccd built
+         * without zstd support must not be allowed to select a
+         * compression mode this binary can't actually handle -- see
+         * issue #225: dcc_x_file_compressed() (bulk.c) has no fallback
+         * for DCC_COMPRESS_ZSTD when HAVE_ZSTD is undefined, so silently
+         * selecting it here left out_buf/out_len uninitialized on the
+         * send path. Reject the protocol version outright instead,
+         * matching this function's own protover==0/>=__DCC_VER_MAX
+         * rejection below and the pattern already used correctly by
+         * this file's ",zstd" hostspec parsing and pump.c's
+         * dcc_r_bulk() dispatch. */
+        rs_log_error("peer requested protocol version 4 (zstd), but this "
+                     "build has no zstd support");
+        *compr = DCC_COMPRESS_NONE;
+        return 1;
+#endif
     } else {
         *compr = DCC_COMPRESS_NONE;
     }

@@ -48,6 +48,25 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **Protocol version 4 (zstd) could silently misconfigure a non-zstd
+  `distccd`** (#225): `src/hosts.c`'s `dcc_get_features_from_protover()`
+  mapped protover 4 to `DCC_COMPRESS_ZSTD` unconditionally, regardless of
+  whether the running binary actually has zstd support compiled in. A peer
+  claiming protover 4 against a non-zstd build could reach
+  `src/bulk.c`'s send path with an uninitialized buffer (sibling of #224's
+  finding), and separately `src/serve.c` never checked this function's own
+  return value, so its existing rejection paths had no real effect on the
+  connection. Fixed by rejecting protover 4 outright under `#ifndef
+  HAVE_ZSTD` (a silent fallback to a different compression wasn't a safe
+  option either -- LZO and zstd use different wire token formats, and the
+  client commits to one before the server could object) plus making
+  `serve.c` actually check and act on the rejection, plus a defense-in-depth
+  fallback directly in `bulk.c`. Verified with a real zstd-capable client
+  against a real `--without-zstd`-built `distccd`: now rejected immediately
+  (`time:0ms`) with a clear log message, before any argv or file data is
+  exchanged. `make check` passes with zero regressions on both
+  `--without-zstd` and normal zstd-enabled builds.
+
 - **Unbounded allocation size from wire-protocol input** (#224): `src/rpc.c`'s
   `dcc_r_str_alloc()` (backing every string field read off the network --
   every `argv[i]`, filename, symlink target) and `dcc_r_argv()`'s argument
