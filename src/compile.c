@@ -489,8 +489,9 @@ static int dcc_please_send_email_after_investigation(
  *
  * @returns 1 if @p path self-identifies as clang, 0 if it doesn't (treated
  *     as gcc, the only other family dcc_rewrite_generic_compiler
- *     distinguishes), -1 if the probe itself failed (fork/exec/pipe error)
- *     and the caller must not guess.
+ *     distinguishes), -1 if the probe itself failed (fork/exec/pipe error),
+ *     @p path failed the pre-exec sanity checks below, or the caller must
+ *     not guess.
  **/
 static int dcc_probe_is_clang(const char *path)
 {
@@ -499,6 +500,30 @@ static int dcc_probe_is_clang(const char *path)
     FILE *in;
     char buff[4096];
     int is_clang = -1;
+
+    /* @p path is caller's dcc_which()-resolved PATH lookup, so its value is
+     * influenced by the invoking user's own environment -- expected for
+     * this client-side, same-privilege context (see this function's
+     * callers), but CodeQL's cpp/uncontrolled-process-operation flags any
+     * execve-family call fed from environment-influenced data on principle,
+     * without knowing the trust boundary here. Two concrete, real checks
+     * before the fork rather than a bare suppression comment:
+     * (1) refuse a non-absolute path outright -- dcc_which() always builds
+     * one from a PATH entry, so a relative value here means something
+     * upstream is already broken and must not be trusted further;
+     * (2) re-verify executability right before the exec below rather than
+     * only relying on dcc_which()'s own earlier access() check, closing the
+     * TOCTOU window between that lookup and this actual exec. */
+    if (path[0] != '/') {
+        rs_log_warning("refusing to probe non-absolute compiler path '%s'",
+                        path);
+        return -1;
+    }
+    if (access(path, X_OK) != 0) {
+        rs_log_warning("compiler path '%s' no longer executable, not probing: %s",
+                        path, strerror(errno));
+        return -1;
+    }
 
     if (pipe(fds) == -1)
         return -1;
