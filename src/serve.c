@@ -717,7 +717,20 @@ static int dcc_run_job(int in_fd,
     if ((ret = dcc_r_request_header(in_fd, &protover)))
         goto out_cleanup;
 
-    dcc_get_features_from_protover(protover, &compr, &cpp_where);
+    /* dcc_get_features_from_protover()'s return value was previously
+     * never checked here, so its own protover-rejection paths (including
+     * the new HAVE_ZSTD guard added for issue #225) had no actual effect
+     * on the connection -- the server would silently proceed with
+     * whatever *compr it fell back to, while the client (unaware of the
+     * silent downgrade) keeps sending data in the wire format it
+     * originally negotiated, causing a protocol desync rather than a
+     * clean rejection. Aborting here closes that gap. */
+    if (dcc_get_features_from_protover(protover, &compr, &cpp_where)) {
+        rs_log_error("client requested unsupported protocol features "
+                     "(protover %d)", (int) protover);
+        ret = EXIT_PROTOCOL_ERROR;
+        goto out_cleanup;
+    }
 
     if (cpp_where == DCC_CPP_ON_SERVER) {
         if ((ret = make_temp_dir_and_chdir_for_cpp(in_fd,
