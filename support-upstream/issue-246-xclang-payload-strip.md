@@ -60,9 +60,9 @@ Neither function has any special-casing of `-Xclang`, so a `-Xclang`-introduced 
 
 ## Fixed code (this fork, PR #247)
 
-A uniform structural guard: a token immediately preceded by `-Xclang` is opaque cc1 payload and is passed through / skipped without matching any flag test.
+A uniform structural guard applied in every argv scanner that sees the resolved argv: a token immediately preceded by `-Xclang` is opaque cc1 payload and is passed through / skipped without matching any flag test.
 
-`dcc_strip_local_args()`:
+`dcc_strip_local_args()` (and, for the same invariant, `dcc_strip_dasho()` — a no-op for today's tokens but kept consistent so the whole class is closed at every scanner):
 
 ```c
         if (str_equal("-Xclang", from[from_i]) && from[from_i+1]) {
