@@ -111,14 +111,29 @@ Relevant to: protocol changes, compiler masquerade/rewrite logic
 (`dcc_gcc_rewrite_fqn` and similar), anything that could affect
 interop with a distccd this fork didn't build.
 
-- [ ] Test against a **real, independently-built `distccd`** (e.g. a
-      stock distro package, not this fork's own binary on both ends) —
-      round-tripping against yourself proves internal consistency, not
-      compatibility.
-- [ ] Real, non-trivial compile load (an actual third-party C project,
-      not a single hello-world file) with real parallelism, so protocol
-      edge cases (large files, many concurrent jobs, varied compiler
-      flags) get real exercise.
+Round-tripping distcc-ng against itself only proves internal
+consistency, not compatibility — that needs **both** directions of the
+matrix below tested, not just one. A change that only breaks one
+direction (e.g. our client mis-negotiating against a stock server, or
+our server mishandling a stock client's requests) can pass a one-
+directional test cleanly and still be a real interop break — this is
+exactly the shape of bug #225 turned out to be (a distcc-ng client
+against a distcc-ng-but-`--without-zstd` server).
+
+- [ ] **Direction A — our client, a real independently-built server**:
+      distcc-ng's `distcc` against a **real, independently-built
+      `distccd`** (e.g. a stock distro package, not this fork's own
+      binary).
+- [ ] **Direction B — a real independently-built client, our server**:
+      a **real, independently-built `distcc`** (stock distro package)
+      against distcc-ng's `distccd`. Don't assume symmetry with
+      Direction A — client-side and server-side code paths differ, and
+      a fix/regression can be one-directional.
+- [ ] Each direction gets its own **real, non-trivial compile load** (an
+      actual third-party C project, not a single hello-world file) with
+      real parallelism, so protocol edge cases (large files, many
+      concurrent jobs, varied compiler flags) get real exercise — not
+      just a trivial connectivity check.
 - [ ] `DISTCC_FALLBACK=0` for the same reason as above: if the whole
       build succeeds with fallback disabled, that's strong evidence every
       compiled file really round-tripped through the remote host.
