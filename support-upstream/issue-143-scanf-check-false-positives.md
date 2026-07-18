@@ -11,7 +11,7 @@ entry documents that they are false positives plus the optional defensive
 hardening this fork applied.
 
 **Fork issue:** [wiki-mod/distcc-ng#143](https://github.com/wiki-mod/distcc-ng/issues/143) (Group G)
-**Fixed by:** [wiki-mod/distcc-ng#PLACEHOLDER_PR](https://github.com/wiki-mod/distcc-ng/pull/PLACEHOLDER_PR) — defensive hardening only, no behavioural change
+**Fixed by:** [wiki-mod/distcc-ng#253](https://github.com/wiki-mod/distcc-ng/pull/253) — defensive hardening only, no behavioural change
 **Upstream location:** `src/util.c`, functions `dcc_get_proc_meminfo_mem_available()` and `dcc_get_disk_io_stats()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `scanf return value`, `meminfo`, `diskstats`, `CodeQL util.c` — no upstream report found; upstream does not appear to run CodeQL on this code.
