@@ -26,6 +26,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`doc/verification-checklist.md` section 7**: input/argument
+  validation checklist (CLI argument parsing, config value parsing,
+  format strings) — prompted by issue #226's `lsdistcc` format-string
+  fix having no matching section to verify against. Cleanup renumbered
+  from section 7 to section 8.
 - **`AGENTS.md` rule 60**: a delegated agent doing non-trivial work must post
   a dated progress comment on its issue/PR at least every 5 minutes of
   active work, not only at real milestones (extends rule 10) — a
