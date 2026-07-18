@@ -13,6 +13,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/strip.c`, `src/arg.c`** (#246): a token introduced by `-Xclang`
+  is now treated as opaque clang cc1 payload by every argv scanner that
+  sees the resolved argv — passed through verbatim by
+  `dcc_strip_local_args()` and `dcc_strip_dasho()`, skipped by
+  `dcc_scan_args()` (server re-scan + pump mode) — instead of being
+  matched against distcc's own flag-prefix tests. The `-march=native`
+  clang resolution (#73/#175)
+  emits `-Xclang -target-feature -Xclang <value>` quadruples, and the
+  disable values `-lwp`/`-xop` (present on any modern non-Bulldozer CPU)
+  collided with `dcc_strip_local_args()`'s `-l<lib>`/`-x<lang>` strip
+  prefixes and were silently dropped client-side, turning the quadruple
+  into a malformed triple the remote clang rejected with
+  `COMPILE_ERROR`. The same value, once transmitted, also tripped
+  `dcc_scan_args()`'s `-x` check on the server (which re-scans a received
+  argv with no native flag, so it has no ignore-range protection).
+  Verified end-to-end with a real two-container and a real
+  two-physical-host distributed clang `-march=native` compile
+  (server-log `COMPILE_OK`), plus new `StripArgs_Case` regression cases;
+  gcc `-march=native` (bare `-m*` tokens, never `-Xclang`-wrapped)
+  confirmed unaffected.
 - **`src/strip.c`** (#79): `dcc_strip_local_args()` now strips the `-x`
   flag (both `-x <lang>` and combined `-xc++`-style forms) before
   sending an already-preprocessed compile (`.ii`/`.mi`/`.mii`) to a

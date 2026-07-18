@@ -87,6 +87,20 @@ int dcc_strip_local_args(char **from, char ***out_argv)
     /* skip through argv, copying all arguments but skipping ones that
      * ought to be omitted */
     for (from_i = to_i = 0; from[from_i]; from_i++) {
+        /* "-Xclang <arg>" hands <arg> straight to clang's cc1 frontend;
+         * <arg> is compiler-internal payload, not a distcc preprocess/link
+         * flag. It must be forwarded verbatim even when it happens to look
+         * like one -- e.g. the -target-feature disable values "-lwp"/"-xop"
+         * produced by -march=native resolution collide with the "-l<lib>"
+         * and "-x<lang>" prefix tests below; dropping the value half turns
+         * the "-Xclang -target-feature -Xclang <value>" quadruple into a
+         * malformed triple the remote clang then rejects. Copy the pair
+         * as-is and skip all stripping logic for it. */
+        if (str_equal("-Xclang", from[from_i]) && from[from_i+1]) {
+            to[to_i++] = from[from_i++];        /* "-Xclang" */
+            to[to_i++] = from[from_i];          /* its verbatim payload */
+            continue;
+        }
         if (str_equal("-D", from[from_i])
             || str_equal("-I", from[from_i])
             || str_equal("-U", from[from_i])
@@ -177,6 +191,19 @@ int dcc_strip_dasho(char **from, char ***out_argv)
     /* skip through argv, copying all arguments but skipping ones that
      * ought to be omitted */
     for (from_i = to_i = 0; from[from_i]; ) {
+        /* Same invariant as dcc_strip_local_args()/dcc_scan_args(): a
+         * "-Xclang <arg>" pair is opaque clang cc1 payload and must never be
+         * reinterpreted as a distcc flag. No -march=native -target-* value
+         * currently collides with the "-o" test below, so this is a no-op
+         * for today's tokens -- it is here so every argv scanner that sees
+         * the resolved argv enforces the one invariant identically, closing
+         * the whole misread class rather than only the sites a specific
+         * token set happens to reach. */
+        if (str_equal("-Xclang", from[from_i]) && from[from_i+1]) {
+            to[to_i++] = from[from_i++];        /* "-Xclang" */
+            to[to_i++] = from[from_i++];        /* its verbatim payload */
+            continue;
+        }
         if (!strcmp(from[from_i], "-o")) {
             /* skip "-o  FILE" */
             from_i += 2;
