@@ -35,6 +35,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   artifact integrity, and cleanup — each with concrete "what counts as
   real evidence" bullet points, not just "make check passed". `AGENTS.md`
   rule 37 now points changes in these areas at it. (#202)
+- **`doc/verification-checklist.md` section 4**: now requires both
+  directions of the default-vs-fork compatibility matrix, not just one —
+  a real independently-built `distccd` against our client (already
+  required) *and* a real independently-built `distcc` against our
+  `distccd` (previously missing). Prompted by #225, which turned out to
+  be exactly this shape of one-directional-tested-but-broken-the-other-
+  way bug. (#232)
 - **`src/arg.c`: skip distributing `-flto`/`-flto=`-style compiler invocations**
   (#74) — LTO defers the bulk of the optimization work to link time, so
   distributing the per-translation-unit compile step wastes network/
