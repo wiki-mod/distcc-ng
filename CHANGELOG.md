@@ -11,6 +11,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **Default build optimization level raised from `-O2` to `-O3`, everywhere**
+  (dev builds, CI, and packaged releases alike), not just a release-only
+  build path (#229). `-O2` was never an explicit setting in this repo's own
+  build files — it came from autoconf's `AC_PROG_CC` default (`-g -O2` when
+  the caller hadn't already set `CFLAGS`); `configure.ac` now rewrites that
+  default's `-O2` to `-O3` right after `AC_PROG_CC`, leaving an explicit
+  caller-supplied `CFLAGS` (e.g. `CFLAGS=-O1 ...`) untouched. Verified with
+  a real side-by-side comparison: both optimization levels build clean with
+  zero new `-Werror` warnings, `make check` passes identically at both
+  (same pass count, same wall time), a full AddressSanitizer/UndefinedBehaviorSanitizer
+  run found no UB or leak difference between the two levels (the one real,
+  pre-existing latent-UB finding it surfaced, `src/cleanup.c`'s
+  zero-length `memcpy` from a still-`NULL` pointer, is identical under
+  both), compile-time overhead is within run-to-run noise for this
+  codebase's size, and a real distributed-compile benchmark (real
+  `distcc`/`distccd` pair, real network hop, verified via the daemon's own
+  log) showed no meaningful runtime win either way -- expected, since
+  distcc/distccd's own runtime is dominated by network I/O rather than the
+  CPU work `-O3` optimizes.
+
 ## [3.6.0-NG] - 2026-07-19
 
 ### Security
