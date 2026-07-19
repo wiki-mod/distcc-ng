@@ -252,6 +252,20 @@ AC_SUBST(HAVE_SECCOMP)
 
 dnl Checks for programs
 AC_PROG_CC
+
+# AC_PROG_CC defaults CFLAGS to "-g -O2" when the caller did not already
+# set CFLAGS before this macro ran. Bump that default to -O3 everywhere
+# (dev builds, CI, and packaged releases alike) rather than reserving the
+# higher optimization level for a separate release-only build path -- a
+# deliberate maintainer decision, not an oversight, made after a real
+# -O2-vs-O3 comparison build. Only the literal "-O2" substring is
+# replaced, so an explicit CFLAGS="-O1 ..." (or any other caller-supplied
+# optimization level) passed to ./configure is left alone rather than
+# silently overridden.
+case "$CFLAGS" in
+    *-O2*) CFLAGS=`echo "$CFLAGS" | sed -e 's/-O2/-O3/'` ;;
+esac
+
 WERROR_CFLAGS=""
 PYTHON_CFLAGS=""
 if test x"$GCC" = xyes
