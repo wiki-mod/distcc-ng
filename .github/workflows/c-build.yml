@@ -66,7 +66,7 @@ jobs:
           # redirect the nightly run to current_dev instead of re-checking
           # master, which push/pull_request already cover on every change.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      - uses: ConorMacBride/install-package@v1
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
@@ -282,6 +282,13 @@ jobs:
     name: Distributed compile E2E (2-container)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # This job only checks out the repo and runs a local docker-compose e2e
+    # script -- it reads code and writes nothing back. Its sibling jobs in
+    # this file all declare an explicit job-level block; without one here the
+    # job inherited the default token scope, which CodeQL flagged
+    # (actions/missing-workflow-permissions). Pin it to the minimum it needs.
+    permissions:
+      contents: read
     steps:
       # Trial run (#58): audit-only egress monitoring, see the make_check
       # job's identical first step for the full rationale.
