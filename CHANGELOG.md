@@ -13,6 +13,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`.github/workflows/`** (#222): supply-chain hardening of the CI workflow
+  files flagged by CodeQL. Pinned the five unpinned third-party action refs
+  to a full commit SHA with a `# vX.Y.Z` comment, matching this repo's own
+  existing pinning convention (`ConorMacBride/install-package@v1` in
+  `c-build.yml` and twice in `package-release.yml`;
+  `stefanzweifel/changelog-updater-action@v1` and
+  `stefanzweifel/git-auto-commit-action@v5` in
+  `changelog-update-on-release.yml`) — clears the six `actions/unpinned-tag`
+  alerts (#40/#44/#45/#46/#48). Added a minimal `permissions: {contents:
+  read}` block to `c-build.yml`'s `distributed_e2e` job (it only reads the
+  repo and runs a local e2e script), clearing the
+  `actions/missing-workflow-permissions` alert (#74). GitHub-owned
+  `actions/*` and `github/codeql-action/*` refs are intentionally left on
+  their major-version tags — CodeQL does not flag them and the repo already
+  treats them as trusted first-party.
 - **`src/ssh.c`** (#143, Group H): sanity-check the resolved SSH transport
   command before it becomes `argv[0]` to `execvp()`
   (`cpp/uncontrolled-process-operation`, CodeQL high, alert #10). A new
