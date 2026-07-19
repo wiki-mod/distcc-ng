@@ -217,6 +217,100 @@ PrintIncludeServerStatusMessage() {
   fi
 }
 
+PythonMajorMinorVersion() {
+  "$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+}
+
+PythonIncludeServerCandidatePaths() {
+  "$PYTHON" - "$python_version" "$prefix" "$exec_prefix" "$distcc_parent" <<'PY'
+import sys
+import sysconfig
+
+version = sys.argv[1]
+roots = sys.argv[2:]
+python_version = "python%s" % version
+python_path_suffix = "/%s/" % python_version
+
+for root in roots:
+  if not root:
+    continue
+  for location in ("purelib", "platlib"):
+    libdir = sysconfig.get_path(
+        location, vars={"base": root, "platbase": root, "data": root})
+    if not libdir:
+      continue
+    print("%s/include_server/include_server.py" % libdir)
+    split_point = libdir.find(python_path_suffix)
+    if split_point == -1:
+      continue
+    python_root = libdir[:split_point]
+    remainder = libdir[split_point + len(python_path_suffix):]
+    if remainder:
+      print(
+          "%s/distcc-pump/%s/%s/include_server/include_server.py" %
+          (python_root.rstrip("/"), python_version, remainder))
+    else:
+      print("%s/distcc-pump/%s/include_server/include_server.py" %
+            (python_root.rstrip("/"), python_version))
+PY
+}
+
+ResolveInstalledIncludeServer() {
+  if [ -n "$include_server" ] && [ -f "$include_server" ]; then
+    return 0
+  fi
+
+  python_version=`PythonMajorMinorVersion` || {
+    echo "$program_name: error: can't determine Python version from $PYTHON" \
+      1>&2
+    return 1
+  }
+
+  distcc_parent=`dirname "$distcc_location"`
+
+  candidate_file=`mktemp "${TMPDIR:-/tmp}/distcc-pump-candidates.XXXXXX"` || {
+    echo "$program_name: error: can't create include_server candidate list" \
+      1>&2
+    return 1
+  }
+  if ! PythonIncludeServerCandidatePaths > "$candidate_file"; then
+    rm -f "$candidate_file"
+    echo "$program_name: error: can't query Python include_server paths" 1>&2
+    return 1
+  fi
+
+  # Prefer the Python version used to configure this pump script.  Reading the
+  # generated list line-by-line keeps paths with whitespace intact.
+  while IFS= read -r candidate
+  do
+    if [ -f "$candidate" ]; then
+      include_server="$candidate"
+      rm -f "$candidate_file"
+      return 0
+    fi
+  done < "$candidate_file"
+  rm -f "$candidate_file"
+
+  if [ -n "$include_server" ]; then
+    echo "$program_name: error: can't find include_server.py at" \
+      "'$include_server' or under the Python $python_version install paths" \
+      1>&2
+  else
+    echo "$program_name: error: can't find include_server.py under the" \
+      "Python $python_version install paths" 1>&2
+  fi
+  return 1
+}
+
+PrintIncludeServerOutput() {
+  if [ -f "$include_server_stdout" ]; then
+    cat "$include_server_stdout"
+  fi
+  if [ -f "$include_server_stderr" ]; then
+    cat "$include_server_stderr" >&2
+  fi
+}
+
 Announce() {
   if [ "$verbose" = 1 ]; then
     echo "__________Using distcc-pump from $DISTCC_LOCATION"
@@ -232,6 +326,7 @@ StartIncludeServer() {
   # installed pump (in /usr/local/bin somewhere or something), and
   # include_server points to the installed include_server.py.
   if [ -n "$include_server" ]; then
+    ResolveInstalledIncludeServer || return 1
     pythonpath=`dirname "$include_server"`
   else
     # We assume this script is run from the build directory.  We pick up .py
@@ -247,6 +342,10 @@ StartIncludeServer() {
     # directory. Possibly there may be more than one such file; first identify
     # them all.
     so_dir=`"$distcc_srcdir/find_c_extension.sh" "$DISTCC_LOCATION"`
+    if [ $? -ne 0 ] || [ -z "$so_dir" ]; then
+      echo "__________Could not locate distcc-pump C-extension directory." 1>&2
+      return 1
+    fi
     pythonpath="$so_dir"
   fi
 
@@ -318,6 +417,7 @@ StartIncludeServer() {
   if $TEST ! -S "$socket"; then
     echo "__________Expected a socket at '$socket'" 1>&2
     PrintIncludeServerStatusMessage 1
+    PrintIncludeServerOutput
     return 1
   fi
 
@@ -334,6 +434,7 @@ StartIncludeServer() {
     # socket is not working.
     include_server_pid=''
     PrintIncludeServerStatusMessage 1
+    PrintIncludeServerOutput
     return 1
   fi
 }
@@ -356,29 +457,106 @@ ReportDiscrepancies() {
        'include_server(1) man page.' 1>&2
 }
 
+# Returns success (0) if the process with pid $1 both exists and is not a
+# zombie ('Z' state); returns failure (1) otherwise. A zombie process is
+# already dead as far as ShutDown()'s SIGTERM/SIGKILL wait loops are
+# concerned: it can never receive or act on another signal, and the OS
+# won't actually reap it until this script itself exits -- so treating a
+# zombie as "still alive" (as a plain `ps -p PID` check does) makes those
+# loops wait the full timeout, or in the worst case deadlock a caller that
+# waits on this script to exit before reaping the zombie itself.
+#
+# The state field is requested as "-o state=" (an empty replacement header)
+# rather than GNU-only "--no-headers"/"-o state" or BSD's differently
+# structured header suppression, because appending "=" to a field name to
+# suppress its header is honored by both GNU procps and BSD/macOS ps --
+# this is the portable no-header idiom, not the Linux-specific one.
+# "state" (not "stat") is used because both GNU and BSD ps define it as
+# the single-letter symbolic state code (R/S/D/Z/T/...) without the extra
+# modifier characters ("+", "s", ...) that "stat"/"STAT" can append.
+#
+# If this ps invocation itself fails or returns no usable output, $state
+# stays empty and we fall through to the pre-existing "alive" behavior (the
+# plain ps -p check already passed above) rather than guessing -- a false
+# "it's a zombie" reading would be worse than the original bug, since it
+# would skip killing a process that is actually still running. Confirmed
+# this is exactly what happens on Cygwin: its minimal `ps` doesn't support
+# `-o` at all (fails with "unknown option -- o"), so $state is empty there
+# and this degrades to the old ps -p-only behavior rather than misreporting
+# a live process as a zombie.
+IncludeServerAlive() {
+  if ! ps -p "$1" > /dev/null 2>&1; then
+    return 1
+  fi
+  state=`ps -o state= -p "$1" 2>/dev/null | tr -d '[:space:]'`
+  case "$state" in
+    Z*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 ShutDown() {
   ReportDiscrepancies
   # Always -- at exit -- shut down include_server and remove $socket_dir
   if [ -n "$include_server_pid" ] && \
-    ps -p "$include_server_pid" > /dev/null; then
+    IncludeServerAlive "$include_server_pid"; then
     if [ "$verbose" = 1 ]; then
       echo '__________Shutting down distcc-pump include server'
     fi
-    kill $include_server_pid
-    # Wait until it's really dead.  We need to do this because the
-    # include server may produce output after receiving SIGTERM.
-    # Note that while 'sleep 0.01' is relying on a feature of GNU sleep,
-    # that's OK; on systems that don't support it, it's effectively the
-    # same as 'sleep 0', i.e. we'll just busy-wait rather than sleeping.
-    while kill -0 $include_server_pid; do sleep 0.01; done >/dev/null 2>&1
+    if ! kill "$include_server_pid"; then
+      echo '__________Could not send SIGTERM to distcc-pump include server' 1>&2
+    else
+      # Allow a short grace period for clean exit, then force kill.
+      include_server_wait_count=0
+      include_server_wait_limit=200   # 200 * 0.01s ~= 2s
+      while IncludeServerAlive "$include_server_pid"; do
+        if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+          echo '__________Timed out waiting for distcc-pump include server' \
+               'to stop after SIGTERM' 1>&2
+          break
+        fi
+        include_server_wait_count=`expr "$include_server_wait_count" + 1`
+        sleep 0.01
+      done
+    fi
+
+    if IncludeServerAlive "$include_server_pid"; then
+      # SIGKILL is unrecoverable, unlike the SIGTERM sent above, so a
+      # stale/reused pid is worse here: if the include server already
+      # exited during the grace period above and the OS quickly recycled
+      # its pid for an unrelated process, we must not force-kill that
+      # process. Confirm the pid still looks like the include server
+      # (its command line contains the include-server script) before
+      # escalating.
+      if ps -p "$include_server_pid" -o args= 2>/dev/null | \
+          grep -q 'include_server'; then
+        echo '__________Sending SIGKILL to unresponsive distcc-pump' \
+             'include server' 1>&2
+        if kill -9 "$include_server_pid"; then
+          include_server_wait_count=0
+          include_server_wait_limit=100   # 100 * 0.01s ~= 1s
+          while IncludeServerAlive "$include_server_pid"; do
+            if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+              echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
+                   1>&2
+              break
+            fi
+            include_server_wait_count=`expr "$include_server_wait_count" + 1`
+            sleep 0.01
+          done
+        else
+          echo '__________Error: could not send SIGKILL to distcc-pump include server' \
+               1>&2
+        fi
+      else
+        echo '__________Not sending SIGKILL: pid' "$include_server_pid" \
+             'no longer looks like the include server (it likely already' \
+             'exited and the pid was reused)' 1>&2
+      fi
+    fi
   fi
 
-  if [ -f "$include_server_stdout" ]; then
-    cat "$include_server_stdout"
-  fi
-  if [ -f "$include_server_stderr" ]; then
-    cat "$include_server_stderr" >&2
-  fi
+  PrintIncludeServerOutput
 
   if [ -n "$socket_dir" ];  then
     rm -rf "$socket_dir"
@@ -466,15 +644,21 @@ StartIncludeServerAndDetermineHosts() {
     else
       hosts=`$distcc_location/distcc --show-hosts`
       num_hosts=`echo "$hosts" | wc -l`
-      num_pump_hosts=`echo "$hosts" | grep ',cpp' | wc -l`
       if [ $num_hosts -eq 0 ]; then
         echo "$program_name: error: distcc hosts list is empty!" 1>&2
         exit 1
-      elif [ $num_pump_hosts -eq 0 ]; then
-        echo "$program_name: error: pump mode requested, but distcc" \
-          "hosts list does not contain any hosts with ',cpp' option" 1>&2
-        exit 1
       else
+        # Auto-append ,cpp,lzo to hosts that don't already specify ,cpp.
+        # This mirrors the behavior of ExportDISTCC_HOSTS() for the auto-discovery
+        # path. Hosts that already have ,cpp are left unchanged (may have their own
+        # compression option). This ensures a single host-list format works for both
+        # pump and plain distcc (which gracefully falls back to client-side cpp if
+        # the include-server isn't running).
+        hosts_with_cpp=`echo "$hosts" | sed '/,cpp/! s/$/,cpp,lzo/'`
+
+        export DISTCC_HOSTS="--randomize `echo "$hosts_with_cpp" | tr '\n' ' ' | sed 's/ $//'`"
+
+        num_pump_hosts=`echo "$hosts_with_cpp" | grep ',cpp' | wc -l`
         if [ "$verbose" = 1 ]; then
           server_word="servers"
           if [ $num_hosts = 1 ]; then

@@ -1,0 +1,47 @@
+This is a copy of libpopt 1.19 (the `popt-1.19-release` tag, 2022-06-07),
+vendored from its real, actively-maintained upstream project at
+https://github.com/rpm-software-management/popt, except that the build
+files have been replaced to fit with distcc's own autoconf/automake setup
+and NLS support has been left undetected (distcc does not use it; see
+"NLS" below).
+
+It is only built and used as a fallback, when `configure` cannot find a
+system libpopt >= 1.7 via pkg-config. If you build distcc on a platform
+which already has popt, this directory is not compiled at all. You can
+force one path or the other with the `--with-system-popt`/
+`--without-system-popt` configure flags (see `configure.ac`).
+
+An earlier version of this fallback tree vendored libpopt 1.7 (recovered
+from upstream distcc/distcc's own git history, immediately before
+distcc's own maintainers dropped it in their commit `3873de0`) — a
+snapshot from roughly 1998-2001. That tree was 20+ years and multiple
+major versions behind any current system-installed popt, and was missing
+two decades of real bugfixes (e.g. `poptReadFile()`'s file-length/overflow
+handling, which needed a hand patch on the 1.7 tree but is already
+correctly handled in 1.19 — see `poptReadFile()` in `poptconfig.c`). This
+directory now tracks the real popt project's own latest tagged release
+instead.
+
+`POPT_VERSION` in this directory records the exact vendored release, so a
+future accidental regression back to a stale/wrong copy can be caught
+mechanically (see the `popt_version_check` step in `c-build.yml`).
+
+## NLS
+
+This bundled copy has NLS (gettext-based translation) left undetected on
+purpose: `HAVE_GETTEXT`, `HAVE_DCGETTEXT`, and `HAVE_LIBINTL_H` are not
+probed for by `configure.ac`, so the bundled build always takes the
+no-translation code path, matching upstream distcc's original choice for
+the 1.7 tree. Likewise `HAVE_ICONV` is intentionally left undetected:
+enabling it would require probing for and possibly linking `-liconv` on
+platforms where iconv isn't part of the base C library (e.g. macOS/BSD),
+which would be a new hard dependency this fork's compatibility policy
+asks to avoid — see `doc/compatibility-policy.md`. All other optional
+features (`glob.h`-based config-directory globbing, `stdalign.h`,
+`secure_getenv()`, etc.) are still detected and used when available,
+matching a normal system popt build.
+
+popt's real upstream (no longer distcc's own history) is:
+https://github.com/rpm-software-management/popt
+
+License: MIT (Red Hat Software, 1998) — see COPYING in this directory.

@@ -88,6 +88,7 @@
 #include "stringmap.h"
 #include "dotd.h"
 #include "fix_debug_info.h"
+#include "pathsafety.h"
 #ifdef HAVE_GSSAPI
 #include "auth.h"
 
@@ -259,6 +260,10 @@ static int dcc_remap_compiler(char **compiler_name)
         char *filename;
         cmdlist_checked = 1;
         filename = getenv("DISTCC_CMDLIST");
+        if (filename && !dcc_sane_env_path(filename)) {
+            rs_log_error("ignoring malformed $DISTCC_CMDLIST value");
+            filename = NULL;
+        }
         if (filename) {
             const char *nw = getenv("DISTCC_CMDLIST_NUMWORDS");
             int numFinalWordsToMatch=1;
@@ -615,6 +620,9 @@ static int tweak_arguments_for_server(char **argv,
  *   @p client_side_cwd: the current directory on the client
  *   @p server_side_cwd: the corresponding directory on the server;
  *                server_side_cwd = temp_dir + client_side_cwd
+ *
+ * Rejects CDIR tokens containing ".." path components that could allow
+ * directory traversal (see dcc_cdir_has_path_traversal()).
  **/
 static int make_temp_dir_and_chdir_for_cpp(int in_fd,
         char **temp_dir, char **client_side_cwd, char **server_side_cwd)
@@ -626,6 +634,16 @@ static int make_temp_dir_and_chdir_for_cpp(int in_fd,
             return ret;
         if ((ret = dcc_r_cwd(in_fd, client_side_cwd)))
             return ret;
+
+        /* Validate the client-supplied working directory to prevent
+         * directory traversal attacks. If the CDIR token contains "..",
+         * reject the request immediately. */
+        if (dcc_cdir_has_path_traversal(*client_side_cwd)) {
+            rs_log_error("rejected CDIR with a path-traversal sequence "
+                         "(must not contain '..'): %s",
+                         *client_side_cwd);
+            return EXIT_PROTOCOL_ERROR;
+        }
 
         checked_asprintf(server_side_cwd, "%s%s", *temp_dir, *client_side_cwd);
         if (*server_side_cwd == NULL) {
@@ -651,6 +669,7 @@ static int dcc_run_job(int in_fd,
     char **tweaked_argv = NULL;
     int status = 0;
     char *temp_i = NULL, *temp_o = NULL;
+    char *dwo_fname = NULL;
     char *err_fname = NULL, *out_fname = NULL, *deps_fname = NULL;
     char *temp_dir = NULL; /* for receiving multiple files */
     int ret = 0, compile_ret = 0;
@@ -698,7 +717,20 @@ static int dcc_run_job(int in_fd,
     if ((ret = dcc_r_request_header(in_fd, &protover)))
         goto out_cleanup;
 
-    dcc_get_features_from_protover(protover, &compr, &cpp_where);
+    /* dcc_get_features_from_protover()'s return value was previously
+     * never checked here, so its own protover-rejection paths (including
+     * the new HAVE_ZSTD guard added for issue #225) had no actual effect
+     * on the connection -- the server would silently proceed with
+     * whatever *compr it fell back to, while the client (unaware of the
+     * silent downgrade) keeps sending data in the wire format it
+     * originally negotiated, causing a protocol desync rather than a
+     * clean rejection. Aborting here closes that gap. */
+    if (dcc_get_features_from_protover(protover, &compr, &cpp_where)) {
+        rs_log_error("client requested unsupported protocol features "
+                     "(protover %d)", (int) protover);
+        ret = EXIT_PROTOCOL_ERROR;
+        goto out_cleanup;
+    }
 
     if (cpp_where == DCC_CPP_ON_SERVER) {
         if ((ret = make_temp_dir_and_chdir_for_cpp(in_fd,
@@ -707,9 +739,31 @@ static int dcc_run_job(int in_fd,
         changed_directory = 1;
     }
 
-    if ((ret = dcc_r_argv(in_fd, "ARGC", "ARGV", &argv))
-        || (ret = dcc_scan_args(argv, &orig_input_tmp, &orig_output_tmp,
-                                &tweaked_argv)))
+    if ((ret = dcc_r_argv(in_fd, "ARGC", "ARGV", &argv)))
+        goto out_cleanup;
+
+    /* This whitelist/remap check on the network-supplied argv[0] must run
+     * before dcc_scan_args(): dcc_scan_args() may itself fork+exec the
+     * compiler named in argv[0] (to resolve -march/-mtune/-mcpu=native to
+     * the server's actual CPU flags -- see dcc_resolve_march_native() in
+     * arg.c), and that exec must never run against an unvalidated,
+     * client-controlled compiler name/path. Skipping this check here would
+     * reopen the exact hole CVE-2004-2687 closed (arbitrary command
+     * execution via a crafted compiler name), just via a different call
+     * site than the actual compile job below. */
+    if (!dcc_remap_compiler(&argv[0]))
+        goto out_cleanup;
+
+    if ((ret = dcc_check_compiler_masq(argv[0])))
+        goto out_cleanup;
+
+    if (!opt_enable_tcp_insecure &&
+        !getenv("DISTCC_CMDLIST") &&
+        dcc_check_compiler_whitelist(argv[0]))
+        goto out_cleanup;
+
+    if ((ret = dcc_scan_args(argv, &orig_input_tmp, &orig_output_tmp,
+                             &tweaked_argv)))
         goto out_cleanup;
 
     /* The orig_input_tmp and orig_output_tmp values returned by dcc_scan_args()
@@ -731,6 +785,10 @@ static int dcc_run_job(int in_fd,
 
     rs_trace("output file %s", orig_output);
     if ((ret = dcc_make_tmpnam("distccd", ".o", &temp_o)))
+        goto out_cleanup;
+
+    dwo_fname = dcc_make_dwo_fname(temp_o);
+    if (!dwo_fname)
         goto out_cleanup;
 
     /* if the protocol is multi-file, then we need to do the following
@@ -755,17 +813,6 @@ static int dcc_run_job(int in_fd,
             goto out_cleanup;
     }
 
-    if (!dcc_remap_compiler(&argv[0]))
-        goto out_cleanup;
-
-    if ((ret = dcc_check_compiler_masq(argv[0])))
-        goto out_cleanup;
-
-    if (!opt_enable_tcp_insecure &&
-        !getenv("DISTCC_CMDLIST") &&
-        dcc_check_compiler_whitelist(argv[0]))
-        goto out_cleanup;
-
     /* unsafe compiler options. See  https://youtu.be/bSkpMdDe4g4?t=53m12s
        on securing https://godbolt.org/ */
     char *a;
@@ -779,12 +826,28 @@ static int dcc_run_job(int in_fd,
             int fail = 1;
             if (arg_sysroot) {
                 char *spec_file = strchr(a, '=') + 1;
-                char *spec_path = alloca(strlen(spec_file) + strlen(arg_sysroot) + 8);
-                sprintf(spec_path, "%s/%s", arg_sysroot, spec_file);
+                size_t spec_path_size = strlen(spec_file) + strlen(arg_sysroot) + 8;
+                /* malloc(), not alloca(): this runs inside the loop over
+                 * every argument in a client-supplied compile command, and
+                 * alloca()'s allocation isn't freed until dcc_run_job()
+                 * itself returns -- not each loop iteration -- so a
+                 * compile command with many -specs= arguments would
+                 * accumulate unbounded, unfreed stack allocations bounded
+                 * only by how many such arguments the client chose to
+                 * send. free() explicitly below instead. */
+                char *spec_path = malloc(spec_path_size);
+                if (spec_path == NULL) {
+                    rs_log_error("failed to allocate %lu bytes for spec_path",
+                                 (unsigned long) spec_path_size);
+                    ret = EXIT_OUT_OF_MEMORY;
+                    goto out_cleanup;
+                }
+                snprintf(spec_path, spec_path_size, "%s/%s", arg_sysroot, spec_file);
                 struct stat spec_stat;
                 if (stat(spec_path, &spec_stat) != -1 && (spec_stat.st_mode & S_IFMT) == S_IFREG) {
                   fail = 0;
                 }
+                free(spec_path);
             }
             if (fail) {
               rs_log_warning("-specs= passed, but we cannot find the specs.");
@@ -793,8 +856,14 @@ static int dcc_run_job(int in_fd,
        }
     }
 
+    /* This is exactly the untrusted-input boundary the seccomp sandbox
+     * (src/sandbox-seccomp.c) exists for: argv[0] and its arguments were
+     * chosen by a remote client, already checked above (whitelist,
+     * masquerade, -fplugin/-specs) but still not fully trusted code we
+     * are about to exec with the daemon's privileges. */
     if ((compile_ret = dcc_spawn_child(argv, &cc_pid,
-                                       "/dev/null", out_fname, err_fname))
+                                       "/dev/null", out_fname, err_fname,
+                                       1 /* sandbox_seccomp */))
         || (compile_ret = dcc_collect_child("cc", cc_pid, &status, in_fd))) {
         /* We didn't get around to finding a wait status from the actual
          * compiler */
@@ -811,7 +880,10 @@ static int dcc_run_job(int in_fd,
             job_result = STATS_COMPILE_ERROR;
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0 */
-        dcc_x_token_int(out_fd, "DOTO", 0);
+        if (protover == DCC_VER_4)
+            dcc_x_token_2int(out_fd, "DOTO", 0, 0);
+        else
+            dcc_x_token_int(out_fd, "DOTO", 0);
 
         if (job_result == -1)
             job_result = STATS_COMPILE_ERROR;
@@ -833,6 +905,10 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
+        if (protover == DCC_VER_4) {
+            if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
+                goto out_cleanup;
+        }
 
         if (cpp_where == DCC_CPP_ON_SERVER) {
             char *cleaned_dotd;
@@ -934,6 +1010,7 @@ out_cleanup:
     free(deps_fname);
     free(err_fname);
     free(out_fname);
+    free(dwo_fname);
 
     free(client_cwd);
     free(server_cwd);

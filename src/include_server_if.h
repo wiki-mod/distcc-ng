@@ -21,4 +21,5 @@
 
 int dcc_talk_to_include_server(char **argv, char ***files);
 int dcc_get_original_fname(const char *fname, char **original_fname);
+void dcc_sort_include_server_files(char **files);
 int dcc_approximate_includes(struct dcc_hostdef *host, char **argv);

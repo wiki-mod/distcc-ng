@@ -1,8 +1,7 @@
 # How to report bugs in distcc
 
-If you are having trouble with distcc, please open a question at
-<https://github.com/distcc/distcc/discussions/categories/q-a>, or, if it's
-clearly a bug, open a bug in that GitHub repo.
+If you are having trouble with distcc, please open an issue at
+<https://github.com/wiki-mod/distcc-ng/issues> describing the problem.
 
   * The first aim of a bug report is to let the programmer see the
     failure with their own eyes. If you can't be with them to make it

@@ -18,6 +18,10 @@ SHELL = @SHELL@
 CFLAGS = @CFLAGS@ @POPT_CFLAGS@
 WERROR_CFLAGS = @WERROR_CFLAGS@
 PYTHON_CFLAGS = @PYTHON_CFLAGS@
+# Set by configure to '-I"$(srcdir)/popt"' only when falling back to the
+# bundled popt copy (see configure.ac); empty when using system libpopt,
+# whose headers are already covered by POPT_CFLAGS/pkg-config.
+POPT_INCLUDES = @POPT_INCLUDES@
 
 LDFLAGS = @LDFLAGS@
 CC = @CC@
@@ -25,9 +29,10 @@ CPP = @CPP@
 # We add a few cppflags.  -Isrc is so that config.h can be found in the build
 # directory.  It is before I"$(srcdir)/src" to reflect VPATH semantics.
 CPPFLAGS = @CPPFLAGS@ ${DIR_DEFS} \
-	   -Isrc -I"$(srcdir)/src" -I"$(srcdir)/lzo"
+	   -Isrc -I"$(srcdir)/src" -I"$(srcdir)/lzo" $(POPT_INCLUDES)
 
 PYTHON = @PYTHON@
+HAVE_ZSTD = @HAVE_ZSTD@
 
 srcdir = @srcdir@
 top_srcdir = @top_srcdir@
@@ -54,6 +59,8 @@ icondir = $(datarootdir)/pixmaps
 desktopdir = $(datarootdir)/applications
 
 include_server_builddir = $(builddir)/_include_server
+INCLUDE_SERVER_BUILD_REQUIRED = no
+INCLUDE_SERVER_CHECKS_STRICT = yes
 
 # These must be done from here, not from autoconf, because they can
 # contain variable expansions written in Make syntax.  Ew.
@@ -89,6 +96,7 @@ DISTCC_INSTALLATION = $(RESTRICTED_PATH)
 dist_files =							\
 	src/config.h.in						\
 	$(dist_lzo)						\
+	$(popt_EXTRA) $(popt_SRC) $(popt_HEADERS)		\
 	$(dist_contrib)						\
 	$(dist_patches)						\
 	$(dist_common)						\
@@ -98,7 +106,6 @@ dist_files =							\
 	$(SRC) $(HEADERS)					\
 	$(update_distcc_symlinks_PY)				\
 	$(test_SOURCE)						\
-	$(bench_PY)						\
 	$(include_server_PY)                                    \
 	$(dist_include_server_SH)                               \
 	$(include_server_SRC)                                   \
@@ -117,6 +124,26 @@ dist_lzo = lzo/minilzo.c \
 	lzo/lzodefs.h \
 	lzo/.stamp-conf.in
 
+# Bundled popt fallback (see configure.ac): only actually compiled into
+# distccd when configure couldn't find a suitable system libpopt (or
+# --without-system-popt was given), via @BUILD_POPT@ below, but always
+# shipped in a source dist regardless of which path configure picked on
+# the machine that ran `make dist`.
+popt_OBJS = popt/popt.o popt/poptconfig.o popt/popthelp.o \
+	popt/poptparse.o popt/poptint.o
+
+popt_SRC = popt/popt.c popt/poptconfig.c popt/popthelp.c \
+	popt/poptparse.c popt/poptint.c
+
+# popt/lookup3.c is not compiled as its own object: popt/poptint.c
+# #includes it directly (upstream's own build does the same -- see
+# popt's src/Makefile.am, which lists lookup3.c under EXTRA_DIST, not
+# among libpopt_la_SOURCES). It still needs to ship in a source dist and
+# be a dependency of poptint.o so a change to it triggers a rebuild.
+popt_HEADERS = popt/popt.h popt/poptint.h popt/system.h popt/lookup3.c
+
+popt_EXTRA = popt/README.popt popt/COPYING popt/.stamp-conf.in popt/POPT_VERSION
+
 dist_contrib = contrib/distcc-absolutify	\
 	contrib/distcc.sh		\
 	contrib/distccd-init		\
@@ -132,16 +159,6 @@ dist_contrib = contrib/distcc-absolutify	\
 
 dist_include_server_SH = \
 	pump.in
-
-bench_PY = bench/Build.py \
-	bench/Project.py \
-	bench/ProjectDefs.py \
-	bench/Summary.py \
-	bench/actions.py \
-	bench/benchmark.py \
-	bench/buildutil.py \
-	bench/compiler.py \
-	bench/statistics.py
 
 pkgdoc_DOCS = AUTHORS COPYING NEWS \
 	README README.pump \
@@ -201,6 +218,7 @@ man8dir = $(mandir)/man8
 
 test_SOURCE = test/comfychair.py \
 	test/onetest.py \
+	test/pump_include_server_path_test.py \
 	test/testdistcc.py \
 	find_c_extension.sh
 
@@ -232,7 +250,7 @@ rpm_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.rpm
 deb_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.deb
 
 common_obj = src/arg.o src/argutil.o					\
-	src/cleanup.o src/compress.o					\
+	src/cleanup.o src/compress-zstd.o src/compress-lzox1.o		\
 	src/trace.o src/util.o src/io.o src/exec.o			\
 	src/rpc.o src/tempfile.o src/bulk.o src/help.o src/filename.o	\
 	src/lock.o							\
@@ -242,7 +260,11 @@ common_obj = src/arg.o src/argutil.o					\
 	src/safeguard.o src/snprintf.o src/timeval.o			\
 	src/dotd.o 							\
 	src/hosts.o src/hostfile.o					\
+	src/include_server_sort.o					\
 	src/implicit.o src/loadfile.o					\
+	src/pathsafety.o						\
+	src/config-parser.o src/client-config.o			\
+	src/sandbox-config.o src/sandbox-seccomp.o			\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\
 	@AUTH_COMMON_OBJS@
@@ -271,7 +293,7 @@ distccd_obj = src/access.o						\
 	src/fix_debug_info.o						\
 	@ZEROCONF_DISTCCD_OBJS@						\
 	@AUTH_DISTCCD_OBJS@						\
-	$(common_obj)
+	$(common_obj) @BUILD_POPT@
 
 lsdistcc_obj = src/lsdistcc.o 						\
 	src/clinet.o src/io.o src/netutil.o src/trace.o src/util.o 	\
@@ -289,6 +311,7 @@ mon_obj =								\
 	src/rpc.o							\
 	src/snprintf.o src/state.o 					\
 	src/tempfile.o src/trace.o src/traceenv.o			\
+	src/pathsafety.o						\
 	src/util.o
 
 gnome_obj = src/history.o src/mon-gnome.o				\
@@ -297,9 +320,18 @@ gnome_obj = src/history.o src/mon-gnome.o				\
 h_exten_obj = src/h_exten.o $(common_obj)
 h_issource_obj = src/h_issource.o $(common_obj)
 h_scanargs_obj = src/h_scanargs.o $(common_obj)
+h_includesort_obj = src/h_includesort.o $(common_obj)
+h_state_obj = src/h_state.o $(common_obj) src/state.o src/mon.o
 h_hosts_obj = src/h_hosts.o $(common_obj)
+h_ssh_obj = src/h_ssh.o $(common_obj) src/ssh.o
 h_argvtostr_obj = src/h_argvtostr.o $(common_obj)
 h_strip_obj = src/h_strip.o $(common_obj) src/strip.o
+# src/dopt.o needs popt, same as distccd_obj above: pull in the bundled
+# popt objects here too when configure fell back to them, or this test
+# helper fails to link with undefined poptGetContext()/etc. references.
+h_dopt_obj = src/h_dopt.o $(common_obj) src/dopt.o src/access.o @BUILD_POPT@
+h_stats_obj = src/h_stats.o src/h_stats_stats.o $(common_obj) src/srvnet.o \
+	      src/access.o
 h_parsemask_obj = src/h_parsemask.o $(common_obj) src/access.o
 h_sa2str_obj = src/h_sa2str.o $(common_obj) src/srvnet.o src/access.o
 h_ccvers_obj = src/h_ccvers.o $(common_obj)
@@ -310,6 +342,9 @@ h_compile_obj = src/h_compile.o $(common_obj) src/compile.o src/timefile.o \
 	        src/clirpc.o src/include_server_if.o src/state.o src/where.o \
 		src/ssh.o src/strip.o src/cpp.o @AUTH_DISTCC_OBJS@
 h_getline_obj = src/h_getline.o $(common_obj)
+# No common_obj: pathsafety.c is deliberately dependency-free (see its file
+# comment), so this test binary links only the two objects it needs.
+h_pathsafety_obj = src/h_pathsafety.o src/pathsafety.o
 
 # All source files, for the purposes of building the distribution
 SRC =	src/stats.c							\
@@ -318,22 +353,26 @@ SRC =	src/stats.c							\
 	src/backoff.c src/bulk.c					\
 	src/cleanup.c							\
 	src/climasq.c src/clinet.c src/clirpc.c src/compile.c		\
-	src/compress.c src/cpp.c					\
+	src/compress-lzox1.c src/compress-zstd.c src/cpp.c		\
 	src/daemon.c src/distcc.c src/dsignal.c				\
 	src/dopt.c src/dparent.c src/exec.c src/filename.c		\
 	src/h_argvtostr.c						\
-	src/h_exten.c src/h_hosts.c src/h_issource.c src/h_parsemask.c	\
-	src/h_sa2str.c src/h_scanargs.c src/h_strip.c			\
-	src/h_dotd.c src/h_compile.c src/h_getline.c			\
+	src/h_dopt.c src/h_exten.c src/h_hosts.c src/h_ssh.c		\
+	src/h_includesort.c src/h_issource.c src/h_parsemask.c		\
+	src/h_sa2str.c src/h_scanargs.c src/h_state.c src/h_strip.c	\
+	src/h_stats.c src/h_dotd.c src/h_compile.c src/h_getline.c	\
 	src/help.c src/history.c src/hosts.c src/hostfile.c		\
-	src/implicit.c src/io.c						\
+	src/implicit.c src/include_server_sort.c src/io.c		\
 	src/loadfile.c src/lock.c 					\
 	src/mon.c src/mon-notify.c src/mon-text.c			\
 	src/mon-gnome.c							\
 	src/ncpus.c src/netutil.c					\
+	src/h_pathsafety.c src/pathsafety.c				\
 	src/prefork.c src/pump.c					\
 	src/remote.c src/renderer.c src/rpc.c				\
-	src/safeguard.c src/sendfile.c src/setuid.c src/serve.c		\
+	src/safeguard.c src/sandbox-config.c src/sandbox-seccomp.c	\
+	src/config-parser.c src/client-config.c			\
+	src/sendfile.c src/setuid.c src/serve.c		\
 	src/snprintf.c src/state.c					\
 	src/srvnet.c src/srvrpc.c src/ssh.c 				\
 	src/stringmap.c src/strip.c					\
@@ -369,7 +408,10 @@ HEADERS = src/stats.h							\
 	src/dotd.h src/include_server_if.h				\
 	src/emaillog.h 							\
 	src/va_copy.h 							\
-	src/zeroconf.h
+	src/zeroconf.h							\
+	src/pathsafety.h						\
+	src/sandbox-config.h src/sandbox-seccomp.h			\
+	src/config-parser.h src/client-config.h
 
 conf_dir = packaging/RedHat/conf
 conf_files = $(conf_dir)/hosts \
@@ -411,17 +453,23 @@ sbin_PROGRAMS = \
 
 check_PROGRAMS = \
 	h_argvtostr@EXEEXT@ \
+	h_dopt@EXEEXT@ \
 	h_exten@EXEEXT@ \
 	h_fix_debug_info@EXEEXT@ \
 	h_hosts@EXEEXT@ \
+	h_ssh@EXEEXT@ \
 	h_issource@EXEEXT@ \
 	h_parsemask@EXEEXT@ \
 	h_sa2str@EXEEXT@ \
 	h_scanargs@EXEEXT@ \
+	h_includesort@EXEEXT@ \
+	h_state@EXEEXT@ \
+	h_stats@EXEEXT@ \
 	h_strip@EXEEXT@ \
 	h_dotd@EXEEXT@ \
 	h_compile@EXEEXT@ \
-	h_getline@EXEEXT@
+	h_getline@EXEEXT@ \
+	h_pathsafety@EXEEXT@
 
 check_include_server_PY = \
 	include_server/c_extensions_test.py \
@@ -484,6 +532,25 @@ pump: pump.in config.status
 # Grab the dependency files generated by gcc's -MD option.
 -include */*.d
 
+# The bundled popt/*.c is third-party code we don't want to hold to this
+# tree's own -Werror/-Wall standard: it only gets compiled at all when
+# configure fell back to it (see @BUILD_POPT@ above), and we don't want an
+# upstream popt warning to break -Werror builds of distccd on a system that
+# merely lacks a packaged libpopt.
+# POPT_SYSCONFDIR is popt's own build-time default for where to look for its
+# system-wide /etc/popt config file (poptReadDefaultConfig() in
+# popt/poptconfig.c); upstream's own configure.ac defines it from
+# $(sysconfdir), so reuse the same directory this tree already resolves
+# SYSCONFDIR to (DIR_DEFS above) rather than inventing a second value.
+# PACKAGE is popt/popthelp.c's own gettext translation-domain string
+# (poptHelpOptions2); this fork's configure.ac uses plain AC_INIT rather
+# than AM_INIT_AUTOMAKE, so it never defines the automake-only PACKAGE
+# macro other code usually gets for free. NLS itself is intentionally not
+# wired up for this bundled tree (see popt/README.popt), so the value
+# here is never actually looked up at runtime -- it only needs to be a
+# valid string literal for popt's own source to compile as shipped.
+$(popt_OBJS): CFLAGS += -Wno-unused -Wno-unused-parameter -DPOPT_SYSCONFDIR="\"$(sysconfdir)\"" -DPACKAGE="\"distcc\""
+
 distcc@EXEEXT@: $(distcc_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(distcc_obj) $(LIBS)
 
@@ -513,17 +580,35 @@ h_sa2str@EXEEXT@: $(h_sa2str_obj)
 h_scanargs@EXEEXT@: $(h_scanargs_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_scanargs_obj) $(LIBS)
 
+h_includesort@EXEEXT@: $(h_includesort_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_includesort_obj) $(LIBS)
+
+h_state@EXEEXT@: $(h_state_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_state_obj) $(LIBS)
+
 h_hosts@EXEEXT@: $(h_hosts_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_hosts_obj) $(LIBS)
 
+h_ssh@EXEEXT@: $(h_ssh_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_ssh_obj) $(LIBS)
+
 h_argvtostr@EXEEXT@: $(h_argvtostr_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_argvtostr_obj) $(LIBS)
+
+h_dopt@EXEEXT@: $(h_dopt_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
 
 h_parsemask@EXEEXT@: $(h_parsemask_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_parsemask_obj) $(LIBS)
 
 h_strip@EXEEXT@: $(h_strip_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_strip_obj) $(LIBS)
+
+h_dopt@EXEEXT@: $(h_dopt_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
+
+h_stats@EXEEXT@: $(h_stats_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_stats_obj) $(LIBS)
 
 h_ccvers@EXEEXT@: $(h_ccvers_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_ccvers_obj) $(LIBS)
@@ -540,11 +625,19 @@ h_compile@EXEEXT@: $(h_compile_obj)
 h_getline@EXEEXT@: $(h_getline_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_getline_obj) $(LIBS)
 
+h_pathsafety@EXEEXT@: $(h_pathsafety_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_pathsafety_obj) $(LIBS)
+
 
 src/h_fix_debug_info.o: src/fix_debug_info.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \
 		-DTEST \
 		$(srcdir)/src/fix_debug_info.c
+
+src/h_stats_stats.o: src/stats.c
+	$(CC) -c -o $@ $(CPPFLAGS) $(WERROR_CFLAGS) $(CFLAGS) \
+		-DTEST \
+		$(srcdir)/src/stats.c
 
 src/mon-gnome.o: src/mon-gnome.c
 	$(CC) -c -o $@ $(CPPFLAGS) $(CFLAGS) \
@@ -563,16 +656,25 @@ distccmon-gnome@EXEEXT@: $(mon_obj) $(gnome_obj)
 
 # The include-server is a python app, so we use Python's build system.  We pass
 # the distcc version, the source location, the CPP flags (for location of the
-# includes), and the build location.
+# includes), and the build location.  Keep a configurable strict mode because
+# some packaging paths intentionally tolerate builds without include-server,
+# while maintainer checks must fail if no include-server was actually built.
 include-server:
-	if test -z "$(PYTHON)"; then	\
-	  echo "Not building $@: No suitable python found"; \
+	if test -z "$(PYTHON)" || test "$(PYTHON)" = ":"; then	\
+	  if test "$(INCLUDE_SERVER_BUILD_REQUIRED)" = "yes"; then \
+	    echo "Cannot build $@: No suitable python found" 1>&2; \
+	    exit 1; \
+	  else \
+	    echo "Not building $@: No suitable python found"; \
+	  fi; \
 	else						\
 	  mkdir -p "$(include_server_builddir)" &&      \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
+	  LIBS="$(LIBS)"                                \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
 	      build 					\
 	        --build-base="$(include_server_builddir)"  \
@@ -697,7 +799,7 @@ TESTDISTCC_OPTS =
 # TODO(klarlund): the outermost if assumes that the include-server target may be
 # satisfied w/o actually building an include server (or rather the C extension);
 # this logic needs to be verified or amended.
-maintainer-check-no-set-path:
+maintainer-check-no-set-path: pump
 	@if ! $(PYTHON) -c 'import sys; print(sys.version)'; then \
 	  echo "WARNING: python not found; tests skipped"; \
 	else \
@@ -708,38 +810,51 @@ maintainer-check-no-set-path:
 	    echo "Please change RESTRICTED_PATH to change this PATH value."; \
 	    exit 1; \
 	  fi; \
-	  $(PYTHON) "$(srcdir)/test/testdistcc.py" $(TESTDISTCC_OPTS); \
+	  $(PYTHON) "$(srcdir)/test/testdistcc.py" $(TESTDISTCC_OPTS) && \
+	  $(PYTHON) "$(srcdir)/test/pump_include_server_path_test.py" \
+	    "$(builddir)/pump" "$(PYTHON)"; \
 	fi
 
 distcc-maintainer-check: check_programs
 	 $(MAKE) PATH="`pwd`:$(RESTRICTED_PATH)" \
 	   TESTDISTCC_OPTS="$(TESTDISTCC_OPTS)" maintainer-check-no-set-path
 
-# If the include server extension module was built, then run the tests include
-# server.  TODO(klarlund): the outermost if assumes that the include-server
-# target may be satisfied w/o actually building an include server (or rather the
-# C extension); this logic needs to be verified or amended.
+# If the include server extension module was built, then run the include server
+# tests.  Strict mode fails when the extension build directory is missing because
+# a successful skip can hide that no include server tests actually ran.  The
+# executed-test counter protects against an accidentally empty test list.
 # TODO(csilvers): keep track of failures instead of exiting on the first one.
+include-server-maintainer-check: INCLUDE_SERVER_BUILD_REQUIRED = $(INCLUDE_SERVER_CHECKS_STRICT)
 include-server-maintainer-check: include-server
 	@if ! test -d "$(include_server_builddir)"; then \
-	  echo "Skipped include-server check"; \
+	  if test "$(INCLUDE_SERVER_CHECKS_STRICT)" = "no"; then \
+	    echo "Skipped include-server check"; \
+	  else \
+	    echo "Missing include-server build directory: $(include_server_builddir)" 1>&2; \
+	    echo "Set INCLUDE_SERVER_CHECKS_STRICT=no to allow this check to skip." 1>&2; \
+	    exit 1; \
+	  fi; \
 	else \
 	  CURDIR=`pwd`; \
 	  include_server_loc=`"$(srcdir)/find_c_extension.sh" "$(builddir)"`; \
 	  test $$? = 0 || (echo 'Could not locate extension.' 1>&2 && exit 1); \
 	  cd "$(srcdir)/include_server"; \
+	  tests_run=0; \
 	  for p in $(check_include_server_PY); do \
 	    p_base=`basename "$$p"`; \
 	    echo "Running:" \
-              "PYTHONPATH=$$CURDIR/$$include_server_loc:$$PYTHONPATH $(PYTHON) $$p_base"; \
+	              "PYTHONPATH=$$CURDIR/$$include_server_loc:$$PYTHONPATH $(PYTHON) $$p_base"; \
+	    tests_run=$$((tests_run + 1)); \
 	    if PYTHONPATH="$$CURDIR/$$include_server_loc:$$PYTHONPATH" $(PYTHON) "$$p_base" \
 		 > "$$CURDIR/$(tempdir)/$$p_base.out" 2>&1; then \
 	      echo "PASS"; \
 	      rm "$$CURDIR/$(tempdir)/$$p_base.out"; \
             else \
-              echo "FAIL"; cat "$$CURDIR/$(tempdir)/$$p_base.out"; exit 1; \
+	              echo "FAIL"; cat "$$CURDIR/$(tempdir)/$$p_base.out"; exit 1; \
 	    fi; \
 	  done; \
+	  test "$$tests_run" -gt 0 || \
+	    (echo "No include-server tests were run." 1>&2 && exit 1); \
 	fi
 
 # Do distcc-maintainer-check in pump-mode, if possible.
@@ -880,36 +995,16 @@ daemon-installcheck:
 	        pump distcc $(CC) $(CFLAGS) -c hello.c -o hello.o && \
 	    test -f hello.o
 
-######################################################################
-## BENCHMARK targets
-
-.PHONY: benchmark
-
-benchmark:
-	@echo "The distcc macro-benchmark uses your existing distcc installation"
-	@if [ -n "$$DISTCC_HOSTS" ]; \
-	then echo "DISTCC_HOSTS=\"$$DISTCC_HOSTS\""; \
-	else echo "You must set up servers and set DISTCC_HOSTS before running the benchmark"; \
-	exit 1; \
-	fi
-	@echo "This benchmark may download a lot of source files, and it takes a "
-	@echo "long time to run.  Interrupt now if you want."
-	@echo
-	@echo "Pass BENCH_ARGS to make to specify which benchmarks to run."
-	@echo
-	@sleep 5
-	cd bench && $(PYTHON) benchmark.py $(BENCH_ARGS)
-
 
 ######################################################################
 ## CLEAN targets
 
-.PHONY: clean clean-autoconf clean-lzo clean-include-server
+.PHONY: clean clean-autoconf clean-lzo clean-popt clean-include-server
 .PHONY: maintainer-clean maintainer-clean-autoconf distclean distclean-autoconf
 
 # Also clean binaries which are optionally built. Also remove .d files; old ones
 # may confuse 'make'.
-clean: clean-autoconf clean-lzo clean-include-server
+clean: clean-autoconf clean-lzo clean-popt clean-include-server
 	rm -f src/*.[od]
 	rm -f test/*.pyc
 	rm -f $(check_PROGRAMS) $(bin_PROGRAMS) $(sbin_PROGRAMS)
@@ -926,13 +1021,20 @@ clean-autoconf:
 clean-lzo:
 	rm -f lzo/*.[od] lzo/testmini
 
+# The bundled popt/*.o files only exist at all when configure chose the
+# fallback build (see @BUILD_POPT@); rm -f is silently a no-op otherwise.
+clean-popt:
+	rm -f popt/*.[od]
+
 
 clean-include-server:
 	if test -n "$(PYTHON)"; then	\
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
+	  LIBS="$(LIBS)"                                \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \
 	      clean	\
 	         --build-base="$(include_server_builddir)"  \
@@ -948,7 +1050,7 @@ maintainer-clean-autoconf:
 
 distclean-autoconf:
 	rm -f Makefile src/config.h src/config.h.stamp pump
-	rm -f lzo/.stamp-conf
+	rm -f lzo/.stamp-conf popt/.stamp-conf
 	rm -f config.status config.cache config.log aclocal.m4
 	rm -rf autom4te.cache
 
@@ -1060,6 +1162,7 @@ install-include-server: include-server pump
 	  DESTDIR=`cd "$(DESTDIR)/" && pwd` &&            \
 	  DISTCC_VERSION="$(VERSION)"			\
 	  SRCDIR="$(srcdir)"                            \
+	  HAVE_ZSTD="$(HAVE_ZSTD)"                      \
 	  CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 	  CPPFLAGS="$(CPPFLAGS)"                        \
 	  $(PYTHON) "$(srcdir)/include_server/setup.py" \

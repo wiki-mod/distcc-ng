@@ -84,13 +84,14 @@ int dcc_talk_to_include_server(char **argv, char ***files)
         return 1;
     }
 
-    if (strlen(include_server_port) >= ((int)sizeof(sa.sun_path) - 1)) {
+    size_t include_server_port_len = strlen(include_server_port);
+    if (include_server_port_len >= ((int)sizeof(sa.sun_path) - 1)) {
         rs_log_warning("$INCLUDE_SERVER_PORT is longer than %ld characters",
                        ((long) sizeof(sa.sun_path) - 1));
         return 1;
     }
 
-    strcpy(sa.sun_path, include_server_port);
+    memcpy(sa.sun_path, include_server_port, include_server_port_len + 1);
     sa.sun_family = AF_UNIX;
 
     if (dcc_connect_by_addr((struct sockaddr *) &sa, sizeof(sa), &fd))
@@ -192,6 +193,9 @@ dcc_approximate_includes(struct dcc_hostdef *host, char **argv)
         rs_log_error("failed to get includes from include server");
         return ret;
     }
+
+    /* Hash-backed include discovery can vary; output in path order. */
+    dcc_sort_include_server_files(files);
 
     for (i = 0; files[i]; i++) {
         if ((ret = dcc_categorize_file(files[i])))

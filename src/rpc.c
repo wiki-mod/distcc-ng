@@ -93,6 +93,36 @@ int dcc_x_token_int(int ofd, const char *token, unsigned param)
     return dcc_writex(ofd, buf, 12);
 }
 
+/**
+ * Transmit token name (4 characters) and two values (32-bit ints, as 8 hex
+ * characters each).
+ */
+int dcc_x_token_2int(int ofd, const char *token, unsigned param,
+                     unsigned param2)
+{
+    char buf[21];
+    int shift;
+    char *p;
+    const char *hex = "0123456789abcdef";
+
+    if (strlen(token) != 4) {
+        rs_log_crit("token \"%s\" seems wrong", token);
+        return EXIT_PROTOCOL_ERROR;
+    }
+    memcpy(buf, token, 4);
+
+    for (shift = 28, p = &buf[4]; shift >= 0; shift -= 4, p++) {
+        *p = hex[(param >> shift) & 0xf];
+    }
+    for (shift = 28, p = &buf[12]; shift >= 0; shift -= 4, p++) {
+        *p = hex[(param2 >> shift) & 0xf];
+    }
+    buf[20] = '\0';
+
+    rs_trace("send %s", buf);
+    return dcc_writex(ofd, buf, 20);
+}
+
 
 /**
  * Send start of a result: DONE <version>
@@ -200,6 +230,60 @@ int dcc_r_token_int(int ifd, const char *expected, unsigned *val)
     return 0;
 }
 
+
+/**
+ * Read a token and two values. The receiver knows the next token name.
+ */
+int dcc_r_token_2int(int ifd, const char *expected,
+                     unsigned *val,
+                     unsigned *val2)
+{
+    char buf[21], *bum, t;
+    int ret;
+
+    if (strlen(expected) != 4) {
+        rs_log_error("expected token \"%s\" seems wrong", expected);
+        return EXIT_PROTOCOL_ERROR;
+    }
+
+    if ((ret = dcc_readx(ifd, buf, 20))) {
+        rs_log_error("read failed while waiting for token \"%s\"",
+                    expected);
+        return ret;
+    }
+
+    if (memcmp(buf, expected, 4)) {
+        rs_log_error("protocol derailment: expected token \"%s\"", expected);
+        dcc_explain_mismatch(buf, 12, ifd);
+        return EXIT_PROTOCOL_ERROR;
+    }
+
+    t = buf[12];
+    buf[12] = '\0';
+    *val = strtoul(&buf[4], &bum, 16);
+    if (bum != &buf[12]) {
+        rs_log_error("failed to parse parameter of token \"%s\"",
+                     expected);
+        buf[12] = t;
+        dcc_explain_mismatch(buf, 20, ifd);
+        return EXIT_PROTOCOL_ERROR;
+    }
+
+    buf[12] = t;
+    buf[20] = '\0';
+    *val2 = strtoul(&buf[12], &bum, 16);
+    if (bum != &buf[20]) {
+        rs_log_error("failed to parse parameter of token \"%s\"",
+                     expected);
+        dcc_explain_mismatch(buf, 20, ifd);
+        return EXIT_PROTOCOL_ERROR;
+    }
+
+    rs_trace("got %s", buf);
+
+    return 0;
+}
+
 /**
  * Read a token and value.  Fill in both token and value;
  * unlike dcc_r_token_int this is for the case when we do not know what
@@ -244,19 +328,19 @@ int dcc_r_str_alloc(int fd, unsigned l, char **buf)
 {
      char *s;
 
-#if 0
-     /* never true  */
-     if (l < 0) {
-         rs_log_crit("oops, l < 0");
+     if (l > DCC_MAX_RPC_STRING_LEN) {
+         rs_log_error("string length %u from peer exceeds sanity limit "
+                      "%u, rejecting", l, DCC_MAX_RPC_STRING_LEN);
          return EXIT_PROTOCOL_ERROR;
      }
-#endif
 
 /*      rs_trace("read %d byte string", l); */
 
      s = *buf = malloc((size_t) l + 1);
-     if (!s)
+     if (!s) {
           rs_log_error("malloc failed");
+          return EXIT_OUT_OF_MEMORY;
+     }
      if (dcc_readx(fd, s, (size_t) l))
           return EXIT_OUT_OF_MEMORY;
 
@@ -322,6 +406,12 @@ int dcc_r_argv(int ifd,
 
     if (dcc_r_token_int(ifd, argc_token, &argc))
         return EXIT_PROTOCOL_ERROR;
+
+    if (argc > DCC_MAX_RPC_ARGC) {
+        rs_log_error("argument count %u from peer exceeds sanity limit "
+                     "%u, rejecting", argc, DCC_MAX_RPC_ARGC);
+        return EXIT_PROTOCOL_ERROR;
+    }
 
     rs_trace("reading %d arguments from job submission", argc);
 

@@ -1,0 +1,15 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# Trivy security scanner ignore list for accepted vulnerabilities with expiry dates
+#
+# Add entries only for findings that are genuinely accepted (no fix
+# available and assessed as not exploitable in this image's context), with
+# an expiry date so the exception gets re-reviewed rather than living
+# forever. Example:
+#
+# vulnerabilities:
+#   - id: CVE-YYYY-NNNNN
+#     paths:
+#       - usr/local/lib/some/path
+#     statement: >-
+#       Why this is accepted, and what would change the assessment.
+#     expired_at: YYYY-MM-DD

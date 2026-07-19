@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <ctype.h>
 
@@ -60,6 +61,7 @@
 #include "include_server_if.h"
 #include "emaillog.h"
 #include "dotd.h"
+#include "pathsafety.h"
 
 /**
  * This boolean is true iff --scan-includes option is enabled.
@@ -130,18 +132,21 @@ int dcc_discrepancy_filename(char **filename)
         int delta = strlen(discrepancy_suffix) -
             strlen(include_server_port_suffix);
         assert (delta > 0);
-        *filename = malloc(strlen(include_server_port) + 1 + delta);
+        size_t include_server_port_len = strlen(include_server_port);
+        *filename = malloc(include_server_port_len + 1 + delta);
         if (!*filename) {
             rs_log_error("failed to allocate space for filename");
             return EXIT_OUT_OF_MEMORY;
         }
-        strcpy(*filename, include_server_port);
-        int slash_pos = strlen(include_server_port)
+        memcpy(*filename, include_server_port, include_server_port_len);
+        int slash_pos = include_server_port_len
                         - strlen(include_server_port_suffix);
         /* Because include_server_port_suffix is a suffix of include_server_port
          * we expect to find a '/' at slash_pos in filename. */
         assert((*filename)[slash_pos] == '/');
-        (void) strcpy(*filename + slash_pos, discrepancy_suffix);
+        size_t discrepancy_suffix_len = strlen(discrepancy_suffix);
+        memcpy(*filename + slash_pos, discrepancy_suffix, discrepancy_suffix_len);
+        (*filename)[slash_pos + discrepancy_suffix_len] = '\0';
         return 0;
     } else
         return 0;
@@ -177,11 +182,18 @@ static int dcc_read_number_discrepancies(const char *discrepancy_filename)
 static int dcc_note_discrepancy(const char *discrepancy_filename)
 {
     FILE *discrepancy_file;
+    int fd;
     if (!discrepancy_filename) return 0;
-    if (!(discrepancy_file = fopen(discrepancy_filename, "a"))) {
+    /* Open with an explicit mode rather than fopen() (which always creates
+     * at the umask-modified default of 0666): 0600, since this is just a
+     * private per-user discrepancy counter, not meant to be shared. */
+    fd = open(discrepancy_filename, O_WRONLY|O_APPEND|O_CREAT, 0600);
+    if (fd == -1 || !(discrepancy_file = fdopen(fd, "a"))) {
         rs_log_error("failed to open discrepancy_filename file: %s: %s",
                      discrepancy_filename,
                      strerror(errno));
+        if (fd != -1)
+            close(fd);
         return EXIT_IO_ERROR;
     }
     if (fputc('@', discrepancy_file) == EOF) {
@@ -293,7 +305,14 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
     dotd_fname_size = stat_dotd.st_size;
     /* Is dotd_fname_size representable as a size_t value ? */
     if ((off_t) (size_t) dotd_fname_size == dotd_fname_size) {
-        dep_name = malloc((size_t) dotd_fname_size);
+        /* +1 reserves the NUL-terminator slot: the copy loop below bounds-
+         * checks each byte it writes against dotd_fname_size (i >=
+         * dotd_fname_size), but the terminator write after the loop
+         * (dep_name[i] = '\0') does not re-check i. If the .d file grows
+         * between this stat() and the read below, i can legitimately reach
+         * dotd_fname_size, and without this extra byte the terminator
+         * write lands one past the end of the allocation. */
+        dep_name = malloc((size_t) dotd_fname_size + 1);
         if (!dep_name) {
             rs_log_error("failed to allocate space for dotd file");
             return EXIT_OUT_OF_MEMORY;
@@ -323,7 +342,10 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
         while ((c = getc(fp)) != EOF &&
                (!isspace(c) || c == '\\')) {
             if (i >= dotd_fname_size) {
-                /* Impossible */
+                /* Not actually impossible: this fires if the .d file grows
+                 * between the stat() above and this read (TOCTOU), so a
+                 * dependency name can be longer than what the buffer was
+                 * sized for. Bail out rather than overrun dep_name. */
                 rs_log_error("not enough room for dependency name");
                 goto return_0;
             }
@@ -395,7 +417,10 @@ static int dcc_compile_local(char *argv[],
 
     /* We don't do any redirection of file descriptors when running locally,
      * so if for example cpp is being used in a pipeline we should be fine. */
-    if ((ret = dcc_spawn_child(argv, &pid, NULL, NULL, NULL)) != 0)
+    /* Not sandboxed: this is a trusted local build, not a remote client's
+     * job -- see dcc_spawn_child()'s sandbox_seccomp parameter. */
+    if ((ret = dcc_spawn_child(argv, &pid, NULL, NULL, NULL,
+                              0 /* sandbox_seccomp */)) != 0)
         return ret;
 
     if ((ret = dcc_collect_child("cc", pid, &status, timeout_null_fd)))
@@ -462,6 +487,99 @@ static int dcc_please_send_email_after_investigation(
 }
 
 #ifdef HAVE_FSTATAT
+/**
+ * Probe @p path -- a resolved, executable compiler binary that is not
+ * itself a symlink, so readlinkat() can't tell us anything about it -- by
+ * running "<path> --version" and checking whether it self-identifies as
+ * clang. Both gcc and clang always print their own family name in the
+ * first line of "--version" output ("gcc (...) X.Y.Z" vs. "... clang
+ * version X.Y.Z", verified against real gcc/clang output); this is a
+ * cheaper probe than dcc_resolve_march_native()'s "-v -E" trick in arg.c
+ * since only the family is needed here, not resolved CPU flags.
+ *
+ * @returns 1 if @p path self-identifies as clang, 0 if it doesn't (treated
+ *     as gcc, the only other family dcc_rewrite_generic_compiler
+ *     distinguishes), -1 if the probe itself failed (fork/exec/pipe error),
+ *     @p path failed the pre-exec sanity checks below, or the caller must
+ *     not guess.
+ **/
+static int dcc_probe_is_clang(const char *path)
+{
+    int fds[2];
+    pid_t pid;
+    FILE *in;
+    char buff[4096];
+    int is_clang = -1;
+
+    /* @p path is caller's dcc_which()-resolved PATH lookup, so its value is
+     * influenced by the invoking user's own environment -- expected for
+     * this client-side, same-privilege context (see this function's
+     * callers), but CodeQL's cpp/uncontrolled-process-operation flags any
+     * execve-family call fed from environment-influenced data on principle,
+     * without knowing the trust boundary here. Two concrete, real checks
+     * before the fork rather than a bare suppression comment:
+     * (1) refuse a non-absolute path outright -- dcc_which() always builds
+     * one from a PATH entry, so a relative value here means something
+     * upstream is already broken and must not be trusted further;
+     * (2) re-verify executability right before the exec below rather than
+     * only relying on dcc_which()'s own earlier access() check, closing the
+     * TOCTOU window between that lookup and this actual exec. */
+    if (path[0] != '/') {
+        rs_log_warning("refusing to probe non-absolute compiler path '%s'",
+                        path);
+        return -1;
+    }
+    if (access(path, X_OK) != 0) {
+        rs_log_warning("compiler path '%s' no longer executable, not probing: %s",
+                        path, strerror(errno));
+        return -1;
+    }
+
+    if (pipe(fds) == -1)
+        return -1;
+
+    pid = fork();
+    if (pid == -1) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* Child. This must never return into the caller's control flow --
+         * doing so would fork the whole distcc client in two. Any failure
+         * here must terminate the child via _exit(), never "return". */
+        int devnull;
+
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+        close(fds[1]);
+        devnull = open("/dev/null", O_RDONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDIN_FILENO);
+            close(devnull);
+        }
+        execl(path, path, "--version", (char *) NULL);
+        /* execl() only returns on failure. */
+        _exit(127);
+    }
+
+    /* Parent. */
+    close(fds[1]);
+    in = fdopen(fds[0], "r");
+    if (in == NULL) {
+        close(fds[0]);
+    } else {
+        if (fgets(buff, sizeof(buff), in) != NULL)
+            is_clang = (strstr(buff, "clang") != NULL) ? 1 : 0;
+        fclose(in);          /* also closes fds[0] */
+    }
+    while (waitpid(pid, NULL, 0) == -1 && errno == EINTR)
+        ;
+    return is_clang;
+}
+
 /* Re-write "cc" to directly call gcc or clang
  */
 static void dcc_rewrite_generic_compiler(char **argv)
@@ -495,9 +613,20 @@ static void dcc_rewrite_generic_compiler(char **argv)
     ret = fstatat(dir, t + 1, &st, AT_SYMLINK_NOFOLLOW);
     if (ret < 0)
         return;
-    if ((st.st_mode & S_IFMT) != S_IFLNK)
-        /* TODO use cc -v */
+    if ((st.st_mode & S_IFMT) != S_IFLNK) {
+        /* Not a symlink -- e.g. macOS's "cc", a small dispatch binary
+         * rather than a symlink to the real compiler. There's no link
+         * target to inspect, so ask the binary itself what it is. */
+        int probed_is_clang = dcc_probe_is_clang(link);
+
+        if (probed_is_clang < 0)
+            return;
+        free(argv[0]);
+        argv[0] = strdup(probed_is_clang ? (cpp ? "clang++" : "clang")
+                                          : (cpp ? "g++" : "gcc"));
+        rs_trace("Rewriting '%s' to '%s'", cpp ? "c++" : "cc", argv[0]);
         return;
+    }
     ssz = readlinkat(dir, t + 1, linkbuf, sizeof(linkbuf) - 1);
     if (ssz < 0)
         return;
@@ -512,6 +641,8 @@ static void dcc_rewrite_generic_compiler(char **argv)
             strcpy(m, linkbuf);
 
             ssz = readlinkat(dir, m, linkbuf, sizeof(linkbuf) - 1);
+            if (ssz < 0)
+                return;
             linkbuf[ssz] = '\0';
         }
     }
@@ -713,6 +844,12 @@ dcc_build_somewhere(char *argv[],
 
     if ((ret = dcc_discrepancy_filename(&discrepancy_filename)))
         goto clean_up;
+    if (discrepancy_filename && !dcc_sane_env_path(discrepancy_filename)) {
+        rs_log_warning("ignoring malformed discrepancy filename derived "
+                        "from INCLUDE_SERVER_PORT");
+        free(discrepancy_filename);
+        discrepancy_filename = NULL;
+    }
 
     if (sg_level) /* Recursive distcc - run locally, and skip all locking. */
         goto run_local;
@@ -837,6 +974,13 @@ dcc_build_somewhere(char *argv[],
             char *dotd_target = NULL;
             dcc_get_dotd_info(argv, &deps_fname, &needs_dotd,
                               &sets_dotd_target, &dotd_target);
+            if (deps_fname && !dcc_sane_env_path(deps_fname)) {
+                rs_log_warning("ignoring malformed dependency filename "
+                                "derived from -MF/DEPENDENCIES_OUTPUT");
+                free(deps_fname);
+                deps_fname = NULL;
+                needs_dotd = 0;
+            }
             if ((ret = dcc_copy_argv(argv, &remotecpp_server_argv, 2)))
                 goto fallback;
             if (needs_dotd && !sets_dotd_target) {

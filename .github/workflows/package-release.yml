@@ -1,0 +1,303 @@
+name: Package release
+
+concurrency:
+  group: package-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_container:
+        description: "Build (and push) the container image even without a real release tag, for testing"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+      image_base: ${{ steps.meta.outputs.image_base }}
+      do_container: ${{ steps.meta.outputs.do_container }}
+    steps:
+      # Trial run (#58): audit-only egress monitoring, does not block any
+      # traffic yet. Must be the very first step in every job -- it can't
+      # retroactively cover network calls made by steps that already ran.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            release_title="distcc-ng ${GITHUB_REF_NAME}"
+          else
+            version="manual-${GITHUB_RUN_NUMBER}"
+            release_title="distcc-ng manual-${GITHUB_RUN_NUMBER}"
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "${{ inputs.publish_container }}" = "true" ]; then
+            do_container=true
+          else
+            do_container=false
+          fi
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'tag_name=%s\n' "${GITHUB_REF_NAME}"
+            printf 'release_title=%s\n' "${release_title}"
+            printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
+            printf 'do_container=%s\n' "${do_container}"
+          } >> "${GITHUB_OUTPUT}"
+
+  # --- Gate 1: real build + full make check before release ------------------
+  build_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ github.run_id }}
+          restore-keys: |
+            ccache-release-
+      # Same autom4te.cache caching as c-build.yml's make_check job -- see
+      # that job for why restoring a stale entry here is safe, and why
+      # configure's own config.cache is deliberately NOT cached (its cached
+      # dependency-detection results aren't safely invalidated by a
+      # configure.ac/m4 hash alone).
+      - uses: actions/cache@v4
+        with:
+          path: autom4te.cache
+          key: autoconf-release-${{ hashFiles('configure.ac', 'm4/*.m4') }}
+          restore-keys: |
+            autoconf-release-
+      - run: ./autogen.sh
+      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
+      - run: make
+      - run: make check
+
+  # --- Gate 2: real distributed-compile e2e before release ------------------
+  distributed_e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+      - name: Run distributed-compile end-to-end test
+        run: bash test/e2e/run-e2e.sh
+
+  build_packages:
+    needs: [setup, build_check, distributed_e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+
+      - name: Build release packages
+        shell: bash
+        run: |
+          ./scripts/build-release-packages.sh
+
+      - name: Generate build attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: distcc-release-packages-${{ needs.setup.outputs.version }}
+          path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
+
+  build_container:
+    needs: [setup, build_check, distributed_e2e]
+    if: needs.setup.outputs.do_container == 'true'
+    strategy:
+      matrix:
+        include:
+          # amd64 is required; arm64 is best-effort, on GitHub's free
+          # native arm64 public-repo runners -- no QEMU emulation needed,
+          # each leg builds natively for its own architecture.
+          - platform: amd64
+            runs_on: ubuntu-latest
+          - platform: arm64
+            runs_on: ubuntu-24.04-arm
+      fail-fast: false
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build ${{ matrix.platform }} image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          VERSION_LABEL: ${{ needs.setup.outputs.version }}
+          VCS_REF: ${{ github.sha }}
+        run: |
+          docker build \
+            --platform "linux/${{ matrix.platform }}" \
+            --file docker/release/Dockerfile \
+            --build-arg "VCS_REF=${VCS_REF}" \
+            --build-arg "VERSION=${VERSION_LABEL}" \
+            --tag "${IMAGE_TAG}" \
+            .
+
+      - name: Prepare local Trivy cache
+        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}"
+
+      - name: Scan image with Trivy
+        # Scans the locally-built image before it's ever pushed -- a
+        # vulnerable image never reaches the registry. Pattern and options
+        # match wiki-mod/lancache-ng's real, working setup.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          hide-progress: true
+          cache: "false"
+          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}
+          timeout: 10m
+          exit-code: "1"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          format: spdx-json
+          artifact-name: distcc-ng-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
+
+      - name: Push ${{ matrix.platform }} image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+        run: docker push "${IMAGE_TAG}"
+
+  publish_manifest:
+    needs: [setup, build_container]
+    if: needs.setup.outputs.do_container == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Create multi-arch manifest
+        shell: bash
+        env:
+          IMAGE_BASE: ${{ needs.setup.outputs.image_base }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_BASE}" \
+            "${IMAGE_BASE}-amd64" \
+            "${IMAGE_BASE}-arm64"
+
+  publish_github_release:
+    needs: [setup, build_packages, publish_manifest]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/download-artifact@v8
+        with:
+          name: distcc-release-packages-${{ needs.setup.outputs.version }}
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
+          RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
+          TAG_NAME: ${{ needs.setup.outputs.tag_name }}
+        run: |
+          shopt -s nullglob
+          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+
+          notes_file="$(mktemp)"
+          {
+            printf '%s\n\n' "${RELEASE_TITLE}"
+            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n'
+            printf 'Source commit: %s\n' "${GITHUB_SHA}"
+            printf 'Tag: %s\n\n' "${TAG_NAME}"
+            printf 'Container image: %s\n' "${IMAGE_TAG}"
+          } > "${notes_file}"
+
+          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
+            gh release edit "${TAG_NAME}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          else
+            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          fi

@@ -83,12 +83,14 @@
 #include <assert.h>
 
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "distcc.h"
 #include "trace.h"
 #include "util.h"
 #include "exitcode.h"
 #include "snprintf.h"
+#include "client-config.h"
 
 
 int dcc_argv_append(char **argv, char *toadd)
@@ -108,6 +110,326 @@ static void dcc_note_compiled(const char *input_file, const char *output_file)
 
     rs_log(RS_LOG_INFO|RS_LOG_NONAME,
            "compile from %s to %s", input_base, output_base);
+}
+
+/**
+ * Detect -march=native / -mtune=native / -mcpu=native anywhere in @p argv
+ * and, if present, ask the LOCAL compiler what concrete flags "native"
+ * expands to on this machine, so we can ship the concrete (resolved) flags
+ * instead of the literal word "native".
+ *
+ * "native" only means something on the machine that actually runs the
+ * compiler backend. Shipping the literal flag to a distcc build server
+ * would silently ask *that* machine's compiler to optimize for its own,
+ * potentially different, CPU -- exactly the class of miscompilation this
+ * function exists to prevent. Resolving it here, on the client, before the
+ * job is ever sent out keeps the meaning of "native" pinned to the machine
+ * the developer actually meant.
+ *
+ * The resolution trick: run "<compiler> -v -E -x c <native-flags> -" with
+ * stdin closed (so it preprocesses an empty file) and stderr captured.
+ * In verbose mode both gcc and clang print the exact invocation of their
+ * backend (cc1/cc1plus for gcc, "-cc1" for clang) on a line containing
+ * " - " (the input placeholder) followed by that backend's fully expanded
+ * argument list -- which is where the concrete -march=/-mtune=/-mcpu=
+ * (gcc) or -target-cpu/-target-feature (clang) flags actually live.
+ *
+ * Which filter applies (clang's vs gcc's) is decided by whether the backend
+ * token found on that line is the dash-prefixed "-cc1" (clang) or a bare
+ * "cc1"/"cc1plus" (gcc) -- i.e. by what the invoked compiler actually turned
+ * out to be, not by guessing by its argv[0]/basename. A dispatcher like
+ * macOS's "cc" can invoke either backend under a name that says nothing
+ * about which; this is what's actually running underneath it.
+ *
+ * clang's driver does not accept raw cc1-level flags on its own
+ * command line, so each flag we forward for clang must be wrapped in
+ * "-Xclang". clang's cc1 invocation also contains a lot of internal
+ * housekeeping flags (emit-obj, debug-info-kind, ...) that are not part
+ * of the CPU resolution and must not be forwarded blindly -- only
+ * "-target-cpu"/"-target-feature"/... (i.e. anything starting with
+ * "-target") and the value token immediately following each of them are
+ * kept, mirroring what upstream distcc/distcc#384 found to be the
+ * minimal correct filter after review discussion on that PR.
+ *
+ * gcc's "-v -E -march=native" output likewise mixes the resolved CPU flags
+ * in with unrelated driver internals (verified against real gcc output):
+ * only "-m"-prefixed tokens (the resolved -march=/-mtune=/-mcpu= plus one
+ * -m<feature> flag per ISA extension, e.g. -msse4.2/-mno-avx512f) are the
+ * actual resolution and get forwarded; everything else (-quiet,
+ * -imultiarch <triple>, --param <name>=<value>, -fasynchronous-unwind-tables,
+ * -dumpbase -, the trailing bare "-") is dropped.
+ *
+ * @param argv the (already compiler-name-prefixed) argument vector to scan.
+ * @param ret_newargv on success (return 1), set to a freshly malloc'd,
+ *     NULL-terminated argv the caller owns, with the native flag(s)
+ *     replaced by their resolved equivalent. Left untouched otherwise.
+ * @param extra_args number of trailing NULL slots to reserve in
+ *     *ret_newargv, matching dcc_copy_argv()'s contract so later callers
+ *     (e.g. to append "-o foo.o") keep working unchanged.
+ * @param ignore_range_min/@param ignore_range_max on success, the [min, max)
+ *     index range in *ret_newargv occupied by the substituted flags, so
+ *     the main dcc_scan_args() scan loop doesn't re-interpret compiler
+ *     backend internals (e.g. clang's "-target-cpu") as distcc option
+ *     syntax.
+ *
+ * @returns 1 if a native flag was found and successfully resolved; 0 if
+ *     no native flag was present, OR resolution was attempted but failed
+ *     for any reason (compiler doesn't support this introspection trick,
+ *     unexpected output shape, subprocess failure, out of memory, ...).
+ *     In the failure case the caller must fall back to its own existing
+ *     safe behavior (hard-failing distribution of this compile) rather
+ *     than silently shipping the unresolved "native" flag remotely.
+ **/
+static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
+                                     int extra_args,
+                                     int *ignore_range_min,
+                                     int *ignore_range_max)
+{
+    int i, l, j, k;
+    unsigned int n_words, n_slots;
+    char *tok, *strtok_save;
+    char **b;
+    const char *compiler;
+    int is_clang;
+    int found_arch_native = 0, found_tune_native = 0, found_cpu_native = 0;
+    int outfds[2], infds[2];
+    pid_t pid;
+    FILE *in;
+    char buff[16384];
+    char argsbuf[16384];
+    char *args = NULL;
+
+    l = dcc_argv_len(argv);
+    if (l == 0 || !argv[0])
+        return 0;
+
+    /* Only used to pick which program to exec below; the actual compiler
+     * family (is_clang) is determined later from what that program tells
+     * us about itself, not from its own invoked name -- see the fgets()
+     * loop below. */
+    compiler = strrchr(argv[0], '/');
+    compiler = (compiler == NULL) ? argv[0] : compiler + 1;
+    is_clang = 0;
+
+    for (i = 0; i < l; i++) {
+        if (!strcmp(argv[i], "-march=native"))
+            found_arch_native = 1;
+        else if (!strcmp(argv[i], "-mtune=native"))
+            found_tune_native = 1;
+        else if (!strcmp(argv[i], "-mcpu=native"))
+            found_cpu_native = 1;
+    }
+    if (!found_arch_native && !found_tune_native && !found_cpu_native)
+        return 0;
+
+    rs_trace("-march/-mtune/-mcpu=native option found; "
+             "resolving to the local machine's actual CPU flags");
+
+    if (pipe(outfds) == -1) {
+        rs_log_warning("failed to create pipe to resolve -march=native: %s",
+                        strerror(errno));
+        return 0;
+    }
+    if (pipe(infds) == -1) {
+        rs_log_warning("failed to create pipe to resolve -march=native: %s",
+                        strerror(errno));
+        close(outfds[0]);
+        close(outfds[1]);
+        return 0;
+    }
+
+    pid = fork();
+    if (pid == -1) {
+        rs_log_warning("failed to fork to resolve -march=native: %s",
+                        strerror(errno));
+        close(outfds[0]); close(outfds[1]);
+        close(infds[0]); close(infds[1]);
+        return 0;
+    }
+
+    if (pid == 0) {
+        /* Child. This must never return into the caller's control flow --
+         * doing so would fork the whole distcc client in two. Any failure
+         * here must terminate the child via _exit(), never "return". */
+        int devnull;
+
+        close(outfds[1]);
+        dup2(outfds[0], STDIN_FILENO);
+        close(outfds[0]);
+        close(infds[0]);
+        dup2(infds[1], STDERR_FILENO);
+        close(infds[1]);
+
+        /* Discard the (irrelevant, and otherwise stdout-polluting)
+         * preprocessed output; we only care about the verbose trace on
+         * stderr. */
+        devnull = open("/dev/null", O_WRONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDOUT_FILENO);
+            close(devnull);
+        }
+
+        execlp(compiler, compiler, "-v", "-E", "-x", "c",
+               found_arch_native ? "-march=native" : "-DDCC_MARCH_NATIVE_UNUSED",
+               found_tune_native ? "-mtune=native" : "-DDCC_MTUNE_NATIVE_UNUSED",
+               found_cpu_native  ? "-mcpu=native"  : "-DDCC_MCPU_NATIVE_UNUSED",
+               "-", (char *) NULL);
+        /* execlp() only returns on failure. */
+        _exit(127);
+    }
+
+    /* Parent. */
+    close(outfds[0]);
+    close(outfds[1]);       /* closing our copy sends EOF to the child's stdin */
+    close(infds[1]);
+
+    in = fdopen(infds[0], "r");
+    if (in == NULL) {
+        rs_log_warning("failed to read compiler output while resolving "
+                        "-march=native: %s", strerror(errno));
+        close(infds[0]);
+    } else {
+        while (fgets(buff, sizeof(buff), in) != NULL) {
+            char *cc1 = strstr(buff, "cc1");
+            char *a, *end;
+
+            if (!cc1)
+                continue;
+            /* Determine the compiler family from the backend invocation
+             * we just observed, not from the compiler binary's own name:
+             * clang's driver always invokes its internal frontend as the
+             * literal dash-prefixed argument "-cc1"; gcc's cc1/cc1plus is
+             * passed as a bare token (or a full path), never dash-prefixed.
+             * This reads what is actually running, so it stays correct even
+             * when a dispatcher (e.g. macOS's "cc") invokes clang under a
+             * name that doesn't contain "clang". */
+            is_clang = (cc1 != buff && cc1[-1] == '-');
+            a = strstr(cc1, " - ");
+            if (!a)
+                continue;
+            a += 3;
+            end = strstr(a, " -v ");
+            if (!end)
+                end = strchr(a, '\n');
+            if (end)
+                *end = '\0';
+            if (*a == '\0')
+                continue;
+            snprintf(argsbuf, sizeof(argsbuf), "%s", a);
+            args = argsbuf;
+            break;
+        }
+        fclose(in);             /* also closes infds[0] */
+    }
+
+    /* Reap the child regardless of outcome above; we don't gate success on
+     * its exit status because we may have closed its stderr pipe (and thus
+     * possibly delivered it a SIGPIPE) before it finished its own verbose
+     * trace -- harmless, since we already extracted what we needed. */
+    while (waitpid(pid, NULL, 0) == -1 && errno == EINTR)
+        ;
+
+    if (args == NULL) {
+        rs_log_warning("failed to resolve -march/-mtune/-mcpu=native via "
+                        "local %s; will not distribute this compilation",
+                        compiler);
+        return 0;
+    }
+
+    /* Worst case every whitespace-separated token in the resolved argument
+     * string survives into the new argv; for clang each surviving token is
+     * additionally preceded by "-Xclang", hence the factor of two. */
+    n_words = 1;
+    for (i = 0; args[i]; i++)
+        if (args[i] == ' ')
+            n_words++;
+    n_slots = is_clang ? n_words * 2 : n_words;
+
+    b = malloc((size_t)(l + extra_args + (int)n_slots) * sizeof(argv[0]));
+    if (b == NULL) {
+        rs_log_warning("failed to allocate argv while resolving "
+                        "-march=native");
+        return 0;
+    }
+
+    j = 0;
+    *ignore_range_min = *ignore_range_max = 0;
+    for (i = 0; i < l; i++) {
+        if (!strcmp(argv[i], "-march=native") ||
+            !strcmp(argv[i], "-mtune=native") ||
+            !strcmp(argv[i], "-mcpu=native")) {
+            if (*ignore_range_max == *ignore_range_min) {
+                /* Insert the resolved flags once, at the position of the
+                 * first native flag encountered; later occurrences are
+                 * just dropped since they'd resolve to the same thing. */
+                int clang_force_next = 0;
+
+                *ignore_range_min = j;
+                for (tok = strtok_r(args, " ", &strtok_save); tok;
+                     tok = strtok_r(NULL, " ", &strtok_save)) {
+                    if (is_clang) {
+                        if (!strncmp(tok, "-target", strlen("-target"))) {
+                            clang_force_next = 1;
+                        } else if (!clang_force_next) {
+                            /* Not part of a "-target ... value" pair:
+                             * internal cc1 housekeeping, not CPU-resolution
+                             * data -- drop it rather than forward it
+                             * blindly. */
+                            continue;
+                        } else {
+                            clang_force_next = 0;
+                        }
+                        if ((b[j++] = strdup("-Xclang")) == NULL)
+                            goto alloc_fail;
+                    } else if (tok[0] != '-' || tok[1] != 'm') {
+                        /* gcc's "-v -E -march=native" output expands the
+                         * native flag(s) into the resolved -march=/-mtune=/
+                         * -mcpu= plus one -m<feature> flag per ISA extension
+                         * (e.g. -msse4.2, -mno-avx512f, verified against real
+                         * gcc output) -- that "-m"-prefixed set IS the CPU
+                         * resolution. It's interleaved with unrelated driver
+                         * internals (-quiet, -imultiarch <triple>, --param
+                         * <name>=<value>, -fasynchronous-unwind-tables,
+                         * -dumpbase -, the trailing bare "-") that must not
+                         * be forwarded to a remote gcc invocation. */
+                        continue;
+                    }
+                    if ((b[j++] = strdup(tok)) == NULL)
+                        goto alloc_fail;
+                }
+                *ignore_range_max = j;
+            }
+            continue;
+        }
+        if ((b[j++] = strdup(argv[i])) == NULL)
+            goto alloc_fail;
+    }
+
+    if (*ignore_range_max == *ignore_range_min) {
+        /* We found native flag(s) but the compiler's verbose output didn't
+         * yield anything we recognized as resolvable CPU flags (e.g. an
+         * unexpected clang cc1 output shape). Treat this the same as any
+         * other resolution failure. */
+        rs_log_warning("could not extract resolved CPU flags from %s "
+                        "output; will not distribute this compilation",
+                        compiler);
+        for (k = 0; k < j; k++)
+            free(b[k]);
+        free(b);
+        return 0;
+    }
+
+    b[j] = NULL;
+    *ret_newargv = b;
+    return 1;
+
+alloc_fail:
+    rs_log_warning("failed to duplicate argument while resolving "
+                    "-march=native");
+    for (k = 0; k < j; k++)
+        free(b[k]);
+    free(b);
+    return 0;
 }
 
 /**
@@ -134,10 +456,21 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
     int i;
     char *a;
     int ret;
+    int ignore_range_min = 0, ignore_range_max = 0;
 
-     /* allow for -o foo.o */
-    if ((ret = dcc_copy_argv(argv, ret_newargv, 4)) != 0)
-        return ret;
+    /* If -march/-mtune/-mcpu=native is present, try to resolve it to the
+     * local machine's actual CPU flags first; dcc_resolve_march_native()
+     * already makes its own malloc'd copy of argv (like dcc_copy_argv()
+     * below) when it succeeds. On failure (including "no native flag
+     * present") we fall through to the normal dcc_copy_argv() path below,
+     * and the existing hard-fail checks further down catch any unresolved
+     * native flag exactly as they did before this feature existed. */
+    if (!dcc_resolve_march_native(argv, ret_newargv, 4,
+                                   &ignore_range_min, &ignore_range_max)) {
+        /* allow for -o foo.o */
+        if ((ret = dcc_copy_argv(argv, ret_newargv, 4)) != 0)
+            return ret;
+    }
     argv = *ret_newargv;
 
     /* FIXME: new copy of argv is leaked */
@@ -155,6 +488,26 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
     *input_file = *output_file = NULL;
 
     for (i = 0; (a = argv[i]); i++) {
+        /* Args in [ignore_range_min, ignore_range_max) are the flags
+         * dcc_resolve_march_native() substituted in place of a native
+         * flag -- e.g. clang's "-target-cpu"/"-target-feature" wrapped in
+         * "-Xclang" aren't distcc option syntax and must not be
+         * reinterpreted as such here. */
+        if (i >= ignore_range_min && i < ignore_range_max)
+            continue;
+        /* A token introduced by "-Xclang" is verbatim clang cc1 payload,
+         * not distcc option syntax, so it must not be matched against the
+         * flag tests below -- e.g. a -target-feature disable value like
+         * "-xop" would otherwise satisfy the str_startswith("-x", a)
+         * language-override check and force this compile local. The
+         * ignore_range above already covers this on the client (where
+         * dcc_resolve_march_native() built the range), but the server
+         * re-scans a received argv that no longer contains -march=native,
+         * so its range is empty [0,0) and this structural guard is what
+         * protects the pairs there. "-Xclang" itself matches no branch
+         * below, so it needs no special case. */
+        if (i > 0 && !strcmp(argv[i-1], "-Xclang"))
+            continue;
         if (a[0] == '-') {
             if (!strcmp(a, "-E")) {
                 rs_trace("-E call for cpp must be local");
@@ -189,6 +542,26 @@ int dcc_scan_args(char *argv[], char **input_file, char **output_file,
                 rs_trace("-mtune=native optimizes for local machine; "
                          "must be local");
                 return EXIT_DISTCC_FAILED;
+            } else if (!strcmp(a, "-mcpu=native")) {
+                rs_trace("-mcpu=native optimizes for local machine; "
+                         "must be local");
+                return EXIT_DISTCC_FAILED;
+            } else if (!strcmp(a, "-flto") || str_startswith("-flto=", a)) {
+                /* Only forced local when explicitly configured to, via
+                 * distcc.conf's `local-lto` or DISTCC_LOCAL_LTO (issue
+                 * #207) -- default is to distribute normally. Upstream
+                 * tried forcing these local unconditionally too
+                 * (distcc/distcc#413) then reverted it (47a19b96) with
+                 * real evidence that distributing LTO compiles reduces
+                 * build time in practice, not wastes it; see
+                 * support-upstream/issue-074-lto-distribution-revert.md.
+                 * Falls through to normal distribution by default. */
+                if (dcc_getenv_bool("DISTCC_LOCAL_LTO",
+                                     dcc_client_config_get()->local_lto)) {
+                    rs_trace("LTO compilation forced local by "
+                             "configuration; must be local");
+                    return EXIT_DISTCC_FAILED;
+                }
             } else if (str_startswith("-Wa,", a)) {
                 /* Look for assembler options that would produce output
                  * files and must be local.

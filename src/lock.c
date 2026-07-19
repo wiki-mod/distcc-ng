@@ -246,7 +246,13 @@ int dcc_open_lockfile(const char *fname, int *plockfd)
      *
      * The file is created with the loosest permissions allowed by the user's
      * umask, to give the best chance of avoiding problems if they should
-     * happen to use a shared lock dir. */
+     * happen to use a shared lock dir. This 0666 is deliberate, not an
+     * oversight: DISTCC_DIR (and so this lock dir) can be pointed at a
+     * location shared across multiple local users on the same build host,
+     * and each of them needs to be able to create/open/lock slot files the
+     * others created first. Tightening this to a private mode would make
+     * that shared-lock-dir deployment fail outright for every user but the
+     * one who happened to create a given slot file first. */
     /* FIXME: If we fail to open with EPERM or something similar, try deleting
      * the file and try again.  That might fix problems with root-owned files
      * in user home directories. */
@@ -254,6 +260,21 @@ int dcc_open_lockfile(const char *fname, int *plockfd)
     if (*plockfd == -1 && errno != EEXIST) {
         rs_log_error("failed to create %s: %s", fname, strerror(errno));
         return EXIT_IO_ERROR;
+    }
+
+    /* open()'s mode argument is masked by the creating process's umask --
+     * under a typical umask of 022 or 002, the 0666 above actually lands
+     * on disk as 0644 or 0664, silently defeating the shared-lock-dir
+     * support the comment above describes (verified live: a second user
+     * outside the file's group got EACCES trying to reopen an existing
+     * slot file O_RDWR). fchmod() is not subject to umask, so it's the
+     * only way to actually get the requested 0666 regardless of who
+     * created the file first. Best-effort: if this fails (e.g. the file
+     * is owned by a different user and we don't have permission to
+     * rechmod it), fall through and let the lock attempt itself succeed
+     * or fail on its own terms rather than treating this as fatal. */
+    if (*plockfd != -1 && fchmod(*plockfd, 0666) == -1) {
+        rs_log_warning("failed to chmod %s to 0666: %s", fname, strerror(errno));
     }
 
     return 0;

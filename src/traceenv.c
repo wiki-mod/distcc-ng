@@ -35,6 +35,7 @@
 #include "trace.h"
 #include "exitcode.h"
 #include "util.h"
+#include "pathsafety.h"
 
 
 /**
@@ -62,7 +63,22 @@ void dcc_set_trace_from_env(void)
     rs_trace_set_level(RS_LOG_DEBUG);
 
     if ((logfile = getenv("DISTCC_LOG")) && logfile[0]) {
-        fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0666);
+        if (!dcc_sane_env_path(logfile)) {
+            /* Malformed $DISTCC_LOG (empty, too long, or containing
+             * control characters): fall through to stderr rather than
+             * handing a bogus value to open(). */
+            fd = -1;
+            errno = EINVAL;
+        } else {
+            /* Mode left at 0666 deliberately, not tightened: this matches
+             * the mode every other distcc trace/lock/state file in a
+             * shared DISTCC_DIR has used for 25+ years (see src/lock.c's
+             * dcc_open_lockfile() for the fuller rationale) -- the
+             * maintainer confirmed this is intentional long-standing
+             * behavior, not an oversight, and CodeQL's world-writable
+             * complaint on this line is not being acted on. */
+            fd = open(logfile, O_WRONLY|O_APPEND|O_CREAT, 0666);
+        }
         if (fd != -1) {
             /* asked for a file, and we can open that file:
                include info messages */

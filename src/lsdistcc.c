@@ -79,6 +79,7 @@
 
 #include <netdb.h>
 #include <assert.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -186,7 +187,7 @@ void usage(void);
 int bitcompare(const unsigned char *a, const unsigned char *b, int nbits);
 void timeout_handler(int x);
 void get_thename(const char**sformat, const char *domain_name,
-                 int i, char *thename);
+                 int i, char *thename, size_t thename_size);
 int detect_distcc_servers(const char **argv, int argc, int opti,
                           int bigtimeout, int dnstimeout, int matchbits,
                           int overlap, int dnsgap);
@@ -311,7 +312,10 @@ static void generate_query(void)
                                       "ARGV00000002-o"
                                       "ARGV00000007hello.o"
                                       "DOTI%08x%s";
-        sprintf(canned_query,
+        /* opt_compiler comes straight from the -c command-line option, so its
+         * length is caller-controlled and the fixed-size canned_query buffer
+         * must be written with an explicit bound rather than a bare sprintf. */
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_1,
                  (unsigned)strlen(opt_compiler), opt_compiler,
                  (unsigned)strlen(program), program);
@@ -329,15 +333,24 @@ static void generate_query(void)
                                       "ARGV00000002-o"
                                       "ARGV00000007hello.o"
                                       "DOTI%08x";
-        sprintf(canned_query,
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_2,
                  (unsigned)strlen(opt_compiler),
                  opt_compiler,
                  (unsigned)lzod_program_len);
 
-        canned_query_len = strlen(canned_query) + lzod_program_len;
-        memcpy(canned_query + strlen(canned_query),
-               lzod_program, lzod_program_len);
+        /* Guard the trailing binary append: if a pathological opt_compiler
+         * truncated the header up against the buffer end, appending the
+         * compressed program at strlen(canned_query) could still overrun. */
+        {
+            size_t hdr_len = strlen(canned_query);
+            if (hdr_len + lzod_program_len > sizeof(canned_query)) {
+                rs_log_error("canned query exceeds buffer; compiler name too long");
+                exit(1);
+            }
+            canned_query_len = hdr_len + lzod_program_len;
+            memcpy(canned_query + hdr_len, lzod_program, lzod_program_len);
+        }
 
         break;
       }
@@ -356,15 +369,21 @@ static void generate_query(void)
                                       "NAME00000008/hello.c"
                                       "FILE%08x";
 
-        sprintf(canned_query,
+        snprintf(canned_query, sizeof(canned_query),
                 canned_query_fmt_protocol_3,
                  (unsigned)strlen(opt_compiler),
                  opt_compiler,
                  (unsigned)lzod_program_len);
 
-        canned_query_len = strlen(canned_query) + lzod_program_len;
-        memcpy(canned_query + strlen(canned_query),
-               lzod_program, lzod_program_len);
+        {
+            size_t hdr_len = strlen(canned_query);
+            if (hdr_len + lzod_program_len > sizeof(canned_query)) {
+                rs_log_error("canned query exceeds buffer; compiler name too long");
+                exit(1);
+            }
+            canned_query_len = hdr_len + lzod_program_len;
+            memcpy(canned_query + hdr_len, lzod_program, lzod_program_len);
+        }
         break;
       }
     }
@@ -875,20 +894,79 @@ static int one_poll_loop(struct rslave_s* rs, struct state_s states[],
     return end_state;
 }
 
+/* Confirm 'fmt' contains exactly one integer ("%d", optionally with
+ * printf flags/width/precision like "%02d") conversion and no other '%'
+ * conversion specifier at all (including a literal "%%" or a '*'
+ * dynamic-width/precision, which would itself consume an extra
+ * argument). get_thename() passes its caller-supplied format string
+ * straight to snprintf() as the *format* argument, not as data -- if it
+ * contained e.g. "%s" or "%n" in addition to "%d", snprintf() would
+ * consume arguments that were never supplied (only a single int is
+ * passed here), reading or -- for "%n" -- writing out of bounds. A
+ * format merely *containing* "%d" somewhere is not sufficient; it must
+ * contain *only* that one conversion. Flags/width/precision are allowed
+ * before the 'd' since they don't change how many arguments the
+ * conversion consumes (e.g. "distcc%02d" for zero-padded host numbers is
+ * a realistic, safe format this must keep accepting). Returns 1 if
+ * 'fmt' is safe to use as-is, 0 otherwise.
+ */
+static int dcc_thename_format_is_safe(const char *fmt)
+{
+    int seen_conversion = 0;
+    const char *p = fmt;
+
+    while (*p != '\0') {
+        if (*p != '%') {
+            p++;
+            continue;
+        }
+        if (seen_conversion)
+            return 0;            /* a second '%' of any kind -> unsafe */
+        p++;                     /* past '%' */
+        while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#')
+            p++;                 /* flags */
+        while (isdigit((unsigned char) *p))
+            p++;                 /* width (a literal digit only -- '*'
+                                   * falls through to the check below and
+                                   * is rejected, since it would consume
+                                   * an extra argument) */
+        if (*p == '.') {
+            p++;
+            while (isdigit((unsigned char) *p))
+                p++;             /* precision, same reasoning as width */
+        }
+        if (*p != 'd')
+            return 0;            /* not a plain int conversion -> unsafe */
+        seen_conversion = 1;
+        p++;                     /* past 'd' */
+    }
+    return seen_conversion;
+}
+
 /* Get the name based on the sformat. If the first element in sformat is a
  * format, ignore the rest, and use the format to generate the series of names;
  * otherwise, copy the name from sformat. Attach domain_name if needed.
+ * thename_size is the maximum number of bytes that can be written to thename.
  */
 void get_thename(const char**sformat, const char *domain_name, int i,
-                char *thename)
+                char *thename, size_t thename_size)
 {
-    if (strstr(sformat[0], "%d") != NULL)
-        sprintf(thename, sformat[0], i);
-    else
-        strcpy(thename, sformat[i-1]);
+    if (strstr(sformat[0], "%d") != NULL) {
+        if (!dcc_thename_format_is_safe(sformat[0])) {
+            /* sformat[0] traces back to an lsdistcc command-line argument
+             * -- refuse outright rather than guess at a "safe" fallback
+             * interpretation of attacker-controlled format text. */
+            fprintf(stderr, "lsdistcc: host-name format '%s' must contain "
+                    "exactly one '%%d' conversion and no other '%%' "
+                    "specifier\n", sformat[0]);
+            exit(1);
+        }
+        snprintf(thename, thename_size, sformat[0], i);
+    } else
+        strncpy(thename, sformat[i-1], thename_size - 1);
     if (opt_domain) {
-        strcat(thename, ".");
-        strcat(thename, domain_name);
+        strncat(thename, ".", thename_size - strlen(thename) - 1);
+        strncat(thename, domain_name, thename_size - strlen(thename) - 1);
     }
 }
 
@@ -980,7 +1058,7 @@ int detect_distcc_servers(const char **argv, int argc, int opti,
     /* all hosts start off in state 'sent 0' */
     for (i=1; i<=n; i++) {
         rslave_request_t *req = &states[i].req;
-        get_thename(sformat, domain_name, i, thename);
+        get_thename(sformat, domain_name, i, thename, sizeof(thename));
         rslave_request_init(req, thename, i);
         states[i].status = STATE_LOOKUP;
         states[i].ntries = 0;

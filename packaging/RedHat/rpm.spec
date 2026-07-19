@@ -11,13 +11,17 @@
 
 Name: %NAME
 Summary: Client side program for distributed C/C++ compilations.
+# Version must be RPM-safe (rpm-version(7) forbids '-', the NVR
+# separator); rpm.sh splits this fork's "-NG"-suffixed version and passes
+# the numeric part as VERSION, folding the suffix into Release below.
+# FULLVERSION keeps the original, hyphenated version for the source
+# tarball, which follows this project's own release-tag naming, not RPM's.
 Version: %VERSION
-Release: %rel
+Release: %{rel}%{?VERSUFFIX:.%{VERSUFFIX}}
 Group: Development/Languages
-Url: https://code.google.com/p/distcc
+Url: https://github.com/wiki-mod/distcc-ng
 License: GPL
-Packager: Google Inc. <opensource@google.com>
-Source: http://%{NAME}.googlecode.com/files/%{NAME}-%{VERSION}.tar.gz
+Source: https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v%{FULLVERSION}.tar.gz#/%{NAME}-%{FULLVERSION}.tar.gz
 Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
@@ -31,7 +35,10 @@ local compile, is simple to install and use, and is often two or more times
 faster than a local compile.
 
 %prep
-%setup
+# The dist tarball's top-level directory uses the full, hyphenated
+# FULLVERSION (matching this fork's real release-tag naming), not the
+# RPM-sanitized %{version} -- tell %setup the real directory name.
+%setup -n %{NAME}-%{FULLVERSION}
 
 %build
 # Work around broken sendfile in 32 bit apps on some x86_64 systems
@@ -42,7 +49,7 @@ ac_cv_func_sendfile=no ac_cv_header_sys_sendfile_h=no ./configure \
   --datadir=%{_datadir} \
   --with-docdir=%{_docdir} \
   --mandir=%{_mandir} \
-  --enable-rfc2553 --with-included-popt
+  --enable-rfc2553
 # Get the list of files installed by the python install process
 # by asking make to tell setup.py to put it in python_install_record
 make RPM_OPT_FLAGS="$RPM_OPT_FLAGS" \
@@ -77,6 +84,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/lsdistcc
 %{_libdir}/distcc
 %{_bindir}/pump
+%{_sbindir}/update-distcc-symlinks
 %dir %{_sysconfdir}/distcc
 %config %{_sysconfdir}/distcc/hosts
 %doc %{_mandir}/man1/distcc.1.gz

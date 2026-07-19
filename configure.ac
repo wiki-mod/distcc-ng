@@ -10,17 +10,19 @@ dnl Process this file with autoconf to produce a configure script
 
 # As of 0.6cvs, distcc no longer uses automake, only autoconf.
 AC_PREREQ([2.71])
-AC_INIT([distcc],[3.4],[https://github.com/distcc/distcc])
+AC_INIT([distcc],[3.6.0-NG],[https://github.com/wiki-mod/distcc-ng/issues])
 
 AC_CONFIG_HEADERS(src/config.h)
 AC_CONFIG_MACRO_DIRS([m4])
 
 AC_CANONICAL_HOST
 AC_MSG_CHECKING([if the host system type is Linux])
+is_linux_host=no
 case "${host_os}" in
 linux*)
 	AC_MSG_RESULT(yes)
 	AC_DEFINE(HAVE_LINUX, 1, [Define to 1 if the host system type is Linux.])
+	is_linux_host=yes
 	;;
 *)
 	AC_MSG_RESULT(no)
@@ -91,9 +93,15 @@ AC_ARG_ENABLE(pump-mode,
 	AS_HELP_STRING([--disable-pump-mode],[include server support (pump mode), requires python]),
 		[pump_mode=${enableval}], [pump_mode=yes])
 
-AM_PATH_PYTHON([3.1],,[:])
-AC_ARG_VAR(PYTHON, [Python interpreter])
-AC_SUBST(PYTHON_RELATIVE_LIB)
+# The include server (pump mode) is implemented in Python, so only probe
+# for a Python interpreter when pump mode is actually going to be built;
+# otherwise --disable-pump-mode would still fail/hang on a system with no
+# Python at all, defeating the point of the flag.
+if test "x${pump_mode}" = xyes; then
+	AM_PATH_PYTHON([3.1],,[:])
+	AC_ARG_VAR(PYTHON, [Python interpreter])
+	AC_SUBST(PYTHON_RELATIVE_LIB)
+fi
 
 AC_ARG_ENABLE(rfc2553,
 	AS_HELP_STRING([--enable-rfc2553],[use getaddrinfo, getnameinfo, etc]))
@@ -172,6 +180,75 @@ AC_SUBST(GNOME_CFLAGS)
 AC_SUBST(GNOME_LIBS)
 AC_SUBST(INSTALL_GNOME)
 AC_SUBST(UNINSTALL_GNOME)
+
+PKG_PROG_PKG_CONFIG
+
+AC_ARG_WITH(zstd,
+        AS_HELP_STRING([--with-zstd], [build with zstd compression]))
+
+HAVE_ZSTD=
+if test x"$with_zstd" != xno; then
+    PKG_CHECK_MODULES([ZSTD], [libzstd >= 1],
+                      [have_zstd_pkg=yes],
+                      [have_zstd_pkg=no])
+    if test x"$have_zstd_pkg" = xyes; then
+        save_CPPFLAGS="$CPPFLAGS"
+        CPPFLAGS="$CPPFLAGS $ZSTD_CFLAGS"
+        AC_CHECK_HEADERS([zstd.h], [have_zstd_header=yes], [have_zstd_header=no])
+        CPPFLAGS="$save_CPPFLAGS"
+    else
+        have_zstd_header=no
+    fi
+
+    if test x"$have_zstd_pkg" = xyes -a x"$have_zstd_header" = xyes; then
+        AC_DEFINE([HAVE_ZSTD], [1], [Define to 1 if zstd support is enabled.])
+        CFLAGS="$CFLAGS $ZSTD_CFLAGS"
+        LIBS="$LIBS $ZSTD_LIBS"
+        HAVE_ZSTD=1
+    elif test x"$with_zstd" = xyes; then
+        AC_MSG_ERROR([Cannot find zstd])
+    else
+        AC_MSG_NOTICE([zstd support disabled])
+    fi
+fi
+AC_SUBST(HAVE_ZSTD)
+
+dnl distccd sandboxes the compiler processes it forks/execs on behalf of
+dnl remote (potentially malicious) clients using a Linux seccomp syscall
+dnl denylist, if libseccomp is available. Linux-only (see is_linux_host
+dnl above); optional everywhere, matching the zstd pattern above, so this
+dnl never becomes a hard build dependency (see doc/compatibility-policy.md).
+AC_ARG_WITH(seccomp,
+        AS_HELP_STRING([--with-seccomp], [sandbox distccd's compiler child processes with a Linux seccomp filter (requires libseccomp)]))
+
+HAVE_SECCOMP=
+if test x"$is_linux_host" = xyes -a x"$with_seccomp" != xno; then
+    PKG_CHECK_MODULES([SECCOMP], [libseccomp >= 2.4],
+                      [have_seccomp_pkg=yes],
+                      [have_seccomp_pkg=no])
+    if test x"$have_seccomp_pkg" = xyes; then
+        save_CPPFLAGS="$CPPFLAGS"
+        CPPFLAGS="$CPPFLAGS $SECCOMP_CFLAGS"
+        AC_CHECK_HEADERS([seccomp.h], [have_seccomp_header=yes], [have_seccomp_header=no])
+        CPPFLAGS="$save_CPPFLAGS"
+    else
+        have_seccomp_header=no
+    fi
+
+    if test x"$have_seccomp_pkg" = xyes -a x"$have_seccomp_header" = xyes; then
+        AC_DEFINE([HAVE_SECCOMP], [1], [Define to 1 if the Linux libseccomp compiler sandbox is enabled.])
+        CFLAGS="$CFLAGS $SECCOMP_CFLAGS"
+        LIBS="$LIBS $SECCOMP_LIBS"
+        HAVE_SECCOMP=1
+    elif test x"$with_seccomp" = xyes; then
+        AC_MSG_ERROR([Cannot find libseccomp])
+    else
+        AC_MSG_NOTICE([libseccomp not found -- distccd will run remote compiles without a seccomp sandbox])
+    fi
+elif test x"$with_seccomp" = xyes; then
+    AC_MSG_ERROR([--with-seccomp requested but the seccomp sandbox is Linux-only])
+fi
+AC_SUBST(HAVE_SECCOMP)
 
 dnl Checks for programs
 AC_PROG_CC
@@ -311,9 +388,63 @@ AC_SEARCH_LIBS(setsockopt, [socket])
 AC_SEARCH_LIBS(hstrerror, [resolv])
 AC_SEARCH_LIBS(inet_aton, [resolv])
 
-PKG_CHECK_MODULES(POPT, [popt >= 1.7])
+# popt is used by distccd (src/dopt.c) for command-line parsing. Prefer the
+# system library (kept up to date with security fixes by the distro), but
+# fall back to the bundled copy in popt/ -- vendored from popt's own real
+# upstream project's popt-1.19-release tag -- when no suitable system
+# libpopt is available (minimal containers, embedded/cross-compilation
+# environments, older or unusual distros without a popt package). This
+# mirrors the configure-time optional-detection pattern used for zstd
+# above: the system package is tried first and the build degrades
+# gracefully instead of failing outright, per doc/compatibility-policy.md.
+# --without-system-popt forces the bundled copy even if a system libpopt is
+# present; --with-system-popt (the implicit "yes" of the pair below) makes a
+# missing system libpopt a hard configure error instead of falling back.
+AC_ARG_WITH([system-popt],
+	AS_HELP_STRING([--without-system-popt],
+		[do not use system libpopt even if present; always build the bundled copy. The default, with neither flag given, is to auto-detect and fall back to the bundled copy if no system libpopt >= 1.7 is found.]))
+
+have_system_popt=no
+BUILD_POPT=
+POPT_INCLUDES=
+if test x"$with_system_popt" != xno; then
+    PKG_CHECK_MODULES(POPT, [popt >= 1.7], [have_system_popt=yes], [have_system_popt=no])
+    if test x"$have_system_popt" != xyes -a x"$with_system_popt" = xyes; then
+        AC_MSG_ERROR([--with-system-popt was given, but no system libpopt >= 1.7 was found via pkg-config])
+    fi
+fi
+
+if test x"$have_system_popt" = xyes; then
+    AC_MSG_NOTICE([using system libpopt])
+else
+    AC_MSG_NOTICE([system libpopt not found (or disabled); building bundled popt from $srcdir/popt instead])
+    # POPT_CFLAGS/POPT_LIBS are set by PKG_CHECK_MODULES above when it
+    # succeeds; when it doesn't run (or fails), make sure they're empty
+    # rather than leftover/undefined, since the bundled copy needs neither
+    # a system -I path nor a -lpopt.
+    POPT_CFLAGS=
+    POPT_LIBS=
+    POPT_INCLUDES='-I"$(srcdir)/popt"'
+    # popt_OBJS gets appended to distccd's object list (see Makefile.in).
+    BUILD_POPT='$(popt_OBJS)'
+    # The vendored popt-1.19 tree (see popt/README.popt) uses a handful of
+    # additional HAVE_* feature macros beyond what this fork already
+    # detects below for its own sources -- all guarded by #ifdef in popt's
+    # own code, so their absence only disables the associated optional
+    # feature (e.g. glob(3)-based config-directory wildcard expansion, or
+    # stdalign.h-based struct alignment) rather than breaking the build.
+    # HAVE_ICONV is deliberately NOT probed for here: enabling it can pull
+    # in -liconv as a new link-time dependency on platforms where iconv
+    # isn't part of the base C library (macOS/BSD), which doc/compatibility
+    # -policy.md's "no new hard dependency" rule asks to avoid -- see
+    # popt/README.popt's "NLS" section for the full rationale.
+    AC_CHECK_HEADERS([glob.h langinfo.h stdalign.h])
+    AC_CHECK_FUNCS([stpcpy secure_getenv __secure_getenv srandom glob_pattern_p mbsrtowcs])
+fi
 AC_SUBST(POPT_CFLAGS)
 AC_SUBST(POPT_LIBS)
+AC_SUBST(POPT_INCLUDES)
+AC_SUBST(BUILD_POPT)
 
 ########################################################################
 # Checks for library functions, using libraries discovered above
@@ -493,7 +624,7 @@ AC_DEFINE_UNQUOTED(NATIVE_COMPILER_TRIPLE, ["$native_compiler_triple"], [Native 
 AC_DEFINE_UNQUOTED(GNU_HOST, ["$host"], [Your gnu-style host triple])
 # The '.stamp-conf' files force creation of the containing directories in the
 # build tree.
-AC_CONFIG_FILES([Makefile]  lzo/.stamp-conf)
+AC_CONFIG_FILES([Makefile] lzo/.stamp-conf popt/.stamp-conf)
 AC_CONFIG_FILES([pump], [chmod +x pump])
 AC_OUTPUT
 

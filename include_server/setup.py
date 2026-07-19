@@ -34,10 +34,32 @@ __author__ = 'Manos Renieris and Nils Klarlund'
 import setuptools
 import doctest
 import os
+import re
 import shlex
 import sys
 
 OPTIONS_NOT_ALLOWED = ['-Iquote', '-Isystem', '-I-']
+
+
+def _pep440_version(raw_version):
+  """Sanitize DISTCC_VERSION into a version setuptools will accept.
+
+  setuptools validates 'version' against PEP 440, which does not allow
+  free-form suffixes like the project's own "-NG" fork marker (e.g.
+  "3.5.0-NG"). Translate a trailing "-<label>" into a PEP 440 local
+  version segment ("+<label>") instead, which is valid and preserves the
+  same information. If the result (or the input, e.g. the "unknown"
+  fallback when DISTCC_VERSION isn't set) still isn't a valid PEP 440
+  version, fall back to a placeholder so the include-server build never
+  fails on the project's own external version string.
+  """
+  candidate = re.sub(r'-([A-Za-z0-9]+)$', r'+\1', raw_version)
+  try:
+    import packaging.version
+    packaging.version.Version(candidate)
+  except Exception:
+    return '0.0.0+unknown'
+  return candidate
 
 # We include a partial command line parser instead of using the more the more
 # complicated one in parse_command.py.  This cuts down on dependencies in the
@@ -98,6 +120,48 @@ def GetIncludes(flags):
       i += 1
   return inc_dirs
 
+
+def GetLibDirs(flags):
+  """Parse a flags string for library search paths of the form -L<DIR>.
+
+  configure.ac merges pkg-config's --libs output for optional dependencies
+  (currently just zstd) into LIBS, so on platforms where the library isn't
+  on the linker's default search path (e.g. Homebrew's keg-only installs
+  under /opt/homebrew), the -L flag pkg-config emitted has to actually
+  reach this extension's link step, not just distcc/distccd's.
+
+  Args:
+    flags: a string in shell syntax denoting linker options
+  Returns:
+    a list of <DIR>s of the -L search paths
+
+  >>> GetLibDirs('-L/opt/homebrew/opt/zstd/lib -lzstd')
+  ['/opt/homebrew/opt/zstd/lib']
+  >>> GetLibDirs('-L /opt/homebrew/lib -lzstd')
+  ['/opt/homebrew/lib']
+  >>> GetLibDirs('-lpopt')
+  []
+  """
+  flags = shlex.split(flags)
+  lib_dirs = []
+  i = 0
+  while i < len(flags):
+    if flags[i].startswith('-L'):
+      lib_dir = flags[i][len('-L'):]
+      if lib_dir:
+        # "-Ldir"
+        lib_dirs.append(lib_dir)
+        i += 1
+      else:
+        # "-L dir"
+        if i == len(flags) - 1:
+          raise ValueError("Argument expected after '-L'.")
+        lib_dirs.append(flags[i+1])
+        i += 2
+    else:
+      i += 1
+  return lib_dirs
+
 cpp_flags_env = os.getenv('CPPFLAGS', '')
 if not cpp_flags_env:
   # Don't quit; perhaps the user is asking for help using '--help'.
@@ -107,6 +171,12 @@ if not cpp_flags_env:
 # will interpret.  GetInclude uses shlex to do the same kind of interpretation
 # in order to identify the include directory options.
 cpp_flags_includes = GetIncludes(cpp_flags_env)
+
+# LIBS carries configure.ac's pkg-config --libs output for optional
+# dependencies (zstd); extract just the -L search paths for the linker,
+# the actual libraries to link stay explicit below (HAVE_ZSTD-gated).
+libs_env = os.getenv('LIBS', '')
+lib_dirs = GetLibDirs(libs_env)
 
 # SRCDIR checking.
 if not os.getenv('SRCDIR'):
@@ -124,39 +194,45 @@ else:
     sys.exit("""Could not cd to SRCDIR '%s'.""" % srcdir)
   srcdir_include_server = os.path.join(srcdir, 'include_server')
 
+sources = [
+    'src/clirpc.c',
+    'src/clinet.c',
+    'src/state.c',
+    'src/srvrpc.c',
+    'src/pathsafety.c',
+    'src/pump.c',
+    'src/rpc.c',
+    'src/io.c',
+    'src/include_server_if.c',
+    'src/include_server_sort.c',
+    'src/trace.c',
+    'src/snprintf.c',
+    'src/util.c',
+    'src/tempfile.c',
+    'src/filename.c',
+    'src/bulk.c',
+    'src/sendfile.c',
+    'src/compress-lzox1.c',
+    'src/argutil.c',
+    'src/cleanup.c',
+    'src/emaillog.c',
+    'src/timeval.c',
+    'src/netutil.c',
+    'lzo/minilzo.c',
+    'include_server/c_extensions/distcc_pump_c_extensions_module.c',
+]
+
+if os.getenv('HAVE_ZSTD'):
+  sources.append('src/compress-zstd.c')
+
 # Specify extension.
 ext = setuptools.Extension(
     name='include_server.distcc_pump_c_extensions',
-    sources=[os.path.join(srcdir, source)
-             for source in
-             ['src/clirpc.c',
-              'src/clinet.c',
-              'src/state.c',
-              'src/srvrpc.c',
-              'src/pump.c',
-              'src/rpc.c',
-              'src/io.c',
-              'src/include_server_if.c',
-              'src/trace.c',
-              'src/snprintf.c',
-              'src/util.c',
-              'src/tempfile.c',
-              'src/filename.c',
-              'src/bulk.c',
-              'src/sendfile.c',
-              'src/compress.c',
-              'src/argutil.c',
-              'src/cleanup.c',
-              'src/emaillog.c',
-              'src/timeval.c',
-              'src/netutil.c',
-              'lzo/minilzo.c',
-              'include_server/c_extensions/distcc_pump_c_extensions_module.c',
-             ]],
+    sources=[os.path.join(srcdir, source) for source in sources],
     include_dirs=cpp_flags_includes,
     define_macros=[('_GNU_SOURCE', 1)],
-    library_dirs=[],
-    libraries=[],
+    library_dirs=lib_dirs,
+    libraries=['zstd'] if os.getenv('HAVE_ZSTD') else [],
     runtime_library_dirs=[],
     extra_objects=[],
     extra_compile_args=[]
@@ -166,11 +242,10 @@ args = {
     'name': 'include_server',
     # The 'include_server' package is in the srcdir_include_server.
     'package_dir': {'include_server': srcdir_include_server},
-    'version': os.getenv('DISTCC_VERSION') or 'unknown',
+    'version': _pep440_version(os.getenv('DISTCC_VERSION') or 'unknown'),
     'description': """Include server for distcc's pump-mode""",
     'author': 'Nils Klarlund',
-    'author_email': 'opensource@google.com',
-    'url': 'http://code.google.com/p/distcc',
+    'url': 'https://github.com/wiki-mod/distcc-ng',
     'long_description': 'The include server is part of distcc.',
     'packages': ['include_server'],
     'ext_modules': [ext],

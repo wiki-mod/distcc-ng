@@ -1,0 +1,63 @@
+name: Release Drafter
+
+# Maintains an auto-updating draft GitHub Release, refreshed on every push
+# to current_dev, so there's always a current, zero-effort preview of
+# what's pending -- separate from CHANGELOG.md, see .github/release-drafter.yml
+# for how the two relate. Also runs on pull_request events so the
+# autolabeler assigns each PR's category label (bug/enhancement/security/
+# documentation) as soon as it's opened, not only once merged.
+#
+# Two separate jobs, not one combined step, because release-drafter/
+# release-drafter@v7's main action does NOT autolabel -- confirmed live by
+# running the combined single-job setup this workflow used to have (v6 and
+# early v7) and observing zero labeling activity in the run log. v7 split
+# autolabeling into its own release-drafter/release-drafter/autolabeler
+# sub-action (see its README's Autolabeler section); running only the main
+# action on a pull_request event also emits a spurious "refs/pull/N/merge
+# is not supported as release target, falling back to default branch"
+# warning, since a PR merge ref was never a valid release target to begin
+# with -- avoided entirely by only running the draft-update job on push.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - current_dev
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Pinned to v7.5.1's commit (not the floating "v7" tag), per the
+      # unpinned-third-party-action CodeQL finding. v7 (unlike v6) declares
+      # `using: node24` in its own action.yml -- no more Node 20 deprecation
+      # warning -- and, more importantly, its config-loading resolves
+      # config-name against the *current* ref/branch automatically instead
+      # of being hardcoded to the repo's default branch. That hardcoding is
+      # what forced #132/#133's workaround (a duplicate .github/release-drafter.yml
+      # on master); v7 doesn't need it, though the duplicate is left in place
+      # as harmless redundancy rather than removed as part of this change.
+      - uses: release-drafter/release-drafter@4d75298e00d9e34c483e5ff8c68d0ea1c1940c1e # v7.5.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auto_label:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: release-drafter/release-drafter/autolabeler@4d75298e00d9e34c483e5ff8c68d0ea1c1940c1e # v7.5.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

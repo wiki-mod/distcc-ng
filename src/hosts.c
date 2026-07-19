@@ -233,8 +233,8 @@ static int dcc_parse_multiplier(const char **psrc, struct dcc_hostdef *hostdef)
 /**
  * Parse an optionally present option string.
  *
- * At the moment the only two options we have is "lzo" for compression,
- * and "cpp" if the server supports doing the preprocessing there, also.
+ * At the moment we support compression options "lzo" and optionally "zstd"
+ * and the optional "cpp" server-side preprocessing option.
  **/
 static int dcc_parse_options(const char **psrc,
                              struct dcc_hostdef *host)
@@ -254,6 +254,15 @@ static int dcc_parse_options(const char **psrc,
             rs_trace("got LZO option");
             host->compr = DCC_COMPRESS_LZO1X;
             p += 3;
+        } else if (str_startswith("zstd", p)) {
+#ifdef HAVE_ZSTD
+            rs_trace("got Zstd option");
+            host->compr = DCC_COMPRESS_ZSTD;
+            p += 4;
+#else
+            rs_log_error("zstd support not built: %s", started);
+            return EXIT_BAD_HOSTSPEC;
+#endif
         } else if (str_startswith("down", p)) {
             /* if "hostid,down", mark it down, and strip down from hostname */
             host->is_up = 0;
@@ -427,18 +436,38 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
                                    enum dcc_compress *compr,
                                    enum dcc_cpp_where *cpp_where)
 {
-    if (protover > 1) {
+    if (protover == 2 || protover == 3) {
         *compr = DCC_COMPRESS_LZO1X;
+    } else if (protover == 4) {
+#ifdef HAVE_ZSTD
+        *compr = DCC_COMPRESS_ZSTD;
+#else
+        /* A peer claiming protover 4 (zstd) against a distccd built
+         * without zstd support must not be allowed to select a
+         * compression mode this binary can't actually handle -- see
+         * issue #225: dcc_x_file_compressed() (bulk.c) has no fallback
+         * for DCC_COMPRESS_ZSTD when HAVE_ZSTD is undefined, so silently
+         * selecting it here left out_buf/out_len uninitialized on the
+         * send path. Reject the protocol version outright instead,
+         * matching this function's own protover==0/>=__DCC_VER_MAX
+         * rejection below and the pattern already used correctly by
+         * this file's ",zstd" hostspec parsing and pump.c's
+         * dcc_r_bulk() dispatch. */
+        rs_log_error("peer requested protocol version 4 (zstd), but this "
+                     "build has no zstd support");
+        *compr = DCC_COMPRESS_NONE;
+        return 1;
+#endif
     } else {
         *compr = DCC_COMPRESS_NONE;
     }
-    if (protover > 2) {
+    if (protover == 3) {
         *cpp_where = DCC_CPP_ON_SERVER;
     } else {
         *cpp_where = DCC_CPP_ON_CLIENT;
     }
 
-    if (protover == 0 || protover > 3) {
+    if (protover == 0 || protover >= __DCC_VER_MAX) {
         return 1;
     } else {
         return 0;
@@ -467,8 +496,12 @@ int dcc_get_protover_from_features(enum dcc_compress compr,
         *protover = DCC_VER_2;
     }
 
+    if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_CLIENT) {
+        *protover = DCC_VER_4;
+    }
+
     if (compr == DCC_COMPRESS_NONE && cpp_where == DCC_CPP_ON_SERVER) {
-        rs_log_error("pump mode (',cpp') requires compression (',lzo')");
+        rs_log_error("pump mode (',cpp') requires compression (',lzo' or ',zstd')");
     }
 
     return *protover;

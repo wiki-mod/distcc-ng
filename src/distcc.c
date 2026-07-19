@@ -50,6 +50,7 @@
 #include "implicit.h"
 #include "compile.h"
 #include "emaillog.h"
+#include "client-config.h"
 
 
 /* Name of this program, for trace.c */
@@ -114,6 +115,9 @@ static void dcc_show_usage(void)
 "   @HOST                      SSH connection to specified host.\n"
 "   USER@HOST                  SSH connection to specified username at host.\n"
 "   HOSTSPEC,lzo               Enable compression.\n"
+#ifdef HAVE_ZSTD
+"   HOSTSPEC,zstd              Enable Zstandard compression.\n"
+#endif
 "   HOSTSPEC,cpp,lzo           Use pump mode (remote preprocessing).\n"
 "   HOSTSPEC,auth              Enable GSS-API based mutual authenticaton.\n"
 "   --randomize                Randomize the server list before execution.\n"
@@ -224,6 +228,13 @@ int main(int argc, char **argv)
 
     dcc_set_trace_from_env();
     dcc_setup_log_email();
+
+    /* Load /etc/distcc/distcc.conf (issue #207) before dcc_scan_args() can
+     * possibly run -- it decides e.g. whether -flto forces a local-only
+     * compile. One-time, per-invocation setup; never re-read within this
+     * process, since a single distcc invocation only ever does one
+     * compile anyway. */
+    dcc_client_config_load(NULL);
 
     dcc_trace_version();
 

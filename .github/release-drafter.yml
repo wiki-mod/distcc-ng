@@ -21,53 +21,67 @@ change-title-escapes: '\<*_&'
 # PRs get sorted into these sections by label. Labels are assigned
 # automatically by the autolabeler below, based on PR title keywords,
 # since this repo doesn't manually label every PR by type.
+#
+# v7 schema (categories[*].when / a dedicated version-resolver category
+# type) rather than the deprecated flat categories[*].labels and top-level
+# version-resolver block -- both old forms still parse under v7 as
+# compatibility shims, but emit a deprecation warning on every run, which
+# this project treats as an error to fix, not noise to ignore.
 categories:
   - title: 'Security'
-    labels:
-      - 'security'
+    semver-increment: 'patch'
+    when:
+      label: 'security'
   - title: 'Fixed'
-    labels:
-      - 'bug'
+    semver-increment: 'patch'
+    when:
+      label: 'bug'
   - title: 'Added'
-    labels:
-      - 'enhancement'
+    semver-increment: 'minor'
+    when:
+      label: 'enhancement'
   - title: 'Documentation'
-    labels:
-      - 'documentation'
+    when:
+      label: 'documentation'
+  # Replaces the old top-level exclude-labels: PRs opted out of the
+  # CHANGELOG.md requirement are opted out here too.
+  - type: 'pre-exclude'
+    when:
+      label: 'no-changelog-needed'
+  # Replaces the old top-level version-resolver block: a 'major' label
+  # (not currently used by any changelog category above) still bumps the
+  # major version, and any PR matching no category above still resolves
+  # to a patch bump by default, same as the old version-resolver's
+  # 'default: patch'.
+  - type: 'version-resolver'
+    semver-increment: 'major'
+    when:
+      label: 'major'
+  - type: 'version-resolver'
+    semver-increment: 'patch'
 
-# PRs opted out of the CHANGELOG.md requirement are opted out here too.
-exclude-labels:
-  - 'no-changelog-needed'
-
+# Regex flags go AFTER the closing slash (JS RegExp syntax, e.g. '/pattern/i'),
+# not as an inline '(?i)' modifier -- (?i) is PCRE/Python-style and isn't
+# supported by the JS RegExp engine autolabeler actually uses under the hood.
+# The inline form silently failed as "Bad autolabeler regex" on every run
+# (confirmed live 2026-07-16), meaning none of these patterns had ever
+# actually matched anything since they were introduced (#120/#121).
 autolabeler:
   - label: 'security'
     title:
-      - '/^(?i)(security|traversal|vulnerab)/'
+      - '/^(security|traversal|vulnerab)/i'
   - label: 'bug'
     title:
-      - '/^(?i)fix/'
+      - '/^fix/i'
   - label: 'enhancement'
     title:
-      - '/^(?i)(add|feat)/'
+      - '/^(add|feat)/i'
   - label: 'documentation'
     title:
-      - '/^(?i)doc/'
+      - '/^doc/i'
     files:
       - '*.md'
       - 'doc/**'
-
-version-resolver:
-  major:
-    labels:
-      - 'major'
-  minor:
-    labels:
-      - 'enhancement'
-  patch:
-    labels:
-      - 'bug'
-      - 'security'
-  default: patch
 
 # release-drafter's own default is "## $TITLE" (H2) for category headings.
 # Overridden to H3 here: changelog-update-on-release.yml's

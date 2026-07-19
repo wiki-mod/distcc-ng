@@ -637,8 +637,16 @@ static int dcc_get_proc_meminfo_mem_available(FILE* f) {
     char line[512];
 
     char key[128];
-    long value;
-    char unit[5];
+    /* Defence-in-depth: value/unit are only ever read after the loop's `break`,
+     * which fires strictly after `sscanf(...) == 3` has freshly written them, so
+     * an uninitialised read is not reachable today (the fgets==NULL / zero-line
+     * exits are all caught by the feof/ferror guard below, which returns early).
+     * Initialising at declaration keeps the function safe even if a future
+     * refactor breaks that control-flow invariant. This also silences a CodeQL
+     * cpp/missing-check-scanf false positive whose definite-assignment model does
+     * not trace the guard fact through the break. */
+    long value = 0;
+    char unit[5] = "";
     char magnitude;
 
     if (f == NULL)
@@ -663,10 +671,10 @@ static int dcc_get_proc_meminfo_mem_available(FILE* f) {
     switch (magnitude) {
         case 'T':
             mem_available *= 1024;
-            /* fallthrough */
+            FALLTHROUGH;
         case 'G':
             mem_available *= 1024;
-            /* fallthrough */
+            FALLTHROUGH;
         case 'M':
             break;
         case 'K':
@@ -783,8 +791,15 @@ void dcc_get_disk_io_stats(int *n_reads, int *n_writes) {
     int retval;
     int kernel26 = 1;
     FILE *f;
-    int reads, writes, minor;
-    char dev[100];
+    int reads, writes;
+    /* Defence-in-depth: minor/dev are only read after `if (retval == EOF ||
+     * retval != 2) break;`, so the fall-through guarantees fscanf wrote both, and
+     * an uninitialised read is not reachable today. Initialising at declaration
+     * keeps this safe against a future refactor of that guard, and silences a
+     * CodeQL cpp/missing-check-scanf false positive whose model does not carry the
+     * break-guard fact into the subsequent use. */
+    int minor = 0;
+    char dev[100] = "";
     char tmp[1024];
 
     *n_reads = 0;
@@ -1095,4 +1110,18 @@ int not_sd_is_socket(int fd, int family, int type, int listening) {
         }
 
         return 1;
+}
+
+char *dcc_make_dwo_fname(const char *temp_o)
+{
+    char *out;
+
+    out = malloc(strlen(temp_o) + 2 + 1);
+    if (!out)
+        return NULL;
+    strcpy(out, temp_o);
+    out[strlen(temp_o) - 1] = '\0'; /*kill the 'o' */
+    strcat(out, "dwo");
+
+    return out;
 }

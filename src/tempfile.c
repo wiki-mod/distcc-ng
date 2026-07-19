@@ -43,6 +43,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 #include "distcc.h"
 #include "trace.h"
@@ -125,11 +127,24 @@ int dcc_mk_tmpdir(const char *path)
 }
 
 /**
- * Create the directory @p path.  If it already exists as a directory
+ * Create the directory @p path, including any missing parent
+ * directories (like `mkdir -p`).  If it already exists as a directory
  * we succeed.
+ *
+ * Callers (dcc_get_top_dir(), dcc_get_subdir()) build paths like
+ * $HOME/.distcc -- $HOME itself is not guaranteed to already exist in
+ * every environment this runs in (minimal containers, sandboxed build
+ * workers), so a plain non-recursive mkdir() can fail with ENOENT even
+ * though creating the directory is otherwise perfectly reasonable.
  **/
 int dcc_mkdir(const char *path)
 {
+    int ret;
+
+    if ((ret = dcc_mk_tmp_ancestor_dirs(path))) {
+        return ret;
+    }
+
     if ((mkdir(path, 0777) == -1) && (errno != EEXIST)) {
         rs_log_error("mkdir '%s' failed: %s", path, strerror(errno));
         return EXIT_IO_ERROR;
@@ -369,6 +384,77 @@ int dcc_get_state_dir(char **dir_ret)
 
 
 /**
+ * Return a well-distributed 64-bit value for use in a temp-file name.
+ *
+ * This used to mix getpid() with gettimeofday(), following the same
+ * approach glibc's __gen_tempname() took at the time this code was
+ * written (2002-2004, before getrandom()/a fast userspace CSPRNG was
+ * available anywhere): both pid and microseconds were shifted left by
+ * 16 bits before the value was truncated to a 32-bit (8 hex digit)
+ * name, so only their low 16 bits actually survived into the printed
+ * suffix -- and callers that fork close together in time (exactly the
+ * case under a concurrent distcc/distccd/pump build) get correlated
+ * (pid, usec) pairs, collapsing the effective entropy to well under
+ * 32 bits under real concurrent load.
+ *
+ * glibc itself hit the same class of problem and now seeds from a real
+ * random source instead of pid/time mixing (glibc bug 32214). Do the
+ * same here directly via /dev/urandom -- present on every platform
+ * this project supports (Linux, the BSDs, macOS, Solaris) -- rather
+ * than reintroduce a pid/time-correlated value.
+ *
+ * The value is a fixed-width uint64_t (not "unsigned long", whose
+ * width varies by platform/ABI -- e.g. 32 bits on ILP32 or LLP64
+ * targets) so the name always has the same, full 64 bits of entropy
+ * on every platform this builds on, not just LP64 ones.
+ **/
+static uint64_t dcc_random_u64(void)
+{
+    uint64_t val;
+    int fd;
+    /* Only used on the degraded fallback path below. A fresh call to
+     * /dev/urandom always differs from the last one on its own, but
+     * pid/time mixing does not: if /dev/urandom stays unavailable
+     * across a whole EEXIST retry loop, getpid() never changes and
+     * the clock may not visibly advance either (coarse time(NULL)
+     * resolution, or simply a very fast retry loop) -- without this,
+     * dcc_make_tmpnam() could redraw the exact same fallback value
+     * forever and never make progress, unlike the old fixed +7777
+     * step it replaced, which always did. */
+    static uint64_t fallback_retries;
+
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd != -1) {
+        ssize_t n = read(fd, &val, sizeof(val));
+        close(fd);
+        if (n == (ssize_t) sizeof(val))
+            return val;
+    }
+
+    /* /dev/urandom missing or unreadable (some exotic/sandboxed
+     * environment) -- fall back to the old, weaker pid/time mixing
+     * rather than fail the caller outright, but say so; this path
+     * should essentially never be taken on any real deployment. */
+    rs_log_warning("could not read /dev/urandom for a temp-file name; "
+                    "falling back to a weaker pid/time-based value");
+
+    val = (uint64_t) getpid() << 16;
+# if HAVE_GETTIMEOFDAY
+    {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        val ^= (uint64_t) tv.tv_usec << 16;
+        val ^= (uint64_t) tv.tv_sec;
+    }
+# else
+    val ^= (uint64_t) time(NULL);
+# endif
+    fallback_retries += 7777;
+    val += fallback_retries;
+    return val;
+}
+
+/**
  * Create a file inside the temporary directory and register it for
  * later cleanup, and return its name.
  *
@@ -382,7 +468,7 @@ int dcc_make_tmpnam(const char *prefix,
     char *s = NULL;
     const char *tempdir;
     int ret;
-    unsigned long random_bits;
+    uint64_t random_bits;
     int fd;
 
     if ((ret = dcc_get_tmp_top(&tempdir)))
@@ -393,30 +479,19 @@ int dcc_make_tmpnam(const char *prefix,
         return EXIT_IO_ERROR;
     }
 
-    random_bits = (unsigned long) getpid() << 16;
-
-# if HAVE_GETTIMEOFDAY
-    {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        random_bits ^= tv.tv_usec << 16;
-        random_bits ^= tv.tv_sec;
-    }
-# else
-    random_bits ^= time(NULL);
-# endif
-
-#if 0
-    random_bits = 0;            /* FOR TESTING */
-#endif
+    random_bits = dcc_random_u64();
 
     do {
         free(s);
 
-        if (asprintf(&s, "%s/%s_%08lx%s",
+        /* 16 hex digits (64 bits) rather than 8 (32 bits): the birthday
+         * bound for a same-second name collision drops by a factor of
+         * 2**32 for the same burst size, at effectively no extra cost
+         * since dcc_random_u64() already draws a full 64-bit value. */
+        if (asprintf(&s, "%s/%s_%016" PRIx64 "%s",
                      tempdir,
                      prefix,
-                     random_bits & 0xffffffffUL,
+                     random_bits,
                      suffix) == -1)
             return EXIT_OUT_OF_MEMORY;
 
@@ -427,9 +502,12 @@ int dcc_make_tmpnam(const char *prefix,
          * and our children should do anything with it. */
         fd = open(s, O_WRONLY | O_CREAT | O_EXCL, 0600);
         if (fd == -1) {
-            /* try again */
+            /* Try again with a freshly drawn value, not a fixed
+             * increment -- a fixed step just marches every caller
+             * that collided on this value through the same sequence
+             * in lockstep, rather than actually spreading them out. */
             rs_trace("failed to create %s: %s", s, strerror(errno));
-            random_bits += 7777; /* fairly prime */
+            random_bits = dcc_random_u64();
             continue;
         }
 

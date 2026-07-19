@@ -77,6 +77,7 @@
 #include "srvnet.h"
 #include "daemon.h"
 #include "types.h"
+#include "sandbox-seccomp.h"
 #ifdef HAVE_GSSAPI
 #include "auth.h"
 #endif
@@ -116,6 +117,12 @@ static int dcc_setup_startup_log(void)
 }
 
 
+/**
+ * Decide whether the daemon should behave as an inetd-spawned, single-shot
+ * server or as a standalone, listening daemon. Falls back to sniffing
+ * stdin (socket vs tty) when neither mode was requested explicitly on the
+ * command line, since that's how inetd/xinetd actually invoke us.
+ **/
 int dcc_should_be_inetd(void)
 {
     /* Work out if we ought to serve stdin or be a standalone daemon */
@@ -136,6 +143,12 @@ int dcc_should_be_inetd(void)
 }
 
 
+/**
+ * Set PATH for the daemon and any compilers it execs. Honors an explicit
+ * DISTCCD_PATH override so operators can pin the daemon to a known-safe
+ * set of directories, distinct from whatever PATH the daemon happened to
+ * inherit from its (possibly untrusted) launch environment.
+ **/
 static int dcc_setup_daemon_path(void)
 {
     int ret;
@@ -153,12 +166,24 @@ static int dcc_setup_daemon_path(void)
     }
 }
 
+/**
+ * Warn (and, if nothing usable is found, exit) when the daemon has no way
+ * to know which compilers it is allowed to masquerade/run. Skipped entirely
+ * when DISTCC_CMDLIST is set: that env var is a documented, explicit opt-in
+ * whitelist (see dcc_remap_compiler() in serve.c), so the masquerade
+ * directory being absent or empty in that case is expected, not a
+ * misconfiguration worth nagging the operator about.
+ **/
 static void dcc_warn_masquerade_whitelist(void) {
     DIR *d, *e;
     const char *warn = "You must set up masquerade" \
-                       " (see distcc(1)) to list whitelisted compilers or pass" \
-                       " --enable-tcp-insecure. To set up masquerade automatically" \
-                       " run update-distcc-symlinks.";
+                       " (see distcc(1)) to list whitelisted compilers, set" \
+                       " DISTCC_CMDLIST, or pass --enable-tcp-insecure. To set up" \
+                       " masquerade automatically run update-distcc-symlinks.";
+
+    if (getenv("DISTCC_CMDLIST")) {
+        return;
+    }
 
     e = opendir("/usr/lib/distcc");
     d = opendir(LIBDIR "/distcc");
@@ -247,6 +272,21 @@ int main(int argc, char *argv[])
     if (!opt_enable_tcp_insecure)
         dcc_warn_masquerade_whitelist();
 
+    /* Load /etc/distcc/distccd.conf (see doc/seccomp-sandbox.md and
+     * issue #192, renamed from seccomp.conf in issue #207) and resolve it
+     * into the effective per-child sandbox configuration before the first
+     * remote compile can possibly be spawned. Both steps are one-time,
+     * daemon-lifetime setup -- neither re-reads the file nor re-resolves
+     * any syscall name per compile. */
+    dcc_seccomp_config_load(NULL);
+    dcc_seccomp_configure(dcc_seccomp_config_get());
+
+    /* One-time startup notice: tells the administrator whether remote
+     * compiler processes will actually get the seccomp sandbox (see
+     * src/sandbox-seccomp.c), rather than leaving that only discoverable
+     * later via a security review. */
+    dcc_seccomp_log_availability();
+
     if (dcc_should_be_inetd())
         ret = dcc_inetd_server();
     else
@@ -290,7 +330,14 @@ static void dcc_setup_real_log(void)
     if (arg_log_file) {
         /* Don't remove loggers yet, in case this fails and needs to go to the
          * default. */
-        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0666)) == -1) {
+        /* 0664, not 0600: this log is routinely read by operators/monitoring
+         * tooling on a shared build host (the same reason the RPM/deb
+         * packaging's postinstall script explicitly chowns/chmods a
+         * pre-created copy of this file to group-readable), so world-read
+         * is kept. Only the world-*write* bit is the actual CodeQL
+         * complaint -- nothing but distccd itself has any business
+         * appending to its own log. */
+        if ((fd = open(arg_log_file, O_CREAT|O_APPEND|O_WRONLY, 0664)) == -1) {
             rs_log_error("failed to open %s: %s", arg_log_file,
                          strerror(errno));
             /* continue and use syslog */
@@ -308,6 +355,12 @@ static void dcc_setup_real_log(void)
 }
 
 
+/**
+ * Log a single, consistently-formatted startup banner (version, host
+ * triplet, build timestamp) shared by both the inetd and standalone
+ * startup paths, so log-scraping tools have one stable line to match on
+ * regardless of which mode the daemon ends up running in.
+ **/
 int dcc_log_daemon_started(const char *role)
 {
     rs_log_info("%s started (%s %s, built %s %s)",

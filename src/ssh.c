@@ -168,6 +168,43 @@ static int dcc_run_piped_cmd(char **argv,
 
 
 /**
+ * Sanity-check the resolved SSH transport command before it is handed to
+ * execvp() as argv[0].
+ *
+ * This is deliberately NOT an absolute-path or PATH-resolution check.  The
+ * transport command legitimately comes from the invoking user's own
+ * environment ($DISTCC_SSH) or host spec and is very often a bare command
+ * name such as "ssh" that relies on execvp()'s own $PATH search -- forcing an
+ * absolute path here (as the compile.c clang-probe path must, because it
+ * pre-resolves and execs later) would break normal, intended usage.  execvp()
+ * performs its lookup atomically at exec time, so unlike that pre-resolve
+ * path there is no check-then-use (TOCTOU) window to close either.
+ *
+ * What is worth rejecting is a value that is not a plausible command at all:
+ * an empty token (can arise from a host-spec-supplied command; the $DISTCC_SSH
+ * path already can't produce one, since strtok() skips leading spaces and
+ * returns NULL, which falls back to the default), or a token beginning with
+ * '-' that execvp() or the spawned program would misread as an option.  This
+ * is robustness/error-clarity hardening of a client-side, user-supplied
+ * value, not a privilege boundary -- ssh.o is client-only and runs as the
+ * invoking user.
+ */
+static int dcc_ssh_cmd_is_sane(const char *ssh_cmd)
+{
+    if (!ssh_cmd || ssh_cmd[0] == '\0') {
+        rs_log_error("SSH transport command is empty");
+        return 0;
+    }
+    if (ssh_cmd[0] == '-') {
+        rs_log_error("SSH transport command \"%s\" looks like an option, "
+                     "not a command", ssh_cmd);
+        return 0;
+    }
+    return 1;
+}
+
+
+/**
  * Open a connection to a remote machine over ssh.
  *
  * Based on code in rsync, but rewritten.
@@ -198,12 +235,19 @@ int dcc_ssh_connect(char *ssh_cmd,
     char *child_argv[11+MAX_SSH_ARGS];
     int i,j;
     int num_ssh_args = 0;
+    char *ssh_cmd_buf = NULL;
     char *ssh_cmd_in;
 
     /* We need to cast away constness.  I promise the strings in the argv[]
      * will not be modified. */
 
     if (!ssh_cmd && (ssh_cmd_in = getenv("DISTCC_SSH"))) {
+        ssh_cmd_buf = strdup(ssh_cmd_in);
+        if (!ssh_cmd_buf) {
+            rs_log_crit("failed to duplicate DISTCC_SSH");
+            return EXIT_OUT_OF_MEMORY;
+        }
+        ssh_cmd_in = ssh_cmd_buf;
         ssh_cmd = strtok(ssh_cmd_in, " ");
         char *token = strtok(NULL, " ");
         while (token != NULL) {
@@ -215,6 +259,14 @@ int dcc_ssh_connect(char *ssh_cmd,
     }
     if (!ssh_cmd)
         ssh_cmd = (char *) dcc_default_ssh;
+
+    /* Validate the resolved command (argv[0] to come) before we build the
+     * child argv and fork -- rejecting here returns a clean error instead of
+     * failing deep inside the forked child after execvp(). */
+    if (!dcc_ssh_cmd_is_sane(ssh_cmd)) {
+        free(ssh_cmd_buf);
+        return EXIT_DISTCC_FAILED;
+    }
 
     if (!machine) {
         rs_log_crit("no machine defined!");
@@ -246,6 +298,7 @@ int dcc_ssh_connect(char *ssh_cmd,
     /*     child_argv[i++] = (char *) "--log-stderr"; */
 
     ret = dcc_run_piped_cmd(child_argv, f_in, f_out, ssh_pid);
+    free(ssh_cmd_buf);
 
     return ret;
 }

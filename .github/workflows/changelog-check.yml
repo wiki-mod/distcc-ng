@@ -1,0 +1,51 @@
+name: Changelog check
+
+# Fails a PR that doesn't touch CHANGELOG.md, so entries can't silently
+# fall behind again (see issue #50 -- CHANGELOG.md went unmaintained for
+# ~10 merged PRs before anyone noticed). Apply the `no-changelog-needed`
+# label for changes that genuinely don't need an entry (pure
+# investigation/design docs, internal refactors with no user-visible
+# effect, etc).
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches:
+      - current_dev
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  require_changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for a CHANGELOG.md update or an explicit opt-out
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '.[].name' \
+              | grep -qx 'no-changelog-needed'; then
+            echo "Skipping: PR is labeled no-changelog-needed."
+            exit 0
+          fi
+
+          if gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
+              --jq '.[].filename' | grep -qx 'CHANGELOG.md'; then
+            echo "OK: CHANGELOG.md is part of this PR's diff."
+            exit 0
+          fi
+
+          echo "::error::This PR doesn't touch CHANGELOG.md. Add an entry under" \
+               "[Unreleased], or apply the 'no-changelog-needed' label if this" \
+               "change genuinely has no user-visible effect (e.g. pure docs/" \
+               "investigation work)."
+          exit 1
