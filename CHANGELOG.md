@@ -82,6 +82,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   ephemeral remote temp path (e.g. `distccd_12345.ii`); with it
   stripped, `DW_AT_name` is the real original source path. Ported from
   upstream distcc/distcc#577.
+- **`src/arg.c`, `src/compile.c`** (#227): compiler family (gcc vs.
+  clang) was trusted from `argv[0]`'s basename alone in three places,
+  misclassifying a dispatcher (e.g. macOS's `cc`) invoked under a name
+  that says nothing about which compiler it actually runs.
+  `dcc_resolve_march_native()`'s `is_clang` detection now reads the
+  actual `-cc1` backend invocation its existing `-v -E` probe already
+  captures instead of guessing from the name; the same function's
+  GCC-branch token filter now keeps only the resolved `-m*` flags
+  instead of forwarding every driver-internal token unfiltered; and
+  `dcc_rewrite_generic_compiler()`'s non-symlink dispatcher case (a
+  long-standing `TODO`) is completed with a new `dcc_probe_is_clang()`
+  helper that asks the binary itself via `--version`. Verified end-to-end
+  against real gcc/clang across a real two-container network hop and
+  against an independently-built stock `distcc`/`distccd`.
 
 ### Added
 

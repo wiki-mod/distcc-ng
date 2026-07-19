@@ -1,9 +1,9 @@
 # -march=native/-mtune=native hard-fail to local — upstream has an open, unmerged fix with real bugs of its own
 
 **Fork issue:** [wiki-mod/distcc-ng#73](https://github.com/wiki-mod/distcc-ng/issues/73)
-**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175)
+**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175) (bugs 1-4 below); [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245) (bugs 5-6, found later via [wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227))
 **Upstream location:** `src/arg.c`, `dcc_scan_args()`
-**Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-17)
+**Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `march=native`, `mtune=native`, `mcpu=native` — found upstream's own open, unmerged attempts: [distcc/distcc#350](https://github.com/distcc/distcc/pull/350) and its rebase [distcc/distcc#384](https://github.com/distcc/distcc/pull/384).
 
 ## Note on scope: upstream already knows about this one
@@ -118,6 +118,64 @@ specific to how this fork structured the port, but documented here for
 completeness since it's part of the same function's story.
 
 Landed via [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175).
+
+### Two more bugs found in the same draft (#384), fixed via #227/#245
+
+A later fork issue ([wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227))
+found two further real bugs in upstream's #384 draft while working on a
+different but related problem (compiler-family misdetection). Both are
+still present in the draft as of the commit checked below; neither has
+master-branch line numbers since `dcc_resolve_march_native()` doesn't
+exist in `master` at all (see this entry's main body above).
+
+**5. `is_clang` trusted from `argv[0]`'s basename, not the actual invoked
+compiler.** From `gh pr diff 384 --repo distcc/distcc`:
+
+```c
+const char* compiler = strrchr(argv[0], '/');
+compiler = (compiler == 0) ? (argv[0]) : (compiler + 1);
+int is_clang = strncmp(compiler, "clang", strlen("clang")) == 0;
+```
+
+A dispatcher invoked under a name that doesn't contain "clang" (e.g.
+macOS's `cc`) is misclassified as gcc even when it actually runs clang,
+so the (also unfiltered — see bug 6) gcc-branch code path forwards raw
+clang-internal `cc1` tokens as if they were gcc flags. This fork's fix
+(#227/#245) instead reads the actual backend invocation this same
+function already captures during its `-v -E` probe: clang always invokes
+its frontend as the literal dash-prefixed `-cc1`; gcc's `cc1`/`cc1plus`
+never is dash-prefixed. No new subprocess or reorder needed — the data
+was already being read, just not used for this.
+
+**6. No token filter at all on the non-clang (gcc) branch.** Same diff,
+the token-splitting loop unconditionally forwards every space-separated
+token from the resolved `-v -E` output for anything not detected as
+clang:
+
+```c
+if (is_clang) {
+    if (strncmp(insert, "-target", strlen("-target")) == 0) {
+        /* need to forward the following option */
+        clang_force_next = 1;
+    } else {
+        /* discard non-target options */
+        ...
+```
+
+— clang's branch discards non-`-target*` tokens, but there is no
+equivalent `else` filter for the non-clang path: every gcc `cc1` token,
+including driver-internal noise (`-quiet`, `-imultiarch <triple>`,
+`--param <name>=<value>`, `-fasynchronous-unwind-tables`, `-dumpbase -`,
+the trailing bare `-`), gets forwarded to gcc as-is. Verified against
+real `gcc -v -E -march=native` output (see #227's issue body/PR #245 for
+the full captured line). This fork's fix keeps only `-m`-prefixed tokens.
+
+**Searched upstream issues/PRs again for this specific angle:**
+`is_clang`, `argv[0] basename clang`, `cc1 filter` — no discussion found
+of detection accuracy or the missing gcc-branch filter in #384's own
+review thread or elsewhere.
+
+Landed via [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245).
 
 ## Empirical verification
 
