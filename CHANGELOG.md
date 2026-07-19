@@ -13,6 +13,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`src/compile.c`** (#256): fix a 1-byte heap NUL overflow in
+  `dcc_fresh_dependency_exists()` (`cpp/toctou-race-condition`, CodeQL alert
+  #3). `dep_name` was allocated with exactly the `.d` file's `stat()`-time
+  size, but the dependency-name copy loop's terminator write
+  (`dep_name[i] = '\0'`) is not itself bounds-checked against that size —
+  only the content-byte writes are. If the `.d` file grows between the
+  `stat()` and the read (a real TOCTOU window, not a hypothetical one), `i`
+  can reach the buffer size and the terminator write lands one byte past
+  the allocation. Fixed with `malloc(dotd_fname_size + 1)`, reserving the
+  terminator slot so every `i` the loop can produce stays in-bounds — no
+  behavioral change otherwise. Client-only (`compile.o` is never linked
+  into `distccd`), low severity (requires local write access to the `.d`
+  file within the race window), but a genuine memory-safety defect.
+  Verified with a clean `-Werror` build, the full `make check` suite, and
+  an AddressSanitizer build with a `stat()`-interposed harness that
+  deterministically forces the race (undersized `stat()` result vs. the
+  file's real on-disk content) — heap-buffer-overflow before the fix,
+  clean after.
 - **`.github/workflows/`** (#222): supply-chain hardening of the CI workflow
   files flagged by CodeQL. Pinned the five unpinned third-party action refs
   to a full commit SHA with a `# vX.Y.Z` comment, matching this repo's own

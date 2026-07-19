@@ -305,7 +305,14 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
     dotd_fname_size = stat_dotd.st_size;
     /* Is dotd_fname_size representable as a size_t value ? */
     if ((off_t) (size_t) dotd_fname_size == dotd_fname_size) {
-        dep_name = malloc((size_t) dotd_fname_size);
+        /* +1 reserves the NUL-terminator slot: the copy loop below bounds-
+         * checks each byte it writes against dotd_fname_size (i >=
+         * dotd_fname_size), but the terminator write after the loop
+         * (dep_name[i] = '\0') does not re-check i. If the .d file grows
+         * between this stat() and the read below, i can legitimately reach
+         * dotd_fname_size, and without this extra byte the terminator
+         * write lands one past the end of the allocation. */
+        dep_name = malloc((size_t) dotd_fname_size + 1);
         if (!dep_name) {
             rs_log_error("failed to allocate space for dotd file");
             return EXIT_OUT_OF_MEMORY;
@@ -335,7 +342,10 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
         while ((c = getc(fp)) != EOF &&
                (!isspace(c) || c == '\\')) {
             if (i >= dotd_fname_size) {
-                /* Impossible */
+                /* Not actually impossible: this fires if the .d file grows
+                 * between the stat() above and this read (TOCTOU), so a
+                 * dependency name can be longer than what the buffer was
+                 * sized for. Bail out rather than overrun dep_name. */
                 rs_log_error("not enough room for dependency name");
                 goto return_0;
             }
