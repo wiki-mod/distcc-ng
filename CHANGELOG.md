@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- **GitHub Actions and base-image references pinned to commit SHAs** (#267):
+  all `.github/workflows/*.yml` steps now use full 40-character commit SHAs
+  (`actions/checkout@9c091bb... # v7`) instead of mutable version tags
+  (`v7`), addressing OSSF Scorecard's `PinnedDependenciesID` finding (18
+  Action references). Docker base images in Dockerfiles remain unpinned due
+  to unavailability of registry digest lookup in this environment; those will
+  be addressed in a follow-up.
+
 ### Changed
 
 - **Default build optimization level raised from `-O2` to `-O3`, everywhere**
