@@ -758,22 +758,24 @@ static int dcc_gcc_rewrite_fqn(char **argv)
         return -ENOENT;
 
 
+    /* Built via snprintf (rather than malloc()+strcpy()+strcat()+strcat())
+     * so the buffer size and the writes are both expressed in a single
+     * call each -- CodeQL's cpp/unbounded-write check cannot trace a size
+     * computed via separate strlen() calls forward to a later strcat(),
+     * even when (as here) the arithmetic is in fact exact; snprintf makes
+     * the bound self-evident at the write site instead of relying on a
+     * remembered invariant from a few lines above. */
     newcmd_len = strlen(target_with_vendor) + 1 + strlen(base) + 1;
     newcmd = malloc(newcmd_len);
     if (!newcmd)
         return -ENOMEM;
-    memset(newcmd, 0, newcmd_len);
-
-    strcpy(newcmd, target_with_vendor);
-
-
-    strcat(newcmd, "-");
-    strcat(newcmd, base);
+    snprintf(newcmd, newcmd_len, "%s-%s", target_with_vendor, base);
 
     /* TODO, is this the right PATH? */
     path = getenv("PATH");
     do {
-        char binname[strlen(path) + 1 + strlen(newcmd) + 1];
+        int binname_len = strlen(path) + 1 + strlen(newcmd) + 1;
+        char binname[binname_len];
         int r;
 
         /* emulate strchrnul() */
@@ -785,8 +787,7 @@ static int dcc_gcc_rewrite_fqn(char **argv)
             break;
         strncpy(binname, path, pathlen);
         binname[pathlen] = '\0';
-        strcat(binname, "/");
-        strcat(binname, newcmd);
+        snprintf(binname + pathlen, binname_len - pathlen, "/%s", newcmd);
         r = access(binname, X_OK);
         if (r < 0)
             continue;
