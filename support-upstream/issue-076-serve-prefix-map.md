@@ -1,7 +1,7 @@
 # `tweak_arguments_for_server()` never rewrites `-f*-prefix-map=` build-path prefixes
 
 **Fork issue:** [wiki-mod/distcc-ng#76](https://github.com/wiki-mod/distcc-ng/issues/76)
-**Fixed by:** [wiki-mod/distcc-ng#PENDING](https://github.com/wiki-mod/distcc-ng/pull/PENDING)
+**Fixed by:** [wiki-mod/distcc-ng#276](https://github.com/wiki-mod/distcc-ng/pull/276)
 **Upstream location:** `src/serve.c`, function `tweak_arguments_for_server()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-21)
 **Searched upstream issues/PRs for:** `prefix-map` — found upstream's own **open, unmerged** PR that proposes exactly this fix: [distcc/distcc#459](https://github.com/distcc/distcc/pull/459) ("Support `-f*-prefix-map` compiler options"), opened 2022-04-29. **Verified live via `gh pr view 459 --repo distcc/distcc --json state,mergedAt,createdAt,updatedAt` on 2026-07-21: `state: OPEN`, `mergedAt: null`, last activity 2025-11-03.** This is a point-in-time observation, not a standing fact — re-check the PR's live state before citing it as still-open in any future work; it could merge or close at any time after this date.
