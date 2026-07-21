@@ -241,10 +241,38 @@ jobs:
           artifact-name: distcc-ng-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
 
       - name: Push ${{ matrix.platform }} image
+        id: push
         shell: bash
         env:
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
         run: docker push "${IMAGE_TAG}"
+
+      - name: Record this run's pushed digest
+        # Recording *this run's* digest (not just checking whether a tag by
+        # this name exists in the registry) is what makes the arm64 leg's
+        # continue-on-error actually safe: a rerun of this workflow for the
+        # same version tag, after an EARLIER successful arm64 push followed
+        # by a NEW failing arm64 attempt, would otherwise still find the
+        # old, stale arm64 tag sitting in the registry under the same
+        # mutable name and wrongly pair it with the current amd64 build in
+        # the manifest. Only reached when the push step above succeeded, so
+        # a failed/continued-past arm64 leg never uploads a digest here --
+        # publish_manifest below only trusts a digest artifact actually
+        # produced by this run, not the mutable tag's current registry
+        # state.
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | \
+                     python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          printf '%s\n' "${digest}" > "digest-${{ matrix.platform }}.txt"
+
+      - name: Upload this run's digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-digest-${{ matrix.platform }}
+          path: digest-${{ matrix.platform }}.txt
 
   publish_manifest:
     needs: [setup, build_container]
@@ -262,6 +290,18 @@ jobs:
         run: |
           printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      - name: Download this run's image digests
+        # continue-on-error: true so a rerun where arm64 failed (and never
+        # uploaded its digest artifact, see build_container's "Record this
+        # run's pushed digest" step) doesn't fail this job -- amd64-only is
+        # the intended degraded outcome, not an error.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-digest-*
+          path: digests
+          merge-multiple: true
+
       - name: Create multi-arch manifest
         shell: bash
         env:
@@ -270,15 +310,24 @@ jobs:
           set -euo pipefail
           # arm64 is best-effort (continue-on-error in build_container, see
           # that job's comment) -- its own leg can fail while amd64 still
-          # succeeds. Don't assume both per-platform tags exist just because
-          # this job ran; probe the registry for the arm64 tag first and
-          # fall back to an amd64-only manifest rather than failing the
-          # whole release on a missing best-effort architecture.
-          tags=("${IMAGE_BASE}-amd64")
-          if docker buildx imagetools inspect "${IMAGE_BASE}-arm64" >/dev/null 2>&1; then
-            tags+=("${IMAGE_BASE}-arm64")
+          # succeeds. Reference each platform by the DIGEST this specific
+          # run recorded, never by the mutable "-amd64"/"-arm64" tag: a
+          # rerun of this workflow for the same version tag, after an
+          # earlier successful arm64 push followed by a new failing arm64
+          # attempt, would otherwise still find the OLD arm64 tag sitting
+          # in the registry and wrongly pair it with the current amd64
+          # build (flagged by Codex review on this PR). A digest artifact
+          # only exists if build_container's push step for that platform
+          # actually ran and succeeded in this exact run, so a missing file
+          # here means the best-effort arch is genuinely absent from this
+          # run, not just momentarily unfound.
+          amd64_digest="$(cat digests/digest-amd64.txt)"
+          tags=("${IMAGE_BASE}@${amd64_digest}")
+          if [ -f digests/digest-arm64.txt ]; then
+            arm64_digest="$(cat digests/digest-arm64.txt)"
+            tags+=("${IMAGE_BASE}@${arm64_digest}")
           else
-            echo "::warning::arm64 image not found in registry (best-effort leg failed or was skipped); publishing amd64-only manifest"
+            echo "::warning::no arm64 digest recorded by this run (best-effort leg failed or was skipped); publishing amd64-only manifest"
           fi
           docker buildx imagetools create \
             --tag "${IMAGE_BASE}" \
