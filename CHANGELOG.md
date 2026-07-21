@@ -15,7 +15,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 - **`docker/verify/Dockerfile`, `docker/verify/selftest-ptrace.sh`,
   `docker/verify/README.md`, `.github/workflows/verify-image-build.yml`**
-  (#264): pre-built, fully self-contained build+debug+verification container
+  (#273, refs #264): pre-built, fully self-contained build+debug+verification container
   image. Sized against Samba's real Debian `Build-Depends` (51 distinct
   packages vs. Apache httpd's 20 — Samba found to have the larger/more
   demanding dependency surface, see the issue #264 research comment),

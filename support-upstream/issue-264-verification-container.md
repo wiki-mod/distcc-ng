@@ -8,7 +8,7 @@ fork-only development/verification tool; the required support-upstream check
 (AGENTS.md rule 57) is documented here as a negative finding, not skipped.
 
 **Fork issue:** [wiki-mod/distcc-ng#264](https://github.com/wiki-mod/distcc-ng/issues/264)
-**Fixed by:** wiki-mod/distcc-ng PR introducing `docker/verify/`
+**Fixed by:** [wiki-mod/distcc-ng#273](https://github.com/wiki-mod/distcc-ng/pull/273)
 **Upstream location:** `docker/` (root of `distcc/distcc`)
 **Checked against upstream commit:** upstream `master` tip at the time of
 this check (2026-07-21) — `docker/README.md`, `docker/base/Dockerfile`,
