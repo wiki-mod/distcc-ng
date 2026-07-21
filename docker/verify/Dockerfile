@@ -115,6 +115,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       docbook-xsl \
       xsltproc \
       perl \
+      # Samba's own build (its waf-based ./configure) generates a parser
+      # via Parse::Yapp -- found missing empirically by this image's own
+      # CI verification step (a real `./configure` dry-run against Samba's
+      # source failed with "perl module Parse::Yapp::Driver ... not
+      # found" before this was added), not assumed from the Build-Depends
+      # list alone.
+      libparse-yapp-perl \
       python3-dnspython \
       python3-markdown \
       # --- Debug tools (issue #264's explicit ask) ---
