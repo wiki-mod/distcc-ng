@@ -35,7 +35,7 @@ jobs:
     steps:
       # No ref override: this validates master, and schedule/dispatch already
       # evaluate from master (the default branch).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # docker and the compose plugin are preinstalled on ubuntu-latest. The
       # same run-e2e.sh orchestrator and daemon setup as the nightly job, with
       # the client workload swapped to the ccache build via E2E_CLIENT_SCRIPT.
@@ -61,7 +61,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ needs.ccache_heartbeat.result == 'success' && 'success' || 'failure' }}

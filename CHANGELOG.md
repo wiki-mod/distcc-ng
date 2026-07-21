@@ -25,6 +25,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `src/config-parser.c`), so the freshness/size check and the subsequent
   read are guaranteed to describe the exact same open file. No behavioral
   change for any existing caller.
+- **GitHub Actions and base-image references pinned to commit SHAs** (#267):
+  all `.github/workflows/*.yml` steps now use full 40-character commit SHAs
+  (`actions/checkout@9c091bb... # v7`) instead of mutable version tags
+  (`v7`), addressing OSSF Scorecard's `PinnedDependenciesID` finding (18
+  Action references). Docker base images in Dockerfiles remain unpinned due
+  to unavailability of registry digest lookup in this environment; those will
+  be addressed in a follow-up.
 
 ### Changed
 
