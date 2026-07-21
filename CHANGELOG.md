@@ -13,6 +13,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`src/dparent.c`** (#77, ported from upstream's still-open
+  [distcc/distcc#468](https://github.com/distcc/distcc/pull/468)): set the
+  daemon's Linux autogroup niceness (via `/proc/self/autogroup`) to the
+  existing `-N`/`--nice` value right after `setsid()` succeeds, Linux-only
+  (`#ifdef HAVE_LINUX`). Without this, on an autogroup-enabled kernel
+  `setsid()` allocates a fresh autogroup at niceness 0, which silently
+  neutralizes the daemon's own `nice(2)` value across sessions (it only
+  ranks the daemon's own tasks against each other, not against unrelated
+  foreground sessions) — this makes the existing niceness setting actually
+  take effect against other sessions on the host, as intended for a
+  background compile-farm daemon. Missing autogroup support (`ENOENT`, e.g.
+  older kernels or `CONFIG_SCHED_AUTOGROUP=n`) is treated as expected and
+  silent; any other failure is a non-fatal warning, matching the existing
+  `nice(2)` failure handling in `daemon.c`.
+
 - **`docker/verify/Dockerfile`, `docker/verify/selftest-ptrace.sh`,
   `docker/verify/README.md`, `.github/workflows/verify-image-build.yml`**
   (#273, refs #264): pre-built, fully self-contained build+debug+verification container

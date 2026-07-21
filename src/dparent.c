@@ -342,6 +342,59 @@ void dcc_remove_pid(void)
 
 
 /**
+ * Sets the niceness of this process's Linux autogroup, if the kernel
+ * supports autogrouping.
+ *
+ * On a kernel with autogroups enabled, setsid() (called just before this
+ * from dcc_detach()) allocates a brand-new autogroup for the daemon's
+ * session, starting at niceness 0 -- so the plain per-process nice(2) value
+ * set earlier in main() only ranks the daemon's own tasks against each
+ * other, not against unrelated sessions on the same host. Writing the same
+ * niceness into /proc/self/autogroup is what actually makes it count
+ * relative to other sessions (e.g. an interactive shell), which is the
+ * whole point of niceing a background compile-farm daemon in the first
+ * place.
+ *
+ * ENOENT is treated as "no autogroup support" (older kernel, or
+ * CONFIG_SCHED_AUTOGROUP=n) and is silently ignored rather than logged --
+ * expected in plenty of real environments (older distros, some containers)
+ * and not a fault of this daemon. Any other failure (e.g. EINVAL from a
+ * niceness value outside [-20,19], or a permission-restricted /proc in a
+ * hardened container) is logged as a warning, not an error: this is a
+ * best-effort scheduling hint, never worth treating as fatal or noisier
+ * than the plain nice(2) failure path in daemon.c's main(), which this
+ * mirrors.
+ **/
+static void dcc_set_autogroup_niceness(int niceness)
+{
+#ifdef HAVE_LINUX
+    FILE *fp = fopen("/proc/self/autogroup", "r+");
+    int error = 0;
+
+    if (fp) {
+        if (fprintf(fp, "%d\n", niceness) < 0) {
+            error = errno;
+        } else {
+            rs_trace("autogroup niceness: %d", niceness);
+        }
+        if (fclose(fp) == EOF && !error)
+            error = errno;
+    } else if (errno != ENOENT) {
+        error = errno;
+    }
+    if (error)
+        rs_log_warning("autogroup nice %d failed: %s", niceness, strerror(error));
+#else
+    /* Not built for Linux: autogrouping is a Linux-only kernel feature, so
+     * there is nothing to do here.  The parameter is kept (rather than
+     * `void`) so the call site in dcc_detach() doesn't need its own
+     * HAVE_LINUX guard. */
+    (void) niceness;
+#endif
+}
+
+
+/**
  * Become a daemon, discarding the controlling terminal.
  *
  * Borrowed from rsync.
@@ -375,6 +428,10 @@ static void dcc_detach(void)
         rs_log_error("setsid failed: %s", strerror(errno));
     } else {
         rs_trace("setsid to session %d", (int) sid);
+        /* Only meaningful for a session we just created: applying this to
+         * an existing (inherited) session would change scheduling for
+         * whatever unrelated processes are also in it. */
+        dcc_set_autogroup_niceness(opt_niceness);
     }
 #else /* no HAVE_SETSID */
 #ifdef TIOCNOTTY
