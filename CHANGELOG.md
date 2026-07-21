@@ -66,6 +66,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   to unavailability of registry digest lookup in this environment; those will
   be addressed in a follow-up.
 
+### Added
+
+- **`src/serve.c`** (#76): `tweak_arguments_for_server()` now also rewrites
+  the `-ffile-prefix-map=`/`-fmacro-prefix-map=`/`-fdebug-prefix-map=`/
+  `-fprofile-prefix-map=` compiler options' absolute `OLD` path, prepending
+  the server-side mirror's `root_dir` the same way it already does for `-I`-
+  style include options and the source file argument. Without this, a
+  distributed compile using these reproducible-build flags never actually
+  got the path substitution the client asked for, since the compiler on the
+  server never saw a build path matching what these options declared as
+  `OLD`. Ported directly from upstream's own open (unmerged) fix,
+  distcc/distcc#459; added `GdbPrefixMap_Case` to `test/testdistcc.py` to
+  cover it, adapted from the same upstream PR's test.
+
 ### Changed
 
 - **Default build optimization level raised from `-O2` to `-O3`, everywhere**
