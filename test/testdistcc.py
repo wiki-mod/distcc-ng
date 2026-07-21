@@ -1282,6 +1282,17 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         clang = self._find_compiler("clang")
         self.require(clang is not None,
                      "no clang found on $PATH to build the fake dispatcher from")
+        # -march=native's acceptance is itself arch/compiler-dependent (e.g.
+        # some clang/AArch64 combinations reject it outright). If the local
+        # clang doesn't accept it at all, dcc_resolve_march_native()'s probe
+        # fails regardless of this fix, the compile falls through to a local
+        # gcc/clang invocation of "-march=native" that ALSO errors there --
+        # a real compile failure, not a clean skip -- so this must be
+        # checked before relying on the flag being usable at all here.
+        probe_rc, _, _ = self.runcmd_unchecked(
+            "%s -march=native -E -x c - < /dev/null > /dev/null 2>&1" % clang)
+        self.require(probe_rc == 0,
+                     "local clang does not accept -march=native on this arch")
         # Deliberately not on $PATH and deliberately not named anything
         # containing "clang"/"gcc"/"cc" -- a basename-only PATH search (the
         # pre-fix behavior) must not be able to resolve this by name alone.
