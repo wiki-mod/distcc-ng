@@ -114,7 +114,7 @@ Also verified: a clean `-Werror` autoconf/automake build and the full
 already exercise `dcc_fresh_dependency_exists()` through real compiles)
 pass unchanged on both trees.
 
-## Addendum (fork issue #268) — the TOCTOU pattern itself
+## Addendum (fork issue #268 / PR #271) — the TOCTOU pattern itself
 
 The `malloc(+1)` fix above closes the memory-safety consequence, but
 CodeQL alert #3 stayed **open** against this same function after #257
