@@ -29,11 +29,26 @@
 # compiling Samba's Windows-side tools is out of scope for what this image
 # needs to prove.
 #
-# Same pinned base image as docker/release/Dockerfile, for consistency with
-# this repo's existing container lineage (same Debian release, same trust
-# root) even though this image serves a different purpose (dev/verification
-# tools, not a minimal runtime image).
-ARG DEBIAN_IMAGE=debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a
+# Same Debian release lineage as docker/release/Dockerfile (trixie), for
+# consistency with this repo's existing container lineage, even though this
+# image serves a different purpose (dev/verification tools, not a minimal
+# runtime image) and is pinned to its own digest rather than sharing
+# docker/release/Dockerfile's ARG value: the two images are on independent
+# patch-level update schedules, so pinning them separately (rather than one
+# shared ARG) avoids an unrelated bump to one accidentally moving the other.
+#
+# Deliberately the full/"standard" debian image, not debian:*-slim: there is
+# no debian:minimal/debian:standard tag on Docker Hub (only the default,
+# full variant vs. an explicit -slim one) -- and slim would be the wrong
+# starting point here regardless, since this image's entire purpose is
+# carrying a large real toolchain (gdb, valgrind, binutils, etc.) well
+# beyond what the slim base strips down to; there is nothing for a smaller
+# base image to save.
+#
+# Pinned to the real, live digest for the debian:13.6 tag (verified against
+# Docker Hub's own API at pin time, 2026-07-21 -- not guessed from a prior
+# 13.5 pin) so this image doesn't sit on a stale trixie patch level.
+ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
 
 FROM ${DEBIAN_IMAGE}
 
@@ -242,7 +257,7 @@ RUN set -eux; \
     #     --version -- neither binding nor listing a loopback socket needs
     #     ptrace, so this works fine at image-build time (unlike gdb/
     #     strace/ltrace above). ---
-    python3 -c "import socket,time; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('127.0.0.1',0)); s.listen(1); print(s.getsockname()[1]); time.sleep(5)" > ss_port.log 2>&1 & \
+    python3 -u -c "import socket,time; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('127.0.0.1',0)); s.listen(1); print(s.getsockname()[1], flush=True); time.sleep(5)" > ss_port.log 2>&1 & \
     SS_PID=$!; \
     for _ in 1 2 3 4 5; do [ -s ss_port.log ] && break; sleep 0.5; done; \
     SS_PORT="$(head -1 ss_port.log)"; \
