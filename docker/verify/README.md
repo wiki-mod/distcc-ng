@@ -25,9 +25,18 @@ docker build -f docker/verify/Dockerfile -t distcc-ng-verify:local .
 ## Using it to verify a distcc-ng change
 
 ```bash
-docker run --rm -it -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
+docker run --rm -it --cap-add=SYS_PTRACE -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
   'cd /work/src && ./autogen.sh && ./configure PYTHON=python3 && make && make check'
 ```
+
+`--cap-add=SYS_PTRACE` is required, not optional, for a full `make check` to
+pass: `test/testdistcc.py`'s `Gdb_Case` runs a real `gdb`, which disables
+ASLR for the debuggee via `personality(2)` by default, and Docker's default
+seccomp profile only permits that specific `personality()` call when the
+container has `CAP_SYS_PTRACE` — without it, gdb prints "warning: Error
+disabling address space randomization: Operation not permitted" to stderr,
+which `Gdb_Case` correctly treats as a real assertion failure (found live in
+this image's own CI verification, see the introducing PR's history).
 
 ## Ptrace-dependent tool self-test (gdb/strace/ltrace)
 

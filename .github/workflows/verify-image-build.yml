@@ -93,8 +93,24 @@ jobs:
         #    image is meant to be used and how a real local `docker run`
         #    already behaves, so distccd is never started as real root here
         #    at all.
+        # 3. A third, separate real failure after both of the above were
+        #    fixed: test/testdistcc.py's Gdb_Case asserted gdb produced no
+        #    stderr, but got "warning: Error disabling address space
+        #    randomization: Operation not permitted" -- gdb's own default
+        #    behavior is to disable ASLR for the debuggee via personality(2)
+        #    before running it, and Docker's default seccomp profile only
+        #    permits that specific personality() call when the container has
+        #    CAP_SYS_PTRACE (this is exactly why docker/verify/
+        #    selftest-ptrace.sh's own `docker run` already passes
+        #    --cap-add=SYS_PTRACE and hits no such warning there -- this step
+        #    was simply missing the same flag). Since Gdb_Case failing makes
+        #    the whole `test/testdistcc.py` invocation exit non-zero, the
+        #    Makefile's `&&`-chained follow-on
+        #    (`test/pump_include_server_path_test.py`) never even ran,
+        #    which is why its output never appeared in this step's log.
         run: |
-          docker run --rm --user root -v "${{ github.workspace }}:/work/src:rw" \
+          docker run --rm --user root --cap-add=SYS_PTRACE \
+            -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \
             distcc-ng-verify:ci bash -c '
               set -euo pipefail
