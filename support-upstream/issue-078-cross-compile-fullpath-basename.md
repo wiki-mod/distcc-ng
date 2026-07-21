@@ -150,3 +150,61 @@ WSL2/DrvFs), both the unmodified (`origin/current_dev`) and fixed
 - Full `make check` passes cleanly on the fixed tree on this real host
   (including `ModeBits_Case`, which a genuine Unix-permission-honoring
   filesystem is required for), no new warnings from the changed files.
+
+### The issue's own example (`/usr/bin/arm-linux-gnueabihf-gcc`) does not need this fix, or any fix
+
+Fork issue #78's own wording ("aren't correctly detected as the
+target-specific compiler they are") reads as if a target-triple-prefixed
+name like `arm-linux-gnueabihf-gcc` is *mishandled* today. It isn't, and
+this fix doesn't change its behavior at all — verified empirically, not
+just by re-reading the match patterns:
+
+A real fake cross-compiler dispatcher, `/tmp/.../xbin/arm-linux-gnueabihf-gcc`
+(a `#!/bin/sh; exec /usr/bin/gcc "$@"` script — a real executable, not a
+symlink, so it can't false-green off `dcc_rewrite_generic_compiler()`'s
+existing symlink-chasing branch), invoked by its full path through both
+an unmodified `origin/current_dev` build and this fix's build, on the
+same real host (`192.168.1.229`):
+
+```
+=== BASELINE (unmodified current_dev) ===
+distcc[130083] exec on localhost: /tmp/.../xbin/arm-linux-gnueabihf-gcc -c test.c -o test_base.o
+distcc[130083] (dcc_spawn_child) forking to execute: /tmp/.../xbin/arm-linux-gnueabihf-gcc -c test.c -o test_base.o
+=== FIXED (this PR) ===
+distcc[130088] exec on localhost: /tmp/.../xbin/arm-linux-gnueabihf-gcc -c test.c -o test_fixed.o
+distcc[130088] (dcc_spawn_child) forking to execute: /tmp/.../xbin/arm-linux-gnueabihf-gcc -c test.c -o test_fixed.o
+```
+
+Byte-identical trace in both cases: no `dcc_gcc_rewrite_fqn`/
+`dcc_add_clang_target`/`dcc_rewrite_generic_compiler` line fires either
+before or after this fix, in both cases the compiler is executed exactly
+as given (full path preserved, name untouched), and both produce an
+identical, valid `.o` object file (`file test_base.o test_fixed.o`: both
+`ELF 64-bit LSB relocatable, x86-64 ... not stripped`).
+
+This is expected, not a gap: `arm-linux-gnueabihf-gcc` never matches
+`dcc_add_clang_target()`'s or `dcc_gcc_rewrite_fqn()`'s `"clang"`/`"gcc"`
+family patterns (`strncmp("arm-linux-gnueabihf-gcc", "gcc-", 4)` fails —
+different string, not a prefix relationship) — with or without basename
+extraction — nor `dcc_rewrite_generic_compiler()`'s exact `"cc"`/`"c++"`
+check. All three functions exist to **add** cross-compilation handling to
+a compiler invocation that doesn't already carry it (a bare `cc`, `gcc`,
+or `clang` that needs a `-target` flag or a target-prefixed rename to
+become cross-capable). A name that is *already* fully target-prefixed —
+which is exactly what `arm-linux-gnueabihf-gcc` is — needs none of that:
+it is passed straight through to the remote/local compile step unmodified,
+under its own full path, which is already the correct behavior (the
+named binary is the compiler that should run). There is no code path in
+`src/compile.c`, `src/arg.c`, or `src/climasq.c` that special-cases or
+mishandles an already-target-prefixed compiler name. Confirmed by a full
+grep of all three files for compiler-family string comparisons
+(`"gcc"`/`"clang"`/`"cc"`/`"c++"` literals and prefix checks), not just
+reasoning about the two functions this PR touches.
+
+**Conclusion:** the issue's illustrative example was imprecise. The
+underlying, real bug this PR fixes is real and distinct: a *bare*
+`gcc`/`g++`/`gcc-N`/`clang`/`clang-N` compiler invoked via a full path
+(e.g. `/usr/bin/gcc-11`) previously did not get the cross-compilation
+handling it would have gotten via its bare name, purely because of the
+unstripped-path string comparison. An already fully-qualified
+cross-compiler name was never broken and needs no further change.
