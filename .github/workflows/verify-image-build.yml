@@ -59,25 +59,54 @@ jobs:
       - name: Real distcc-ng build+test inside the image
         # Proves the image is sufficient for this repo's own toolchain, not
         # just that gcc exists -- the full real validation bar (AGENTS.md's
-        # Required Validation section). Explicit --user root: the Dockerfile
-        # sets `USER verify` as the image's own default, so merely omitting
-        # a --user flag here still runs as `verify`, not root (an actual CI
-        # failure this workflow hit: "autom4te: error: cannot create
-        # autom4te.cache in /work/src: Permission denied" -- actions/checkout
-        # leaves the bind-mounted workspace owned by the runner's own uid,
-        # which the image's `verify` user, a different image-local uid,
-        # can't write into). A real local `docker run` (see docker/verify/
-        # README.md) doesn't hit this because the same host user owns both
-        # sides of the mount there, so it can stay non-root by default.
+        # Required Validation section).
+        #
+        # Two real CI failures were found and fixed getting this step right,
+        # both a consequence of the same root cause (actions/checkout leaves
+        # the bind-mounted workspace owned by the runner's own uid, which
+        # differs from the image's `verify` uid -- a bind-mount ownership
+        # mismatch that a real local `docker run`, see docker/verify/
+        # README.md, never hits, since the same host user owns both sides
+        # of the mount there):
+        #
+        # 1. Simply omitting --user verify does NOT run as root: the
+        #    Dockerfile sets `USER verify` as the image's own default, so an
+        #    explicit `--user root` was needed just to get write access at
+        #    all ("autom4te: error: cannot create autom4te.cache in
+        #    /work/src: Permission denied").
+        # 2. Running the *whole* build+test as real root then broke a
+        #    different, legitimate test: `make check`'s
+        #    maintainer-check-no-set-path (Unicode_Case) deliberately starts
+        #    distccd as root so it can exercise distccd's own privilege-drop
+        #    behavior (dcc_discard_root() dropping to uid=65534/nobody) --
+        #    that drop only actually happens when distccd's real uid is 0,
+        #    so forcing this whole step to run as root, only to work around
+        #    the mount-ownership mismatch, accidentally armed a real
+        #    privilege-drop code path that then couldn't write
+        #    _testtmp/Unicode_Case/distccd.log as uid=65534 (that directory
+        #    is root-owned, not nobody-writable). The correct fix isn't to
+        #    make the tree world-writable (would mask real permission bugs)
+        #    or skip that test (would lose real coverage this image exists
+        #    to provide) -- it's to only use root transiently to fix the
+        #    mount's ownership (chown to the image's own `verify` uid), then
+        #    actually run the build+test as `verify`, matching how this
+        #    image is meant to be used and how a real local `docker run`
+        #    already behaves, so distccd is never started as real root here
+        #    at all.
         run: |
           docker run --rm --user root -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \
             distcc-ng-verify:ci bash -c '
               set -euo pipefail
-              ./autogen.sh
-              ./configure PYTHON=python3
-              make
-              make check
+              chown -R verify:verify /work/src
+              su -s /bin/bash verify -c "
+                set -euo pipefail
+                cd /work/src
+                ./autogen.sh
+                ./configure PYTHON=python3
+                make
+                make check
+              "
             '
 
       - name: Real Samba configure dry-run (proves the sizing claim empirically)
