@@ -60,6 +60,16 @@ def _rebase_python_build_optimization_level():
   in the build log. Patching the *source* config vars here (instead of
   relying on gcc's tie-break) removes the stray '-O2' at its origin.
 
+  Only fires when the environment CFLAGS this script was actually invoked
+  with contains '-O3' -- mirroring configure.ac's own guard that a
+  caller-supplied CFLAGS (e.g. a debug build's 'CFLAGS=-g
+  -fno-omit-frame-pointer', which carries no '-O' flag at all) is left
+  alone rather than forced onto our own optimization level. Without this
+  guard, this function would still overwrite Python's baked '-O2' with
+  '-O3' even when the project's own CFLAGS never asked for '-O3',
+  silently building the include-server extension optimized while the
+  rest of the project builds unoptimized for debugging.
+
   sysconfig.get_config_vars() returns the *same* cached dict on every
   call within a process, so mutating it here (before setuptools.setup()
   is invoked) is visible to every later reader, including setuptools'
@@ -70,9 +80,10 @@ def _rebase_python_build_optimization_level():
   setuptools.setup() call below).  Only the literal '-O2' substring is
   replaced (mirroring configure.ac's own sed pattern), so any other flag
   in these vars is left untouched, and hosts where Python wasn't built
-  with '-O2' at all (mirroring configure.ac's guard for a caller-supplied
-  CFLAGS) are simply left alone.
+  with '-O2' at all are simply left alone.
   """
+  if '-O3' not in os.environ.get('CFLAGS', ''):
+    return
   cfg_vars = sysconfig.get_config_vars()
   for key in ('CFLAGS', 'OPT', 'LDSHARED'):
     value = cfg_vars.get(key)

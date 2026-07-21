@@ -54,7 +54,7 @@ whatever flag Python's own sysconfig already had, not in place of it.
 
 Byte-for-byte identical to this fork's pre-fix state, in both files:
 
-`Makefile.in` (upstream, lines ~574/934/1063, all three identical):
+`Makefile.in` (upstream, exact lines 574, 934, and 1063 as of commit `8d569d19` — confirmed via `git show 8d569d19:Makefile.in | grep -n PYTHON_CFLAGS`, all three identical):
 ```
 CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"           \
 CPPFLAGS="$(CPPFLAGS)"                        \
