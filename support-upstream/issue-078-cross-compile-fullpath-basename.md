@@ -128,7 +128,7 @@ same fix. Left as a follow-up: see wiki-mod/distcc-ng#78's PR discussion.
 
 ## Empirical verification
 
-Built and tested on a real Linux host (`192.168.1.229`, native ext4, not
+Built and tested on a real Linux host (native ext4, not
 WSL2/DrvFs), both the unmodified (`origin/current_dev`) and fixed
 `src/compile.c`, side by side:
 
@@ -164,7 +164,7 @@ A real fake cross-compiler dispatcher, `/tmp/.../xbin/arm-linux-gnueabihf-gcc`
 symlink, so it can't false-green off `dcc_rewrite_generic_compiler()`'s
 existing symlink-chasing branch), invoked by its full path through both
 an unmodified `origin/current_dev` build and this fix's build, on the
-same real host (`192.168.1.229`):
+same real host:
 
 ```
 === BASELINE (unmodified current_dev) ===
