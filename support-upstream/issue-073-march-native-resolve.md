@@ -1,7 +1,7 @@
 # -march=native/-mtune=native hard-fail to local — upstream has an open, unmerged fix with real bugs of its own
 
 **Fork issue:** [wiki-mod/distcc-ng#73](https://github.com/wiki-mod/distcc-ng/issues/73)
-**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175) (bugs 1-4 below); [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245) (bugs 5-6, found later via [wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227))
+**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175) (bugs 1-4 below); [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245) (bugs 5-6, found later via [wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227)); [wiki-mod/distcc-ng#280](https://github.com/wiki-mod/distcc-ng/pull/280) (bug 7, found later via [wiki-mod/distcc-ng#278](https://github.com/wiki-mod/distcc-ng/issues/278))
 **Upstream location:** `src/arg.c`, `dcc_scan_args()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `march=native`, `mtune=native`, `mcpu=native` — found upstream's own open, unmerged attempts: [distcc/distcc#350](https://github.com/distcc/distcc/pull/350) and its rebase [distcc/distcc#384](https://github.com/distcc/distcc/pull/384).
@@ -219,7 +219,7 @@ no discussion found of the exec-target (as opposed to the family-
 detection) side of this basename-trust problem in #384's own review
 thread or elsewhere.
 
-Landed via wiki-mod/distcc-ng#278 (PR number filled in once opened).
+Landed via [wiki-mod/distcc-ng#280](https://github.com/wiki-mod/distcc-ng/pull/280).
 
 ## Empirical verification
 

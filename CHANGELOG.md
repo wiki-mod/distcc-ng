@@ -104,7 +104,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
-- **`src/arg.c`** (#278): `dcc_resolve_march_native()` now execs the
+- **`src/arg.c`** (#280): `dcc_resolve_march_native()` now execs the
   actually-invoked compiler binary (`argv[0]` unchanged) instead of a
   basename stripped from it and re-resolved via a fresh `PATH` search.
   Previously, an explicit compiler path (e.g. `distcc /opt/x/cc ...`, or a
@@ -122,21 +122,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `COMPILE_OK` entry in the server's own independent log both times, and
   confirming the pre-fix code silently compiled locally with zero server
   log activity for the identical command.
-- **`Makefile.in`** (#278): removed a duplicate `h_dopt@EXEEXT@:` target
+- **`Makefile.in`** (#280): removed a duplicate `h_dopt@EXEEXT@:` target
   recipe (one of two identical, back-to-back definitions), which was
   making every clean build emit a spurious GNU make "overriding recipe for
   target" warning.
-- **`.github/workflows/release-drafter.yml`** (#278): added
+- **`.github/workflows/release-drafter.yml`** (#280): added
   `pull-requests: read` to the `update_release_draft` job's permissions
   block, which had been overridden down to `contents: write` only by the
   job-level block -- Release Drafter needs read access to merged-PR
   metadata to build its draft notes.
-- **`.github/workflows/scorecard.yml`** (#278): added `contents: read` to
+- **`.github/workflows/scorecard.yml`** (#280): added `contents: read` to
   the `analysis` job's permissions block, which had replaced the
   workflow-level `read-all` with `security-events: write` and
   `id-token: write` only, leaving `actions/checkout` without read access
   on a token-scope-enforcing repo.
-- **`.github/workflows/package-release.yml`** (#278): the arm64 container
+- **`.github/workflows/package-release.yml`** (#280): the arm64 container
   matrix leg is documented as best-effort but had no `continue-on-error`,
   so `fail-fast: false` alone did not stop an arm64 failure from blocking
   the release-gating jobs downstream (`publish_manifest`,
@@ -147,7 +147,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
-- **`.github/workflows/nightly-publish.yml`** (#278): added
+- **`.github/workflows/nightly-publish.yml`** (#280): added
   `--repo wiki-mod/distcc-ng` to the three `gh release` invocations
   (`view`/`delete`/`create`) in the tag-move-and-republish step, which were
   previously relying on `gh`'s ambient default-repo resolution -- per
