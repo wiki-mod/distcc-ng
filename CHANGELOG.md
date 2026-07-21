@@ -31,6 +31,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   published to GHCR — see the introducing PR for a sketched, not-yet-
   implemented publish-pipeline design.
 
+### Fixed
+
+- **`src/compile.c`** (#279, refs #78): `dcc_add_clang_target()` and
+  `dcc_gcc_rewrite_fqn()` now match the compiler's *basename*
+  (`dcc_find_basename(argv[0])`) instead of comparing `argv[0]` directly,
+  so cross-compilation auto-detection (clang's `-target` flag, gcc's
+  fully-qualified-name rewrite) now fires when the compiler is invoked by
+  a full or relative path (e.g. `/usr/bin/gcc-11`, `/usr/bin/clang-19`),
+  not only by a bare `$PATH` name. `dcc_gcc_rewrite_fqn()`'s rewritten
+  command name is now also built from the basename, fixing a related bug
+  where it previously would have embedded the caller's full original path
+  into the new command name. Ported and independently re-verified against
+  upstream's own open, unmerged distcc/distcc#491.
+
 ### Security
 
 - **`.github/workflows/{actionlint,c-build,changelog-update-on-release,codeql}.yml`**

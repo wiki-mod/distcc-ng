@@ -691,14 +691,26 @@ static void dcc_rewrite_generic_compiler(char **argv)
  * building.
  * TODO: actually probe clang with clang --version, instead of trusting
  * autoheader.
+ *
+ * argv[0] may be a full path (e.g. the user ran "distcc /usr/bin/clang-15
+ * ...", or a masquerade/wrapper resolved to an absolute path further up the
+ * call chain) rather than a bare name found via PATH -- match against the
+ * basename, not the raw argv[0], so this still fires in that case. This is
+ * purely a string classification used to decide whether to append a flag
+ * below; nothing here execs argv[0] itself, so there is no risk of running
+ * a different physical binary than the one the caller invoked (contrast
+ * with dcc_resolve_march_native() in arg.c, which does exec argv[0] and
+ * must therefore preserve the caller's original path/PATH-search
+ * distinction instead of rewriting it to a basename).
  */
 static void dcc_add_clang_target(char **argv)
 {
         /* defined by autoheader */
     const char *target = NATIVE_COMPILER_TRIPLE;
+    const char *base = dcc_find_basename(argv[0]);
 
-    if (strcmp(argv[0], "clang") == 0 || strncmp(argv[0], "clang-", strlen("clang-")) == 0 ||
-        strcmp(argv[0], "clang++") == 0 || strncmp(argv[0], "clang++-", strlen("clang++-")) == 0)
+    if (strcmp(base, "clang") == 0 || strncmp(base, "clang-", strlen("clang-")) == 0 ||
+        strcmp(base, "clang++") == 0 || strncmp(base, "clang++-", strlen("clang++-")) == 0)
         ;
     else
         return;
@@ -719,23 +731,34 @@ static void dcc_add_clang_target(char **argv)
 
 /*
  * Cross compilation for gcc
+ *
+ * As with dcc_add_clang_target() above, argv[0] may be a full path rather
+ * than a bare name found via PATH -- match and rewrite against the
+ * basename, not the raw argv[0], so a compiler invoked as e.g.
+ * "/usr/bin/gcc-11" is still recognised as plain "gcc-11" for the
+ * fully-qualified-name rewrite below. The rewritten command name itself
+ * must also be built from the basename: concatenating the *original*
+ * argv[0] here would produce a malformed name embedding the caller's
+ * original path (e.g. "aarch64-linux-gnu-/usr/bin/gcc-11") instead of the
+ * intended "aarch64-linux-gnu-gcc-11".
 */
 static int dcc_gcc_rewrite_fqn(char **argv)
 {
         /* defined by autoheader */
     const char *target_with_vendor = NATIVE_COMPILER_TRIPLE;
+    const char *base = dcc_find_basename(argv[0]);
     char *newcmd, *t, *path;
     int pathlen = 0;
     int newcmd_len = 0;
 
-    if (strcmp(argv[0], "gcc") == 0 || strncmp(argv[0], "gcc-", strlen("gcc-")) == 0 ||
-        strcmp(argv[0], "g++") == 0 || strncmp(argv[0], "g++-", strlen("g++-")) == 0)
+    if (strcmp(base, "gcc") == 0 || strncmp(base, "gcc-", strlen("gcc-")) == 0 ||
+        strcmp(base, "g++") == 0 || strncmp(base, "g++-", strlen("g++-")) == 0)
         ;
     else
         return -ENOENT;
 
 
-    newcmd_len = strlen(target_with_vendor) + 1 + strlen(argv[0]) + 1;
+    newcmd_len = strlen(target_with_vendor) + 1 + strlen(base) + 1;
     newcmd = malloc(newcmd_len);
     if (!newcmd)
         return -ENOMEM;
@@ -745,7 +768,7 @@ static int dcc_gcc_rewrite_fqn(char **argv)
 
 
     strcat(newcmd, "-");
-    strcat(newcmd, argv[0]);
+    strcat(newcmd, base);
 
     /* TODO, is this the right PATH? */
     path = getenv("PATH");
