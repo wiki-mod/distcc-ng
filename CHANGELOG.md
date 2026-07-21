@@ -13,6 +13,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`.github/workflows/{actionlint,c-build,changelog-update-on-release,codeql}.yml`**
+  (#267): pin the remaining 12 action references still using mutable
+  version tags (`actions/checkout@v7`, `actions/cache@v4`,
+  `actions/attest-build-provenance@v4`, `github/codeql-action/{init,analyze}@v3`)
+  to full 40-character commit SHAs, found via a repo-wide re-sweep after
+  PR #270's pass missed these (Scorecard's own scan apparently doesn't
+  flag every occurrence of an already-partially-pinned action). All 15
+  distinct actions used anywhere in this repo are now SHA-pinned; verified
+  each SHA by dereferencing the real tag ref live via the GitHub API (not
+  assumed from memory), including correctly handling annotated tags whose
+  `git/refs/tags/<tag>` response points at the tag *object*, not the
+  commit (a mistake PR #270 itself made twice before being caught in
+  review — see that PR's history).
 - **`src/compile.c`** (#268): eliminate the stat-then-open TOCTOU pattern in
   `dcc_fresh_dependency_exists()` (CodeQL alert #3, `cpp/toctou-race-condition`).
   #256/#257 already fixed this alert's *consequence* (a 1-byte heap NUL
