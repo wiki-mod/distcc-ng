@@ -60,7 +60,7 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # schedule always evaluates using the default branch (master);
           # redirect the nightly run to current_dev instead of re-checking
@@ -82,7 +82,7 @@ jobs:
       # this OS, always save a new one (actions/cache no-ops a save on an
       # exact key collision, so bumping github.run_id into the key avoids
       # that and keeps the cache warm across runs).
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ matrix.os }}-${{ github.run_id }}
@@ -104,7 +104,7 @@ jobs:
       # risk silently reusing wrong dependency-detection results.) Key on the
       # actual autoconf inputs so a real configure.ac/m4 change still gets a
       # fresh (initially empty) cache instead of reusing pre-change traces.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: autom4te.cache
           key: autoconf-${{ matrix.os }}-${{ hashFiles('configure.ac', 'm4/*.m4') }}
@@ -134,7 +134,7 @@ jobs:
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
       - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: /tmp/attest-subjects/*
 
@@ -154,7 +154,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
@@ -217,7 +217,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Vendored version marker matches what this repo claims to ship
         run: |
           test "$(cat popt/POPT_VERSION)" = "popt-1.19-release" \
@@ -296,7 +296,7 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Same schedule redirect as make_check: the nightly run evaluates
           # from master but must validate current_dev.
