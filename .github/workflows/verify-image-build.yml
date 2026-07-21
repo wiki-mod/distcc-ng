@@ -150,7 +150,20 @@ jobs:
         # downloaded without error") before using it as the empirical proof
         # that this image's Samba-sized package inventory is actually
         # sufficient: Samba's own real ./configure (its bundled waf wrapper)
-        # must complete with no missing-dependency line.
+        # must exit zero.
+        #
+        # Detecting failure via the real exit code, not a text grep: an
+        # earlier version of this step grepped configure.log for "not
+        # found" and reported a false failure -- Samba's waf-based configure
+        # legitimately prints many benign "Checking for X: not found" lines
+        # for *optional* features it simply disables (e.g. libsystemd-
+        # journal, lttng-ust), which is not a real error, and the log even
+        # said "'configure' finished successfully" right before the grep-
+        # based check wrongly failed the step. waf's own exit code is the
+        # real, robust signal for "did configure actually succeed" -- `set
+        # -o pipefail` (part of `set -euo pipefail` below) makes the `if`
+        # condition below see `./configure`'s real exit status through the
+        # `tee` pipe, not tee's.
         run: |
           docker run --rm distcc-ng-verify:ci bash -c '
             set -euo pipefail
@@ -165,10 +178,10 @@ jobs:
               || { echo "::error::Samba tarball signature did not verify against samba.org own published key -- refusing to use it as verification evidence"; exit 1; }
             tar xf samba-4.22.4.tar
             cd samba-4.22.4
-            ./configure 2>&1 | tee configure.log
-            if grep -qi "not found" configure.log; then
-              echo "::error::Samba configure reported a missing dependency -- this images package inventory is not actually sufficient"
+            if ./configure 2>&1 | tee configure.log; then
+              echo "Samba ./configure exited 0 -- this images package inventory is sufficient."
+            else
+              echo "::error::Samba ./configure exited non-zero -- this images package inventory is not actually sufficient"
               exit 1
             fi
-            echo "Samba ./configure completed with no missing-dependency lines."
           '

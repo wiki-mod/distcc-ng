@@ -87,7 +87,7 @@ what this image needs to prove.
 
 ```bash
 docker run --rm distcc-ng-verify:local bash -c '
-  set -e
+  set -euo pipefail
   cd /tmp
   wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.gz
   wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.asc
@@ -104,15 +104,19 @@ docker run --rm distcc-ng-verify:local bash -c '
   tar xf samba-4.22.4.tar
   cd samba-4.22.4
   ./configure 2>&1 | tee configure.log
-  ! grep -qi "not found" configure.log
 '
 ```
 
-A clean `./configure` run (Samba uses its own `waf`-based configure wrapper,
-bundled in its source tree — no separate `waf` package needed) with no
-"not found"/missing-dependency lines is the real evidence that this image's
-package inventory is actually sufficient for a Samba-sized project, not just
-asserted from the Build-Depends comparison alone.
+A `./configure` run (Samba uses its own `waf`-based configure wrapper,
+bundled in its source tree — no separate `waf` package needed) that exits
+zero is the real evidence that this image's package inventory is actually
+sufficient for a Samba-sized project, not just asserted from the
+Build-Depends comparison alone. Check the real exit code, not the log text:
+waf's own configure legitimately prints many benign "Checking for X: not
+found" lines for *optional* features it simply disables (e.g.
+`libsystemd-journal`, `lttng-ust`) — grepping the log for "not found" was
+tried first and produced a false failure even when configure itself
+reported `'configure' finished successfully`.
 
 ## Not yet implemented: publishing to GHCR
 
