@@ -771,8 +771,48 @@ static int dcc_gcc_rewrite_fqn(char **argv)
         return -ENOMEM;
     snprintf(newcmd, newcmd_len, "%s-%s", target_with_vendor, base);
 
+    /* If the caller gave a directory (e.g. "/opt/toolchain/bin/gcc"), the
+     * eventual execvp() of the rewritten name must still resolve inside
+     * that same directory, not wherever $PATH happens to point -- a bare
+     * rewritten name searched globally could silently pick up a different
+     * cross-toolchain's same-named binary if one exists earlier on $PATH,
+     * silently swapping toolchains instead of using the one the build
+     * system explicitly selected. So: look for the target-prefixed binary
+     * alongside the original directory first; only fall through to a
+     * global $PATH search when argv[0] itself had no directory component
+     * (i.e. it was already found via $PATH, so searching $PATH again for
+     * the rewritten name carries the same resolution semantics as the
+     * original invocation, not a change in them). */
+    if (base != argv[0]) {
+        size_t dirlen = (size_t) (base - argv[0]); /* includes trailing '/' */
+        int dirbinlen = (int) dirlen + newcmd_len;
+        char *dirbin = malloc(dirbinlen);
+
+        if (!dirbin) {
+            free(newcmd);
+            return -ENOMEM;
+        }
+        memcpy(dirbin, argv[0], dirlen);
+        memcpy(dirbin + dirlen, newcmd, newcmd_len);
+        if (access(dirbin, X_OK) == 0) {
+            rs_log_info("Re-writing call to '%s' to '%s' to support cross-compilation.",
+                        argv[0], dirbin);
+            free(argv[0]);
+            free(newcmd);
+            argv[0] = dirbin;
+            return 0;
+        }
+        free(dirbin);
+        free(newcmd);
+        return -ENOENT;
+    }
+
     /* TODO, is this the right PATH? */
     path = getenv("PATH");
+    if (!path) {
+        free(newcmd);
+        return -ENOENT;
+    }
     do {
         int binname_len = strlen(path) + 1 + strlen(newcmd) + 1;
         char binname[binname_len];
