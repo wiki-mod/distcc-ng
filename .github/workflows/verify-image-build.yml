@@ -107,7 +107,7 @@ jobs:
             cd samba-4.22.4
             ./configure 2>&1 | tee configure.log
             if grep -qi "not found" configure.log; then
-              echo "::error::Samba configure reported a missing dependency -- this image's package inventory is not actually sufficient"
+              echo "::error::Samba configure reported a missing dependency -- this images package inventory is not actually sufficient"
               exit 1
             fi
             echo "Samba ./configure completed with no missing-dependency lines."
