@@ -11,6 +11,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- **`src/compile.c`** (#268): eliminate the stat-then-open TOCTOU pattern in
+  `dcc_fresh_dependency_exists()` (CodeQL alert #3, `cpp/toctou-race-condition`).
+  #256/#257 already fixed this alert's *consequence* (a 1-byte heap NUL
+  overflow reachable if the `.d` file grew between the `stat()` and the
+  read), but the flagged pattern itself — a `stat(dotd_fname, ...)` followed
+  by a separate `fopen(dotd_fname, "r")`, two syscalls that can each
+  independently resolve the same path to a different underlying file —
+  remained. Restructured to `fopen()` first, then `fstat(fileno(fp), ...)`
+  on the already-open descriptor (already idiomatic in this codebase, see
+  `src/config-parser.c`), so the freshness/size check and the subsequent
+  read are guaranteed to describe the exact same open file. No behavioral
+  change for any existing caller.
+
 ### Changed
 
 - **Default build optimization level raised from `-O2` to `-O3`, everywhere**

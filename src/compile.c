@@ -290,16 +290,31 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
     char *dep_name;
 
     *result = NULL;
-    /* Allocate buffer for dotd contents and open it. */
-    res = stat(dotd_fname, &stat_dotd);
+    /* Open the .d file first, then fstat() the resulting descriptor
+     * instead of stat()-ing the path and opening it as a second, separate
+     * step. fstat() on an already-open fd is guaranteed to describe
+     * exactly the file this function goes on to read (same open file
+     * description/inode) -- there is no window in which dotd_fname could
+     * resolve to a different or replaced file between the freshness/size
+     * check and the read. A stat(path) followed by a later open(path) (the
+     * previous shape here) is the check-then-act pattern CodeQL's
+     * cpp/toctou-race-condition flags, since those two syscalls can each
+     * independently resolve the same path to different underlying files. */
+    if ((fp = fopen(dotd_fname, "r")) == NULL) {
+        rs_trace("could not open \"%s\": %s", dotd_fname, strerror(errno));
+        return 0;
+    }
+    res = fstat(fileno(fp), &stat_dotd);
     if (res) {
-        rs_trace("could not stat \"%s\": %s", dotd_fname, strerror(errno));
+        rs_trace("could not fstat \"%s\": %s", dotd_fname, strerror(errno));
+        fclose(fp);
         return 0;
     }
     if (stat_dotd.st_mtime < reference_time) {
         /* That .d file appears to be too old; don't trust it for this
          * analysis. */
         rs_trace("old dotd file \"%s\"", dotd_fname);
+        fclose(fp);
         return 0;
     }
     dotd_fname_size = stat_dotd.st_size;
@@ -308,22 +323,20 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
         /* +1 reserves the NUL-terminator slot: the copy loop below bounds-
          * checks each byte it writes against dotd_fname_size (i >=
          * dotd_fname_size), but the terminator write after the loop
-         * (dep_name[i] = '\0') does not re-check i. If the .d file grows
-         * between this stat() and the read below, i can legitimately reach
-         * dotd_fname_size, and without this extra byte the terminator
-         * write lands one past the end of the allocation. */
+         * (dep_name[i] = '\0') does not re-check i. Kept even though the
+         * fopen()-then-fstat() ordering above removes the path-level
+         * TOCTOU: another writer sharing this same underlying file could
+         * still append to it between this fstat() and the read loop below,
+         * so i can still legitimately reach dotd_fname_size. */
         dep_name = malloc((size_t) dotd_fname_size + 1);
         if (!dep_name) {
             rs_log_error("failed to allocate space for dotd file");
+            fclose(fp);
             return EXIT_OUT_OF_MEMORY;
         }
     } else { /* This is exceedingly unlikely. */
         rs_trace("file \"%s\" is too big", dotd_fname);
-        return 0;
-    }
-    if ((fp = fopen(dotd_fname, "r")) == NULL) {
-        rs_trace("could not open \"%s\": %s", dotd_fname, strerror(errno));
-        free(dep_name);
+        fclose(fp);
         return 0;
     }
 
@@ -343,9 +356,11 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
                (!isspace(c) || c == '\\')) {
             if (i >= dotd_fname_size) {
                 /* Not actually impossible: this fires if the .d file grows
-                 * between the stat() above and this read (TOCTOU), so a
-                 * dependency name can be longer than what the buffer was
-                 * sized for. Bail out rather than overrun dep_name. */
+                 * between the fstat() above and this read (the file is
+                 * still being written to by something else even though we
+                 * hold it open), so a dependency name can be longer than
+                 * what the buffer was sized for. Bail out rather than
+                 * overrun dep_name. */
                 rs_log_error("not enough room for dependency name");
                 goto return_0;
             }
