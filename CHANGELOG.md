@@ -33,7 +33,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
-- **`src/compile.c`** (#279, refs #78): `dcc_add_clang_target()` and
+- **`src/compile.c`** (#281, refs #78): `dcc_add_clang_target()` and
   `dcc_gcc_rewrite_fqn()` now match the compiler's *basename*
   (`dcc_find_basename(argv[0])`) instead of comparing `argv[0]` directly,
   so cross-compilation auto-detection (clang's `-target` flag, gcc's
