@@ -59,16 +59,18 @@ jobs:
       - name: Real distcc-ng build+test inside the image
         # Proves the image is sufficient for this repo's own toolchain, not
         # just that gcc exists -- the full real validation bar (AGENTS.md's
-        # Required Validation section). Runs as root here (not the image's
-        # default non-root `verify` user): actions/checkout leaves the bind-
-        # mounted workspace owned by the runner's own uid, which the image's
-        # `verify` user (a different, image-local uid) can't write into --
-        # a bind-mount ownership mismatch, not a container-permission
-        # design flaw. A real local `docker run` (see docker/verify/
+        # Required Validation section). Explicit --user root: the Dockerfile
+        # sets `USER verify` as the image's own default, so merely omitting
+        # a --user flag here still runs as `verify`, not root (an actual CI
+        # failure this workflow hit: "autom4te: error: cannot create
+        # autom4te.cache in /work/src: Permission denied" -- actions/checkout
+        # leaves the bind-mounted workspace owned by the runner's own uid,
+        # which the image's `verify` user, a different image-local uid,
+        # can't write into). A real local `docker run` (see docker/verify/
         # README.md) doesn't hit this because the same host user owns both
-        # sides of the mount there.
+        # sides of the mount there, so it can stay non-root by default.
         run: |
-          docker run --rm -v "${{ github.workspace }}:/work/src:rw" \
+          docker run --rm --user root -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \
             distcc-ng-verify:ci bash -c '
               set -euo pipefail
