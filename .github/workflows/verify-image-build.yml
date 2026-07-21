@@ -98,18 +98,31 @@ jobs:
         #    stderr, but got "warning: Error disabling address space
         #    randomization: Operation not permitted" -- gdb's own default
         #    behavior is to disable ASLR for the debuggee via personality(2)
-        #    before running it, and Docker's default seccomp profile only
-        #    permits that specific personality() call when the container has
-        #    CAP_SYS_PTRACE (this is exactly why docker/verify/
-        #    selftest-ptrace.sh's own `docker run` already passes
-        #    --cap-add=SYS_PTRACE and hits no such warning there -- this step
-        #    was simply missing the same flag). Since Gdb_Case failing makes
-        #    the whole `test/testdistcc.py` invocation exit non-zero, the
-        #    Makefile's `&&`-chained follow-on
+        #    before running it. Adding --cap-add=SYS_PTRACE alone did NOT
+        #    fix this (confirmed empirically: the identical warning
+        #    reappeared verbatim in the next CI run) -- capabilities and
+        #    seccomp are two independent Docker security layers, and
+        #    Docker's *default seccomp profile* denies personality()'s
+        #    ADDR_NO_RANDOMIZE flag outright, regardless of which
+        #    capabilities the container holds. This step's docker run had
+        #    no --security-opt at all, unlike docker/verify/
+        #    selftest-ptrace.sh's own `docker run`, which happens to avoid
+        #    tripping this because its gdb check only sets a breakpoint and
+        #    continues -- it never needs gdb to actually disable ASLR.
+        #    --security-opt seccomp=unconfined is scoped to this one CI
+        #    verification step (an isolated, ephemeral GitHub-hosted
+        #    runner, not the shipped runtime image or a multi-tenant host),
+        #    which is an acceptable trade-off for a container whose whole
+        #    purpose is real debugging with gdb/strace/ltrace -- a real
+        #    developer using this image locally for the same `make check`
+        #    would need the same flag for the same reason. Since Gdb_Case
+        #    failing makes the whole `test/testdistcc.py` invocation exit
+        #    non-zero, the Makefile's `&&`-chained follow-on
         #    (`test/pump_include_server_path_test.py`) never even ran,
         #    which is why its output never appeared in this step's log.
         run: |
           docker run --rm --user root --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
             -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \
             distcc-ng-verify:ci bash -c '

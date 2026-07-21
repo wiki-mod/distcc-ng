@@ -25,18 +25,31 @@ docker build -f docker/verify/Dockerfile -t distcc-ng-verify:local .
 ## Using it to verify a distcc-ng change
 
 ```bash
-docker run --rm -it --cap-add=SYS_PTRACE -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
+docker run --rm -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+  -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
   'cd /work/src && ./autogen.sh && ./configure PYTHON=python3 && make && make check'
 ```
 
-`--cap-add=SYS_PTRACE` is required, not optional, for a full `make check` to
-pass: `test/testdistcc.py`'s `Gdb_Case` runs a real `gdb`, which disables
-ASLR for the debuggee via `personality(2)` by default, and Docker's default
-seccomp profile only permits that specific `personality()` call when the
-container has `CAP_SYS_PTRACE` — without it, gdb prints "warning: Error
-disabling address space randomization: Operation not permitted" to stderr,
-which `Gdb_Case` correctly treats as a real assertion failure (found live in
-this image's own CI verification, see the introducing PR's history).
+Both `--cap-add=SYS_PTRACE` and `--security-opt seccomp=unconfined` are
+required, not optional, for a full `make check` to pass: `test/testdistcc.py`'s
+`Gdb_Case` runs a real `gdb`, which disables ASLR for the debuggee via
+`personality(2)` by default. This was found live, empirically, in this
+image's own CI verification (see the introducing PR's history) as two
+separate real failures:
+
+- `--cap-add=SYS_PTRACE` alone was tried first and did **not** fix it — the
+  identical "warning: Error disabling address space randomization:
+  Operation not permitted" reappeared verbatim in the next run. Capabilities
+  and seccomp are two independent Docker security layers; a capability
+  being present doesn't matter if the (default) seccomp profile denies the
+  syscall/argument combination outright.
+- Docker's default seccomp profile denies `personality()`'s
+  `ADDR_NO_RANDOMIZE` flag regardless of capabilities, so
+  `--security-opt seccomp=unconfined` is what actually fixed it. This is
+  scoped to running this verification/debug image specifically — never
+  appropriate for the shipped runtime image (`docker/release/Dockerfile`)
+  or a multi-tenant host — but is a reasonable trade-off for a container
+  whose whole purpose is real debugging with `gdb`/`strace`/`ltrace`.
 
 ## Ptrace-dependent tool self-test (gdb/strace/ltrace)
 
