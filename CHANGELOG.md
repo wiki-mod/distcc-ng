@@ -30,6 +30,38 @@ See `doc/release-versioning.md` for the full versioning and release process.
   self-test, not just an `apt-get install` exit-code check. Not yet
   published to GHCR — see the introducing PR for a sketched, not-yet-
   implemented publish-pipeline design.
+- **`src/serve.c`** (#76): `tweak_arguments_for_server()` now also rewrites
+  the `-ffile-prefix-map=`/`-fmacro-prefix-map=`/`-fdebug-prefix-map=`/
+  `-fprofile-prefix-map=` compiler options' absolute `OLD` path, prepending
+  the server-side mirror's `root_dir` the same way it already does for `-I`-
+  style include options and the source file argument. Without this, a
+  distributed compile using these reproducible-build flags never actually
+  got the path substitution the client asked for, since the compiler on the
+  server never saw a build path matching what these options declared as
+  `OLD`. Ported directly from upstream's own open (unmerged) fix,
+  distcc/distcc#459; added `GdbPrefixMap_Case` to `test/testdistcc.py` to
+  cover it, adapted from the same upstream PR's test.
+
+### Fixed
+
+- **`include_server/setup.py`**: the include-server's separate Python
+  C-extension build was showing both `-O2` and `-O3` on the same `gcc`
+  invocation (#229's follow-up gap). `Makefile.in` forwards
+  `CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"` (now `-O3 ...`) into `setup.py`'s
+  environment, but `setuptools`/`distutils`' own `customize_compiler()`
+  *appends* that environment `CFLAGS` after Python's own sysconfig-baked
+  default (`-O2` on every tested build) rather than replacing it — gcc's
+  own "last flag wins" rule made the resulting build correct in practice,
+  but left a confusing double-optimization-level line in the build log
+  (confirmed live in real GitHub Actions runs of both `c-build.yml` and
+  `package-release.yml` on `current_dev`). Fixed by patching
+  `sysconfig.get_config_vars()`'s `CFLAGS`/`OPT`/`LDSHARED` entries (only
+  the literal `-O2` substring, mirroring `configure.ac`'s own approach) at
+  `setup.py` module-import time, before `setuptools.setup()` runs.
+  Verified against the actual CPython/setuptools versions this project's
+  CI uses (Python 3.11/3.12, setuptools' vendored `_distutils`), and that
+  the built extension still passes its own functional test
+  (`include_server/c_extensions_test.py`).
 
 ### Fixed
 
@@ -80,19 +112,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
   to unavailability of registry digest lookup in this environment; those will
   be addressed in a follow-up.
 
-### Added
+### Fixed
 
-- **`src/serve.c`** (#76): `tweak_arguments_for_server()` now also rewrites
-  the `-ffile-prefix-map=`/`-fmacro-prefix-map=`/`-fdebug-prefix-map=`/
-  `-fprofile-prefix-map=` compiler options' absolute `OLD` path, prepending
-  the server-side mirror's `root_dir` the same way it already does for `-I`-
-  style include options and the source file argument. Without this, a
-  distributed compile using these reproducible-build flags never actually
-  got the path substitution the client asked for, since the compiler on the
-  server never saw a build path matching what these options declared as
-  `OLD`. Ported directly from upstream's own open (unmerged) fix,
-  distcc/distcc#459; added `GdbPrefixMap_Case` to `test/testdistcc.py` to
-  cover it, adapted from the same upstream PR's test.
+- **`include_server/setup.py`**: the include-server's separate Python
+  C-extension build was showing both `-O2` and `-O3` on the same `gcc`
+  invocation (#229's follow-up gap). `Makefile.in` forwards
+  `CFLAGS="$(CFLAGS) $(PYTHON_CFLAGS)"` (now `-O3 ...`) into `setup.py`'s
+  environment, but `setuptools`/`distutils`' own `customize_compiler()`
+  *appends* that environment `CFLAGS` after Python's own sysconfig-baked
+  default (`-O2` on every tested build) rather than replacing it — gcc's
+  own "last flag wins" rule made the resulting build correct in practice,
+  but left a confusing double-optimization-level line in the build log
+  (confirmed live in real GitHub Actions runs of both `c-build.yml` and
+  `package-release.yml` on `current_dev`). Fixed by patching
+  `sysconfig.get_config_vars()`'s `CFLAGS`/`OPT`/`LDSHARED` entries (only
+  the literal `-O2` substring, mirroring `configure.ac`'s own approach) at
+  `setup.py` module-import time, before `setuptools.setup()` runs.
+  Verified against the actual CPython/setuptools versions this project's
+  CI uses (Python 3.11/3.12, setuptools' vendored `_distutils`), and that
+  the built extension still passes its own functional test
+  (`include_server/c_extensions_test.py`).
 
 ### Changed
 
