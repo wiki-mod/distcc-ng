@@ -1291,7 +1291,7 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         f = open(self.dispatcher_path, "w")
         f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
         f.close()
-        os.chmod(self.dispatcher_path, 0o755)
+        os.chmod(self.dispatcher_path, 0o700)
 
     def compileCmd(self):
         return self.distcc_without_fallback() + \
