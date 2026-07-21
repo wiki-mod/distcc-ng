@@ -1,0 +1,114 @@
+name: Verification container build+test
+
+# Builds docker/verify/Dockerfile (issue #264) and proves it real: the image
+# build's own self-test RUN step already fails the build if a baked-in tool
+# is missing or non-functional (see the Dockerfile), so a green build here is
+# itself part of the evidence. This workflow adds the checks that can't run
+# inside `docker build` (ptrace-dependent tools, a real distcc-ng
+# ./autogen.sh && ./configure && make && make check run against this repo's
+# own source, and a real Samba ./configure dry-run to prove the Samba-sized
+# dependency inventory is actually sufficient) -- run here because this
+# development machine has no local Docker (WSL2 is banned for cited
+# verification evidence per this repo's standing rule), so CI is the real,
+# honest verification environment for this change, matching AGENTS.md rule
+# 32's preference for CI over an unverifiable local claim.
+#
+# This is intentionally a manually-triggered/PR-scoped check, not (yet) part
+# of the always-on c-build.yml matrix -- the image is not yet a published
+# artifact (see docker/verify/README.md's "not yet implemented" section), so
+# there's nothing to publish here, only to prove the Dockerfile/image work.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docker/verify/**'
+      - '.github/workflows/verify-image-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+
+      - name: Build docker/verify/Dockerfile
+        # The image build's own embedded self-test RUN step (gcc/clang,
+        # ASan, UBSan, valgrind, binutils, ripgrep/grep/less, ccache) already
+        # fails this step on any tool regression -- see the Dockerfile.
+        run: |
+          docker build -f docker/verify/Dockerfile -t distcc-ng-verify:ci .
+
+      - name: Ptrace-dependent tool self-test (gdb/strace/ltrace)
+        run: |
+          docker run --rm --cap-add=SYS_PTRACE \
+            -v "${{ github.workspace }}/docker/verify:/verify:ro" \
+            distcc-ng-verify:ci bash /verify/selftest-ptrace.sh
+
+      - name: Real distcc-ng build+test inside the image
+        # Proves the image is sufficient for this repo's own toolchain, not
+        # just that gcc exists -- the full real validation bar (AGENTS.md's
+        # Required Validation section). Runs as root here (not the image's
+        # default non-root `verify` user): actions/checkout leaves the bind-
+        # mounted workspace owned by the runner's own uid, which the image's
+        # `verify` user (a different, image-local uid) can't write into --
+        # a bind-mount ownership mismatch, not a container-permission
+        # design flaw. A real local `docker run` (see docker/verify/
+        # README.md) doesn't hit this because the same host user owns both
+        # sides of the mount there.
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/work/src:rw" \
+            -w /work/src \
+            distcc-ng-verify:ci bash -c '
+              set -euo pipefail
+              ./autogen.sh
+              ./configure PYTHON=python3
+              make
+              make check
+            '
+
+      - name: Real Samba configure dry-run (proves the sizing claim empirically)
+        # Downloads the real upstream Samba release tarball, its detached
+        # signature, and Samba's own published public key (all three from
+        # samba.org, per the exact verification method documented on
+        # https://www.samba.org/samba/download/ -- gpg --import the key,
+        # then gpg --verify the signature against the *uncompressed* tarball,
+        # matching that page's own instructions). This is verification-
+        # checklist section 5's requirement (verify a downloaded artifact
+        # against the upstream project's own published value, not just "it
+        # downloaded without error") before using it as the empirical proof
+        # that this image's Samba-sized package inventory is actually
+        # sufficient: Samba's own real ./configure (its bundled waf wrapper)
+        # must complete with no missing-dependency line.
+        run: |
+          docker run --rm distcc-ng-verify:ci bash -c '
+            set -euo pipefail
+            cd /tmp
+            wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.gz
+            wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.asc
+            wget -q https://download.samba.org/pub/samba/samba-pubkey.asc
+            gpg --batch --import samba-pubkey.asc
+            gunzip -k samba-4.22.4.tar.gz
+            gpg --batch --verify samba-4.22.4.tar.asc samba-4.22.4.tar 2>&1 | tee gpg-verify.log
+            grep -q "Good signature from" gpg-verify.log \
+              || { echo "::error::Samba tarball signature did not verify against samba.org own published key -- refusing to use it as verification evidence"; exit 1; }
+            tar xf samba-4.22.4.tar
+            cd samba-4.22.4
+            ./configure 2>&1 | tee configure.log
+            if grep -qi "not found" configure.log; then
+              echo "::error::Samba configure reported a missing dependency -- this image's package inventory is not actually sufficient"
+              exit 1
+            fi
+            echo "Samba ./configure completed with no missing-dependency lines."
+          '
