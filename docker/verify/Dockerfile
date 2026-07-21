@@ -138,7 +138,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       git \
       ca-certificates \
       wget \
-      curl && \
+      curl \
+      # Network/socket debugging (follow-up ask this session): same bundle
+      # as strace/gdb/valgrind above -- diagnosing a distccd that won't
+      # bind/accept, or a hung distributed-compile connection, needs to see
+      # real open sockets/file descriptors, not just process-level tracing.
+      lsof \
+      iproute2 && \
     rm -rf /var/lib/apt/lists/*
 
 # bash (not the default dash /bin/sh) for the self-test below: it uses
@@ -232,6 +238,23 @@ RUN set -eux; \
     ccache gcc -c ok.c -o ok.o; \
     ccache --show-stats | grep -qE "Hits:[[:space:]]*[1-9]" \
       || { ccache --show-stats; echo "ERROR: ccache reported no cache hit"; exit 1; }; \
+    # --- ss (iproute2): must show a real listening socket, not just
+    #     --version -- neither binding nor listing a loopback socket needs
+    #     ptrace, so this works fine at image-build time (unlike gdb/
+    #     strace/ltrace above). ---
+    python3 -c "import socket,time; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('127.0.0.1',0)); s.listen(1); print(s.getsockname()[1]); time.sleep(5)" > ss_port.log 2>&1 & \
+    SS_PID=$!; \
+    for _ in 1 2 3 4 5; do [ -s ss_port.log ] && break; sleep 0.5; done; \
+    SS_PORT="$(head -1 ss_port.log)"; \
+    ss -tln | grep -q ":${SS_PORT} " \
+      || { echo "ERROR: ss did not show the real listening socket on port ${SS_PORT}"; ss -tln; kill "${SS_PID}" 2>/dev/null || true; exit 1; }; \
+    kill "${SS_PID}" 2>/dev/null || true; \
+    wait "${SS_PID}" 2>/dev/null || true; \
+    # --- lsof: must show a real open file descriptor on this same shell ---
+    exec 9< /etc/hostname; \
+    lsof -p "$$" | grep -q hostname \
+      || { echo "ERROR: lsof did not show the open /etc/hostname file descriptor"; lsof -p "$$"; exit 1; }; \
+    exec 9<&-; \
     cd / && rm -rf /tmp/verify-selftest
 
 # Non-root by default (matches docker/release/Dockerfile's convention);
