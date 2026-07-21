@@ -1248,6 +1248,66 @@ int main(void) {
 }
 """
 
+class MarchNativeDispatcherPath_Case(CompileHello_Case):
+    """-march=native must resolve using the compiler binary actually invoked,
+    not a basename re-resolved via a fresh PATH search.
+
+    Regression test for arg.c's dcc_resolve_march_native() (wiki-mod/
+    distcc-ng#278, finding #2): argv[0] here is an explicit path to a
+    dispatcher script that is NOT named "clang" (and lives in a directory
+    that is deliberately not on $PATH), but the script execs the real local
+    clang underneath -- mirroring macOS's "cc", which is a small dispatch
+    binary rather than a symlink, and any other non-obviously-named
+    compiler wrapper.
+
+    Before the fix, dcc_resolve_march_native() stripped argv[0] down to its
+    basename and ran execlp() on that basename alone; since the dispatcher's
+    own basename is not on $PATH here, that lookup fails, "-march=native"
+    is left unresolved, and the existing hard-fail-to-local path silently
+    routes the whole compile through a local fallback instead of
+    distributing it. After the fix, execlp() is handed argv[0] unchanged,
+    so a path containing '/' is executed literally (no PATH search) --
+    the dispatcher runs for real, "-march=native" resolves to concrete
+    clang flags, and the compile distributes normally.
+
+    A real remote distribution (not just "the resulting binary works",
+    which a silent local fallback would also produce) is confirmed by
+    grepping the daemon's own independent log for a COMPILE_OK entry, per
+    doc/verification-checklist.md section 3's real-two-host evidence bar --
+    a trace line or a working binary alone cannot tell these two cases
+    apart."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        clang = self._find_compiler("clang")
+        self.require(clang is not None,
+                     "no clang found on $PATH to build the fake dispatcher from")
+        # Deliberately not on $PATH and deliberately not named anything
+        # containing "clang"/"gcc"/"cc" -- a basename-only PATH search (the
+        # pre-fix behavior) must not be able to resolve this by name alone.
+        dispatch_dir = os.path.join(os.getcwd(), "not_on_path")
+        os.mkdir(dispatch_dir)
+        self.dispatcher_path = os.path.join(dispatch_dir, "mycompiler")
+        f = open(self.dispatcher_path, "w")
+        f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
+        f.close()
+        os.chmod(self.dispatcher_path, 0o755)
+
+    def compileCmd(self):
+        return self.distcc_without_fallback() + \
+               self.dispatcher_path + " -o testtmp.o -march=native " + \
+               self.compileOpts() + " -c %s" % (self.sourceFilename())
+
+    def linkCmd(self):
+        return self.distcc() + \
+               self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
+
+    def runtest(self):
+        CompileHello_Case.runtest(self)
+        daemon_log = open(self.daemon_logfile).read()
+        self.assert_re_search(r'COMPILE_OK', daemon_log)
+
+
 class LanguageSpecific_Case(Compilation_Case):
     """Abstract base class to test building non-C programs."""
     def runtest(self):
@@ -2614,6 +2674,7 @@ class Getline_Case(comfychair.TestCase):
 # All the tests defined in this suite
 tests = [
          CompileHello_Case,
+         MarchNativeDispatcherPath_Case,
          CommaInFilename_Case,
          ComputedInclude_Case,
          BackslashInMacro_Case,

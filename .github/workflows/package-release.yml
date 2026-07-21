@@ -172,6 +172,18 @@ jobs:
             runs_on: ubuntu-24.04-arm
       fail-fast: false
     runs-on: ${{ matrix.runs_on }}
+    # fail-fast: false only stops one leg's failure from cancelling the
+    # other -- it does NOT stop a failed leg from making this job's own
+    # overall result "failure", which needs: [build_container] downstream
+    # (publish_manifest) treats as blocking. arm64 is documented above as
+    # best-effort; continue-on-error is what actually makes that true --
+    # an arm64 failure is reported (not silently green) but no longer
+    # blocks the amd64 leg or downstream publish jobs. publish_manifest
+    # itself independently confirms the arm64 image is actually present
+    # in the registry before including it in the multi-arch manifest, so
+    # a continue-on-error'd arm64 failure degrades to an amd64-only
+    # manifest rather than a broken multi-arch one.
+    continue-on-error: ${{ matrix.platform == 'arm64' }}
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -255,10 +267,22 @@ jobs:
         env:
           IMAGE_BASE: ${{ needs.setup.outputs.image_base }}
         run: |
+          set -euo pipefail
+          # arm64 is best-effort (continue-on-error in build_container, see
+          # that job's comment) -- its own leg can fail while amd64 still
+          # succeeds. Don't assume both per-platform tags exist just because
+          # this job ran; probe the registry for the arm64 tag first and
+          # fall back to an amd64-only manifest rather than failing the
+          # whole release on a missing best-effort architecture.
+          tags=("${IMAGE_BASE}-amd64")
+          if docker buildx imagetools inspect "${IMAGE_BASE}-arm64" >/dev/null 2>&1; then
+            tags+=("${IMAGE_BASE}-arm64")
+          else
+            echo "::warning::arm64 image not found in registry (best-effort leg failed or was skipped); publishing amd64-only manifest"
+          fi
           docker buildx imagetools create \
             --tag "${IMAGE_BASE}" \
-            "${IMAGE_BASE}-amd64" \
-            "${IMAGE_BASE}-arm64"
+            "${tags[@]}"
 
   publish_github_release:
     needs: [setup, build_packages, publish_manifest]
