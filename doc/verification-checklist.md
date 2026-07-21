@@ -225,6 +225,53 @@ flag value.
       directory moved aside to test its absence) restored to its original
       state.
 
+## 9. Container-based verification (Docker/`docker/verify/`-based build+test runs)
+
+Relevant to: any verification claim backed by a `docker build`/`docker run`
+against `docker/verify/Dockerfile` or a similar ad-hoc container, especially
+one exercising `gdb`/`strace`/`ltrace`, a real `distccd` privilege drop, or
+any other permission-sensitive behavior. Two real, non-obvious permission
+traps were found and fixed building `docker/verify/Dockerfile` itself
+(issue #264) — both produced a plausible-looking but wrong diagnosis before
+the real cause was pinned down, so they're recorded here rather than left
+for the next container-based verification effort (e.g. the fuller
+Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
+
+- [ ] **Seccomp is not capabilities.** `--cap-add=SYS_PTRACE` alone does
+      *not* guarantee `gdb`/`strace`/`ltrace`/ptrace-based syscalls
+      (including `gdb`'s own default ASLR-disabling `personality(2)` call)
+      actually work in the container — Docker's seccomp filter is a
+      *separate* gate from Linux capabilities, and the default seccomp
+      profile can still deny the syscall (or a specific argument value,
+      e.g. `personality()`'s `ADDR_NO_RANDOMIZE` flag) even once the
+      capability is granted. The failure mode is identical-looking to a
+      missing-capability failure (the same "Operation not permitted" from
+      the tool), which makes it easy to mistake for "the capability didn't
+      take effect" rather than "a second, independent gate is still
+      closed." Real verification: after adding `--cap-add=SYS_PTRACE`, if
+      the identical error still reproduces verbatim, that itself is the
+      diagnostic signal to add `--security-opt seccomp=unconfined` (or a
+      custom seccomp profile explicitly allowing the denied syscall) rather
+      than re-checking the capability flag again.
+- [ ] **A root-owned bind mount breaks `distccd`'s own privilege-drop
+      test.** Running the whole build+test step as container root (often
+      needed to work around a bind-mounted host checkout being owned by a
+      different uid than the image's own non-root user) arms `distccd`'s
+      real `dcc_discard_root()` privilege-drop-to-`uid=65534`/nobody
+      behavior (`test/testdistcc.py`'s `Unicode_Case`, exercised via `make
+      check`'s `maintainer-check-no-set-path` target) — which then fails
+      with a real "Permission denied" writing into the still-root-owned
+      test directory. This is not a bug in the drop behavior itself, only
+      a mismatch between "root in the container" and "a test that
+      deliberately changes uid mid-run." Do not fix this by making the
+      tree world-writable (masks real permission bugs) or skipping the
+      test (loses real coverage). Fix by using root only transiently to
+      `chown` the mounted tree to the image's own non-root user, then
+      actually running the build+test as that non-root user (`su -s
+      /bin/bash <user> -c '...'`) — matching how a real local `docker run`
+      already behaves when the same host user owns both sides of the
+      mount.
+
 ## Keeping this checklist current
 
 This list is not closed — it only covers the categories of change this
@@ -237,7 +284,12 @@ because "there's no checklist item for this." Section 6 (config file
 changes) was added this way, prompted by issue #207 introducing this
 repo's first client-side config file. Section 7 (input/argument
 validation) was added the same way, prompted by issue #226's `lsdistcc`
-format-string fix having no matching section to verify against.
+format-string fix having no matching section to verify against. Section 9
+(container-based verification) was added the same way, prompted by issue
+#264's `docker/verify/Dockerfile` work hitting two real, non-obvious
+permission traps (seccomp-vs-capabilities, root-mount-vs-privilege-drop)
+that cost real CI iterations to diagnose and had no matching section to
+record them against.
 
 ## Reporting
 

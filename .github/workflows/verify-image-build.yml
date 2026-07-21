@@ -1,0 +1,187 @@
+name: Verification container build+test
+
+# Builds docker/verify/Dockerfile (issue #264) and proves it real: the image
+# build's own self-test RUN step already fails the build if a baked-in tool
+# is missing or non-functional (see the Dockerfile), so a green build here is
+# itself part of the evidence. This workflow adds the checks that can't run
+# inside `docker build` (ptrace-dependent tools, a real distcc-ng
+# ./autogen.sh && ./configure && make && make check run against this repo's
+# own source, and a real Samba ./configure dry-run to prove the Samba-sized
+# dependency inventory is actually sufficient) -- run here because this
+# development machine has no local Docker (WSL2 is banned for cited
+# verification evidence per this repo's standing rule), so CI is the real,
+# honest verification environment for this change, matching AGENTS.md rule
+# 32's preference for CI over an unverifiable local claim.
+#
+# This is intentionally a manually-triggered/PR-scoped check, not (yet) part
+# of the always-on c-build.yml matrix -- the image is not yet a published
+# artifact (see docker/verify/README.md's "not yet implemented" section), so
+# there's nothing to publish here, only to prove the Dockerfile/image work.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docker/verify/**'
+      - '.github/workflows/verify-image-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+
+      - name: Build docker/verify/Dockerfile
+        # The image build's own embedded self-test RUN step (gcc/clang,
+        # ASan, UBSan, valgrind, binutils, ripgrep/grep/less, ccache) already
+        # fails this step on any tool regression -- see the Dockerfile.
+        run: |
+          docker build -f docker/verify/Dockerfile -t distcc-ng-verify:ci .
+
+      - name: Ptrace-dependent tool self-test (gdb/strace/ltrace)
+        run: |
+          docker run --rm --cap-add=SYS_PTRACE \
+            -v "${{ github.workspace }}/docker/verify:/verify:ro" \
+            distcc-ng-verify:ci bash /verify/selftest-ptrace.sh
+
+      - name: Real distcc-ng build+test inside the image
+        # Proves the image is sufficient for this repo's own toolchain, not
+        # just that gcc exists -- the full real validation bar (AGENTS.md's
+        # Required Validation section).
+        #
+        # Two real CI failures were found and fixed getting this step right,
+        # both a consequence of the same root cause (actions/checkout leaves
+        # the bind-mounted workspace owned by the runner's own uid, which
+        # differs from the image's `verify` uid -- a bind-mount ownership
+        # mismatch that a real local `docker run`, see docker/verify/
+        # README.md, never hits, since the same host user owns both sides
+        # of the mount there):
+        #
+        # 1. Simply omitting --user verify does NOT run as root: the
+        #    Dockerfile sets `USER verify` as the image's own default, so an
+        #    explicit `--user root` was needed just to get write access at
+        #    all ("autom4te: error: cannot create autom4te.cache in
+        #    /work/src: Permission denied").
+        # 2. Running the *whole* build+test as real root then broke a
+        #    different, legitimate test: `make check`'s
+        #    maintainer-check-no-set-path (Unicode_Case) deliberately starts
+        #    distccd as root so it can exercise distccd's own privilege-drop
+        #    behavior (dcc_discard_root() dropping to uid=65534/nobody) --
+        #    that drop only actually happens when distccd's real uid is 0,
+        #    so forcing this whole step to run as root, only to work around
+        #    the mount-ownership mismatch, accidentally armed a real
+        #    privilege-drop code path that then couldn't write
+        #    _testtmp/Unicode_Case/distccd.log as uid=65534 (that directory
+        #    is root-owned, not nobody-writable). The correct fix isn't to
+        #    make the tree world-writable (would mask real permission bugs)
+        #    or skip that test (would lose real coverage this image exists
+        #    to provide) -- it's to only use root transiently to fix the
+        #    mount's ownership (chown to the image's own `verify` uid), then
+        #    actually run the build+test as `verify`, matching how this
+        #    image is meant to be used and how a real local `docker run`
+        #    already behaves, so distccd is never started as real root here
+        #    at all.
+        # 3. A third, separate real failure after both of the above were
+        #    fixed: test/testdistcc.py's Gdb_Case asserted gdb produced no
+        #    stderr, but got "warning: Error disabling address space
+        #    randomization: Operation not permitted" -- gdb's own default
+        #    behavior is to disable ASLR for the debuggee via personality(2)
+        #    before running it. Adding --cap-add=SYS_PTRACE alone did NOT
+        #    fix this (confirmed empirically: the identical warning
+        #    reappeared verbatim in the next CI run) -- capabilities and
+        #    seccomp are two independent Docker security layers, and
+        #    Docker's *default seccomp profile* denies personality()'s
+        #    ADDR_NO_RANDOMIZE flag outright, regardless of which
+        #    capabilities the container holds. This step's docker run had
+        #    no --security-opt at all, unlike docker/verify/
+        #    selftest-ptrace.sh's own `docker run`, which happens to avoid
+        #    tripping this because its gdb check only sets a breakpoint and
+        #    continues -- it never needs gdb to actually disable ASLR.
+        #    --security-opt seccomp=unconfined is scoped to this one CI
+        #    verification step (an isolated, ephemeral GitHub-hosted
+        #    runner, not the shipped runtime image or a multi-tenant host),
+        #    which is an acceptable trade-off for a container whose whole
+        #    purpose is real debugging with gdb/strace/ltrace -- a real
+        #    developer using this image locally for the same `make check`
+        #    would need the same flag for the same reason. Since Gdb_Case
+        #    failing makes the whole `test/testdistcc.py` invocation exit
+        #    non-zero, the Makefile's `&&`-chained follow-on
+        #    (`test/pump_include_server_path_test.py`) never even ran,
+        #    which is why its output never appeared in this step's log.
+        run: |
+          docker run --rm --user root --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            -v "${{ github.workspace }}:/work/src:rw" \
+            -w /work/src \
+            distcc-ng-verify:ci bash -c '
+              set -euo pipefail
+              chown -R verify:verify /work/src
+              su -s /bin/bash verify -c "
+                set -euo pipefail
+                cd /work/src
+                ./autogen.sh
+                ./configure PYTHON=python3
+                make
+                make check
+              "
+            '
+
+      - name: Real Samba configure dry-run (proves the sizing claim empirically)
+        # Downloads the real upstream Samba release tarball, its detached
+        # signature, and Samba's own published public key (all three from
+        # samba.org, per the exact verification method documented on
+        # https://www.samba.org/samba/download/ -- gpg --import the key,
+        # then gpg --verify the signature against the *uncompressed* tarball,
+        # matching that page's own instructions). This is verification-
+        # checklist section 5's requirement (verify a downloaded artifact
+        # against the upstream project's own published value, not just "it
+        # downloaded without error") before using it as the empirical proof
+        # that this image's Samba-sized package inventory is actually
+        # sufficient: Samba's own real ./configure (its bundled waf wrapper)
+        # must exit zero.
+        #
+        # Detecting failure via the real exit code, not a text grep: an
+        # earlier version of this step grepped configure.log for "not
+        # found" and reported a false failure -- Samba's waf-based configure
+        # legitimately prints many benign "Checking for X: not found" lines
+        # for *optional* features it simply disables (e.g. libsystemd-
+        # journal, lttng-ust), which is not a real error, and the log even
+        # said "'configure' finished successfully" right before the grep-
+        # based check wrongly failed the step. waf's own exit code is the
+        # real, robust signal for "did configure actually succeed" -- `set
+        # -o pipefail` (part of `set -euo pipefail` below) makes the `if`
+        # condition below see `./configure`'s real exit status through the
+        # `tee` pipe, not tee's.
+        run: |
+          docker run --rm distcc-ng-verify:ci bash -c '
+            set -euo pipefail
+            cd /tmp
+            wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.gz
+            wget -q https://download.samba.org/pub/samba/stable/samba-4.22.4.tar.asc
+            wget -q https://download.samba.org/pub/samba/samba-pubkey.asc
+            gpg --batch --import samba-pubkey.asc
+            gunzip -k samba-4.22.4.tar.gz
+            gpg --batch --verify samba-4.22.4.tar.asc samba-4.22.4.tar 2>&1 | tee gpg-verify.log
+            grep -q "Good signature from" gpg-verify.log \
+              || { echo "::error::Samba tarball signature did not verify against samba.org own published key -- refusing to use it as verification evidence"; exit 1; }
+            tar xf samba-4.22.4.tar
+            cd samba-4.22.4
+            if ./configure 2>&1 | tee configure.log; then
+              echo "Samba ./configure exited 0 -- this images package inventory is sufficient."
+            else
+              echo "::error::Samba ./configure exited non-zero -- this images package inventory is not actually sufficient"
+              exit 1
+            fi
+          '
