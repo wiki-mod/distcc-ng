@@ -54,12 +54,17 @@ typical case, three machines are 2.6 times faster than one.
 
 ## Security
 
-`distccd` does not authenticate connections by default. Before starting it
-(especially with `--allow` set broadly, or `--enable-tcp-insecure`), make
-sure whoever administers the host understands the consequences — anyone
-who can reach the port can ask it to run a compiler. Don't have a package
-or install script start it automatically without the administrator's
-explicit choice to do so.
+`distccd` doesn't authenticate *who* connects, only *from where*: without
+an explicit `--allow`, it automatically restricts itself to private,
+non-Internet-routable address ranges (`src/dopt.c`'s `--allow-private`
+fallback) — it isn't wide open by default. That's still IP-range
+filtering, not real identity verification (an optional GSSAPI `--auth`
+mode exists, but is off unless explicitly enabled and requires a build
+with GSSAPI support). The real risk is an administrator who widens
+`--allow` to a public range, or passes `--enable-tcp-insecure`, without
+understanding that anyone reachable at that point can ask the daemon to
+run a compiler. Don't have a package or install script make either of
+those choices automatically — leave it to the administrator.
 
 ## Licence
 
