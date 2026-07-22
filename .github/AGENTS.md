@@ -1,5 +1,5 @@
 # GitHub Directory Guidance
 
-Repository-wide agent governance lives in [`../AGENTS.md`](../AGENTS.md) — read it in full, not summarized or partially, before making any change under `.github/**`.
+This file is `wiki-mod/distcc-ng/.github/AGENTS.md` — a pointer only, not a second governance source. The binding rules live in `wiki-mod/distcc-ng/AGENTS.md` (this same repository's root-level file, linked here as [`../AGENTS.md`](../AGENTS.md)) — read `wiki-mod/distcc-ng/AGENTS.md` in full, not summarized or partially, before making any change under `wiki-mod/distcc-ng/.github/**`.
 
-Follow the root guidance for all `.github/**` changes too, especially workflow validation (`actionlint`), secret/variable handling, and issue/PR linking rules. See root `AGENTS.md`'s "What Not To Do" section in particular for the repo-scope write restriction (writes limited to `wiki-mod/distcc-ng`, `distcc/distcc` read-only with no exceptions).
+`wiki-mod/distcc-ng/AGENTS.md` governs all changes under `wiki-mod/distcc-ng/.github/**` too — in particular its rules 4 (issue/PR linking), 33 (workflow validation), 47 (secret/variable handling), 50, and 51 — read them in `wiki-mod/distcc-ng/AGENTS.md` itself; this file (`wiki-mod/distcc-ng/.github/AGENTS.md`) does not restate their content, so there is nothing in this file that can drift out of sync with `wiki-mod/distcc-ng/AGENTS.md`.
