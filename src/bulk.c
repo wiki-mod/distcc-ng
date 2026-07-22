@@ -345,6 +345,114 @@ int dcc_r_file(int ifd, const char *filename,
 
 
 /**
+ * Receive a file stream from the network and create it as @p leaf inside an
+ * already-open parent directory @p parent_fd, without ever following a
+ * symlink for the final component.
+ *
+ * This is the symlink-safe counterpart of dcc_r_file() used by the server's
+ * multi-file receive path (dcc_r_many_files() in srvrpc.c). The caller has
+ * already resolved and, if necessary, created every ancestor directory
+ * component of the client-supplied NAME one at a time with O_NOFOLLOW (see
+ * dcc_open_parent_beneath()), so here we only create the leaf -- relative to
+ * @p parent_fd and with O_NOFOLLOW, so that a leaf that happens to already
+ * exist as a symlink is refused (ELOOP) rather than written through to
+ * wherever it points. That closes the CWE-59 write-escape described in
+ * issue #292: without O_NOFOLLOW the kernel would transparently follow such
+ * a symlink and land the write outside the per-job temp directory.
+ *
+ * The binutils bfd/cache.c "unlink first if non-empty" behaviour that plain
+ * dcc_r_file() implements is preserved here deliberately (build tools may
+ * depend on it): fstatat() with AT_SYMLINK_NOFOLLOW, then a conditional
+ * unlinkat() when the existing entry is non-empty. The size-0 guard still
+ * avoids unlinking special files, and unlinkat() (like the original
+ * unlink()) removes a symlink itself rather than its target, so this step
+ * cannot be turned into an escape either.
+ *
+ * @param parent_fd Directory fd the leaf is created relative to.
+ * @param leaf      Final path component (no '/'); created inside parent_fd.
+ * @param len       Compressed length of the incoming file.
+ * @param mode      Permission bits (subject to umask) for the created file.
+ *                  Taken as a parameter rather than read from a global so
+ *                  this shared-object function (linked into both distcc
+ *                  and distccd, see Makefile.in's common_obj) never needs
+ *                  distccd-only option state (opt_job_file_mode lives in
+ *                  dopt.c, which is server-only) -- the caller in
+ *                  src/srvrpc.c (server-only) supplies it.
+ **/
+int dcc_r_file_beneath(int ifd, int parent_fd, const char *leaf,
+                       unsigned len,
+                       unsigned uncompr_size,
+                       enum dcc_compress compr,
+                       mode_t mode)
+{
+    int ofd;
+    int ret, close_ret;
+    struct stat s;
+
+    /* Same rationale as dcc_r_file()'s unlink-first step, but relative to
+     * parent_fd and without following a leaf symlink: remove an existing
+     * non-empty target so the recreated file is owned by us and no other
+     * process keeps reading the old inode. AT_SYMLINK_NOFOLLOW means a
+     * dangling/other-pointing symlink is stat'd as the symlink itself
+     * (always non-zero-size), so it is removed here and recreated fresh
+     * inside parent_fd below rather than followed. */
+    if (fstatat(parent_fd, leaf, &s, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (s.st_size != 0) {
+            if (unlinkat(parent_fd, leaf, 0) && errno != ENOENT) {
+                rs_trace("failed to remove %s: %s", leaf, strerror(errno));
+                /* continue */
+            }
+        }
+    } else {
+        if (errno != ENOENT) {
+            rs_trace("fstatat %s failed: %s", leaf, strerror(errno));
+        }
+        /* continue */
+    }
+
+    /* O_NOFOLLOW is the security-relevant flag here (see this function's
+     * comment). @p mode is caller-supplied (opt_job_file_mode, default
+     * 0600) rather than hardcoded 0666 like dcc_r_file(): unlike that
+     * function's client-side use (the final compiled .o output, which
+     * must match a local compiler invocation's own umask-subject 0666,
+     * see ModeBits_Case), these are the server's own ephemeral per-job
+     * input files -- created and later read only by this same daemon
+     * process/uid (dcc_discard_root() only ever runs once, at startup,
+     * before any connection is accepted), so no other user needs access
+     * by default; configurable to something like 0660 via --job-file-mode
+     * for sites that want an operator in the same group to inspect a
+     * running job's files without the daemon's own uid. O_EXCL is not
+     * used because a legitimately re-sent leaf may already exist as a
+     * real file we intend to truncate; O_NOFOLLOW still refuses a
+     * symlink. */
+    ofd = openat(parent_fd, leaf, O_TRUNC|O_WRONLY|O_CREAT|O_NOFOLLOW|O_BINARY,
+                 mode);
+    if (ofd == -1) {
+        rs_log_error("failed to create %s: %s", leaf, strerror(errno));
+        return EXIT_IO_ERROR;
+    }
+
+    ret = 0;
+    if (len > 0) {
+        ret = dcc_r_bulk(ofd, ifd, len, uncompr_size, compr);
+    }
+    close_ret = dcc_close(ofd);
+
+    if (!ret && !close_ret) {
+        rs_trace("received %d bytes to file %s", len, leaf);
+        return 0;
+    }
+
+    rs_trace("failed to receive %s, removing it", leaf);
+    if (unlinkat(parent_fd, leaf, 0)) {
+        rs_log_error("failed to unlink %s after failed transfer: %s",
+                     leaf, strerror(errno));
+    }
+    return EXIT_IO_ERROR;
+}
+
+
+/**
  * Receive a file and print timing statistics.  Only used for big files.
  *
  * Wrapper around dcc_r_file().

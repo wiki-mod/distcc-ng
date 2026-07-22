@@ -679,6 +679,81 @@ class PathSafety_Case(SimpleDistCC_Case):
 
 
 
+class SymlinkTraversal_Case(SimpleDistCC_Case):
+    """End-to-end regression for issue #292: distccd's multi-file receive
+    (dcc_r_many_files() in src/srvrpc.c) must not follow a symlink sitting at
+    an intermediate NAME component when materializing a later entry in the
+    same NFIL batch.
+
+    Unlike PathSafety_Case (which exercises the NAME/CDIR/LINK-target *string*
+    checks in isolation), this drives the real dcc_r_many_files() code path
+    via the h_srvrpc harness, feeding it the exact escape sequence from the
+    issue: entry 1 creates a symlink NAME "/safe" with a relative,
+    deliberately-unvalidated target pointing at a sibling directory, then
+    entry 2 sends a FILE whose NAME "/safe/pwned" is nested underneath that
+    symlink. A vulnerable server follows the symlink and writes outside the
+    job directory; the fixed server rejects entry 2 with EXIT_PROTOCOL_ERROR
+    (109) and nothing lands in the escape target.
+    """
+    def runtest(self):
+        # --- Malicious sequence: must be rejected, must not escape. ---
+        atk = os.path.join(self.tmpdir, "atk")
+        jobdir = os.path.join(atk, "job")
+        escape = os.path.join(atk, "escape")
+        os.makedirs(jobdir)
+        os.makedirs(escape)
+
+        # From jobdir, "../escape" resolves to the sibling escape dir; the
+        # symlink target is relative, so it passes every current string
+        # check (this is exactly the case #290 leaves unvalidated).
+        o, err = self.runcmd("h_srvrpc attack '%s' ../escape" % jobdir)
+        if o != "ret=109\n":
+            raise AssertionError(
+                "attack sequence not rejected: h_srvrpc gave %s (stderr: %s), "
+                "expected 'ret=109\\n'" % (repr(o), repr(err)))
+
+        # The first entry's leaf symlink must exist (proving the test really
+        # reached the vulnerable second step, not bailed out earlier)...
+        safe = os.path.join(jobdir, "safe")
+        if not os.path.islink(safe):
+            raise AssertionError(
+                "expected job/safe to have been created as a symlink; "
+                "the attack never reached the nested-FILE step")
+        # ...and the escape target must be empty: the nested FILE must NOT
+        # have been written through the symlink.
+        pwned = os.path.join(escape, "pwned")
+        if os.path.exists(pwned):
+            raise AssertionError(
+                "PATH TRAVERSAL: nested FILE escaped the job directory and "
+                "was written to %s" % pwned)
+
+        # --- Benign nested sequence: must still succeed. ---
+        legjob = os.path.join(self.tmpdir, "leg", "job")
+        os.makedirs(legjob)
+        o, err = self.runcmd("h_srvrpc legit '%s'" % legjob)
+        if o != "ret=0\n":
+            raise AssertionError(
+                "legit sequence rejected: h_srvrpc gave %s (stderr: %s), "
+                "expected 'ret=0\\n'" % (repr(o), repr(err)))
+
+        first = os.path.join(legjob, "a", "b", "c", "first.h")
+        second = os.path.join(legjob, "a", "b", "c", "d", "second.h")
+        mirror = os.path.join(legjob, "a", "mirror.h")
+        if open(first).read() != "one":
+            raise AssertionError("legit: %s has wrong contents" % first)
+        if open(second).read() != "two":
+            raise AssertionError("legit: %s has wrong contents" % second)
+        # A leaf mirror-style relative symlink (nothing nested under it) is
+        # legitimate pump traffic and must be created, not rejected.
+        if not os.path.islink(mirror):
+            raise AssertionError(
+                "legit: expected %s to be created as a symlink" % mirror)
+        if os.readlink(mirror) != "../elsewhere/real.h":
+            raise AssertionError(
+                "legit: %s points at %s, expected '../elsewhere/real.h'"
+                % (mirror, os.readlink(mirror)))
+
+
 class ScanArgs_Case(SimpleDistCC_Case):
     '''Test understanding of gcc command lines.'''
     def runtest(self):
@@ -3120,6 +3195,7 @@ tests = [
          BadLogFile_Case,
          PathSafety_Case,
          ScanArgs_Case,
+         SymlinkTraversal_Case,
          IncludeServerFileOrder_Case,
          StateFileAtomicWrite_Case,
          ParseMask_Case,
