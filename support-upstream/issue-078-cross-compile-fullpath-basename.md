@@ -228,6 +228,80 @@ carried, which showed the pre-`7700663` behavior — a bare-name
 invocation. That behavior no longer exists; see the "Fixed code" section
 above (last snippet) for the current directory-preserving logic itself.
 
+### External-host interop (`doc/verification-checklist.md` section 4)
+
+A further Codex review on PR #281 correctly pointed out that this change
+is explicitly named in `doc/verification-checklist.md` section 4's own
+"Relevant to" list (`dcc_gcc_rewrite_fqn` and similar compiler
+masquerade/rewrite logic) and that only local/no-host traces plus
+`make check` had been used as evidence so far — not sufficient for a
+change affecting what compiler name/path is actually sent across the
+wire to a remote host. Ran the full two-direction matrix for real,
+2026-07-22, on two distinct real hosts (not the same machine, not
+WSL2), each already running the distro-packaged `distcc`/`distccd`
+3.4+really3.4-12 (Debian, independently built from this fork, `distccd`
+built Apr 18 2025) as a live system service, alongside this branch's own
+build (`3.7.0-NG`, built fresh from the current tip):
+
+- **Direction A — this fork's fixed client against a real,
+  independently-built `distccd`**: on host A, `DISTCC_HOSTS=<host
+  B>:3632 DISTCC_FALLBACK=0` with this branch's own `distcc`, invoking
+  `/usr/bin/gcc` (full path, with `/usr/bin/x86_64-linux-gnu-gcc`
+  present alongside it — this host's real, unmodified Debian
+  multiarch-gcc layout) across **15 real, distinct `.c` files from this
+  project's own `src/`** (not a hello-world), each compiled in real
+  parallel (`&`/`wait`, not sequential). All 15 produced valid non-empty
+  `.o` object files. Client trace confirms the rewrite fired and the
+  compile ran on the *remote* host, not locally:
+  ```
+  distcc[162050] (dcc_gcc_rewrite_fqn) Re-writing call to '/usr/bin/gcc' to '/usr/bin/x86_64-linux-gnu-gcc' to support cross-compilation.
+  distcc[162050] exec on 192.168.1.240:3632: /usr/bin/x86_64-linux-gnu-gcc -Werror -g -O3 -W -Wall -o .../bulk.o -c src/bulk.c
+  ```
+  Confirmed from **host B's own independent log** (`journalctl -u
+  distcc`, the real system `distccd`'s own record, not the client's
+  claim), all 15 as `COMPILE_OK`:
+  ```
+  distccd[147]: (dcc_job_summary) client: 192.168.1.229:60940 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:73ms /usr/bin/x86_64-linux-gnu-gcc src/bulk.c
+  ```
+  (and 14 further identically-shaped `COMPILE_OK` lines for the rest of
+  the file set, one per source file, all `exit:0`).
+- **Direction B — a real, independently-built `distcc` client against
+  this fork's fixed `distccd`**: on host B, the same distro `distcc`
+  3.4 binary (unmodified — this fix is client-side only, so this
+  direction exercises whether the *server* still correctly serves an
+  unmodified stock client, not the rewrite itself), `DISTCC_HOSTS=<host
+  A>:43632 DISTCC_FALLBACK=0` (a dedicated instance of this branch's own
+  `distccd`, started on a non-default port so as not to disturb host A's
+  own pre-existing system `distccd` service), same 15-file real compile
+  load, real parallelism. All 15 succeeded. Confirmed from **host A's own
+  independent `distccd` log**, all 15 as `COMPILE_OK`:
+  ```
+  distccd[161987]: (dcc_job_summary) client: 192.168.1.240:49664 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:28ms /usr/bin/gcc src/pathsafety.c
+  ```
+  (and 14 further identically-shaped lines for the rest of the file set).
+- `DISTCC_FALLBACK=0` was set for both directions throughout — a failure
+  to actually distribute would have hard-failed the compile (as it did
+  transiently once, see below) rather than silently and misleadingly
+  succeeding via local fallback.
+- One real hiccup during this run, itself informative: the first
+  Direction-B attempt failed everywhere with `fatal error: config.h: No
+  such file or directory` (host B's checkout hadn't been `./configure`'d,
+  so its local preprocessing step — which runs even for a fully remote
+  compile, since distcc preprocesses locally — had no `config.h`; fixed by
+  copying host A's already-generated `src/config.h` across). That single
+  failure then poisoned all 15 *retried* jobs at once via distcc's own
+  `backoff_tcp_<host>_<port>_0` lockfile mechanism (`dcc_remove_disliked`)
+  marking the host disliked for a cooldown window; clearing that lockfile
+  before retrying was necessary to get a clean re-run. Recorded here so a
+  future re-verification of this section doesn't waste time
+  re-diagnosing the same two artifacts.
+- Both temporary hosts' test directories, the dedicated (non-service)
+  `distccd` instance started for Direction B, and all generated object
+  files/traces were removed after the run; each host's own pre-existing
+  system `distccd` service (used as Direction A's server) was left
+  untouched and running throughout, as it was never restarted or
+  reconfigured — only connected to as a client.
+
 ### The issue's own example (`/usr/bin/arm-linux-gnueabihf-gcc`) does not need this fix, or any fix
 
 Fork issue #78's own wording ("aren't correctly detected as the
