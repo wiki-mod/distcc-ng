@@ -34,6 +34,16 @@ rule this checklist operationalizes.
       effect. Added after issue #77's autogroup-niceness fix, verified by
       reading `/proc/<pid>/autogroup` directly rather than just trusting
       `distccd`'s own trace log.
+- [ ] State explicitly which user/uid `distcc` and `distccd` actually ran as
+      during this verification: root with no privilege drop, root that then
+      drops via `--user`, or already non-root/non-root-in-container. Several
+      categories below (permission/file-mode, sandbox/seccomp) can behave
+      differently under root than under a dropped-privilege user — root
+      often bypasses a check a non-root run would actually exercise (e.g.
+      `open()`/`fopen()` mode restrictions, or a seccomp filter that a
+      privileged process interacts with differently) — so "it worked"
+      without saying which case was exercised leaves the other case
+      unverified. If only one case was tested, say so and name which.
 
 ## 1. Permission / file-mode changes (`open()`/`fopen()` modes, umask handling)
 
@@ -234,6 +244,13 @@ flag value.
 - [ ] Any temporarily moved/renamed system state (e.g. a masquerade
       directory moved aside to test its absence) restored to its original
       state.
+- [ ] Report any leftovers found that **predate this run** (a container,
+      process, or file that was already there before this verification
+      started) rather than silently cleaning it up or leaving it
+      unmentioned — say explicitly "found and left/removed pre-existing X",
+      not just "no leftovers" when what's meant is "no *new* leftovers".
+      Conflating the two hides whether an earlier session's cleanup already
+      failed.
 
 ## 9. Container-based verification (Docker/`docker/verify/`-based build+test runs)
 
@@ -280,7 +297,14 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       actually running the build+test as that non-root user (`su -s
       /bin/bash <user> -c '...'`) — matching how a real local `docker run`
       already behaves when the same host user owns both sides of the
-      mount.
+      mount. **This resolves the immediate symptom, but reaching for root
+      at all — even transiently, even for a narrow `chown` — should not
+      become the unquestioned standing convention for every future
+      container-based verification effort just because it was the first
+      thing that worked.** Whether a build-arg matching the host uid,
+      Docker's own `--user` flag, or rootless Docker/user-namespace
+      remapping can avoid needing root here at all is tracked separately in
+      issue #286, not decided here.
 
 ## Keeping this checklist current
 
@@ -300,6 +324,19 @@ format-string fix having no matching section to verify against. Section 9
 permission traps (seccomp-vs-capabilities, root-mount-vs-privilege-drop)
 that cost real CI iterations to diagnose and had no matching section to
 record them against.
+
+Every example above was added *after* a gap actually caused a real
+diagnosis cost — reactively, once the missing coverage had already bitten
+once. Don't wait for that as the only trigger: as part of verifying any
+non-trivial change, explicitly ask "did anything about this change's
+actual behavior not fit cleanly into an existing section?" — not just
+"did an existing section's checks pass." A change that technically
+satisfies the letter of an existing section while clearly testing
+something the section wasn't written for is itself a signal this list
+needs extending, in the same PR, not a note for later. This is a
+standing habit for every relevant PR, not a one-time backfill exercise —
+the list will never reach a final, complete state, because the set of
+changes this repo makes keeps growing too.
 
 ## Reporting
 
