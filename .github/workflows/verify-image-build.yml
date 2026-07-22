@@ -351,8 +351,8 @@ jobs:
         # Rebuilt here rather than re-tagging build_and_selftest's image --
         # jobs run on separate runners with no shared Docker daemon/image
         # cache, so this is the only way to get the already-proven Dockerfile
-        # into GHCR. Tagged both :latest (moving, what docker/verify/README.md
-        # tells users to pull) and the short commit SHA (so a given pull can
+        # into GHCR. Tagged both :latest (moving, what doc/docker.md tells
+        # users to pull) and the short commit SHA (so a given pull can
         # be pinned to the exact revision that was proven by this run).
         env:
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-buildtools
