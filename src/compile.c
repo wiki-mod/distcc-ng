@@ -713,12 +713,17 @@ static void dcc_rewrite_generic_compiler(char **argv)
  * to close this identical class of bug for "cc"/"c++" -- instead of trusting
  * the basename alone, so the flag is only added once the binary has actually
  * confirmed it is clang. dcc_probe_is_clang() requires an absolute path; a
- * relative path-qualified argv[0] (e.g. "./clang") can't be probed and is
- * treated the same as a failed probe: omit the flag rather than risk
- * appending one that hard-fails a real gcc wrapper. Omitting "-target" for a
- * genuine clang only loses the cross-compile triple hint (clang falls back to
- * its own default target detection) -- a strictly safer failure mode than a
- * hard compile failure.
+ * relative path-qualified argv[0] (e.g. "./clang") is resolved to an
+ * absolute path via realpath() first so it can still be probed -- if that
+ * resolution itself fails, or the probe otherwise can't verify (exec
+ * failure, etc), that is treated the same as a failed probe: omit the flag
+ * rather than risk appending one that hard-fails a real gcc wrapper.
+ * Omitting "-target" for a genuine clang only loses the cross-compile
+ * triple hint (clang falls back to its own default target detection) -- a
+ * strictly safer failure mode than a hard compile failure. dcc_probe_is_clang()
+ * itself only exists when HAVE_FSTATAT is defined (see its own guard above);
+ * on a build without it, a path-qualified name can't be verified at all and
+ * is handled the same as an unverifiable probe.
  */
 static void dcc_add_clang_target(char **argv)
 {
@@ -732,13 +737,29 @@ static void dcc_add_clang_target(char **argv)
     else
         return;
 
-    if (base != argv[0] && dcc_probe_is_clang(argv[0]) != 1) {
-        /* Path-qualified, and either confirmed not-clang, or the probe
-         * itself couldn't verify it (non-absolute path, exec failure, etc).
-         * Do not trust the basename alone here -- see the function comment
-         * above. */
+#ifdef HAVE_FSTATAT
+    if (base != argv[0]) {
+        const char *probe_path = argv[0];
+        char resolved[MAXPATHLEN + 1];
+
+        if (argv[0][0] != '/' && realpath(argv[0], resolved) != NULL)
+            probe_path = resolved;
+        if (dcc_probe_is_clang(probe_path) != 1) {
+            /* Path-qualified, and either confirmed not-clang, or the probe
+             * itself couldn't verify it (resolution failed, non-absolute
+             * path, exec failure, etc). Do not trust the basename alone
+             * here -- see the function comment above. */
+            return;
+        }
+    }
+#else
+    if (base != argv[0]) {
+        /* No dcc_probe_is_clang() available on this build (HAVE_FSTATAT
+         * undefined) -- a path-qualified name can't be verified at all;
+         * treat the same as an unverifiable probe. */
         return;
     }
+#endif
 
     /* -target aarch64-linux-gnu */
     if (dcc_argv_search(argv, "-target"))

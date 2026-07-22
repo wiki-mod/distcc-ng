@@ -164,14 +164,22 @@ compiler family (e.g. a real gcc) now gets `-target` appended to the
 `argv` this fix builds. `dcc_add_clang_target()` itself still never
 execs anything — but the `argv` it hands off *is* exec'd by a later
 stage, and a real gcc backing such a wrapper rejects `-target` outright,
-hard-failing the compile. See `src/compile.c`'s `dcc_add_clang_target()`
-comment (added alongside this note, commit `f3b404e`) for the up-to-date
-statement of this risk, and wiki-mod/distcc-ng#281's PR discussion for
-the open decision on how to close it (gate on `dcc_probe_is_clang()`, or
-narrow this fix back to bare names for that function only). Before that
-decision lands, "safe" in this section should be read narrowly as
-"does not reintroduce the wrong-physical-binary class of bug" — not as
-"carries no risk of any kind."
+hard-failing the compile.
+
+**Resolved** (commit `9b4d8a2`): `dcc_add_clang_target()` now reuses
+`dcc_probe_is_clang()` — the same "ask the binary itself" probe
+`dcc_rewrite_generic_compiler()` already uses for this identical class of
+bug — gated on the path-qualified case that introduced the risk (`base
+!= argv[0]`); a bare name keeps its pre-existing, unchanged trust. A
+relative path-qualified name (e.g. `./clang`) is resolved via `realpath()`
+before probing so it can still be verified; if resolution or the probe
+itself fails, or `dcc_probe_is_clang()` isn't compiled at all (a build
+without `HAVE_FSTATAT`), the flag is omitted rather than trusting the
+basename — a genuine clang only loses the cross-compile triple hint in
+that case (falls back to its own default target detection), a strictly
+safer failure mode than a hard compile failure against a mismatched
+wrapper. See `src/compile.c`'s `dcc_add_clang_target()` comment for the
+current, up-to-date statement of this behavior.
 
 A third instance of the same literal-`argv[0]`-comparison pattern exists
 in the same file, `dcc_rewrite_generic_compiler()`'s entry check
