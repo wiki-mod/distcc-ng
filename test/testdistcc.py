@@ -1292,10 +1292,26 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         # gcc/clang invocation of "-march=native" that ALSO errors there --
         # a real compile failure, not a clean skip -- so this must be
         # checked before relying on the flag being usable at all here.
-        probe_rc, _, _ = self.runcmd_unchecked(
-            "%s -march=native -E -x c - < /dev/null > /dev/null 2>&1" % clang)
+        probe_rc, _, probe_err = self.runcmd_unchecked(
+            "%s -march=native -E -x c - < /dev/null > /dev/null" % clang)
         self.require(probe_rc == 0,
                      "local clang does not accept -march=native on this arch")
+        # Some hosts' clang legitimately emits its own warning while
+        # resolving "-march=native" (seen: "invalid feature combination:
+        # +avx10.1-256; will be promoted to avx10.1-512") -- this is the
+        # SYSTEM/dispatcher clang commenting on its own flag resolution,
+        # not a diagnostic about distcc-ng's source, but this test's
+        # compile() (inherited, unmodified) fails on any non-empty stderr,
+        # same as every other compile in this suite. Silently filtering a
+        # known warning pattern out of that check (tried once, reverted)
+        # would weaken the warnings-are-errors discipline for exactly the
+        # cases where a real regression could hide behind a real one; skip
+        # cleanly instead of degrading what "pass" means for this test.
+        self.require(probe_err == '',
+                     "local clang's own -march=native resolution emits a "
+                     "warning on this host (%r) -- skipping rather than "
+                     "filtering it out of this test's warning-as-error "
+                     "check" % probe_err)
         # Deliberately not on $PATH and deliberately not named anything
         # containing "clang"/"gcc"/"cc" -- a basename-only PATH search (the
         # pre-fix behavior) must not be able to resolve this by name alone.
@@ -1322,40 +1338,6 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         # so the produced object file links against a consistent compiler.
         return self.distcc() + \
                self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
-
-    # Overrides Compilation_Case.compile(), which fails on ANY non-empty
-    # stderr. -march=native's whole point is to resolve to whatever the
-    # local/dispatcher clang decides "native" means on the CI runner's
-    # actual CPU -- and on at least one real runner, clang's own resolution
-    # legitimately emits "warning: invalid feature combination: ...; will
-    # be promoted to ..." (seen for +avx10.1-256 being promoted to
-    # avx10.1-512) plus the matching "N warning(s) generated." line, once
-    # for the local cpp/preprocess pass and once for the actual remote
-    # compile -- both are the SYSTEM/dispatcher clang commenting on its own
-    # -march=native resolution, not a diagnostic about this repo's own
-    # source. This is a different thing from AGENTS.md's "warnings are
-    # errors" rule, which governs distcc-ng's own build (-Werror on our own
-    # compiler invocations) -- filtering a third-party compiler's own
-    # informational note about resolving a flag this test deliberately
-    # asked it to resolve doesn't mask anything in distcc-ng's source, and
-    # every other stderr line still fails the test exactly as before.
-    _HARMLESS_MARCH_NATIVE_STDERR_RES = (
-        re.compile(r'^warning: invalid feature combination: .*$'),
-        re.compile(r'^\d+ warnings? generated\.$'),
-    )
-
-    def compile(self):
-        cmd = self.compileCmd()
-        out, err = self.runcmd(cmd)
-        if out != '':
-            self.fail("compiler command %s produced output:\n%s" % (repr(cmd), out))
-        residual_lines = [
-            line for line in err.splitlines()
-            if not any(p.match(line) for p in self._HARMLESS_MARCH_NATIVE_STDERR_RES)
-        ]
-        residual = "\n".join(residual_lines)
-        if residual != '':
-            self.fail("compiler command %s produced error:\n%s" % (repr(cmd), residual))
 
     def runtest(self):
         # A working binary alone can't distinguish a real remote
