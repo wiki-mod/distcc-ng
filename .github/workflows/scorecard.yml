@@ -43,6 +43,11 @@ jobs:
       # repo's code-scanning alerts. id-token: write is unused while
       # publish_results is false, but kept so flipping that flag later (see
       # note above) doesn't also require a follow-up permissions change.
+      # contents: read is required here because this job-level block
+      # replaces (rather than adds to) the workflow-level `read-all` --
+      # without it, actions/checkout below has no contents permission at
+      # all on a repo/token where scope enforcement is strict.
+      contents: read
       security-events: write
       id-token: write
     steps:

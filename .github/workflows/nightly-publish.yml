@@ -142,10 +142,11 @@ jobs:
 
           # Recreate the release each run so its target follows the moved tag;
           # --latest=false keeps it from ever outranking a real tagged release.
-          if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
-            gh release delete "${NIGHTLY_TAG}" --yes
+          if gh release view "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng >/dev/null 2>&1; then
+            gh release delete "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng --yes
           fi
           gh release create "${NIGHTLY_TAG}" "${assets[@]}" \
+            --repo wiki-mod/distcc-ng \
             --title "distcc-ng nightly" \
             --notes-file "${notes_file}" \
             --prerelease \
