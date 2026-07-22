@@ -113,13 +113,19 @@ static int prepend_dir_to_name(const char *dirname, char **path)
  * path for both the FILE-write and the LINK-create cases.
  *
  * A LINK entry's link_target (the symlink's target, as opposed to its own
- * path/name) is deliberately NOT validated the same way: unlike NAME, the
- * include-server's own mirroring logic legitimately relies on a leading
- * ".." in link_target to reference real system directories from a mirror
- * tree (see _MakeLinkFromMirrorToRealLocation in
- * include_server/compiler_defaults.py). Rejecting ".." there would break
- * that existing, intended behavior; fixing it needs a corresponding
- * include-server change first and is tracked separately.
+ * path/name) is only partly validated, unlike NAME: an absolute-style
+ * link_target (starting with '/') is checked the same way NAME is (see
+ * dcc_absolute_link_target_has_path_traversal()), since it gets prepended
+ * with dirname exactly like NAME does. A relative link_target is NOT
+ * validated -- the include-server's own legitimate mirroring symlinks use
+ * a leading run of ".." segments to reference real system directories
+ * from a mirror tree (see _MakeLinkFromMirrorToRealLocation() in
+ * include_server/compiler_defaults.py), and a text-only check can't tell
+ * that case apart from an attacker-supplied relative link_target of the
+ * same shape (see dcc_absolute_link_target_has_path_traversal()'s own
+ * comment in pathsafety.h for why). Closing that residual case is tracked
+ * in issue #289 (a real OS-level containment boundary around the job
+ * directory), not attempted here.
  */
 int dcc_r_many_files(int in_fd,
                      const char *dirname,
@@ -162,16 +168,23 @@ int dcc_r_many_files(int in_fd,
             if ((ret = dcc_r_str_alloc(in_fd, link_or_file_len, &link_target))){
                 goto out_cleanup;
             }
-            /* FIXME: verify that link_target doesn't contain '..'.
-             * But the include server uses '..' to reference system
-             * directories (see _MakeLinkFromMirrorToRealLocation
-             * in include_server/compiler_defaults.py), so we'll need to
-             * modify that first. */
             if (link_target[0] == '/') {
+                if (dcc_absolute_link_target_has_path_traversal(link_target)) {
+                    rs_log_error("rejected absolute LINK target with a "
+                                 "path-traversal sequence: %s", link_target);
+                    ret = EXIT_PROTOCOL_ERROR;
+                    goto out_cleanup;
+                }
                 if ((ret = prepend_dir_to_name(dirname, &link_target))) {
                     goto out_cleanup;
                 }
             }
+            /* A relative link_target (not starting with '/') is NOT
+             * validated here -- see this function's own comment above for
+             * why a text-only check can't distinguish the include-server's
+             * legitimate mirroring symlinks from an attacker-supplied one
+             * of the same shape (issue #95, tracked residual risk; real
+             * fix in issue #289). */
             if ((ret = dcc_mk_tmp_ancestor_dirs(name))) {
                 goto out_cleanup;
             }

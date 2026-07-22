@@ -28,51 +28,64 @@
 #include "pathsafety.h"
 
 /**
- * Test harness: make dcc_name_has_path_traversal() and
- * dcc_cdir_has_path_traversal() accessible from the command line so they
- * can be exercised by test/testdistcc.py without a full client/server round
- * trip (see src/srvrpc.c's dcc_r_many_files() for the real callers and their
- * rationale).
+ * Test harness: make dcc_name_has_path_traversal(),
+ * dcc_cdir_has_path_traversal(), and
+ * dcc_absolute_link_target_has_path_traversal() accessible from the command
+ * line so they can be exercised by test/testdistcc.py without a full
+ * client/server round trip (see src/srvrpc.c's dcc_r_many_files() for the
+ * real callers and their rationale).
  *
- * Prints "safe" or "unsafe" for each NAME or CDIR argument given.
+ * Prints "safe" or "unsafe" for each NAME, CDIR, or LINK-target argument
+ * given.
  *
  * Usage:
- *   h_pathsafety [--cdir] PATH...
+ *   h_pathsafety [--cdir|--link-target] PATH...
  *
- * If --cdir is specified, test dcc_cdir_has_path_traversal() on the remaining
- * arguments; otherwise, test dcc_name_has_path_traversal().
+ * If --cdir is specified, test dcc_cdir_has_path_traversal() on the
+ * remaining arguments; if --link-target, test
+ * dcc_absolute_link_target_has_path_traversal() (only meaningful for an
+ * absolute-style value -- see that function's own comment in pathsafety.h
+ * for why a relative link_target isn't validated at all); otherwise, test
+ * dcc_name_has_path_traversal().
  **/
 int main(int argc, char *argv[])
 {
     int i;
-    int use_cdir = 0;
+    enum { MODE_NAME, MODE_CDIR, MODE_LINK_TARGET } mode = MODE_NAME;
 
     if (argc < 2) {
-        fprintf(stderr, "usage: h_pathsafety [--cdir] PATH...\n");
+        fprintf(stderr, "usage: h_pathsafety [--cdir|--link-target] PATH...\n");
         return 1;
     }
 
     i = 1;
     if (strcmp(argv[1], "--cdir") == 0) {
-        use_cdir = 1;
+        mode = MODE_CDIR;
+        i = 2;
+    } else if (strcmp(argv[1], "--link-target") == 0) {
+        mode = MODE_LINK_TARGET;
         i = 2;
     }
 
     if (i >= argc) {
-        fprintf(stderr, "usage: h_pathsafety [--cdir] PATH...\n");
+        fprintf(stderr, "usage: h_pathsafety [--cdir|--link-target] PATH...\n");
         return 1;
     }
 
     for (; i < argc; i++) {
-        if (use_cdir) {
-            printf("%s %s\n",
-                   dcc_cdir_has_path_traversal(argv[i]) ? "unsafe" : "safe",
-                   argv[i]);
-        } else {
-            printf("%s %s\n",
-                   dcc_name_has_path_traversal(argv[i]) ? "unsafe" : "safe",
-                   argv[i]);
+        int unsafe;
+        switch (mode) {
+        case MODE_CDIR:
+            unsafe = dcc_cdir_has_path_traversal(argv[i]);
+            break;
+        case MODE_LINK_TARGET:
+            unsafe = dcc_absolute_link_target_has_path_traversal(argv[i]);
+            break;
+        default:
+            unsafe = dcc_name_has_path_traversal(argv[i]);
+            break;
         }
+        printf("%s %s\n", unsafe ? "unsafe" : "safe", argv[i]);
     }
 
     return 0;

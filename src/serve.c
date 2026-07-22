@@ -850,10 +850,21 @@ static int dcc_run_job(int in_fd,
      * in a loop.
      */
     if (cpp_where == DCC_CPP_ON_SERVER) {
-        if (dcc_r_many_files(in_fd, temp_dir, compr)
-            || dcc_set_output(argv, temp_o)
-            || tweak_arguments_for_server(argv, temp_dir, deps_fname,
-                                          &dotd_target, &tweaked_argv))
+        /* Each call's return value must be captured into ret, not just
+         * used for its truthiness in the || chain: without this, a
+         * non-zero return (e.g. dcc_r_many_files()'s EXIT_PROTOCOL_ERROR
+         * on a rejected path-traversal attempt, see #95/#292) still
+         * triggers the goto correctly, but ret is left at its prior
+         * (successful) value, so out_cleanup's switch(ret) misclassifies
+         * the job's stats (job_result falls into the default case
+         * instead of STATS_REJ_BAD_REQ) and the function's own return
+         * value reports success. The connection is still torn down
+         * either way -- this only affects stats/monitoring visibility,
+         * not the rejection itself. */
+        if ((ret = dcc_r_many_files(in_fd, temp_dir, compr))
+            || (ret = dcc_set_output(argv, temp_o))
+            || (ret = tweak_arguments_for_server(argv, temp_dir, deps_fname,
+                                          &dotd_target, &tweaked_argv)))
             goto out_cleanup;
         /* Repeat the switcharoo trick a few lines above. */
         dcc_free_argv(argv);

@@ -31,6 +31,25 @@
  * directly by h_pathsafety.c. */
 int dcc_name_has_path_traversal(const char *name);
 
+/* Returns 1 if an absolute-style client-supplied LINK token's link_target
+ * (i.e. one starting with '/', which srvrpc.c's dcc_r_many_files() prepends
+ * with the server's own temp dirname before use) contains a ".." path
+ * component that could walk the resulting symlink target back out of that
+ * temp directory, 0 if safe. This is only a partial fix for the LINK
+ * traversal risk tracked in issue #95: it closes the absolute-target case
+ * (same "/../ " shape as dcc_name_has_path_traversal()'s NAME check), but
+ * deliberately does NOT attempt to validate a relative link_target (one not
+ * starting with '/') -- the include-server's own legitimate mirroring
+ * symlinks (_MakeLinkFromMirrorToRealLocation() in
+ * include_server/compiler_defaults.py) use exactly the same shape (a
+ * leading run of "../" segments, then a clean remainder with no further
+ * "..") as an attacker-supplied escaping link_target would; the remainder
+ * itself is what differs, and that can't be told apart by string shape
+ * alone. Closing that residual case needs a real OS-level containment
+ * boundary around the job directory, tracked separately in issue #289 --
+ * not a text-only check like this one. */
+int dcc_absolute_link_target_has_path_traversal(const char *link_target);
+
 /* Returns 1 if a client-supplied CDIR (current working directory) token
  * contains ".." path components that could allow directory traversal when
  * the path is concatenated with the server's temp directory, 0 if safe.

@@ -102,6 +102,32 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`src/srvrpc.c`/`src/pathsafety.c`** (#95): reject an absolute-style LINK
+  token's `link_target` containing a `..` path component in
+  `dcc_r_many_files()`, closing a server-side arbitrary-file-write primitive:
+  a malicious distcc client could previously send a `LINK` token whose target
+  escaped the server's per-job temp directory once concatenated with it (the
+  same risk already guarded against for `NAME` tokens, but not for
+  `link_target`). Partial fix — a *relative* `link_target` is deliberately
+  left unvalidated, since the include-server's own legitimate mirroring
+  symlinks (`_MakeLinkFromMirrorToRealLocation()`) use the identical
+  "leading `../` run + clean remainder" shape an attacker-supplied one would,
+  so a text-only check can't distinguish them. That residual case turned out
+  to be independently exploitable without any absolute or otherwise
+  suspicious `link_target` at all (a relative-target `LINK` plus a nested
+  `NAME`/`FILE` sequence bypasses ordinary path-component symlink following
+  in `mkdir()`/`open()`) -- tracked as its own fix in #292, not this partial
+  string check, with #289's containment boundary remaining valuable as
+  separate defense-in-depth.
+- **`src/serve.c`** (found while reviewing #95/#292): capture
+  `dcc_r_many_files()`/`dcc_set_output()`/`tweak_arguments_for_server()`'s
+  return values into `ret` in `dcc_run_job()`'s multi-file branch instead of
+  only using them for `||`-chain truthiness. A rejection (e.g.
+  `dcc_r_many_files()`'s `EXIT_PROTOCOL_ERROR`) still aborted the connection
+  correctly either way, but `ret` was left at its prior successful value,
+  so `out_cleanup`'s `switch(ret)` misclassified the job in stats (fell to
+  the default case instead of `STATS_REJ_BAD_REQ`) and the function itself
+  reported success. Monitoring-visibility bug, not a security bypass.
 - **`.github/workflows/{actionlint,c-build,changelog-update-on-release,codeql}.yml`**
   (#267): pin the remaining 12 action references still using mutable
   version tags (`actions/checkout@v7`, `actions/cache@v4`,
