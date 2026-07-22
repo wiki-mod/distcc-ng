@@ -29,6 +29,7 @@ jobs:
       tag_name: ${{ steps.meta.outputs.tag_name }}
       release_title: ${{ steps.meta.outputs.release_title }}
       image_base: ${{ steps.meta.outputs.image_base }}
+      pump_image_base: ${{ steps.meta.outputs.pump_image_base }}
       do_container: ${{ steps.meta.outputs.do_container }}
     steps:
       # Trial run (#58): audit-only egress monitoring, does not block any
@@ -59,6 +60,7 @@ jobs:
             printf 'tag_name=%s\n' "${GITHUB_REF_NAME}"
             printf 'release_title=%s\n' "${release_title}"
             printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
+            printf 'pump_image_base=ghcr.io/%s/distcc-ng-pump:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
             printf 'do_container=%s\n' "${do_container}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -162,6 +164,7 @@ jobs:
     if: needs.setup.outputs.do_container == 'true'
     strategy:
       matrix:
+        variant: [plain, pump]
         include:
           # amd64 is required; arm64 is best-effort, on GitHub's free
           # native arm64 public-repo runners -- no QEMU emulation needed,
@@ -173,16 +176,16 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.runs_on }}
     # fail-fast: false only stops one leg's failure from cancelling the
-    # other -- it does NOT stop a failed leg from making this job's own
+    # others -- it does NOT stop a failed leg from making this job's own
     # overall result "failure", which needs: [build_container] downstream
     # (publish_manifest) treats as blocking. arm64 is documented above as
     # best-effort; continue-on-error is what actually makes that true --
     # an arm64 failure is reported (not silently green) but no longer
-    # blocks the amd64 leg or downstream publish jobs. publish_manifest
-    # itself independently confirms the arm64 image is actually present
-    # in the registry before including it in the multi-arch manifest, so
-    # a continue-on-error'd arm64 failure degrades to an amd64-only
-    # manifest rather than a broken multi-arch one.
+    # blocks the amd64 leg or downstream publish jobs, for either variant.
+    # publish_manifest itself independently confirms the arm64 image is
+    # actually present in the registry before including it in the
+    # multi-arch manifest, so a continue-on-error'd arm64 failure degrades
+    # to an amd64-only manifest rather than a broken multi-arch one.
     continue-on-error: ${{ matrix.platform == 'arm64' }}
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
@@ -193,28 +196,50 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Resolve this leg's image tag and Dockerfile target
+        # variant/platform live in the matrix; the image base (which
+        # differs per variant -- distcc-ng vs the separate distcc-ng-pump
+        # package, issue #181) doesn't, since matrix entries can't
+        # reference job outputs directly.
+        id: leg
+        shell: bash
+        run: |
+          if [ "${{ matrix.variant }}" = "pump" ]; then
+            image_base="${{ needs.setup.outputs.pump_image_base }}"
+            dockerfile_target="runtime-pump"
+          else
+            image_base="${{ needs.setup.outputs.image_base }}"
+            dockerfile_target="runtime"
+          fi
+          {
+            printf 'image_tag=%s-%s\n' "${image_base}" "${{ matrix.platform }}"
+            printf 'dockerfile_target=%s\n' "${dockerfile_target}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Log in to GHCR
         shell: bash
         run: |
           printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build ${{ matrix.platform }} image
+      - name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
         shell: bash
         env:
-          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
+          DOCKERFILE_TARGET: ${{ steps.leg.outputs.dockerfile_target }}
           VERSION_LABEL: ${{ needs.setup.outputs.version }}
           VCS_REF: ${{ github.sha }}
         run: |
           docker build \
             --platform "linux/${{ matrix.platform }}" \
             --file docker/release/Dockerfile \
+            --target "${DOCKERFILE_TARGET}" \
             --build-arg "VCS_REF=${VCS_REF}" \
             --build-arg "VERSION=${VERSION_LABEL}" \
             --tag "${IMAGE_TAG}" \
             .
 
       - name: Prepare local Trivy cache
-        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}"
+        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.variant }}/${{ matrix.platform }}"
 
       - name: Scan image with Trivy
         # Scans the locally-built image before it's ever pushed -- a
@@ -222,29 +247,29 @@ jobs:
         # match wiki-mod/lancache-ng's real, working setup.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          image-ref: ${{ steps.leg.outputs.image_tag }}
           scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
           hide-progress: true
           cache: "false"
-          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}
+          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.variant }}/${{ matrix.platform }}
           timeout: 10m
           exit-code: "1"
 
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          image: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          image: ${{ steps.leg.outputs.image_tag }}
           format: spdx-json
-          artifact-name: distcc-ng-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
+          artifact-name: distcc-ng-${{ matrix.variant }}-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
 
-      - name: Push ${{ matrix.platform }} image
+      - name: Push ${{ matrix.variant }} ${{ matrix.platform }} image
         id: push
         shell: bash
         env:
-          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
         run: docker push "${IMAGE_TAG}"
 
       - name: Record this run's pushed digest
@@ -262,11 +287,11 @@ jobs:
         # state.
         shell: bash
         env:
-          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
         run: |
           digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | \
                      python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
-          printf '%s\n' "${digest}" > "digest-${{ matrix.platform }}.txt"
+          printf '%s\n' "${digest}" > "digest-${{ matrix.variant }}-${{ matrix.platform }}.txt"
 
       - name: Upload this run's digest
         # Artifact name includes github.run_attempt: GitHub's v4 artifacts
@@ -278,12 +303,16 @@ jobs:
         # from the registry tag to the artifact store.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: image-digest-${{ matrix.platform }}-${{ github.run_attempt }}
-          path: digest-${{ matrix.platform }}.txt
+          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
 
   publish_manifest:
     needs: [setup, build_container]
     if: needs.setup.outputs.do_container == 'true'
+    strategy:
+      matrix:
+        variant: [plain, pump]
+      fail-fast: false
     runs-on: ubuntu-latest
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
@@ -305,14 +334,14 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: image-digest-*-${{ github.run_attempt }}
+          pattern: image-digest-${{ matrix.variant }}-*-${{ github.run_attempt }}
           path: digests
           merge-multiple: true
 
       - name: Create multi-arch manifest
         shell: bash
         env:
-          IMAGE_BASE: ${{ needs.setup.outputs.image_base }}
+          IMAGE_BASE: ${{ matrix.variant == 'pump' && needs.setup.outputs.pump_image_base || needs.setup.outputs.image_base }}
         run: |
           set -euo pipefail
           # arm64 is best-effort (continue-on-error in build_container, see
@@ -327,10 +356,10 @@ jobs:
           # step for that platform actually ran and succeeded in this exact
           # run, so a missing file here means the best-effort arch is
           # genuinely absent from this run, not just momentarily unfound.
-          amd64_digest="$(cat digests/digest-amd64.txt)"
+          amd64_digest="$(cat "digests/digest-${{ matrix.variant }}-amd64.txt")"
           tags=("${IMAGE_BASE}@${amd64_digest}")
-          if [ -f digests/digest-arm64.txt ]; then
-            arm64_digest="$(cat digests/digest-arm64.txt)"
+          if [ -f "digests/digest-${{ matrix.variant }}-arm64.txt" ]; then
+            arm64_digest="$(cat "digests/digest-${{ matrix.variant }}-arm64.txt")"
             tags+=("${IMAGE_BASE}@${arm64_digest}")
           else
             # A notice, not a warning: amd64-only degradation on a missing
@@ -364,6 +393,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
+          PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
           RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
           TAG_NAME: ${{ needs.setup.outputs.tag_name }}
         run: |
@@ -377,6 +407,7 @@ jobs:
             printf 'Source commit: %s\n' "${GITHUB_SHA}"
             printf 'Tag: %s\n\n' "${TAG_NAME}"
             printf 'Container image: %s\n' "${IMAGE_TAG}"
+            printf 'Container image (pump mode, issue #181): %s\n' "${PUMP_IMAGE_TAG}"
           } > "${notes_file}"
 
           if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
