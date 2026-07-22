@@ -13,7 +13,6 @@ AC_PREREQ([2.71])
 AC_INIT([distcc],[3.7.0-NG],[https://github.com/wiki-mod/distcc-ng/issues])
 
 AC_CONFIG_HEADERS(src/config.h)
-AC_CONFIG_MACRO_DIRS([m4])
 
 AC_CANONICAL_HOST
 AC_MSG_CHECKING([if the host system type is Linux])
