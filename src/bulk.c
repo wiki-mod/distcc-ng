@@ -412,18 +412,19 @@ int dcc_r_file_beneath(int ifd, int parent_fd, const char *leaf,
 
     /* O_NOFOLLOW is the security-relevant flag here (see this function's
      * comment). @p mode is caller-supplied (opt_job_file_mode, default
-     * 0660) rather than hardcoded 0666 like dcc_r_file(): unlike that
+     * 0600) rather than hardcoded 0666 like dcc_r_file(): unlike that
      * function's client-side use (the final compiled .o output, which
      * must match a local compiler invocation's own umask-subject 0666,
      * see ModeBits_Case), these are the server's own ephemeral per-job
      * input files -- created and later read only by this same daemon
      * process/uid (dcc_discard_root() only ever runs once, at startup,
-     * before any connection is accepted), so no other user needs access;
-     * 0660 rather than 0600 by default only to let an operator in the
-     * same group inspect a running job's files without the daemon's own
-     * uid. O_EXCL is not used because a legitimately re-sent leaf may
-     * already exist as a real file we intend to truncate; O_NOFOLLOW
-     * still refuses a symlink. */
+     * before any connection is accepted), so no other user needs access
+     * by default; configurable to something like 0660 via --job-file-mode
+     * for sites that want an operator in the same group to inspect a
+     * running job's files without the daemon's own uid. O_EXCL is not
+     * used because a legitimately re-sent leaf may already exist as a
+     * real file we intend to truncate; O_NOFOLLOW still refuses a
+     * symlink. */
     ofd = openat(parent_fd, leaf, O_TRUNC|O_WRONLY|O_CREAT|O_NOFOLLOW|O_BINARY,
                  mode);
     if (ofd == -1) {
