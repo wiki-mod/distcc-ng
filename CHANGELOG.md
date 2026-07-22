@@ -177,6 +177,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   log) showed no meaningful runtime win either way -- expected, since
   distcc/distccd's own runtime is dominated by network I/O rather than the
   CPU work `-O3` optimizes.
+- **`docker/release/Dockerfile`, `packaging/RedHat/rpm.spec`**: aligned the
+  `distcc` service user's lifecycle with Debian's own real `distcc`
+  package (verified live on a host running it, 2026-07-22). The Docker
+  image's `useradd` no longer creates a home directory (`--no-create-home
+  --home-dir /nonexistent`, matching Debian's own `adduser --system --home
+  /nonexistent --no-create-home`) — the unprivileged daemon process never
+  needs a writable home. The RPM spec's `%postun` no longer deletes the
+  `distcc` user/group on Debian-based purge (`deluser`/`delgroup`
+  removed): Debian's own package's `postrm` never does this either (it
+  removes `/etc/default/distcc`, log files, and the pid file on purge, but
+  keeps the system user), so this fork has no reason to be stricter than
+  the package it forked from.
 
 ### Fixed
 

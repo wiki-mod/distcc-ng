@@ -62,7 +62,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libzstd1 \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd --create-home --shell /usr/sbin/nologin distcc
+    useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin distcc
 
 COPY --from=build /out/ /
 
