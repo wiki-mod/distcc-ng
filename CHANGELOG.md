@@ -13,6 +13,56 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/verify-image-build.yml`/`docker/verify/README.md`**
+  (#264): added a `ccache + Redis remote-storage self-test` step (plus an
+  ephemeral, CI-local `redis:alpine` `services:` container) to the
+  `build_and_selftest` job, proving ccache's `CCACHE_REMOTE_STORAGE`
+  integration — per the maintainer, the single most common real-world
+  ccache deployment shape — actually round-trips a real cache hit through
+  Redis. Two separate, fresh `docker run` invocations compile the same real
+  source file (`src/dopt.o`, via this repo's own Makefile with
+  `CC="ccache gcc"`); the second invocation's container has no local
+  on-disk ccache dir, so a reported hit there can only have come from
+  Redis. Unrelated to and never referencing the maintainer's own real
+  `CCACHE_REMOTE_STORAGE` repo secret (a private LAN Redis instance
+  unreachable from GitHub-hosted runners). `docker/verify/README.md`
+  documents pointing the published image at a user's own Redis instance at
+  `docker run` time.
+- **`docker/verify/Dockerfile`** (#264): added `dnsutils` (`dig`/`nslookup`/
+  `host`) for diagnosing DNS resolution issues (a `DISTCC_HOSTS` entry, an
+  `--allow` netrange, or a Redis remote-storage hostname that won't
+  resolve). Gets a real functional build-time self-test (resolving the same
+  Debian mirror host `apt-get install` already reached, not just a
+  `--version` check), since DNS resolution only needs network access
+  (already available to a `docker build` `RUN` step), unlike the
+  ptrace-dependent tools above which need a runtime capability `docker
+  build` can't grant.
+- **`docker/verify/Dockerfile`/`docker/verify/selftest-ptrace.sh`** (#264):
+  added `python3-dbg` (debug build + gdb helper macros) for debugging the
+  Python-based include_server and its C extension
+  (`include_server/c_extensions/`) together under `gdb` (`py-bt`/`py-list`).
+  Gets a real functional runtime self-test in `selftest-ptrace.sh`: `gdb`
+  launches `python3-dbg` as its own child (breaking on CPython's
+  `time_sleep` C function, then running `py-bt`), checked for the actual
+  Python frame name in the output, rather than an existence check --
+  matching this script's existing gdb/strace/ltrace tests' "trace your own
+  child" shape. An earlier version instead attached via `gdb -p <pid>` to
+  an already-running sibling process and failed in real CI with "ptrace:
+  Operation not permitted" even under `--cap-add=SYS_PTRACE`: Yama's
+  default `ptrace_scope=1` only allows attaching to a process's own
+  descendants (a sibling launched independently isn't one), so this was
+  corrected to the same self-tracing shape used elsewhere in this script.
+  `pdb` (Python's own built-in debugger) needs no extra package, already
+  ships inside plain `python3`.
+- **`.github/workflows/verify-image-build.yml`/`docker/verify/`** (#264):
+  publish the verification/debug container to GHCR as
+  `distcc-ng-buildtools:latest` (plus a short-SHA tag per publish) on every
+  push to `current_dev` that touches `docker/verify/**`, and on manual
+  `workflow_dispatch` — never from a pull request. Previously this image
+  could only be built locally; pulling and starting the published image is
+  now the entire setup step, matching issue #264's own "pre-built, fully
+  self-contained" requirement. `docker/verify/README.md` updated with the
+  pull instructions.
 - **`src/dparent.c`** (#77, ported from upstream's still-open
   [distcc/distcc#468](https://github.com/distcc/distcc/pull/468)): set the
   daemon's Linux autogroup niceness (via `/proc/self/autogroup`) right after

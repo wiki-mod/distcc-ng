@@ -1,13 +1,19 @@
 # distcc-ng verification/debug container
 
-Tracks issue #264. A pre-built, fully self-contained Debian-based image with
+Tracks issue #264. Published to GHCR as `distcc-ng-buildtools` (see
+"Pulling the published image" below) — a pre-built, fully self-contained
+Debian-based image with
 distcc-ng's own build toolchain plus a dependency surface sized to match
 **Samba** (found to have the larger/more demanding real-world build-dependency
 list compared to Apache httpd — 51 vs. 20 distinct Debian `Build-Depends`
 packages, see the issue #264 research comment for the full comparison), debug
-tools (`gdb`, `strace`, `ltrace`), a sanitizer/memory-debug toolchain
-(ASan/UBSan via gcc, `valgrind`), `binutils` (`objdump`/`readelf`/`nm`/
-`addr2line`), and search/inspection tools (`ripgrep`, `grep`, `less`).
+tools (`gdb`, `strace`, `ltrace`, `python3-dbg` for `gdb`'s `py-bt`/`py-list`
+against the Python-based include_server and its C extension), a
+sanitizer/memory-debug toolchain (ASan/UBSan via gcc, `valgrind`), `binutils`
+(`objdump`/`readelf`/`nm`/`addr2line`), network/socket-debugging tools
+(`lsof`, `ss`/`iproute2`, `dig`/`nslookup`/`dnsutils`), and search/inspection
+tools (`ripgrep`, `grep`, `less`). Python's own built-in debugger (`pdb`)
+needs no extra package, it already ships inside plain `python3`.
 
 **Hard requirement (maintainer, issue #264): pre-built and fully
 self-contained.** Downloading and starting this image is the entire setup
@@ -16,7 +22,23 @@ Every tool listed above is baked into the image layers and gets a real
 build-time self-test (see the Dockerfile's self-test `RUN` step); the image
 build itself fails if any tool is missing or non-functional.
 
-## Building
+## Pulling the published image
+
+```bash
+docker pull ghcr.io/wiki-mod/distcc-ng-buildtools:latest
+```
+
+Published automatically by `.github/workflows/verify-image-build.yml`'s
+`publish` job on every push to `current_dev` that touches `docker/verify/**`
+(after `build_and_selftest` proves the image still works), and on a manual
+`workflow_dispatch` run — never from a pull request. `:latest` is a moving
+tag (same channel philosophy as `distcc-ng-nightly`); each publish is also
+tagged with the short commit SHA it was built from, for pinning to an exact
+revision. Substitute `ghcr.io/wiki-mod/distcc-ng-buildtools:local` for
+`distcc-ng-verify:local` in the commands below if you pulled the published
+image instead of building locally.
+
+## Building locally
 
 ```bash
 docker build -f docker/verify/Dockerfile -t distcc-ng-verify:local .
@@ -50,6 +72,29 @@ separate real failures:
   appropriate for the shipped runtime image (`docker/release/Dockerfile`)
   or a multi-tenant host — but is a reasonable trade-off for a container
   whose whole purpose is real debugging with `gdb`/`strace`/`ltrace`.
+
+## Using your own ccache Redis remote storage
+
+The image bakes in `ccache` (see the Dockerfile's own build-time self-test),
+which honors ccache's standard `CCACHE_REMOTE_STORAGE` environment variable
+(ccache's current name for this setting — `CCACHE_SECONDARY_STORAGE` is the
+exact same setting under ccache's own prior, still-honored name, not a
+separate option) at container run time. Point it at your own Redis instance
+to get a shared remote compile cache across runs/machines, no image rebuild
+needed:
+
+```bash
+docker run --rm -it \
+  -e CC="ccache gcc" \
+  -e CCACHE_REMOTE_STORAGE="redis://your-redis-host:6379" \
+  -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
+  'cd /work/src && ./autogen.sh && ./configure PYTHON=python3 && make && make check'
+```
+
+This repo's own CI (`.github/workflows/verify-image-build.yml`'s
+`build_and_selftest` job) proves this combination works end-to-end against
+an ephemeral, CI-local Redis service container — unrelated to any real
+Redis instance you point `CCACHE_REMOTE_STORAGE` at yourself.
 
 ## Ptrace-dependent tool self-test (gdb/strace/ltrace)
 
@@ -118,8 +163,3 @@ found" lines for *optional* features it simply disables (e.g.
 tried first and produced a false failure even when configure itself
 reported `'configure' finished successfully`.
 
-## Not yet implemented: publishing to GHCR
-
-This image is not yet published anywhere — see the PR that introduced this
-directory for a sketched (not implemented) release-pipeline design analogous
-to `nightly-publish.yml`/`package-release.yml`.

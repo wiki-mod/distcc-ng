@@ -13,10 +13,14 @@ name: Verification container build+test
 # honest verification environment for this change, matching AGENTS.md rule
 # 32's preference for CI over an unverifiable local claim.
 #
-# This is intentionally a manually-triggered/PR-scoped check, not (yet) part
-# of the always-on c-build.yml matrix -- the image is not yet a published
-# artifact (see docker/verify/README.md's "not yet implemented" section), so
-# there's nothing to publish here, only to prove the Dockerfile/image work.
+# On a pull_request, only build_and_selftest runs (proves the Dockerfile/image
+# still work) -- publish is skipped for PRs so a PR can never push a package.
+# On push to current_dev (or a manual workflow_dispatch), publish also runs,
+# rebuilding the now-proven image and pushing it to GHCR as
+# distcc-ng-buildtools:latest (own package, separate from distcc-ng/
+# distcc-ng-nightly), so pulling and starting the image is the entire setup
+# step (issue #264's own "pre-built, fully self-contained" requirement) rather
+# than every user needing a local `docker build`.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,6 +28,12 @@ concurrency:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - current_dev
+    paths:
+      - 'docker/verify/**'
+      - '.github/workflows/verify-image-build.yml'
   pull_request:
     paths:
       - 'docker/verify/**'
@@ -36,6 +46,41 @@ jobs:
   build_and_selftest:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Ephemeral, CI-local Redis for the ccache-remote-storage self-test step
+    # below -- this is a throwaway container that only exists for this job
+    # run, entirely unrelated to the maintainer's own real CCACHE_REMOTE_STORAGE
+    # repo secret (a private LAN Redis instance GitHub-hosted runners cannot
+    # reach anyway, and never referenced anywhere in this workflow). Proving
+    # ccache's Redis remote-storage integration actually works is valuable on
+    # its own merits: per the maintainer, a shared Redis-backed remote cache
+    # is the single most common real-world ccache deployment shape.
+    #
+    # GitHub Actions' `services:` block has no dedicated memory-limit field
+    # (verified against GitHub's own workflow-syntax and service-container
+    # docs -- neither documents one). `options:` does forward arbitrary
+    # `docker create` flags to the service container (documented for the
+    # sibling `jobs.<job_id>.container.options` key, which explicitly points
+    # at Docker's own `docker create` option list; `services.<id>.options`
+    # is the same mechanism applied to a service container), so the
+    # maintainer's ~2GB ask is expressed as a real `docker create` flag
+    # (`--memory=2g`) here rather than skipped.
+    #
+    # `ports: ['6379:6379']` binds Redis to a fixed, known host port
+    # (rather than the random-port form, which would require reading
+    # `job.services.redis.ports.6379` back out at runtime) specifically so
+    # the self-test step below has one real, verified address
+    # (127.0.0.1:6379) to hand to CCACHE_REMOTE_STORAGE without guessing.
+    services:
+      redis:
+        image: redis:alpine
+        options: >-
+          --memory=2g
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -138,6 +183,100 @@ jobs:
               "
             '
 
+      - name: ccache + Redis remote-storage self-test
+        # Proves the single most common real-world ccache deployment shape
+        # (a shared Redis-backed remote/secondary cache, per the maintainer)
+        # actually round-trips a real cache hit through Redis -- not just
+        # that `ccache`/`redis-cli` exit 0. Uses the ephemeral `services:`
+        # Redis container declared on this job above; never references the
+        # maintainer's own real CCACHE_REMOTE_STORAGE secret (a private LAN
+        # instance, unreachable from and irrelevant to this runner).
+        #
+        # `--network host` (Linux runner only, matching the other docker run
+        # steps in this job) lets the container reach the `services:` Redis
+        # container on the runner's own loopback interface, at the fixed
+        # 127.0.0.1:6379 port bound above.
+        #
+        # CCACHE_REMOTE_STORAGE is ccache's current name for this setting;
+        # CCACHE_SECONDARY_STORAGE is the exact same setting under ccache's
+        # own prior (still-honored) name, not a second/independent option
+        # (ccache's own manual: "In previous ccache versions this option was
+        # called secondary_storage (CCACHE_SECONDARY_STORAGE), which can
+        # still be used as an alias."). CCACHE_REMOTE_STORAGE is used here
+        # since it is the current, non-deprecated name.
+        #
+        # Compiles a single real distcc-ng source file (src/dopt.o) using
+        # this repo's own actual Makefile suffix rule (`.c.o:`, see the
+        # top-level Makefile) rather than a hand-built gcc command line --
+        # that rule already carries this build's real, configure-computed
+        # CPPFLAGS/CFLAGS (include paths, -DHAVE_CONFIG_H, etc.), so it
+        # exercises the same compile a real `make` would do, with `ccache`
+        # substituted in for the compiler via `make CC="ccache gcc"`
+        # (GNU Make's own semantics: a command-line variable assignment
+        # always overrides the makefile's own `CC = @CC@` line). `touch`ing
+        # the source file first forces a rebuild each time, since the
+        # object file already exists (built without ccache) from the
+        # previous "Real distcc-ng build+test" step above.
+        #
+        # Two separate, fresh `docker run` invocations (not one container
+        # compiling twice) is the point, not an accident: a single
+        # container's own *local* on-disk ccache dir would itself explain a
+        # second-compile hit, proving nothing about Redis specifically.
+        # Each invocation here gets a brand-new, empty container filesystem
+        # (no local ccache dir carried over), so the only way the second
+        # invocation's compile can hit is if it actually fetched the object
+        # back out of the first invocation's Redis push -- that is the
+        # real, specific claim this step exists to verify. Not reusing the
+        # earlier build+test step's exact `--user root` + `chown` + `su`
+        # sequence would leave this step dependent on that other step's
+        # ordering/side effects, so it repeats that same self-contained
+        # pattern here rather than assuming the workspace is still owned by
+        # `verify` from before.
+        run: |
+          set -euo pipefail
+
+          # Stats logs go under $RUNNER_TEMP, never under the checked-out
+          # workspace: the su'd container command below runs `chown -R
+          # verify:verify /work/src` (needed so the non-root `verify` user
+          # can write the rebuilt src/dopt.o into the bind-mounted
+          # workspace), which changes that *host* directory's real
+          # ownership away from the runner's own user for the rest of this
+          # step -- a real, empirically-found failure here first: `tee
+          # first-run-stats.log` into the default (workspace) working
+          # directory failed with "Permission denied" once the chown from
+          # this step's own first `docker run` had already run.
+          run_ccache_build () {
+            local label="$1"
+            local stats_file="$2"
+            docker run --rm --network host --user root \
+              -v "${{ github.workspace }}:/work/src:rw" \
+              -w /work/src \
+              -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
+              distcc-ng-verify:ci bash -c '
+                set -euo pipefail
+                chown -R verify:verify /work/src
+                su -s /bin/bash verify -c "
+                  set -euo pipefail
+                  cd /work/src
+                  export CCACHE_REMOTE_STORAGE=\"${CCACHE_REMOTE_STORAGE}\"
+                  ccache --zero-stats >/dev/null
+                  touch src/dopt.c
+                  make CC=\"ccache gcc\" src/dopt.o
+                  ccache --show-stats
+                "
+              ' | tee "${stats_file}"
+            echo "--- ${label}: ccache stats above ---"
+          }
+
+          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log"
+          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log"
+
+          if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
+            echo "::error::ccache reported no cache hit on the second, fresh container -- Redis remote storage did not actually serve the cached object"
+            exit 1
+          fi
+          echo "Real cache hit confirmed against the ephemeral Redis remote-storage backend."
+
       - name: Real Samba configure dry-run (proves the sizing claim empirically)
         # Downloads the real upstream Samba release tarball, its detached
         # signature, and Samba's own published public key (all three from
@@ -185,3 +324,47 @@ jobs:
               exit 1
             fi
           '
+
+  # --- Publish, only after a successful build+selftest, never from a PR -----
+  # A pull_request event could carry an attacker-modified Dockerfile; gating
+  # on !pull_request means only a push to current_dev (already reviewed and
+  # merged) or an explicit manual workflow_dispatch can ever reach GHCR.
+  publish:
+    needs: build_and_selftest
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push distcc-ng-buildtools:latest
+        # Rebuilt here rather than re-tagging build_and_selftest's image --
+        # jobs run on separate runners with no shared Docker daemon/image
+        # cache, so this is the only way to get the already-proven Dockerfile
+        # into GHCR. Tagged both :latest (moving, what docker/verify/README.md
+        # tells users to pull) and the short commit SHA (so a given pull can
+        # be pinned to the exact revision that was proven by this run).
+        env:
+          IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-buildtools
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          docker build \
+            --file docker/verify/Dockerfile \
+            --build-arg "VCS_REF=$(git rev-parse HEAD)" \
+            --build-arg "VERSION=${SHORT_SHA}" \
+            --tag "${IMAGE_BASE}:latest" \
+            --tag "${IMAGE_BASE}:${SHORT_SHA}" \
+            .
+          docker push "${IMAGE_BASE}:latest"
+          docker push "${IMAGE_BASE}:${SHORT_SHA}"

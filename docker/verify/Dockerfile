@@ -55,7 +55,7 @@ FROM ${DEBIAN_IMAGE}
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng-verify" \
+LABEL org.opencontainers.image.title="distcc-ng-buildtools" \
       org.opencontainers.image.description="Pre-built, self-contained build+debug+verification image for distcc-ng (issue #264): distcc-ng's own toolchain plus a Samba-sized dependency surface, debug tools, sanitizers, and inspection tools." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
@@ -95,6 +95,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libzstd-dev \
       libseccomp-dev \
       gdb \
+      # python3-dbg (debug build + gdb helper macros, e.g. py-bt/py-list):
+      # for debugging the include_server itself (a Python program) and its
+      # C extension (include_server/c_extensions/) together under gdb --
+      # follow-up ask this session. pdb (Python's own built-in debugger)
+      # needs nothing extra, it already ships inside plain python3.
+      python3-dbg \
       # --- Samba-sized reference toolchain (see sizing rationale above):
       #     the real library/header surface a project as demanding as Samba
       #     needs to configure and build, so this image is proven adequate
@@ -159,7 +165,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # bind/accept, or a hung distributed-compile connection, needs to see
       # real open sockets/file descriptors, not just process-level tracing.
       lsof \
-      iproute2 && \
+      iproute2 \
+      # DNS lookup tools (dig/nslookup/host -- follow-up ask this session):
+      # diagnosing a distccd host that won't resolve (DISTCC_HOSTS entries,
+      # a misbehaving --allow netrange, or a Redis remote-storage hostname
+      # for ccache) needs real name-resolution tools, not just IP-level
+      # socket inspection.
+      dnsutils && \
     rm -rf /var/lib/apt/lists/*
 
 # bash (not the default dash /bin/sh) for the self-test below: it uses
@@ -270,6 +282,18 @@ RUN set -eux; \
     lsof -p "$$" | grep -q hostname \
       || { echo "ERROR: lsof did not show the open /etc/hostname file descriptor"; lsof -p "$$"; exit 1; }; \
     exec 9<&-; \
+    # --- dig/nslookup (dnsutils): must actually resolve a real hostname,
+    #     not just print a --version banner -- unlike the ptrace-dependent
+    #     tools above, DNS resolution needs only network access, which a
+    #     `docker build` RUN step does have (apt-get install just used it
+    #     to reach Debian's own mirrors), so this can be a real functional
+    #     test here rather than deferred to a runtime selftest script.
+    #     Resolving the same mirror host apt-get already reached avoids
+    #     depending on a third, unrelated external hostname being up. ---
+    dig +short deb.debian.org | grep -qE '^[0-9]+\.' \
+      || { echo "ERROR: dig did not resolve deb.debian.org to an IPv4 address"; dig deb.debian.org; exit 1; }; \
+    nslookup deb.debian.org | grep -qi "Address" \
+      || { echo "ERROR: nslookup did not resolve deb.debian.org"; nslookup deb.debian.org; exit 1; }; \
     cd / && rm -rf /tmp/verify-selftest
 
 # Non-root by default (matches docker/release/Dockerfile's convention);
