@@ -50,6 +50,7 @@
 #include "trace.h"
 #include "exitcode.h"
 #include "util.h"
+#include "snprintf.h"
 #include "hosts.h"
 #include "bulk.h"
 #include "implicit.h"
