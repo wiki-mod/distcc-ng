@@ -202,7 +202,6 @@ update_distcc_symlinks_PY = update-distcc-symlinks.py
 
 # These are included in the distribution but not installed anywhere.
 dist_extra =							\
-	README.packaging \
 	packaging/RedHat/rpm.spec \
 	packaging/RedHat/logrotate.d/distcc \
 	packaging/RedHat/init.d/distcc \

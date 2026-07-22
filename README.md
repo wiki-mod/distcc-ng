@@ -52,6 +52,15 @@ kernel, rsync, KDE, GNOME (via GARNOME), Samba and Ethereal.  distcc
 is nearly linearly scalable for small numbers of machines: for a
 typical case, three machines are 2.6 times faster than one.
 
+## Security
+
+`distccd` does not authenticate connections by default. Before starting it
+(especially with `--allow` set broadly, or `--enable-tcp-insecure`), make
+sure whoever administers the host understands the consequences — anyone
+who can reach the port can ask it to run a compiler. Don't have a package
+or install script start it automatically without the administrator's
+explicit choice to do so.
+
 ## Licence
 
 distcc is distributed under the GNU General Public Licence v2.
