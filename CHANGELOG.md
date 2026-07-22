@@ -102,6 +102,27 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`src/srvrpc.c`, `src/bulk.c`** (#293, refs #292, #95): close the
+  server-side path-traversal write-escape in `distccd`'s multi-file receive
+  (`dcc_r_many_files()`) that #95's string check could not reach. A malicious
+  client could send one `NFIL` batch whose first entry creates a symlink at a
+  chosen `NAME` (with a relative, deliberately unvalidated `LINK` target) and
+  whose second entry's `NAME` is nested under that symlink; the old
+  plain-string `mkdir()`/`open()`/`symlink()` calls transparently followed the
+  intermediate symlink, letting the write land anywhere `distccd` could write
+  (CWE-59). Neither `NAME` contains `..`, so `dcc_name_has_path_traversal()`
+  never saw it. `dcc_r_many_files()` now opens the job directory once and
+  resolves every `NAME` component-by-component relative to that fd with
+  `O_NOFOLLOW` throughout (new `dcc_open_parent_beneath()`), rejecting any
+  intermediate component that resolves to a symlink or non-directory with
+  `EXIT_PROTOCOL_ERROR`; the `FILE` leaf is created with
+  `openat(..., O_NOFOLLOW)` (new `dcc_r_file_beneath()`, preserving the
+  binutils-compat unlink-first-if-non-empty behaviour via `fstatat`/`unlinkat`)
+  and the `LINK` leaf with `symlinkat()`. Legitimate pump mirroring is
+  unaffected — `include_server/mirror_path.py` never nests a later entry
+  beneath a symlink it created in the same batch. A new `h_srvrpc` test harness
+  drives the real `dcc_r_many_files()` with the exact malicious sequence as an
+  end-to-end regression test.
 - **`src/srvrpc.c`/`src/pathsafety.c`** (#95): reject an absolute-style LINK
   token's `link_target` containing a `..` path component in
   `dcc_r_many_files()`, closing a server-side arbitrary-file-write primitive:
