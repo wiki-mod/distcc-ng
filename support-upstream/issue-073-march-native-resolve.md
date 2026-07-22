@@ -1,7 +1,7 @@
 # -march=native/-mtune=native hard-fail to local — upstream has an open, unmerged fix with real bugs of its own
 
 **Fork issue:** [wiki-mod/distcc-ng#73](https://github.com/wiki-mod/distcc-ng/issues/73)
-**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175) (bugs 1-4 below); [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245) (bugs 5-6, found later via [wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227))
+**Fixed by:** [wiki-mod/distcc-ng#175](https://github.com/wiki-mod/distcc-ng/pull/175) (bugs 1-4 below); [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245) (bugs 5-6, found later via [wiki-mod/distcc-ng#227](https://github.com/wiki-mod/distcc-ng/issues/227)); [wiki-mod/distcc-ng#280](https://github.com/wiki-mod/distcc-ng/pull/280) (bug 7, found later via [wiki-mod/distcc-ng#278](https://github.com/wiki-mod/distcc-ng/issues/278))
 **Upstream location:** `src/arg.c`, `dcc_scan_args()`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-18)
 **Searched upstream issues/PRs for:** `march=native`, `mtune=native`, `mcpu=native` — found upstream's own open, unmerged attempts: [distcc/distcc#350](https://github.com/distcc/distcc/pull/350) and its rebase [distcc/distcc#384](https://github.com/distcc/distcc/pull/384).
@@ -176,6 +176,50 @@ of detection accuracy or the missing gcc-branch filter in #384's own
 review thread or elsewhere.
 
 Landed via [wiki-mod/distcc-ng#245](https://github.com/wiki-mod/distcc-ng/pull/245).
+
+### A seventh bug in the same draft, found via a Codex review of #219, fixed via #278
+
+A Codex (chatgpt-codex-connector) review of PR #219 (later tracked as
+[wiki-mod/distcc-ng#278](https://github.com/wiki-mod/distcc-ng/issues/278))
+found that bug 5's fix (reading the actual backend invocation to decide
+`is_clang`) left one remaining piece of the same basename-trust problem
+untouched: the variable that decides **which binary to actually exec**
+for the probe, not just which family to interpret its output as.
+
+**7. The probe execs a re-resolved basename, not the invoked binary.**
+Confirmed still present in upstream's #384 draft as of the same commit
+checked above (`gh pr diff 384 --repo distcc/distcc`, checked
+2026-07-21):
+
+```c
+const char* compiler = strrchr(argv[0], '/');
+compiler = (compiler == 0) ? (argv[0]) : (compiler + 1);
+...
+execlp(compiler, compiler, "-v", "-E", "-x", "c", ...);
+```
+
+This is the same line quoted under bug 5 above, but the relevant defect
+is different: regardless of how `is_clang` gets decided, `execlp()` is
+handed the stripped **basename**, not `argv[0]` itself. If `argv[0]` was
+an explicit path (the user invoked `distcc /opt/x/cc ...` directly, or a
+masquerade symlink already resolved to one) rather than a bare name meant
+to be found on `PATH`, stripping to the basename before `execlp()` throws
+away that distinction and forces a *fresh* `PATH` search for just the
+name — which can silently resolve to a *different* binary than the one
+actually invoked (or fail to resolve at all, if that name isn't on
+`PATH` under its own basename). This fork's fix (#278) instead passes
+`argv[0]` through unchanged: `execlp()` already implements the correct
+rule on its own — a name containing `/` is executed literally with no
+`PATH` search, a bare name is looked up on `PATH` — so the fix is to stop
+overriding that with a basename-only value.
+
+**Searched upstream issues/PRs again for this specific angle:**
+`execlp compiler basename`, `argv[0] path distcc-ng`, `cc1 exec path` —
+no discussion found of the exec-target (as opposed to the family-
+detection) side of this basename-trust problem in #384's own review
+thread or elsewhere.
+
+Landed via [wiki-mod/distcc-ng#280](https://github.com/wiki-mod/distcc-ng/pull/280).
 
 ## Empirical verification
 

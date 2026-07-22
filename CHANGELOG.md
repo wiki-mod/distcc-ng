@@ -86,6 +86,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the built extension still passes its own functional test
   (`include_server/c_extensions_test.py`).
 
+### Fixed
+
+- **`src/compile.c`** (#281, refs #78): `dcc_add_clang_target()` and
+  `dcc_gcc_rewrite_fqn()` now match the compiler's *basename*
+  (`dcc_find_basename(argv[0])`) instead of comparing `argv[0]` directly,
+  so cross-compilation auto-detection (clang's `-target` flag, gcc's
+  fully-qualified-name rewrite) now fires when the compiler is invoked by
+  a full or relative path (e.g. `/usr/bin/gcc-11`, `/usr/bin/clang-19`),
+  not only by a bare `$PATH` name. `dcc_gcc_rewrite_fqn()`'s rewritten
+  command name is now also built from the basename, fixing a related bug
+  where it previously would have embedded the caller's full original path
+  into the new command name. Ported and independently re-verified against
+  upstream's own open, unmerged distcc/distcc#491.
+
 ### Security
 
 - **`.github/workflows/{actionlint,c-build,changelog-update-on-release,codeql}.yml`**
@@ -163,6 +177,58 @@ See `doc/release-versioning.md` for the full versioning and release process.
   log) showed no meaningful runtime win either way -- expected, since
   distcc/distccd's own runtime is dominated by network I/O rather than the
   CPU work `-O3` optimizes.
+
+### Fixed
+
+- **`src/arg.c`** (#280): `dcc_resolve_march_native()` now execs the
+  actually-invoked compiler binary (`argv[0]` unchanged) instead of a
+  basename stripped from it and re-resolved via a fresh `PATH` search.
+  Previously, an explicit compiler path (e.g. `distcc /opt/x/cc ...`, or a
+  masquerade symlink already resolved to one) was reduced to its basename
+  before `execlp()`, which could silently exec a *different* binary than
+  the one actually invoked, or fail to resolve at all if that basename
+  wasn't separately on `PATH` -- either way, `-march=native` silently fell
+  back to a local-only compile instead of distributing. `is_clang` family
+  detection itself was already correct (fixed via #245); only the exec
+  target was still basename-only. Added a targeted regression test
+  (`MarchNativeDispatcherPath_Case` in `test/testdistcc.py`) using a
+  non-"clang"-named dispatcher script at an explicit, not-on-`PATH`
+  location; verified both in the test suite and via a real two-host
+  distributed compile (separate client/server hosts), confirming a
+  `COMPILE_OK` entry in the server's own independent log both times, and
+  confirming the pre-fix code silently compiled locally with zero server
+  log activity for the identical command.
+- **`Makefile.in`** (#280): removed a duplicate `h_dopt@EXEEXT@:` target
+  recipe (one of two identical, back-to-back definitions), which was
+  making every clean build emit a spurious GNU make "overriding recipe for
+  target" warning.
+- **`.github/workflows/release-drafter.yml`** (#280): added
+  `pull-requests: read` to the `update_release_draft` job's permissions
+  block, which had been overridden down to `contents: write` only by the
+  job-level block -- Release Drafter needs read access to merged-PR
+  metadata to build its draft notes.
+- **`.github/workflows/scorecard.yml`** (#280): added `contents: read` to
+  the `analysis` job's permissions block, which had replaced the
+  workflow-level `read-all` with `security-events: write` and
+  `id-token: write` only, leaving `actions/checkout` without read access
+  on a token-scope-enforcing repo.
+- **`.github/workflows/package-release.yml`** (#280): the arm64 container
+  matrix leg is documented as best-effort but had no `continue-on-error`,
+  so `fail-fast: false` alone did not stop an arm64 failure from blocking
+  the release-gating jobs downstream (`publish_manifest`,
+  `publish_github_release`). Added `continue-on-error` scoped to the arm64
+  leg, and made the multi-arch manifest step probe the registry for the
+  arm64 tag first, falling back to an amd64-only manifest rather than
+  failing the whole release when the best-effort arch is unavailable.
+
+### Security
+
+- **`.github/workflows/nightly-publish.yml`** (#280): added
+  `--repo wiki-mod/distcc-ng` to the three `gh release` invocations
+  (`view`/`delete`/`create`) in the tag-move-and-republish step, which were
+  previously relying on `gh`'s ambient default-repo resolution -- per
+  AGENTS.md rule 18, every `gh` command in this repo must pass `--repo`
+  explicitly to prevent it from ever targeting the wrong repository.
 
 ## [3.6.0-NG] - 2026-07-19
 

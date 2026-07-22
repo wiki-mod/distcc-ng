@@ -1251,6 +1251,109 @@ int main(void) {
 }
 """
 
+class MarchNativeDispatcherPath_Case(CompileHello_Case):
+    """-march=native must resolve using the compiler binary actually invoked,
+    not a basename re-resolved via a fresh PATH search.
+
+    Regression test for arg.c's dcc_resolve_march_native(): argv[0] here is
+    an explicit path to a dispatcher script that is NOT named "clang" (and
+    lives in a directory that is deliberately not on $PATH), but the script
+    execs the real local clang underneath -- mirroring macOS's "cc", which
+    is a small dispatch binary rather than a symlink, and any other
+    non-obviously-named compiler wrapper.
+
+    Before the fix, dcc_resolve_march_native() stripped argv[0] down to its
+    basename and ran execlp() on that basename alone; since the dispatcher's
+    own basename is not on $PATH here, that lookup fails, "-march=native"
+    is left unresolved, and the existing hard-fail-to-local path silently
+    routes the whole compile through a local fallback instead of
+    distributing it. After the fix, execlp() is handed argv[0] unchanged,
+    so a path containing '/' is executed literally (no PATH search) --
+    the dispatcher runs for real, "-march=native" resolves to concrete
+    clang flags, and the compile distributes normally.
+
+    A real remote distribution (not just "the resulting binary works",
+    which a silent local fallback would also produce) is confirmed by
+    grepping the daemon's own independent log for a COMPILE_OK entry, per
+    doc/verification-checklist.md section 3's real-two-host evidence bar --
+    a trace line or a working binary alone cannot tell these two cases
+    apart."""
+
+    def setup(self):
+        # Builds the fake dispatcher fixture described in the class
+        # docstring: a real, non-"clang"-named executable script that execs
+        # the real local clang, placed outside $PATH so a basename-only
+        # lookup (the pre-fix bug) cannot find it by name alone.
+        CompileHello_Case.setup(self)
+        clang = self._find_compiler("clang")
+        self.require(clang is not None,
+                     "no clang found on $PATH to build the fake dispatcher from")
+        # -march=native's acceptance is itself arch/compiler-dependent (e.g.
+        # some clang/AArch64 combinations reject it outright). If the local
+        # clang doesn't accept it at all, dcc_resolve_march_native()'s probe
+        # fails regardless of this fix, the compile falls through to a local
+        # gcc/clang invocation of "-march=native" that ALSO errors there --
+        # a real compile failure, not a clean skip -- so this must be
+        # checked before relying on the flag being usable at all here.
+        probe_rc, _, probe_err = self.runcmd_unchecked(
+            "%s -march=native -E -x c - < /dev/null > /dev/null" % clang)
+        self.require(probe_rc == 0,
+                     "local clang does not accept -march=native on this arch")
+        # Some hosts' clang legitimately emits its own warning while
+        # resolving "-march=native" (seen: "invalid feature combination:
+        # +avx10.1-256; will be promoted to avx10.1-512") -- this is the
+        # SYSTEM/dispatcher clang commenting on its own flag resolution,
+        # not a diagnostic about distcc-ng's source, but this test's
+        # compile() (inherited, unmodified) fails on any non-empty stderr,
+        # same as every other compile in this suite. Silently filtering a
+        # known warning pattern out of that check (tried once, reverted)
+        # would weaken the warnings-are-errors discipline for exactly the
+        # cases where a real regression could hide behind a real one; skip
+        # cleanly instead of degrading what "pass" means for this test.
+        self.require(probe_err == '',
+                     "local clang's own -march=native resolution emits a "
+                     "warning on this host (%r) -- skipping rather than "
+                     "filtering it out of this test's warning-as-error "
+                     "check" % probe_err)
+        # Deliberately not on $PATH and deliberately not named anything
+        # containing "clang"/"gcc"/"cc" -- a basename-only PATH search (the
+        # pre-fix behavior) must not be able to resolve this by name alone.
+        dispatch_dir = os.path.join(os.getcwd(), "not_on_path")
+        os.mkdir(dispatch_dir)
+        self.dispatcher_path = os.path.join(dispatch_dir, "mycompiler")
+        f = open(self.dispatcher_path, "w")
+        f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
+        f.close()
+        os.chmod(self.dispatcher_path, 0o700)
+
+    def compileCmd(self):
+        # Invokes the dispatcher by its full path (not a bare name), with
+        # DISTCC_FALLBACK disabled so a broken -march=native resolution
+        # surfaces as a hard failure instead of a silently-successful local
+        # compile that would mask the exact regression this test targets.
+        return self.distcc_without_fallback() + \
+               self.dispatcher_path + " -o testtmp.o -march=native " + \
+               self.compileOpts() + " -c %s" % (self.sourceFilename())
+
+    def linkCmd(self):
+        # Link step doesn't exercise -march=native resolution itself, but
+        # must still invoke the same full-path dispatcher as compileCmd()
+        # so the produced object file links against a consistent compiler.
+        return self.distcc() + \
+               self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
+
+    def runtest(self):
+        # A working binary alone can't distinguish a real remote
+        # distribution from a silent local fallback (both produce a valid
+        # testtmp) -- grepping the daemon's own independent log for
+        # COMPILE_OK is the actual proof the compile was distributed, per
+        # doc/verification-checklist.md section 3's real-two-host evidence
+        # bar.
+        CompileHello_Case.runtest(self)
+        daemon_log = open(self.daemon_logfile).read()
+        self.assert_re_search(r'COMPILE_OK', daemon_log)
+
+
 class LanguageSpecific_Case(Compilation_Case):
     """Abstract base class to test building non-C programs."""
     def runtest(self):
@@ -2960,6 +3063,7 @@ class Getline_Case(comfychair.TestCase):
 # All the tests defined in this suite
 tests = [
          CompileHello_Case,
+         MarchNativeDispatcherPath_Case,
          CommaInFilename_Case,
          ComputedInclude_Case,
          BackslashInMacro_Case,
