@@ -102,6 +102,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`src/srvrpc.c`/`src/pathsafety.c`** (#95): reject an absolute-style LINK
+  token's `link_target` containing a `..` path component in
+  `dcc_r_many_files()`, closing a server-side arbitrary-file-write primitive:
+  a malicious distcc client could previously send a `LINK` token whose target
+  escaped the server's per-job temp directory once concatenated with it (the
+  same risk already guarded against for `NAME` tokens, but not for
+  `link_target`). Partial fix — a *relative* `link_target` is deliberately
+  left unvalidated, since the include-server's own legitimate mirroring
+  symlinks (`_MakeLinkFromMirrorToRealLocation()`) use the identical
+  "leading `../` run + clean remainder" shape an attacker-supplied one would,
+  so a text-only check can't distinguish them. Closing that residual case
+  needs a real OS-level containment boundary around the job directory,
+  tracked in #289.
 - **`.github/workflows/{actionlint,c-build,changelog-update-on-release,codeql}.yml`**
   (#267): pin the remaining 12 action references still using mutable
   version tags (`actions/checkout@v7`, `actions/cache@v4`,
