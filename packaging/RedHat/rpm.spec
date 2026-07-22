@@ -218,12 +218,15 @@ else
 fi
 
 %postun server
-# TODO(mtm) Should Red Hat also remove user/group?
+# Never remove the distcc user/group here, on Red Hat or Debian: Debian's
+# own distcc package deliberately keeps it across a purge (confirmed by
+# reading that package's real postrm on a live host, 2026-07-22 -- it
+# deletes /etc/default/distcc, log files, and the pid file on purge, but
+# has no deluser/delgroup call anywhere), and there is no reason for this
+# fork to be stricter than the package it forked from.
 if [ -s /etc/debian_version ]; then
   case "$1" in
     purge)
-      deluser --quiet --system distcc
-      delgroup --quiet --system distcc
       ;;
     remove)
       ;;
