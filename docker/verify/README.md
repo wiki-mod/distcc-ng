@@ -9,7 +9,9 @@ list compared to Apache httpd — 51 vs. 20 distinct Debian `Build-Depends`
 packages, see the issue #264 research comment for the full comparison), debug
 tools (`gdb`, `strace`, `ltrace`), a sanitizer/memory-debug toolchain
 (ASan/UBSan via gcc, `valgrind`), `binutils` (`objdump`/`readelf`/`nm`/
-`addr2line`), and search/inspection tools (`ripgrep`, `grep`, `less`).
+`addr2line`), network/socket-debugging tools (`lsof`, `ss`/`iproute2`,
+`dig`/`nslookup`/`dnsutils`), and search/inspection tools (`ripgrep`, `grep`,
+`less`).
 
 **Hard requirement (maintainer, issue #264): pre-built and fully
 self-contained.** Downloading and starting this image is the entire setup

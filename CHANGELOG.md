@@ -28,6 +28,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   unreachable from GitHub-hosted runners). `docker/verify/README.md`
   documents pointing the published image at a user's own Redis instance at
   `docker run` time.
+- **`docker/verify/Dockerfile`** (#264): added `dnsutils` (`dig`/`nslookup`/
+  `host`) for diagnosing DNS resolution issues (a `DISTCC_HOSTS` entry, an
+  `--allow` netrange, or a Redis remote-storage hostname that won't
+  resolve). Gets a real functional build-time self-test (resolving the same
+  Debian mirror host `apt-get install` already reached, not just a
+  `--version` check), since DNS resolution only needs network access
+  (already available to a `docker build` `RUN` step), unlike the
+  ptrace-dependent tools above which need a runtime capability `docker
+  build` can't grant.
 - **`.github/workflows/verify-image-build.yml`/`docker/verify/`** (#264):
   publish the verification/debug container to GHCR as
   `distcc-ng-buildtools:latest` (plus a short-SHA tag per publish) on every
