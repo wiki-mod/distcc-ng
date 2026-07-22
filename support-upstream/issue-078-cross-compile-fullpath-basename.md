@@ -236,71 +236,101 @@ is explicitly named in `doc/verification-checklist.md` section 4's own
 masquerade/rewrite logic) and that only local/no-host traces plus
 `make check` had been used as evidence so far — not sufficient for a
 change affecting what compiler name/path is actually sent across the
-wire to a remote host. Ran the full two-direction matrix for real,
-2026-07-22, on two distinct real hosts (not the same machine, not
-WSL2), each already running the distro-packaged `distcc`/`distccd`
-3.4+really3.4-12 (Debian, independently built from this fork, `distccd`
-built Apr 18 2025) as a live system service, alongside this branch's own
-build (`3.7.0-NG`, built fresh from the current tip):
+wire to a remote host.
+
+**A first attempt at this section (2026-07-22, superseded below) used
+this project's own `src/*.c` files as the compile load.** A subsequent
+Codex review correctly caught that section 4 explicitly requires "an
+actual third-party C project, not a single hello-world file" — this
+repo's own source is neither a hello-world nor third-party, and using it
+did not satisfy that requirement regardless of the file count or real
+parallelism involved. That attempt is replaced below with a real rerun
+against zlib, a genuine external project, rather than simply relabeling
+the old text.
+
+**Re-run 2026-07-22, using zlib 1.3.2 as the third-party compile load.**
+zlib was chosen for being small, self-contained (no external
+dependencies of its own, straightforward to compile standalone), and
+widely known. Downloaded from zlib's own site
+(`https://zlib.net/zlib-1.3.2.tar.gz`) and independently cross-checked
+against the same release's GitHub asset
+(`https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz`);
+both are byte-identical (`sha256sum`:
+`bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`),
+matching the SHA-256 zlib's own download page publishes for this exact
+release — verified against the upstream project's own published value
+from two independent sources, per `doc/verification-checklist.md`
+section 5.
+
+Ran the same two-direction matrix as before, on the same two distinct
+real hosts (not the same machine, not WSL2), each already running the
+distro-packaged `distcc`/`distccd` 3.4+really3.4-12 (Debian,
+independently built from this fork) as a live system service, alongside
+this branch's own build (`3.7.0-NG`, built fresh from the current tip),
+compiling all **15 of zlib 1.3.2's `.c` files**
+(`adler32.c compress.c crc32.c deflate.c gzclose.c gzlib.c gzread.c
+gzwrite.c infback.c inffast.c inflate.c inftrees.c trees.c uncompr.c
+zutil.c` — real, substantial files; `deflate.c`/`inflate.c` are zlib's
+actual compression/decompression engines, not stubs), each compiled in
+real parallel (`&`/`wait`, not sequential):
 
 - **Direction A — this fork's fixed client against a real,
   independently-built `distccd`**: on host A, `DISTCC_HOSTS=<host
   B>:3632 DISTCC_FALLBACK=0` with this branch's own `distcc`, invoking
-  `/usr/bin/gcc` (full path, with `/usr/bin/x86_64-linux-gnu-gcc`
-  present alongside it — this host's real, unmodified Debian
-  multiarch-gcc layout) across **15 real, distinct `.c` files from this
-  project's own `src/`** (not a hello-world), each compiled in real
-  parallel (`&`/`wait`, not sequential). All 15 produced valid non-empty
+  `/usr/bin/gcc` (full path, with `/usr/bin/x86_64-linux-gnu-gcc` present
+  alongside it — this host's real, unmodified Debian multiarch-gcc
+  layout) to compile all 15 zlib files. All 15 produced valid non-empty
   `.o` object files. Client trace confirms the rewrite fired and the
   compile ran on the *remote* host, not locally:
   ```
-  distcc[162050] (dcc_gcc_rewrite_fqn) Re-writing call to '/usr/bin/gcc' to '/usr/bin/x86_64-linux-gnu-gcc' to support cross-compilation.
-  distcc[162050] exec on <host B>:3632: /usr/bin/x86_64-linux-gnu-gcc -Werror -g -O3 -W -Wall -o .../bulk.o -c src/bulk.c
+  distcc[167787] (dcc_gcc_rewrite_fqn) Re-writing call to '/usr/bin/gcc' to '/usr/bin/x86_64-linux-gnu-gcc' to support cross-compilation.
+  distcc[167787] exec on <host B>:3632: /usr/bin/x86_64-linux-gnu-gcc -O2 -o .../deflate.o -c deflate.c
   ```
   Confirmed from **host B's own independent log** (`journalctl -u
   distcc`, the real system `distccd`'s own record, not the client's
   claim), all 15 as `COMPILE_OK`:
   ```
-  distccd[147]: (dcc_job_summary) client: <host A>:60940 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:73ms /usr/bin/x86_64-linux-gnu-gcc src/bulk.c
+  distccd[158]: (dcc_job_summary) client: <host A>:48466 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:283ms /usr/bin/x86_64-linux-gnu-gcc deflate.c
   ```
   (and 14 further identically-shaped `COMPILE_OK` lines for the rest of
-  the file set, one per source file, all `exit:0`).
+  zlib's file set, one per source file, all `exit:0`).
 - **Direction B — a real, independently-built `distcc` client against
-  this fork's fixed `distccd`**: on host B, the same distro `distcc`
-  3.4 binary (unmodified — this fix is client-side only, so this
-  direction exercises whether the *server* still correctly serves an
-  unmodified stock client, not the rewrite itself), `DISTCC_HOSTS=<host
+  this fork's fixed `distccd`**: on host B, the same distro `distcc` 3.4
+  binary (unmodified — this fix is client-side only, so this direction
+  exercises whether the *server* still correctly serves an unmodified
+  stock client, not the rewrite itself), `DISTCC_HOSTS=<host
   A>:43632 DISTCC_FALLBACK=0` (a dedicated instance of this branch's own
   `distccd`, started on a non-default port so as not to disturb host A's
-  own pre-existing system `distccd` service), same 15-file real compile
+  own pre-existing system `distccd` service), same 15-file zlib compile
   load, real parallelism. All 15 succeeded. Confirmed from **host A's own
   independent `distccd` log**, all 15 as `COMPILE_OK`:
   ```
-  distccd[161987]: (dcc_job_summary) client: <host B>:49664 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:28ms /usr/bin/gcc src/pathsafety.c
+  distccd[167569]: (dcc_job_summary) client: <host B>:46550 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:341ms /usr/bin/gcc deflate.c
   ```
-  (and 14 further identically-shaped lines for the rest of the file set).
+  (and 14 further identically-shaped lines for the rest of zlib's file
+  set).
 - `DISTCC_FALLBACK=0` was set for both directions throughout — a failure
-  to actually distribute would have hard-failed the compile (as it did
-  transiently once, see below) rather than silently and misleadingly
-  succeeding via local fallback.
+  to actually distribute would have hard-failed the compile rather than
+  silently and misleadingly succeeding via local fallback.
 - One real hiccup during this run, itself informative: the first
-  Direction-B attempt failed everywhere with `fatal error: config.h: No
-  such file or directory` (host B's checkout hadn't been `./configure`'d,
-  so its local preprocessing step — which runs even for a fully remote
-  compile, since distcc preprocesses locally — had no `config.h`; fixed by
-  copying host A's already-generated `src/config.h` across). That single
-  failure then poisoned all 15 *retried* jobs at once via distcc's own
-  `backoff_tcp_<host>_<port>_0` lockfile mechanism (`dcc_remove_disliked`)
-  marking the host disliked for a cooldown window; clearing that lockfile
-  before retrying was necessary to get a clean re-run. Recorded here so a
-  future re-verification of this section doesn't waste time
-  re-diagnosing the same two artifacts.
-- Both temporary hosts' test directories, the dedicated (non-service)
-  `distccd` instance started for Direction B, and all generated object
-  files/traces were removed after the run; each host's own pre-existing
-  system `distccd` service (used as Direction A's server) was left
-  untouched and running throughout, as it was never restarted or
-  reconfigured — only connected to as a client.
+  Direction-A attempt failed on exactly zlib's three `gz*.c` files
+  (`gzlib.c`, `gzread.c`, `gzwrite.c`) with real compile errors —
+  `implicit declaration of function 'lseek'/'read'/'write'/'close'` —
+  because compiling zlib's sources standalone (without running zlib's own
+  `./configure`) left the feature-test macro these functions need
+  (`unistd.h`'s POSIX declarations) unset. Not a distcc bug: adding
+  `-D_GNU_SOURCE` to the compile command (consistent with this project's
+  own `CPPFLAGS`) fixed it, and a clean rerun of all 15 files succeeded.
+  `DISTCC_FALLBACK=0` correctly hard-failed those three rather than
+  silently "succeeding" via local fallback, which is how the problem
+  surfaced immediately rather than being masked.
+- Both hosts' temporary test/download directories, the dedicated
+  (non-service) `distccd` instance started for Direction B, and all
+  generated object files/traces/downloaded zlib tarballs were removed
+  after the run; each host's own pre-existing system `distccd` service
+  (used as Direction A's server) was left untouched and running
+  throughout, as it was never restarted or reconfigured — only connected
+  to as a client.
 
 ### The issue's own example (`/usr/bin/arm-linux-gnueabihf-gcc`) does not need this fix, or any fix
 
