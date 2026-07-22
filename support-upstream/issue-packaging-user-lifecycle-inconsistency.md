@@ -1,7 +1,7 @@
 # `rpm.spec`'s Debian branch removes the `distcc` service user/group on purge, unlike Debian's own real package
 
 **Fork issue:** none filed yet — found while investigating this fork's own `distccd` privilege-drop behavior (see `issue-077-autogroup-niceness.md`)
-**Fixed by:** [wiki-mod/distcc-ng packaging-user-debian-parity branch](https://github.com/wiki-mod/distcc-ng) (this change) — purge/deletion behavior only; see "Related, NOT fixed here" below for a second, separate inconsistency found in the same file that this change does not touch
+**Fixed by:** [wiki-mod/distcc-ng#284](https://github.com/wiki-mod/distcc-ng/pull/284) — purge/deletion behavior only; see "Related, NOT fixed here" below for a second, separate inconsistency found in the same file that this change does not touch
 **Upstream location:** `packaging/RedHat/rpm.spec` — Debian branch's `deluser`/`delgroup` at line 217
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-22)
 **Searched upstream issues/PRs for:** `useradd distcc`, `deluser distcc`, `distcc home directory` — no matching report or fix attempt found, open or closed.
