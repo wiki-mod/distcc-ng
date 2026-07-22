@@ -2,7 +2,7 @@
 
 **Fork issue:** [wiki-mod/distcc-ng#78](https://github.com/wiki-mod/distcc-ng/issues/78)
 **Fixed by:** [wiki-mod/distcc-ng#281](https://github.com/wiki-mod/distcc-ng/pull/281)
-**Upstream location:** `src/compile.c`, functions `dcc_add_clang_target()` (~line 550) and `dcc_gcc_rewrite_fqn()` (~line 582)
+**Upstream location:** `src/compile.c`, functions `dcc_add_clang_target()` (line 549) and `dcc_gcc_rewrite_fqn()` (line 577), confirmed exact via `git show 8d569d19:src/compile.c | grep -n "dcc_add_clang_target\|dcc_gcc_rewrite_fqn"`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-21)
 **Upstream already has an open, unmerged fix:** [distcc/distcc#491](https://github.com/distcc/distcc/pull/491) ("Support cross compilation when compiler given as path"), open and unmerged as of 2026-07-21 (confirmed via `gh api repos/distcc/distcc/pulls/491`: `state: open`, `merged: false` — this literal-path form of `gh api` has no `--repo` flag to add per AGENTS.md rule 18's example list; `--repo` only applies to `gh` subcommands that resolve a repo ambiently, not to `gh api` calls whose endpoint path already names the repo explicitly, per `gh api --help`). This entry independently re-verifies that PR's diff is correct against this fork's current source before adopting it, per this fork's "never adopt unverified" policy, rather than porting it blind.
 **Searched upstream issues/PRs for:** `dcc_add_clang_target`, `dcc_gcc_rewrite_fqn`, `dcc_find_basename`, `"cross compilation when compiler given as path"` — the only relevant result is #491 above, no other open report or fix attempt for this specific pair of functions. This is a distinct bug from this fork's own issue #227 (`issue-227-compiler-family-basename-trust.md`): #227 is about a *wrong* family match (a name that resolves but lies about what it is); this one is about *no* match at all (a name that would resolve correctly but is never even tried) once a full path is involved.
@@ -97,10 +97,12 @@ need:
         return -ENOENT;
 
     newcmd_len = strlen(target_with_vendor) + 1 + strlen(base) + 1;
+    newcmd = malloc(newcmd_len);
     ...
-    strcat(newcmd, "-");
-    strcat(newcmd, base);
+    snprintf(newcmd, newcmd_len, "%s-%s", target_with_vendor, base);
 ```
+
+(Built via `snprintf()` rather than `malloc()`+`strcat()`+`strcat()` as of a later CodeQL `cpp/unbounded-write` cleanup on this same PR, commit `eba52b6` — the buffer sizing was already exact, but `snprintf()` makes the bound self-evident at the write site instead of relying on a remembered invariant a few lines above.)
 
 A follow-up Codex review on PR #281 found two further, related issues in
 `dcc_gcc_rewrite_fqn()` not part of the original basename fix: a NULL
