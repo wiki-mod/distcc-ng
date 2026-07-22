@@ -13,6 +13,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/verify-image-build.yml`/`docker/verify/`** (#264):
+  publish the verification/debug container to GHCR as
+  `distcc-ng-buildtools:latest` (plus a short-SHA tag per publish) on every
+  push to `current_dev` that touches `docker/verify/**`, and on manual
+  `workflow_dispatch` — never from a pull request. Previously this image
+  could only be built locally; pulling and starting the published image is
+  now the entire setup step, matching issue #264's own "pre-built, fully
+  self-contained" requirement. `docker/verify/README.md` updated with the
+  pull instructions.
 - **`src/dparent.c`** (#77, ported from upstream's still-open
   [distcc/distcc#468](https://github.com/distcc/distcc/pull/468)): set the
   daemon's Linux autogroup niceness (via `/proc/self/autogroup`) right after

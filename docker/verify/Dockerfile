@@ -55,7 +55,7 @@ FROM ${DEBIAN_IMAGE}
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
-LABEL org.opencontainers.image.title="distcc-ng-verify" \
+LABEL org.opencontainers.image.title="distcc-ng-buildtools" \
       org.opencontainers.image.description="Pre-built, self-contained build+debug+verification image for distcc-ng (issue #264): distcc-ng's own toolchain plus a Samba-sized dependency surface, debug tools, sanitizers, and inspection tools." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"

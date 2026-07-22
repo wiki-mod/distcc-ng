@@ -1,6 +1,8 @@
 # distcc-ng verification/debug container
 
-Tracks issue #264. A pre-built, fully self-contained Debian-based image with
+Tracks issue #264. Published to GHCR as `distcc-ng-buildtools` (see
+"Pulling the published image" below) — a pre-built, fully self-contained
+Debian-based image with
 distcc-ng's own build toolchain plus a dependency surface sized to match
 **Samba** (found to have the larger/more demanding real-world build-dependency
 list compared to Apache httpd — 51 vs. 20 distinct Debian `Build-Depends`
@@ -16,7 +18,23 @@ Every tool listed above is baked into the image layers and gets a real
 build-time self-test (see the Dockerfile's self-test `RUN` step); the image
 build itself fails if any tool is missing or non-functional.
 
-## Building
+## Pulling the published image
+
+```bash
+docker pull ghcr.io/wiki-mod/distcc-ng-buildtools:latest
+```
+
+Published automatically by `.github/workflows/verify-image-build.yml`'s
+`publish` job on every push to `current_dev` that touches `docker/verify/**`
+(after `build_and_selftest` proves the image still works), and on a manual
+`workflow_dispatch` run — never from a pull request. `:latest` is a moving
+tag (same channel philosophy as `distcc-ng-nightly`); each publish is also
+tagged with the short commit SHA it was built from, for pinning to an exact
+revision. Substitute `ghcr.io/wiki-mod/distcc-ng-buildtools:local` for
+`distcc-ng-verify:local` in the commands below if you pulled the published
+image instead of building locally.
+
+## Building locally
 
 ```bash
 docker build -f docker/verify/Dockerfile -t distcc-ng-verify:local .
@@ -118,8 +136,3 @@ found" lines for *optional* features it simply disables (e.g.
 tried first and produced a false failure even when configure itself
 reported `'configure' finished successfully`.
 
-## Not yet implemented: publishing to GHCR
-
-This image is not yet published anywhere — see the PR that introduced this
-directory for a sketched (not implemented) release-pipeline design analogous
-to `nightly-publish.yml`/`package-release.yml`.
