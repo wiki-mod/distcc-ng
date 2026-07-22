@@ -5,6 +5,7 @@ name: CodeQL
 # to catch issues in our active development branch (current_dev).
 # See: https://github.com/wiki-mod/distcc-ng/issues/155
 on:
+  workflow_dispatch:
   push:
     branches: [current_dev, master]
   pull_request:

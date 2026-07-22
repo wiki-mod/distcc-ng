@@ -13,6 +13,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/{actionlint,codeql,changelog-check,changelog-update-on-release,release-drafter}.yml`**:
+  added `workflow_dispatch` to the 5 of 11 workflow files that had no manual
+  trigger at all. `actionlint.yml`/`codeql.yml` needed no other change
+  (event-independent). `changelog-check.yml` and
+  `changelog-update-on-release.yml` hard-depend on `github.event.pull_request`/
+  `github.event.release` context that doesn't exist on a manual dispatch, so
+  each gets required `workflow_dispatch` inputs (`pr_number`; `tag_name`/
+  `release_notes`) instead of silently running with empty values.
+  `release-drafter.yml`'s `update_release_draft` job (safe/idempotent to
+  re-run manually) now also matches `workflow_dispatch`; its `auto_label`
+  job stays `pull_request`-only, since it needs a real PR event to know
+  which PR to label. Verified with a real `actionlint` binary (not just
+  YAML syntax) against all workflow files.
 - **`.github/workflows/verify-image-build.yml`/`docker/verify/README.md`**
   (#264): added a `ccache + Redis remote-storage self-test` step (plus an
   ephemeral, CI-local `redis:alpine` `services:` container) to the
