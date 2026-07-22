@@ -122,7 +122,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
   unaffected — `include_server/mirror_path.py` never nests a later entry
   beneath a symlink it created in the same batch. A new `h_srvrpc` test harness
   drives the real `dcc_r_many_files()` with the exact malicious sequence as an
-  end-to-end regression test.
+  end-to-end regression test. Also adds `distccd --job-file-mode MODE`
+  (octal, default `0600`): permission bits for these per-job input files.
+  They're created and later read by the same daemon process/uid throughout
+  a job's lifetime (`dcc_discard_root()` only ever runs once, at startup,
+  before any connection is accepted), so `0600` is sufficient by default;
+  configurable (e.g. `0660`) for sites that want an operator in the same
+  group to inspect a running job's files. `dcc_r_many_files()`/
+  `dcc_r_file_beneath()` take the mode as a parameter rather than reading
+  the global directly, since `src/srvrpc.c`/`src/bulk.c` are also linked
+  into the `distcc` client binary and, separately, into the include-server's
+  own Python C extension (`include_server/setup.py`) — neither links
+  `src/dopt.c` (distccd-only option parsing). Verified for real (not just
+  reasoned about): with `--job-file-mode=0600`, files created on disk
+  actually show `600`, confirmed via `stat` on a real host before this was
+  made the default.
 - **`src/srvrpc.c`/`src/pathsafety.c`** (#95): reject an absolute-style LINK
   token's `link_target` containing a `..` path component in
   `dcc_r_many_files()`, closing a server-side arbitrary-file-write primitive:

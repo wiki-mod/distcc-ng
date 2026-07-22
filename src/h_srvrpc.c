@@ -26,16 +26,35 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 #include "distcc.h"
 #include "rpc.h"
 #include "bulk.h"
 #include "exitcode.h"
 #include "trace.h"
+#include "dopt.h"
 
 /* trace.c references this symbol; every distcc executable (and every test
  * harness) must define it. Matches the other h_*.c harnesses. */
 const char *rs_program_name = "h_srvrpc";
+
+/* dopt.o (linked in for the real opt_job_file_mode default, see
+ * Makefile.in's h_srvrpc_obj) itself references opt_user (setuid.c) and
+ * dcc_should_be_inetd() (daemon.c) from distccd_parse_options() -- neither
+ * of which this harness links, since pulling in daemon.o would drag in
+ * the whole daemon architecture for a narrow unit test. h_dopt.c already
+ * establishes exactly this same stub pattern for its own use of dopt.o;
+ * mirrored here rather than invented fresh. Neither is actually exercised
+ * by this harness (it never calls distccd_parse_options() itself, only
+ * reads the already-initialized opt_job_file_mode default), so the stub
+ * bodies don't need to do anything real. */
+int dcc_should_be_inetd(void);
+const char *opt_user = "distcc";
+int dcc_should_be_inetd(void)
+{
+    return 0;
+}
 
 /**
  * Test harness: drive the *real* server-side dcc_r_many_files() (src/srvrpc.c)
@@ -144,7 +163,11 @@ int main(int argc, char *argv[])
      * token rather than blocking for more. */
     close(pipefd[1]);
 
-    ret = dcc_r_many_files(pipefd[0], jobdir, DCC_COMPRESS_NONE);
+    /* opt_job_file_mode (dopt.c's real default, 0600) -- this harness links
+     * dopt.o (see Makefile.in's h_srvrpc_obj) specifically so it drives the
+     * real option default rather than a duplicated literal. */
+    ret = dcc_r_many_files(pipefd[0], jobdir, DCC_COMPRESS_NONE,
+                           (mode_t) opt_job_file_mode);
     close(pipefd[0]);
 
     printf("ret=%d\n", ret);

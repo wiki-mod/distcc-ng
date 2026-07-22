@@ -348,7 +348,12 @@ h_pathsafety_obj = src/h_pathsafety.o src/pathsafety.o
 # End-to-end harness for the server-side multi-file receive path: pulls in
 # the real src/srvrpc.o (which is otherwise only in distccd_obj) on top of
 # common_obj so dcc_r_many_files() itself can be driven from testdistcc.py.
-h_srvrpc_obj = src/h_srvrpc.o src/srvrpc.o $(common_obj)
+# Also needs src/dopt.o (for the real opt_job_file_mode default, rather than
+# a duplicated literal) and, transitively, src/access.o + @BUILD_POPT@ --
+# same extra dependencies dopt.o already needs in h_dopt_obj above, since
+# dopt.c itself calls dcc_parse_mask() (access.c) and uses popt directly.
+h_srvrpc_obj = src/h_srvrpc.o src/srvrpc.o $(common_obj) src/dopt.o \
+               src/access.o @BUILD_POPT@
 
 # All source files, for the purposes of building the distribution
 SRC =	src/stats.c							\

@@ -371,11 +371,19 @@ int dcc_r_file(int ifd, const char *filename,
  * @param parent_fd Directory fd the leaf is created relative to.
  * @param leaf      Final path component (no '/'); created inside parent_fd.
  * @param len       Compressed length of the incoming file.
+ * @param mode      Permission bits (subject to umask) for the created file.
+ *                  Taken as a parameter rather than read from a global so
+ *                  this shared-object function (linked into both distcc
+ *                  and distccd, see Makefile.in's common_obj) never needs
+ *                  distccd-only option state (opt_job_file_mode lives in
+ *                  dopt.c, which is server-only) -- the caller in
+ *                  src/srvrpc.c (server-only) supplies it.
  **/
 int dcc_r_file_beneath(int ifd, int parent_fd, const char *leaf,
                        unsigned len,
                        unsigned uncompr_size,
-                       enum dcc_compress compr)
+                       enum dcc_compress compr,
+                       mode_t mode)
 {
     int ofd;
     int ret, close_ret;
@@ -403,12 +411,21 @@ int dcc_r_file_beneath(int ifd, int parent_fd, const char *leaf,
     }
 
     /* O_NOFOLLOW is the security-relevant flag here (see this function's
-     * comment); 0666-subject-to-umask matches dcc_r_file() for the same
-     * compiler-output-permissions reason (ModeBits_Case). O_EXCL is not
-     * used because a legitimately re-sent leaf may already exist as a real
-     * file we intend to truncate; O_NOFOLLOW still refuses a symlink. */
+     * comment). @p mode is caller-supplied (opt_job_file_mode, default
+     * 0660) rather than hardcoded 0666 like dcc_r_file(): unlike that
+     * function's client-side use (the final compiled .o output, which
+     * must match a local compiler invocation's own umask-subject 0666,
+     * see ModeBits_Case), these are the server's own ephemeral per-job
+     * input files -- created and later read only by this same daemon
+     * process/uid (dcc_discard_root() only ever runs once, at startup,
+     * before any connection is accepted), so no other user needs access;
+     * 0660 rather than 0600 by default only to let an operator in the
+     * same group inspect a running job's files without the daemon's own
+     * uid. O_EXCL is not used because a legitimately re-sent leaf may
+     * already exist as a real file we intend to truncate; O_NOFOLLOW
+     * still refuses a symlink. */
     ofd = openat(parent_fd, leaf, O_TRUNC|O_WRONLY|O_CREAT|O_NOFOLLOW|O_BINARY,
-                 0666);
+                 mode);
     if (ofd == -1) {
         rs_log_error("failed to create %s: %s", leaf, strerror(errno));
         return EXIT_IO_ERROR;

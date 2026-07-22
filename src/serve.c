@@ -861,7 +861,8 @@ static int dcc_run_job(int in_fd,
          * value reports success. The connection is still torn down
          * either way -- this only affects stats/monitoring visibility,
          * not the rejection itself. */
-        if ((ret = dcc_r_many_files(in_fd, temp_dir, compr))
+        if ((ret = dcc_r_many_files(in_fd, temp_dir, compr,
+                                    (mode_t) opt_job_file_mode))
             || (ret = dcc_set_output(argv, temp_o))
             || (ret = tweak_arguments_for_server(argv, temp_dir, deps_fname,
                                           &dotd_target, &tweaked_argv)))

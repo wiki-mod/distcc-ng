@@ -325,9 +325,18 @@ fail:
  * a later entry; a broader OS-level containment boundary around the job
  * directory remains tracked in issue #289.
  */
+/* @p file_mode is caller-supplied (rather than read from a global) so this
+ * function stays free of distccd-only option state: srvrpc.c is compiled
+ * into more than just the distccd binary -- also into the h_srvrpc test
+ * harness and, via include_server/setup.py's own separate build, into the
+ * include-server's Python C extension -- and none of those link
+ * src/dopt.c (server-only option parsing, and pulling it in would also
+ * require access.o and popt, see Makefile.in's h_dopt_obj). The only
+ * distccd-only caller (src/serve.c) supplies opt_job_file_mode. */
 int dcc_r_many_files(int in_fd,
                      const char *dirname,
-                     enum dcc_compress compr)
+                     enum dcc_compress compr,
+                     mode_t file_mode)
 {
     int ret = 0;
     unsigned int n_files;
@@ -428,7 +437,8 @@ int dcc_r_many_files(int in_fd,
             }
         } else if (strncmp(token, "FILE", 4) == 0) {
             if ((ret = dcc_r_file_beneath(in_fd, parent_fd, leaf,
-                                          link_or_file_len, 0, compr))) {
+                                          link_or_file_len, 0, compr,
+                                          file_mode))) {
                 goto out_cleanup;
             }
             if ((ret = dcc_add_cleanup(full_name))) {
