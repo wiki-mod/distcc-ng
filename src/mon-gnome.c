@@ -60,10 +60,6 @@
 #  include <sys/loadavg.h>
 #endif
 
-#ifdef WITH_GNOME
-#  include <gnome.h>
-#endif
-
 #include <gtk/gtk.h>
 
 #include "types.h"

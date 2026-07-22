@@ -25,6 +25,31 @@ See `doc/release-versioning.md` for the full versioning and release process.
   full build, `make check`, `make install-doc`, and `make dist` all still
   exit 0 on a real host with both files removed.
 
+- **`m4/pkg.m4`** (an 18-year-old vendored copy of pkg-config's autoconf
+  macro) and the now-empty `m4/` directory: verified dead before removal —
+  renaming the file away entirely and re-running `./autogen.sh &&
+  ./configure PYTHON=python3 --with-auth` produced an identical
+  `aclocal.m4` and identical pkg-config/zstd/seccomp detection, because
+  `aclocal` picks up the system's own `/usr/share/aclocal/pkg.m4` (from the
+  `pkg-config` package) instead. `configure.ac`'s
+  `AC_CONFIG_MACRO_DIRS([m4])`, `autogen.sh`'s `-I m4` flag, and
+  `Makefile.in`'s `dist_dirs` entry removed accordingly. Verified for real:
+  `autogen.sh`, `configure`, a full build with `-Wall -Werror`, `make
+  check`, `make install-doc`, and `make dist` all still exit 0 with `m4/`
+  gone.
+
+- **`--with-gnome`** (`configure.ac`, `src/mon-gnome.c`'s `WITH_GNOME`
+  include guard, `INSTALL`): removed as unsupported — it required
+  `libgnome-3.0`/`libgnomeui-3.0`, packages that don't exist in any current
+  Linux distribution (dropped entirely, not versioned to 3.0, during the
+  GNOME 2 → 3 transition around 2010/2011); `configure
+  PYTHON=python3 --with-gnome` failed hard (`configure: error: libgnome-3.0
+  was not found by pkg-config`, verified for real on a current host).
+  `--with-gtk` (plain GTK3, no GNOME desktop-integration libraries) is the
+  one remaining, actually-working way to build `distccmon-gnome` — verified
+  for real: builds and links cleanly against `gtk+-3.0` 3.24.49 both before
+  and after this change.
+
 ### Added
 
 - **`docker/release/Dockerfile`, `.github/workflows/package-release.yml`** (#181):

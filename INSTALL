@@ -80,20 +80,9 @@ You can optionally have
 
      To find the libpopt library in the configure script.
 
-To build the optional GNOME monitor (--with-gnome), you need the
-GNOME2 development libraries, and in particular
+To build the optional graphical monitor (--with-gtk), you need
 
-  gtk+ >=2.0
-  libgnome >=2.0
-  libgnomeui >= 2.0
-  libglade >= 2.0
-  libpango
-
-The monitor can also be built without GNOME desktop integration
-(--with-gtk), in which case you need only
-
-  gtk+ >=2.0
-  libglade >= 2.0
+  gtk+-3.0
 
 
 Preliminaries
@@ -118,7 +107,7 @@ You can set an installation prefix if you want to put distcc in /opt:
 distcc needs to be installed on all client and server machines.
 
 If you would like a graphical client-side monitor to show running
-jobs, you can choose either --with-gnome or --with-gtk.
+jobs, use --with-gtk.
 
 If you would like to try running distcc over IPv6, use
 --enable-rfc2553.  You must have a reasonably recent operating system
