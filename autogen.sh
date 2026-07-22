@@ -20,7 +20,7 @@ srcdir=`dirname "$0"`
 builddir=`pwd`
 
 echo "$0: running $ACLOCAL"
-(cd $srcdir && $ACLOCAL -I m4 --output=$builddir/aclocal.m4)
+(cd $srcdir && $ACLOCAL --output=$builddir/aclocal.m4)
 
 echo "$0: running $AUTOHEADER"
 [ -d src ] || mkdir src  # Needed for autoheader to generate src/config.h.in.

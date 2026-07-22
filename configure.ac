@@ -13,7 +13,6 @@ AC_PREREQ([2.71])
 AC_INIT([distcc],[3.7.0-NG],[https://github.com/wiki-mod/distcc-ng/issues])
 
 AC_CONFIG_HEADERS(src/config.h)
-AC_CONFIG_MACRO_DIRS([m4])
 
 AC_CANONICAL_HOST
 AC_MSG_CHECKING([if the host system type is Linux])
@@ -111,15 +110,6 @@ then
     AC_DEFINE(ENABLE_RFC2553,1,[use getaddrinfo(), getnameinfo(), etc])
 fi
 
-AC_ARG_WITH(gnome,
-        AS_HELP_STRING([--with-gnome],[build GNOME-based monitor]))
-
-if test x"$with_gnome" = xyes
-then
-    GNOME_BIN=distccmon-gnome
-    AC_DEFINE(WITH_GNOME,1,[Use GNOME])
-fi
-
 AC_ARG_WITH(gtk,
         AS_HELP_STRING([--with-gtk],[build GTK+-based monitor]))
 if test x"$with_gtk" = xyes
@@ -141,10 +131,7 @@ AC_ARG_ENABLE(Werror,
 
 # Now get the package configuration information for whatever packages
 # we need.  It's faster to just do it once during configuration.
-if test "x${with_gnome}" = xyes
-then
-    GNOME_PACKAGES="gtk+-3.0 libgnome-3.0 libgnomeui-3.0 pango"
-elif test "x${with_gtk}" = xyes
+if test "x${with_gtk}" = xyes
 then
     GNOME_PACKAGES="gtk+-3.0"
 else
@@ -162,7 +149,7 @@ do
     fi
 done
 
-if test x${with_gnome} = xyes -o x${with_gtk} = xyes
+if test x${with_gtk} = xyes
 then
     INSTALL_GNOME="install-gnome-data"
     UNINSTALL_GNOME="uninstall-gnome-data"

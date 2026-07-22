@@ -52,6 +52,20 @@ kernel, rsync, KDE, GNOME (via GARNOME), Samba and Ethereal.  distcc
 is nearly linearly scalable for small numbers of machines: for a
 typical case, three machines are 2.6 times faster than one.
 
+## Security
+
+`distccd` doesn't authenticate *who* connects, only *from where*: without
+an explicit `--allow`, it automatically restricts itself to private,
+non-Internet-routable address ranges (`src/dopt.c`'s `--allow-private`
+fallback) — it isn't wide open by default. That's still IP-range
+filtering, not real identity verification (an optional GSSAPI `--auth`
+mode exists, but is off unless explicitly enabled and requires a build
+with GSSAPI support). The real risk is an administrator who widens
+`--allow` to a public range, or passes `--enable-tcp-insecure`, without
+understanding that anyone reachable at that point can ask the daemon to
+run a compiler. Don't have a package or install script make either of
+those choices automatically — leave it to the administrator.
+
 ## Licence
 
 distcc is distributed under the GNU General Public Licence v2.

@@ -13,6 +13,43 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Removed
 
+- **`ChangeLog`, `NEWS`** (root-level, not `CHANGELOG.md`): deleted as old
+  upstream history this fork doesn't carry forward — `ChangeLog` was a
+  frozen, auto-generated commit log last touched 2011; `NEWS` was upstream's
+  own curated release notes, last touched 2025-01-25 and superseded by
+  `CHANGELOG.md` as the one changelog going forward. `Makefile.in`'s
+  `pkgdoc_DOCS`/`dist_extra` lists and the `dist` target's separate
+  `$(distnews)` copy step (which unconditionally `cp`'d `NEWS` alongside
+  the release tarball) updated accordingly, so `make install-doc`/
+  `make dist` don't break looking for either file. Verified for real: a
+  full build, `make check`, `make install-doc`, and `make dist` all still
+  exit 0 on a real host with both files removed.
+
+- **`m4/pkg.m4`** (an 18-year-old vendored copy of pkg-config's autoconf
+  macro) and the now-empty `m4/` directory: verified dead before removal —
+  renaming the file away entirely and re-running `./autogen.sh &&
+  ./configure PYTHON=python3 --with-auth` produced an identical
+  `aclocal.m4` and identical pkg-config/zstd/seccomp detection, because
+  `aclocal` picks up the system's own `/usr/share/aclocal/pkg.m4` (from the
+  `pkg-config` package) instead. `configure.ac`'s
+  `AC_CONFIG_MACRO_DIRS([m4])`, `autogen.sh`'s `-I m4` flag, and
+  `Makefile.in`'s `dist_dirs` entry removed accordingly. Verified for real:
+  `autogen.sh`, `configure`, a full build with `-Wall -Werror`, `make
+  check`, `make install-doc`, and `make dist` all still exit 0 with `m4/`
+  gone.
+
+- **`--with-gnome`** (`configure.ac`, `src/mon-gnome.c`'s `WITH_GNOME`
+  include guard, `INSTALL`): removed as unsupported — it required
+  `libgnome-3.0`/`libgnomeui-3.0`, packages that don't exist in any current
+  Linux distribution (dropped entirely, not versioned to 3.0, during the
+  GNOME 2 → 3 transition around 2010/2011); `configure
+  PYTHON=python3 --with-gnome` failed hard (`configure: error: libgnome-3.0
+  was not found by pkg-config`, verified for real on a current host).
+  `--with-gtk` (plain GTK3, no GNOME desktop-integration libraries) is the
+  one remaining, actually-working way to build `distccmon-gnome` — verified
+  for real: builds and links cleanly against `gtk+-3.0` 3.24.49 both before
+  and after this change.
+
 - **`docker/base/`, `docker/compilers/`, `docker/build.sh`**: the original
   upstream compiler-compatibility test harness (built distcc against
   gcc-4.8/gcc-5/clang-3.8 on Ubuntu 16.04 Xenial). Not referenced by any
