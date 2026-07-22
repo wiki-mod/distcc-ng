@@ -703,8 +703,7 @@ static void dcc_rewrite_generic_compiler(char **argv)
  * the wrapper really execs by a later stage of dcc_build_somewhere() -- a
  * real gcc behind such a wrapper rejects "-target" outright and the whole
  * compile fails. Reproduced empirically with a real, non-symlink dispatcher
- * script named "clang" that execs gcc (see this fork's
- * support-upstream/issue-078-cross-compile-fullpath-basename.md).
+ * script named "clang" that execs gcc.
  *
  * Only the path-qualified case is at risk: a bare name ("clang") is trusted
  * exactly as before this basename widening, unchanged risk profile. When
@@ -713,9 +712,15 @@ static void dcc_rewrite_generic_compiler(char **argv)
  * to close this identical class of bug for "cc"/"c++" -- instead of trusting
  * the basename alone, so the flag is only added once the binary has actually
  * confirmed it is clang. dcc_probe_is_clang() requires an absolute path; a
- * relative path-qualified argv[0] (e.g. "./clang") is resolved to an
- * absolute path via realpath() first so it can still be probed -- if that
- * resolution itself fails, or the probe otherwise can't verify (exec
+ * relative path-qualified argv[0] (e.g. "./clang") has only its directory
+ * component resolved to an absolute path (not the whole path via realpath())
+ * so the final "clang" path component -- and therefore argv[0] as seen by
+ * whatever actually execs it -- is preserved even if it is itself a symlink
+ * to a dispatcher (e.g. a ccache install using a "clang"-named symlink,
+ * which decides its own behavior from argv[0]'s basename): fully resolving
+ * the symlink via realpath() would probe the dispatcher's own identity
+ * instead of the identity the caller's invocation actually resolves to. If
+ * directory resolution fails, or the probe otherwise can't verify (exec
  * failure, etc), that is treated the same as a failed probe: omit the flag
  * rather than risk appending one that hard-fails a real gcc wrapper.
  * Omitting "-target" for a genuine clang only loses the cross-compile
@@ -742,8 +747,25 @@ static void dcc_add_clang_target(char **argv)
         const char *probe_path = argv[0];
         char resolved[MAXPATHLEN + 1];
 
-        if (argv[0][0] != '/' && realpath(argv[0], resolved) != NULL)
-            probe_path = resolved;
+        if (argv[0][0] != '/') {
+            /* Resolve only the directory component to an absolute path --
+             * NOT the whole path via realpath(), which would follow a
+             * symlink at the final component and probe the *target*'s
+             * identity instead of the name the caller actually invoked
+             * (see the function comment above). */
+            size_t dirlen = (size_t) (base - argv[0]); /* includes trailing '/' */
+            char dirbuf[MAXPATHLEN + 1];
+            char resolved_dir[MAXPATHLEN + 1];
+
+            if (dirlen > 0 && dirlen < sizeof(dirbuf)) {
+                memcpy(dirbuf, argv[0], dirlen);
+                dirbuf[dirlen] = '\0';
+                if (realpath(dirbuf, resolved_dir) != NULL &&
+                    snprintf(resolved, sizeof(resolved), "%s/%s",
+                             resolved_dir, base) < (int) sizeof(resolved))
+                    probe_path = resolved;
+            }
+        }
         if (dcc_probe_is_clang(probe_path) != 1) {
             /* Path-qualified, and either confirmed not-clang, or the probe
              * itself couldn't verify it (resolution failed, non-absolute
