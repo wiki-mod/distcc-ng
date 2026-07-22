@@ -102,6 +102,43 @@ need:
     strcat(newcmd, base);
 ```
 
+A follow-up Codex review on PR #281 found two further, related issues in
+`dcc_gcc_rewrite_fqn()` not part of the original basename fix: a NULL
+`$PATH` would crash the PATH-search loop, and — more relevantly for this
+entry — rewriting a directory-qualified `argv[0]` (e.g.
+`/opt/toolchain/bin/gcc`) to a bare target-prefixed name and letting the
+later `execvp()` resolve it via a fresh global `$PATH` search could
+silently execute a *different* cross-toolchain's same-named binary than
+the one the build system actually selected. Fixed (commit `7700663`) by
+preferring the target-prefixed binary in the **same directory** as the
+original compiler when `argv[0]` had one, only falling back to a global
+`$PATH` search when it didn't (i.e. was already bare):
+
+```c
+    if (base != argv[0]) {
+        size_t dirlen = (size_t) (base - argv[0]); /* includes trailing '/' */
+        int dirbinlen = (int) dirlen + newcmd_len;
+        char *dirbin = malloc(dirbinlen);
+        ...
+        memcpy(dirbin, argv[0], dirlen);
+        memcpy(dirbin + dirlen, newcmd, newcmd_len);
+        if (access(dirbin, X_OK) == 0) {
+            ...
+            argv[0] = dirbin;
+            return 0;
+        }
+        free(dirbin);
+        free(newcmd);
+        return -ENOENT;
+    }
+```
+
+This is a stricter, more correct behavior than a global `$PATH` search
+would be for a directory-qualified invocation, and it's why the empirical
+verification below distinguishes a directory-qualified full path with and
+without the target-prefixed sibling present, rather than only the bare-name
+case.
+
 This fix is safe because neither function *executes* `argv[0]` itself —
 they only use it for string classification and (for gcc) to build a new
 `argv[0]` value that a later stage of `dcc_build_somewhere()` will use.
@@ -128,28 +165,66 @@ same fix. Left as a follow-up: see wiki-mod/distcc-ng#78's PR discussion.
 
 ## Empirical verification
 
-Built and tested on a real Linux host (native ext4, not
-WSL2/DrvFs), both the unmodified (`origin/current_dev`) and fixed
-`src/compile.c`, side by side:
+**Re-run 2026-07-22** against the branch tip as of commit `7700663`
+("Fix two Codex P2 findings in `dcc_gcc_rewrite_fqn()`: NULL PATH and
+toolchain-directory loss") — a Codex review on PR #281 correctly flagged
+that an earlier version of this section had gone stale after that commit
+changed `dcc_gcc_rewrite_fqn()`'s behavior for a directory-qualified
+`argv[0]`: it no longer rewrites to a bare target-prefixed name resolved
+via a global `$PATH` search; instead it looks for the target-prefixed
+binary **in the same directory as the original compiler** and only
+rewrites if that specific file exists, returning `-ENOENT` (no rewrite at
+all) otherwise. The trace below was captured fresh from an actual build
+and run, not edited by hand from the old text.
 
-- **Before (unmodified):** `DISTCC_HOSTS='' distcc /usr/bin/gcc -c test.c -o test.o`
-  and `DISTCC_HOSTS='' distcc /usr/bin/clang-19 -c test.c -o test.o`
-  (`DISTCC_VERBOSE=1`) produce **no** `dcc_gcc_rewrite_fqn`/
-  `dcc_add_clang_target` trace line at all — confirmed by `grep`ing the
-  trace output for `rewrit|target|adding` and getting zero matches for
-  both.
-- **After (fixed):** the identical commands produce
-  `(dcc_gcc_rewrite_fqn) Re-writing call to '/usr/bin/gcc' to
-  'x86_64-linux-gnu-gcc' to support cross-compilation.` and
-  `(dcc_add_clang_target) Adding '-target x86_64-linux-gnu' to support
-  clang cross-compilation.` respectively — both compiles then proceed
-  using the rewritten/target-augmented command.
-- **No regression on bare names:** `distcc gcc -c test.c -o test.o` and
-  `distcc clang-19 -c test.c -o test.o` produce byte-identical trace
-  lines before and after the fix (the existing, already-working case).
-- Full `make check` passes cleanly on the fixed tree on this real host
-  (including `ModeBits_Case`, which a genuine Unix-permission-honoring
-  filesystem is required for), no new warnings from the changed files.
+Built and tested on a real Linux host (native ext4, not WSL2/DrvFs), the
+current branch tip:
+
+- **Full path, target-prefixed sibling absent (the realistic case on a
+  plain Debian host missing a matching cross-toolchain package)**: a
+  fake `/.../nosibling/gcc` dispatcher script (no `x86_64-linux-gnu-gcc`
+  alongside it) invoked as `DISTCC_VERBOSE=1 DISTCC_HOSTS=''  distcc
+  /.../nosibling/gcc -c test.c -o out.o` produces **no**
+  `dcc_gcc_rewrite_fqn` trace line at all — `dcc_gcc_rewrite_fqn()`
+  returns `-ENOENT` internally and the original invocation
+  (`/.../nosibling/gcc`) is executed unchanged:
+  ```
+  distcc[152314] exec on localhost: /tmp/.../nosibling/gcc -c test.c -o out_nosibling.o
+  distcc[152314] (dcc_spawn_child) forking to execute: /tmp/.../nosibling/gcc -c test.c -o out_nosibling.o
+  ```
+- **Full path, target-prefixed sibling present** (a second fake
+  `x86_64-linux-gnu-gcc` script placed in the *same* directory as `gcc`):
+  the rewrite now fires and resolves to the full path **in that same
+  directory**, not a bare name subject to a fresh global `$PATH` search:
+  ```
+  distcc[152320] (dcc_gcc_rewrite_fqn) Re-writing call to '/tmp/.../withsibling/gcc' to '/tmp/.../withsibling/x86_64-linux-gnu-gcc' to support cross-compilation.
+  distcc[152320] exec on localhost: /tmp/.../withsibling/x86_64-linux-gnu-gcc -c test.c -o out.o
+  ```
+- **Bare name (no directory component, e.g. plain `gcc` on `$PATH`)**:
+  unaffected by the directory-preserving change — still resolves via a
+  global `$PATH` search to a bare rewritten name, exactly as before:
+  ```
+  distcc[152326] (dcc_gcc_rewrite_fqn) Re-writing call to 'gcc' to 'x86_64-linux-gnu-gcc' to support cross-compilation.
+  distcc[152326] exec on localhost: x86_64-linux-gnu-gcc -c test.c -o out.o
+  ```
+- **clang, full path** (`/usr/bin/clang-19`, unaffected by the gcc-specific
+  directory fix): `-target` still added as before:
+  ```
+  distcc[152332] (dcc_add_clang_target) Adding '-target x86_64-linux-gnu' to support clang cross-compilation.
+  distcc[152332] exec on localhost: /usr/bin/clang-19 -c test.c -o out.o -target x86_64-linux-gnu
+  ```
+- All four cases produced a valid, non-empty `.o` object file
+  (`ELF 64-bit LSB relocatable, x86-64`, confirmed via `file`/`ls -la`).
+- Full `make check` passes cleanly on this branch tip on this real host
+  (123 `OK` cases, no `FAIL`; including `ModeBits_Case`, which a genuine
+  Unix-permission-honoring filesystem is required for), no new warnings
+  from the changed files.
+
+This supersedes the original (now-stale) trace this section previously
+carried, which showed the pre-`7700663` behavior — a bare-name
+`$PATH`-search rewrite even for a directory-qualified full-path
+invocation. That behavior no longer exists; see the "Fixed code" section
+above (last snippet) for the current directory-preserving logic itself.
 
 ### The issue's own example (`/usr/bin/arm-linux-gnueabihf-gcc`) does not need this fix, or any fix
 
