@@ -13,6 +13,33 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`docker/release/Dockerfile`, `.github/workflows/package-release.yml`** (#181):
+  established `distcc-ng-pump` as a separately-published, actively-maintained
+  container variant with pump mode (the Python include-server + `pump`
+  wrapper) built in — the currently-active release image had none at all,
+  a real, previously-unnoticed gap (the last pump-capable image was a
+  frozen, pre-`-NG` `3.4.1` relic, since renamed to a legacy suffix per
+  #40). New `runtime-pump` Dockerfile stage reuses the exact same compiled
+  build-stage artifacts as the plain image (pump mode is built by default,
+  nothing needed to be recompiled) via `make install DESTDIR=/out-pump` --
+  deliberately not a manual file-by-file copy, since `pump`'s own install
+  step needs to record where `include_server.py` ends up so the installed
+  wrapper can find it (`Makefile.in`'s `install-include-server` target).
+  `package-release.yml`'s `build_container`/`publish_manifest` jobs gained
+  a `variant: [plain, pump]` matrix dimension (alongside the existing
+  `amd64`/`arm64` platform one), each variant getting its own image base,
+  Trivy scan, SBOM, and multi-arch manifest -- published as the separate
+  `ghcr.io/wiki-mod/distcc-ng-pump` package (matching this repo's existing
+  `distcc-ng-nightly`/`distcc-ng-buildtools` separate-package precedent for
+  build variants, not a tag suffix on the same package). Verified for
+  real: both `runtime` and `runtime-pump` targets built and ran on a real
+  Docker host, and a genuine two-container pump-mode distributed compile
+  (client `pump distcc gcc -c` against a `distccd` server, both containers
+  built from the new image, `DISTCC_FALLBACK=0` so a real distribution
+  failure couldn't silently fall back to local) completed with the real
+  wire-protocol trace showing server-side compilation (`exec on
+  pump-server,cpp,lzo`), the real symlink-mirroring mechanism from
+  issues #95/#292 in action, and a working resulting binary.
 - **`.github/workflows/{actionlint,codeql,changelog-check,changelog-update-on-release,release-drafter}.yml`**:
   added `workflow_dispatch` to the 5 of 11 workflow files that had no manual
   trigger at all. `actionlint.yml`/`codeql.yml` needed no other change
