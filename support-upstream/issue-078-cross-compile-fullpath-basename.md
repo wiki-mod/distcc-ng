@@ -367,6 +367,62 @@ real parallel (`&`/`wait`, not sequential):
   throughout, as it was never restarted or reconfigured — only connected
   to as a client.
 
+**Clang full-path coverage, added 2026-07-22 per a Codex review on
+PR #281**: the matrix above only exercised `dcc_gcc_rewrite_fqn()`'s gcc
+rewrite path — this PR also changes `dcc_add_clang_target()` for
+full-path clang, and none of the evidence above showed that combination
+(the caller's absolute clang path plus the newly appended `-target`)
+actually round-tripping through a real server. Re-run using the same two
+real hosts and the same zlib 1.3.2 workload (re-verified present,
+unchanged checksum), this time invoking `/usr/bin/clang` by its full path
+against a dedicated instance of this branch's own `distccd` (not the
+gcc test's stock-server direction, since verifying this PR's own new
+client-side logic — the `-target` addition — needs the server merely to
+accept and run whatever `argv` the client sends, which any real distccd
+does; the interesting question is whether the flag round-trips and the
+remote compile actually succeeds, not which distccd implementation is on
+the other end):
+
+- Real trace confirms the fix fired for a full path, not just a bare
+  name: `distcc[837231] (dcc_add_clang_target) Adding '-target
+  x86_64-linux-gnu' to support clang cross-compilation.`
+- All 15 zlib `.c` files compiled successfully (real parallelism, with
+  a small stagger between launches — a bare `for f in ...; do cmd &
+  done` fired all 15 near-simultaneously and tripped distcc's own
+  connection-backoff mechanism on a transient early failure, marking the
+  host disliked for the rest of the batch; this is a pre-existing client
+  behavior unrelated to this PR's fix, not a new bug, and is worked
+  around here by not launching all 15 in the same instant — see
+  `src/where.c`'s `dcc_lock_pause()`/backoff logic, tracked as a possible
+  future scheduler-testing topic in issue #288).
+- Confirmed from the **server's own independent log**
+  (`/usr/bin/clang`'s dedicated `distccd` instance, not the client's
+  claim), all 15 as `COMPILE_OK`:
+  ```
+  distccd[180757] (dcc_job_summary) client: 192.168.1.240:50330 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:70ms /usr/bin/clang adler32.c
+  ```
+  (and 14 further identically-shaped lines for the rest of zlib's file
+  set — `compress.c`, `crc32.c`, `deflate.c`, `gzclose.c`, `gzlib.c`,
+  `gzread.c`, `gzwrite.c`, `infback.c`, `inffast.c`, `inflate.c`,
+  `inftrees.c`, `trees.c`, `uncompr.c`, `zutil.c`, all `exit:0`).
+- `DISTCC_FALLBACK=0` throughout, same reasoning as the gcc matrix above.
+- **Not covered by this run**: the ccache-dispatcher scenario
+  (`clang` as a symlink to `ccache`, which decides its own behavior from
+  `argv[0]`'s basename — the exact case commit `4aaf909`'s
+  directory-only-`realpath()` fix targets) was attempted on a real host
+  where `clang` genuinely is such a symlink, but ran into an unrelated
+  environment interaction (a recursive-invocation condition between
+  `distcc` and `ccache` in that specific shell/PATH setup) that wasn't
+  resolved within this session. The symlink-preservation logic itself
+  was verified separately and directly (see the "Resolved" section
+  above): a standalone repro confirmed `realpath(dirname) + basename`
+  preserves the `clang` name where a full `realpath()` collapses it to
+  ccache's own resolved binary. A full external-host round-trip through
+  a real ccache install remains a gap, not yet closed.
+- Both hosts' temporary directories, the dedicated `distccd` instance,
+  and generated object files/traces/downloaded tarballs were removed
+  after the run.
+
 ### The issue's own example (`/usr/bin/arm-linux-gnueabihf-gcc`) does not need this fix, or any fix
 
 Fork issue #78's own wording ("aren't correctly detected as the
