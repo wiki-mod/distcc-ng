@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file is `wiki-mod/distcc-ng/CLAUDE.md`. It provides guidance to Claude Code (claude.ai/code) when working with code in the `wiki-mod/distcc-ng` repository specifically.
 
 ## Project Purpose
 
-distcc-ng is a maintained fork of [distcc/distcc](https://github.com/distcc/distcc) — a distributed C/C++ compiler that lets `make -jN` (or any build) farm out compile jobs to other machines on the network. This fork exists because upstream distcc does not accept AI-assisted contributions; wiki-mod/distcc-ng does, under the governance in this same repository's own root-level `AGENTS.md`.
+distcc-ng is a maintained fork of [distcc/distcc](https://github.com/distcc/distcc) — a distributed C/C++ compiler that lets `make -jN` (or any build) farm out compile jobs to other machines on the network. This fork exists because upstream distcc does not accept AI-assisted contributions; wiki-mod/distcc-ng does, under the governance in `wiki-mod/distcc-ng/AGENTS.md`.
 
 Core pieces: `distcc` (client), `distccd` (compile server daemon), `pump` (the include-server-backed "pump mode" that lets distcc safely preprocess headers server-side for a much bigger speedup), `include_server/` (the Python include-server itself), plus the usual monitoring tools (`distccmon-text`, `distccmon-gnome`, `lsdistcc`).
 
@@ -15,9 +15,9 @@ Core pieces: `distcc` (client), `distccd` (compile server daemon), `pump` (the i
 
 ## Governance
 
-**Mandatory at the start of every session/task in this repo**: read `wiki-mod/distcc-ng`'s own root-level `AGENTS.md` (not any other repo's or nested copy — see rule 68) **completely, start to finish, no summarizing, no skipping sections, no reading only the parts that seem relevant** — and follow it as binding rules for this repository, not optional background reading. It is not auto-loaded into context the way this file is; you must actively read it yourself. This applies equally to every delegated subagent working in this repo, not just the top-level session. If it changes during a session (e.g. after a `git pull` or merge), re-read it in full again before continuing work that it governs. A `.github/AGENTS.md` pointer file exists for tools that only look there — it just redirects here, the root file is the real source.
+**Mandatory at the start of every session/task in the `wiki-mod/distcc-ng` repository**: read `wiki-mod/distcc-ng/AGENTS.md` (not any other repo's `AGENTS.md`, not a submodule's, not `wiki-mod/distcc-ng/.github/AGENTS.md` — see `wiki-mod/distcc-ng/AGENTS.md` rule 68) **completely, start to finish, no summarizing, no skipping sections, no reading only the parts that seem relevant** — and follow it as binding rules for this repository, not optional background reading. It is not auto-loaded into context the way `wiki-mod/distcc-ng/CLAUDE.md` is; you must actively read `wiki-mod/distcc-ng/AGENTS.md` yourself. This applies equally to every delegated subagent working in `wiki-mod/distcc-ng`, not just the top-level session. If `wiki-mod/distcc-ng/AGENTS.md` changes during a session (e.g. after a `git pull` or merge), re-read it in full again before continuing work that it governs. `wiki-mod/distcc-ng/.github/AGENTS.md` is a separate pointer file for tools that only look under `.github/` — it redirects to `wiki-mod/distcc-ng/AGENTS.md` and restates none of its content; `wiki-mod/distcc-ng/AGENTS.md` itself is always the real source.
 
-The bullets below restate a few of this same repo's `AGENTS.md`'s highest-stakes rules **word-for-word** (per rule 65) so they're visible without a separate read — but they are excerpts, not a substitute for reading the full file, and are not necessarily current if `AGENTS.md` has changed since this file's own last edit; the numbered rule is always the authoritative source.
+The bullets below restate a few of `wiki-mod/distcc-ng/AGENTS.md`'s highest-stakes rules **word-for-word** (per rule 65) so they're visible without a separate read — but they are excerpts, not a substitute for reading `wiki-mod/distcc-ng/AGENTS.md` in full, and are not necessarily current if `wiki-mod/distcc-ng/AGENTS.md` has changed since this file's (`wiki-mod/distcc-ng/CLAUDE.md`'s) own last edit; the numbered rule in `wiki-mod/distcc-ng/AGENTS.md` is always the authoritative source.
 
 - **Rule 1**: "All GitHub content — issues, pull requests, commit messages, code comments, and documentation — must be written in **English**. Chat with the maintainer may be in German; that does not change this rule."
 - **Rule 21**: "Do not push directly to `wiki-mod/distcc-ng`'s `master` branch. All changes to `master` go through a pull request, and merging into `master` requires the maintainer's **explicit** approval — a prior approval for one PR does not carry over to the next. `current_dev` may be merged into more routinely (standard PR review), but the same "verify before claiming done" discipline still applies."
@@ -46,7 +46,7 @@ scripts/                 # build-release-packages.sh, check-release-version.sh
 ## Branching Model
 
 - `master` (this repo's, `wiki-mod/distcc-ng`): the stable, released branch. Only ever updated via an explicitly maintainer-approved promotion PR from `current_dev`, paired with a real `vX.Y.Z-NG` tag (see `doc/release-versioning.md`).
-- `current_dev`: active development branch. Individual fixes/features land here via `dev/issueNN_short-name` branches, one worktree per issue (see this repo's own `AGENTS.md`'s Agent Workflow section) — not directly in the shared `repo/` clone, which can be stale.
+- `current_dev`: active development branch. Individual fixes/features land here via `dev/issueNN_short-name` branches, one worktree per issue (see `wiki-mod/distcc-ng/AGENTS.md`'s Agent Workflow section) — not directly in the shared `repo/` clone, which can be stale.
 - Versioning continues distcc's own numbering (currently based on distcc 3.4) with a `<version>-NG` suffix marking this fork's releases (e.g. `3.5.1-NG`). `scripts/check-release-version.sh` enforces tag/`configure.ac` consistency.
 
 ## Key Design Decisions
@@ -59,7 +59,7 @@ scripts/                 # build-release-packages.sh, check-release-version.sh
 
 ## Testing
 
-`make check` runs the real test suite (`test/testdistcc.py`, a comfychair-based harness) — this includes genuine daemon+compile e2e-style tests (`WithDaemon_Case`, `CompileHello_Case`: a real `distccd` is started and a real compile is distributed through it), not just unit tests of argument parsing. Treat "does `make check` pass" as a meaningful bar, but not a substitute for an actual CI run when the change touches build/test machinery itself (see `AGENTS.md`'s Required Validation section) or when a real distributed-compile validation (beyond a single "hello world") is the more honest test for the change at hand.
+`make check` runs the real test suite (`test/testdistcc.py`, a comfychair-based harness) — this includes genuine daemon+compile e2e-style tests (`WithDaemon_Case`, `CompileHello_Case`: a real `distccd` is started and a real compile is distributed through it), not just unit tests of argument parsing. Treat "does `make check` pass" as a meaningful bar, but not a substitute for an actual CI run when the change touches build/test machinery itself (see `wiki-mod/distcc-ng/AGENTS.md`'s Required Validation section) or when a real distributed-compile validation (beyond a single "hello world") is the more honest test for the change at hand.
 
 ## Changelog Maintenance
 
@@ -69,7 +69,7 @@ CHANGELOG.md follows [Keep a Changelog](https://keepachangelog.com/) format and 
 2. A maintainer publishes that release as part of the existing manual release-cut process (`doc/release-versioning.md`) — unchanged.
 3. On that `release: released` event, `.github/workflows/changelog-update-on-release.yml` runs [`stefanzweifel/changelog-updater-action`](https://github.com/marketplace/actions/changelog-updater) to insert the release's notes as a new dated section into `CHANGELOG.md`, then [`stefanzweifel/git-auto-commit-action`](https://github.com/stefanzweifel/git-auto-commit-action) commits it to `current_dev` (tags are cut from `current_dev`'s tip, so that's always where the update belongs).
 
-`release-drafter`'s config-loading is hardcoded to the repo's **default branch** (`master`) — this affected both the draft-release-update and the PR autolabeler (both failed with "Invalid config file" on every run since #121, confirmed live 2026-07-16, correcting an earlier too-optimistic note here that assumed only the draft-notes side was affected). Fixed by giving `master` its own copy of `.github/release-drafter.yml` as a one-off exception ahead of the real promotion (#132/#133), same precedent as the AGENTS.md/CLAUDE.md exception (#126/#127). Historical PRs merged before this fix mostly lack category labels as a result — see #132 for the backfill follow-up.
+`release-drafter`'s config-loading is hardcoded to the repo's **default branch** (`master`) — this affected both the draft-release-update and the PR autolabeler (both failed with "Invalid config file" on every run since #121, confirmed live 2026-07-16, correcting an earlier too-optimistic note here that assumed only the draft-notes side was affected). Fixed by giving `master` its own copy of `.github/release-drafter.yml` as a one-off exception ahead of the real promotion (#132/#133), same precedent as the `wiki-mod/distcc-ng/AGENTS.md`/`wiki-mod/distcc-ng/CLAUDE.md` exception (#126/#127). Historical PRs merged before this fix mostly lack category labels as a result — see #132 for the backfill follow-up.
 
 The existing `changelog-check.yml` workflow still requires PRs to touch `CHANGELOG.md` (or carry `no-changelog-needed`) — with this automated chain, that per-PR requirement may no longer be the right gate (the file now only changes automatically at release-publish time), but relaxing it is a separate, not-yet-made decision.
 
