@@ -11,6 +11,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Removed
+
+- **`doc/web/`**: deleted the old, conserved upstream distcc project
+  website (index/FAQ/benchmark/results/scenarios/security pages, man-page
+  HTML mirrors, and static assets) — historical project marketing/docs
+  content this fork doesn't maintain or serve.
+
+- **`Makefile.in`'s `man-html`/`upload-man`/`upload-dist` targets,
+  `packaging/googlecode_upload.py`**: dead maintainer-only upstream
+  tooling found while removing `doc/web/` — `man-html`/`upload-man`
+  directly wrote into (and `svn commit`'d) the now-deleted
+  `doc/web/man/`, and `upload-dist` called `googlecode_upload.py` to
+  upload release tarballs to Google Code, which shut down in 2016. None
+  of this fork's own release process (`.github/workflows/package-release.yml`,
+  GHCR) uses any of it.
+
 ## [3.6.0-NG] - 2026-07-19
 
 ### Security
