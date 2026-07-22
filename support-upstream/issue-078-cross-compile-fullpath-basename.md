@@ -409,3 +409,24 @@ underlying, real bug this PR fixes is real and distinct: a *bare*
 handling it would have gotten via its bare name, purely because of the
 unstripped-path string comparison. An already fully-qualified
 cross-compiler name was never broken and needs no further change.
+
+## Related, NOT fixed here: `dcc_execvp()`'s PATH-basename fallback (src/exec.c)
+
+Found via a Codex review on PR #281 after the directory-preservation
+fix above: `src/exec.c`'s `dcc_execvp()` -- the single, shared exec path
+used to actually run a compiler, both client- and server-side -- falls
+back to a bare `execvp()` on just the basename if the first exec (using
+the resolved, possibly absolute/directory-qualified `argv[0]`) fails.
+In a real distributed build, that first exec can fail simply because
+the server's toolchain isn't laid out at the same path as the client's
+(e.g. a directory-qualified cross-compiler path this PR's own fix now
+sends more often, per the directory-preservation section above). The
+fallback then lets the *server's* `$PATH` resolve the bare name, which
+can silently pick a different same-named binary than the one the client
+actually selected -- no error, no signal, just a potentially different
+compiler producing the output.
+
+This is a pre-existing behavior in a generic function used far beyond
+this PR's own two functions (`dcc_add_clang_target()`,
+`dcc_gcc_rewrite_fqn()`) -- fixing it is out of scope for this PR (see
+`AGENTS.md` rule 58). Tracked separately: wiki-mod/distcc-ng#287.
