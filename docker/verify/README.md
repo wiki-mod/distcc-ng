@@ -69,6 +69,29 @@ separate real failures:
   or a multi-tenant host — but is a reasonable trade-off for a container
   whose whole purpose is real debugging with `gdb`/`strace`/`ltrace`.
 
+## Using your own ccache Redis remote storage
+
+The image bakes in `ccache` (see the Dockerfile's own build-time self-test),
+which honors ccache's standard `CCACHE_REMOTE_STORAGE` environment variable
+(ccache's current name for this setting — `CCACHE_SECONDARY_STORAGE` is the
+exact same setting under ccache's own prior, still-honored name, not a
+separate option) at container run time. Point it at your own Redis instance
+to get a shared remote compile cache across runs/machines, no image rebuild
+needed:
+
+```bash
+docker run --rm -it \
+  -e CC="ccache gcc" \
+  -e CCACHE_REMOTE_STORAGE="redis://your-redis-host:6379" \
+  -v "$(pwd):/work/src:rw" distcc-ng-verify:local bash -c \
+  'cd /work/src && ./autogen.sh && ./configure PYTHON=python3 && make && make check'
+```
+
+This repo's own CI (`.github/workflows/verify-image-build.yml`'s
+`build_and_selftest` job) proves this combination works end-to-end against
+an ephemeral, CI-local Redis service container — unrelated to any real
+Redis instance you point `CCACHE_REMOTE_STORAGE` at yourself.
+
 ## Ptrace-dependent tool self-test (gdb/strace/ltrace)
 
 `docker build`'s `RUN` steps have no `CAP_SYS_PTRACE` and the default seccomp

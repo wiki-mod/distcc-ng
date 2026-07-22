@@ -13,6 +13,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/verify-image-build.yml`/`docker/verify/README.md`**
+  (#264): added a `ccache + Redis remote-storage self-test` step (plus an
+  ephemeral, CI-local `redis:alpine` `services:` container) to the
+  `build_and_selftest` job, proving ccache's `CCACHE_REMOTE_STORAGE`
+  integration — per the maintainer, the single most common real-world
+  ccache deployment shape — actually round-trips a real cache hit through
+  Redis. Two separate, fresh `docker run` invocations compile the same real
+  source file (`src/dopt.o`, via this repo's own Makefile with
+  `CC="ccache gcc"`); the second invocation's container has no local
+  on-disk ccache dir, so a reported hit there can only have come from
+  Redis. Unrelated to and never referencing the maintainer's own real
+  `CCACHE_REMOTE_STORAGE` repo secret (a private LAN Redis instance
+  unreachable from GitHub-hosted runners). `docker/verify/README.md`
+  documents pointing the published image at a user's own Redis instance at
+  `docker run` time.
 - **`.github/workflows/verify-image-build.yml`/`docker/verify/`** (#264):
   publish the verification/debug container to GHCR as
   `distcc-ng-buildtools:latest` (plus a short-SHA tag per publish) on every
