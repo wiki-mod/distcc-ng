@@ -696,13 +696,30 @@ static void dcc_rewrite_generic_compiler(char **argv)
  * argv[0] may be a full path (e.g. the user ran "distcc /usr/bin/clang-15
  * ...", or a masquerade/wrapper resolved to an absolute path further up the
  * call chain) rather than a bare name found via PATH -- match against the
- * basename, not the raw argv[0], so this still fires in that case. This is
- * purely a string classification used to decide whether to append a flag
- * below; nothing here execs argv[0] itself, so there is no risk of running
- * a different physical binary than the one the caller invoked (contrast
- * with dcc_resolve_march_native() in arg.c, which does exec argv[0] and
- * must therefore preserve the caller's original path/PATH-search
- * distinction instead of rewriting it to a basename).
+ * basename, not the raw argv[0], so this still fires in that case.
+ *
+ * CAUTION (found empirically, not just by inspection, when this match was
+ * widened to cover full paths, not only bare names): this function itself
+ * never execs argv[0], but that does NOT make a name-only match safe. If
+ * the basename merely *says* "clang" -- a full-path dispatcher or wrapper
+ * that actually invokes a different compiler family under that name -- the
+ * "-target" flag this function appends is still forwarded to whatever that
+ * binary really is by a later stage of dcc_build_somewhere(); a real gcc
+ * executed via such a wrapper rejects "-target" outright ("error:
+ * unrecognized command-line option") and the whole compile fails.
+ * Reproduced with a real, non-symlink dispatcher script named "clang" that
+ * execs gcc: matching only the raw argv[0] (a full path never equals the
+ * bare name "clang"), invoking it by full path added no flag and the
+ * compile succeeded; matching the basename instead, the same full-path
+ * invocation matches "clang", "-target" gets appended, and the compile
+ * hard-fails. This is the same class of "compiler family trusted from the
+ * name alone" problem that dcc_probe_is_clang() (below) exists to close
+ * for dcc_rewrite_generic_compiler(); whether the same probe should gate
+ * this function too -- at the cost of an extra fork+exec on every clang
+ * compile, not just the narrow one-shot "cc"/"c++" dispatch case that
+ * function covers -- is a real design tradeoff (probe cost vs. a wrong
+ * flag silently reaching a mismatched compiler), left as an open decision
+ * rather than resolved unilaterally here.
  */
 static void dcc_add_clang_target(char **argv)
 {
