@@ -1,0 +1,62 @@
+description of distcc protocol version 5
+
+disclaimer
+----------
+
+This document is provided as explanation for people developing or
+debugging distcc.  Discrepancies between this document and the distcc
+code are an error in the document.
+
+protocol
+--------
+
+Protocol 5 combines protocol 3's server-side preprocessing (pump mode) with
+protocol 4's Zstandard compression of the request/response bulk tokens.
+It exists to fill a combination that protocols 1-4 left unreachable: a host
+specification requesting both ",cpp" (server-side cpp) and ",zstd" would
+previously fail to resolve to any protocol version at all.
+
+The protocol number (DIST) sent by the client is set to 5.  The server must
+respond (DONE) in version 5.
+
+request
+-------
+
+Identical in shape to protocol 3's request (CDIR, ARGC/ARGV, then the
+NFIL/NAME/FILE/LINK sequence of the include closure) -- with one important
+exception: the NFIL/NAME/FILE/LINK file bodies are still LZO-compressed,
+not Zstd. This is a deliberate asymmetry, not an oversight: the include
+server (include_server/compress_files.py) prepares that closure ahead of
+the wire-protocol negotiation and hardcodes the LZO ("*.lzo"/"*.lzo.abs")
+image format, independent of which protocol version the client and server
+ultimately agree on. Making that path Zstd-aware as well is future work,
+tracked separately from this protocol version; see "Notes" below.
+
+response
+--------
+
+Exactly as for protocol version 4 (2-int length format -- compressed then
+uncompressed -- for the SERR/SOUT/DOTO bulk tokens, Zstd-compressed bodies),
+but ending with a DOTD token instead of a DDWO token:
+
+DOTD <compressed-len> <uncompressed-len> <bytes>
+    The contents of the result .d file, Zstd-compressed, in the same 2-int
+    format as SERR/SOUT/DOTO. Sent only when cpp ran on the server, exactly
+    as for protocol 3, and only after DOTO -- there is no DDWO (split dwarf)
+    token in this protocol version; see "Notes" below.
+
+Notes
+-----
+
+Protocol 5 does not send a DDWO (split dwarf, `-gsplit-dwarf`) token: that
+would need a wire-format slot between DOTO and DOTD that this protocol
+version doesn't define, and split dwarf has never been implemented for
+server-side cpp in any earlier protocol version either (protocol 3 has no
+DDWO token, and protocol 4's DDWO always assumes client-side cpp, i.e. no
+DOTD in the same response). Adding it is a separate future enhancement, not
+part of this version.
+
+As protocol 3's own notes point out, compression of files should ideally be
+independent of whether preprocessing happens on the server or the client --
+that's not true for the request's file-closure bodies in this protocol
+version either, for the reason explained above.

@@ -2568,6 +2568,70 @@ class DashWpMD_Case(CompileHello_Case):
         self.assert_re_search(r"testhdr\.h", deps)
         self.assert_re_search(r"stdio\.h", deps)
 
+
+class ZstdPumpCompile_Case(CompileHello_Case):
+    """Real distributed compile exercising protocol version 5: Zstandard
+    compression combined with server-side cpp (pump mode) -- see issue #101
+    and distcc.h's DCC_VER_5 comment. This forces ',zstd,cpp' for its own
+    DISTCC_HOSTS regardless of the suite-wide _server_options (typically
+    ',lzo,cpp' under --pump), so it always negotiates DCC_VER_5 specifically
+    rather than DCC_VER_3 (lzo+pump).
+
+    Only meaningful under an actual pump-mode test run (see Makefile.in's
+    pump-maintainer-check / --pump target, both driven through the `pump`
+    wrapper script): the include server that materializes the header
+    closure server-side has to actually be running for ',cpp' to work at
+    all, independent of which compression this test itself asks for.
+    """
+
+    def compileOpts(self):
+        # -MD forces a real DOTD (dependency file) round trip -- exactly
+        # the wire path that needed fixing for DCC_VER_5: clirpc.c's
+        # dcc_retrieve_results() previously assumed DOTD always used LZO's
+        # single-int length format, which would desync (or silently drop
+        # the deps file while still reporting compile success) once DOTD is
+        # zstd-compressed and needs the 2-int compressed/uncompressed
+        # length format instead.
+        return "-MD -MFzstd_pump_test.d"
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "zstd+pump (DCC_VER_5) needs an actual pump-mode test run "
+                "(see --pump); this run has no include server available")
+        CompileHello_Case.setup(self)
+        os.environ['DISTCC_HOSTS'] = (
+            '127.0.0.1:%d,zstd,cpp' % self.server_port)
+
+    def runtest(self):
+        out, unused_err = self.runcmd(self.distcc() + "--version")
+        if 'Zstd compression support' not in out:
+            raise comfychair.NotRunError(
+                "this distcc build has no zstd support (configure "
+                "--without-zstd)")
+        try:
+            os.remove('zstd_pump_test.d')
+        except OSError:
+            pass
+        CompileHello_Case.runtest(self)
+
+        # The dependency file must have actually arrived via the DOTD wire
+        # token, with real content -- a silent decode failure on the new
+        # 2-int DOTD path could leave the compile itself reporting success
+        # while this file is absent, empty, or truncated.
+        deps = open('zstd_pump_test.d').read()
+        self.assert_re_search(r"testhdr\.h", deps)
+
+        # Confirm from the *server's own log* -- not just the client's exit
+        # code -- that this job actually negotiated protocol version 5
+        # (zstd + server-side cpp), rather than a silent fallback to a
+        # different protocol version or to local compilation.
+        log = open(self.daemon_logfile).read()
+        self.assert_re_search(
+            r"accepted job with protover 5 \(compr \d+, cpp_where \d+\)",
+            log)
+
+
 class ScanIncludes_Case(CompileHello_Case):
     """Test --scan-includes"""
 
@@ -3217,6 +3281,7 @@ tests = [
          DashD_Case,
          EmptyDefine_Case,
          DashWpMD_Case,
+         ZstdPumpCompile_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
          BinFalse_Case,

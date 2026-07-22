@@ -11,6 +11,29 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Protocol version 5: Zstandard compression with server-side cpp (pump
+  mode)** (`src/distcc.h`, `src/hosts.c`) — closes the combination gap left
+  by protocol versions 1-4: a host specification requesting both `,cpp`
+  (pump mode) and `,zstd` previously failed to resolve to any protocol
+  version at all ("invalid host options"). `dcc_get_protover_from_features()`
+  / `dcc_get_features_from_protover()` (`src/hosts.c`) now recognize this
+  combination as `DCC_VER_5`. Fixed two real interaction bugs found while
+  wiring the two previously-independent features together (`src/serve.c`,
+  `src/clirpc.c`): the header-closure transfer (`NFIL`/`NAME`/`FILE`, always
+  LZO-compressed by the include-server regardless of the negotiated wire
+  protocol) was at risk of being fed through zstd decompression instead once
+  the top-level negotiated compression became zstd; and the client's `DOTD`
+  (dependency-file) read assumed LZO's single-int length format
+  unconditionally, which would desync once `DOTD` is zstd-compressed and
+  needs the 2-int compressed/uncompressed length format. Split dwarf
+  (`DDWO`) is deliberately *not* extended to this version — see
+  `doc/protocol-5.txt` and `src/distcc.h`'s `DCC_VER_5` comment for why.
+  See `doc/protocol-5.txt` for the full wire-format description and
+  `test/testdistcc.py`'s new `ZstdPumpCompile_Case` for real daemon+compile
+  test coverage of this combination. Refs #101.
+
 ### Removed
 
 - **`ChangeLog`, `NEWS`** (root-level, not `CHANGELOG.md`): deleted as old
