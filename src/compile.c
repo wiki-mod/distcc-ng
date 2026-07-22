@@ -690,36 +690,35 @@ static void dcc_rewrite_generic_compiler(char **argv)
 
 /* Clang is a native cross-compiler, but needs to be told to what target it is
  * building.
- * TODO: actually probe clang with clang --version, instead of trusting
- * autoheader.
  *
  * argv[0] may be a full path (e.g. the user ran "distcc /usr/bin/clang-15
  * ...", or a masquerade/wrapper resolved to an absolute path further up the
  * call chain) rather than a bare name found via PATH -- match against the
  * basename, not the raw argv[0], so this still fires in that case.
  *
- * CAUTION (found empirically, not just by inspection, when this match was
- * widened to cover full paths, not only bare names): this function itself
- * never execs argv[0], but that does NOT make a name-only match safe. If
- * the basename merely *says* "clang" -- a full-path dispatcher or wrapper
- * that actually invokes a different compiler family under that name -- the
- * "-target" flag this function appends is still forwarded to whatever that
- * binary really is by a later stage of dcc_build_somewhere(); a real gcc
- * executed via such a wrapper rejects "-target" outright ("error:
- * unrecognized command-line option") and the whole compile fails.
- * Reproduced with a real, non-symlink dispatcher script named "clang" that
- * execs gcc: matching only the raw argv[0] (a full path never equals the
- * bare name "clang"), invoking it by full path added no flag and the
- * compile succeeded; matching the basename instead, the same full-path
- * invocation matches "clang", "-target" gets appended, and the compile
- * hard-fails. This is the same class of "compiler family trusted from the
- * name alone" problem that dcc_probe_is_clang() (below) exists to close
- * for dcc_rewrite_generic_compiler(); whether the same probe should gate
- * this function too -- at the cost of an extra fork+exec on every clang
- * compile, not just the narrow one-shot "cc"/"c++" dispatch case that
- * function covers -- is a real design tradeoff (probe cost vs. a wrong
- * flag silently reaching a mismatched compiler), left as an open decision
- * rather than resolved unilaterally here.
+ * This function itself never execs argv[0], but a name-only match is not
+ * automatically safe: a full-path dispatcher or wrapper whose basename merely
+ * *says* "clang" but actually invokes a different compiler family gets the
+ * "-target" flag appended regardless, and that flag is forwarded to whatever
+ * the wrapper really execs by a later stage of dcc_build_somewhere() -- a
+ * real gcc behind such a wrapper rejects "-target" outright and the whole
+ * compile fails. Reproduced empirically with a real, non-symlink dispatcher
+ * script named "clang" that execs gcc (see this fork's
+ * support-upstream/issue-078-cross-compile-fullpath-basename.md).
+ *
+ * Only the path-qualified case is at risk: a bare name ("clang") is trusted
+ * exactly as before this basename widening, unchanged risk profile. When
+ * argv[0] is path-qualified, reuse dcc_probe_is_clang() (below) -- the same
+ * "ask the binary itself" probe dcc_rewrite_generic_compiler() already uses
+ * to close this identical class of bug for "cc"/"c++" -- instead of trusting
+ * the basename alone, so the flag is only added once the binary has actually
+ * confirmed it is clang. dcc_probe_is_clang() requires an absolute path; a
+ * relative path-qualified argv[0] (e.g. "./clang") can't be probed and is
+ * treated the same as a failed probe: omit the flag rather than risk
+ * appending one that hard-fails a real gcc wrapper. Omitting "-target" for a
+ * genuine clang only loses the cross-compile triple hint (clang falls back to
+ * its own default target detection) -- a strictly safer failure mode than a
+ * hard compile failure.
  */
 static void dcc_add_clang_target(char **argv)
 {
@@ -732,6 +731,14 @@ static void dcc_add_clang_target(char **argv)
         ;
     else
         return;
+
+    if (base != argv[0] && dcc_probe_is_clang(argv[0]) != 1) {
+        /* Path-qualified, and either confirmed not-clang, or the probe
+         * itself couldn't verify it (non-absolute path, exec failure, etc).
+         * Do not trust the basename alone here -- see the function comment
+         * above. */
+        return;
+    }
 
     /* -target aarch64-linux-gnu */
     if (dcc_argv_search(argv, "-target"))
