@@ -160,7 +160,7 @@ dist_contrib = contrib/distcc-absolutify	\
 dist_include_server_SH = \
 	pump.in
 
-pkgdoc_DOCS = AUTHORS COPYING NEWS \
+pkgdoc_DOCS = AUTHORS COPYING \
 	README README.pump \
 	INSTALL \
 	TODO \
@@ -202,7 +202,7 @@ update_distcc_symlinks_PY = update-distcc-symlinks.py
 
 # These are included in the distribution but not installed anywhere.
 dist_extra =							\
-	README.packaging ChangeLog \
+	README.packaging \
 	packaging/RedHat/rpm.spec \
 	packaging/RedHat/logrotate.d/distcc \
 	packaging/RedHat/init.d/distcc \
@@ -244,7 +244,6 @@ tarball_bz2 = $(tarball).bz2
 tarball_gz = $(tarball).gz
 tarball_sig_bz2 = $(tarball_bz2).asc
 tarball_sig_gz = $(tarball_gz).asc
-distnews = $(PACKAGE_TARNAME)-$(VERSION).NEWS
 
 rpm_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.rpm
 deb_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.deb
@@ -716,7 +715,6 @@ dist:
 		$(BZIP2_BIN) -vfc "$(tarball)" > "$(tarball_bz2)"
 	rm -f "$(tarball)"
 	rm -fr "$(distdir)"
-	cp "$(srcdir)/NEWS" "$(distnews)"
 
 # We create two new directories: one for the build and one to install,
 # and make sure we can build and install from different directories

@@ -11,6 +11,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Removed
+
+- **`ChangeLog`, `NEWS`** (root-level, not `CHANGELOG.md`): deleted as old
+  upstream history this fork doesn't carry forward — `ChangeLog` was a
+  frozen, auto-generated commit log last touched 2011; `NEWS` was upstream's
+  own curated release notes, last touched 2025-01-25 and superseded by
+  `CHANGELOG.md` as the one changelog going forward. `Makefile.in`'s
+  `pkgdoc_DOCS`/`dist_extra` lists and the `dist` target's separate
+  `$(distnews)` copy step (which unconditionally `cp`'d `NEWS` alongside
+  the release tarball) updated accordingly, so `make install-doc`/
+  `make dist` don't break looking for either file. Verified for real: a
+  full build, `make check`, `make install-doc`, and `make dist` all still
+  exit 0 on a real host with both files removed.
+
 ### Added
 
 - **`docker/release/Dockerfile`, `.github/workflows/package-release.yml`** (#181):
