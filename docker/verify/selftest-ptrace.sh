@@ -49,4 +49,26 @@ grep -q 'malloc' ltrace.log \
   || { echo "ERROR: ltrace did not trace the expected library call"; cat ltrace.log; exit 1; }
 echo "OK: ltrace traced a real library call"
 
+# --- python3-dbg + gdb's py-bt: must show a real Python-level backtrace,
+#     not just attach -- proves gdb's bundled python3-gdb.py auto-load
+#     actually works against this image's python3-dbg build, for
+#     debugging the include_server (a Python program) and its C extension
+#     together. Same ptrace-capability reasoning as gdb/strace/ltrace
+#     above -- can't be tested at `docker build` time. ---
+printf '%s\n' \
+  'import time' \
+  'def target_function():' \
+  '    time.sleep(5)' \
+  'target_function()' \
+  > py_target.py
+python3-dbg py_target.py &
+PY_PID=$!
+sleep 1
+gdb -q -p "${PY_PID}" -batch -ex 'py-bt' > py-bt.log 2>&1 || true
+kill "${PY_PID}" 2>/dev/null || true
+wait "${PY_PID}" 2>/dev/null || true
+grep -q 'target_function' py-bt.log \
+  || { echo "ERROR: gdb py-bt did not show the real Python frame target_function"; cat py-bt.log; exit 1; }
+echo "OK: gdb py-bt showed a real Python-level backtrace"
+
 echo "All ptrace-dependent tool self-tests passed."

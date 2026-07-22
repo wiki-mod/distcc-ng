@@ -37,6 +37,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (already available to a `docker build` `RUN` step), unlike the
   ptrace-dependent tools above which need a runtime capability `docker
   build` can't grant.
+- **`docker/verify/Dockerfile`/`docker/verify/selftest-ptrace.sh`** (#264):
+  added `python3-dbg` (debug build + gdb helper macros) for debugging the
+  Python-based include_server and its C extension
+  (`include_server/c_extensions/`) together under `gdb` (`py-bt`/`py-list`).
+  Gets a real functional runtime self-test in `selftest-ptrace.sh` (a real
+  `gdb -p <pid> -ex py-bt` against a running `python3-dbg` process, checked
+  for the actual Python frame name in the output) rather than an existence
+  check, matching this script's existing gdb/strace/ltrace tests -- verified
+  working with real `CAP_SYS_PTRACE` before landing (a non-privileged shell
+  without that capability fails identically to how a plain `docker run`
+  without `--cap-add=SYS_PTRACE` would, which is exactly why this test lives
+  in the runtime script rather than the `Dockerfile`'s own build-time
+  self-test). `pdb` (Python's own built-in debugger) needs no extra
+  package, already ships inside plain `python3`.
 - **`.github/workflows/verify-image-build.yml`/`docker/verify/`** (#264):
   publish the verification/debug container to GHCR as
   `distcc-ng-buildtools:latest` (plus a short-SHA tag per publish) on every

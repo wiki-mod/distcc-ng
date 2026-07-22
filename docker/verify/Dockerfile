@@ -95,6 +95,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libzstd-dev \
       libseccomp-dev \
       gdb \
+      # python3-dbg (debug build + gdb helper macros, e.g. py-bt/py-list):
+      # for debugging the include_server itself (a Python program) and its
+      # C extension (include_server/c_extensions/) together under gdb --
+      # follow-up ask this session. pdb (Python's own built-in debugger)
+      # needs nothing extra, it already ships inside plain python3.
+      python3-dbg \
       # --- Samba-sized reference toolchain (see sizing rationale above):
       #     the real library/header surface a project as demanding as Samba
       #     needs to configure and build, so this image is proven adequate
