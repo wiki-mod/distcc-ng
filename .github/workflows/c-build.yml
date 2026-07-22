@@ -121,6 +121,37 @@ jobs:
       - run: make
       - run: ccache --show-stats
       - run: make check
+      # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py) needs real
+      # root to exercise dcc_discard_root()'s privilege drop -- the plain
+      # `make check` above always runs as the unprivileged
+      # runner user, so that one root-only case is silently NOTRUN there
+      # (see test/comfychair.py's require_root()). ubuntu-latest gives real,
+      # working sudo on a genuine Linux kernel (same basis issue #264's
+      # container work already relies on for dcc_discard_root() coverage),
+      # so run just this one case again, this time under sudo, rather than
+      # re-running the whole suite as root (which would change behavior --
+      # umask/permission checks, etc. -- for many unrelated, non-root-aware
+      # cases). Linux-only: autogroups don't exist on macOS, and the case
+      # self-skips there anyway via its own sys.platform check.
+      # `single-test` depends on check_PROGRAMS, already built (non-root) by
+      # `make check` above, so this does not rebuild anything as root.
+      # comfychair treats a NotRunError skip as a plain exit 0, identical to
+      # a real pass -- so if this ever runs on a future runner image that's
+      # missing /proc/sys/kernel/sched_autogroup_enabled (or has it set to
+      # 0), the step would stay green while providing zero actual coverage
+      # of the root/autogroup behavior it exists to check. Capture the
+      # test's own reported line and fail explicitly on a skip, rather than
+      # trusting the process exit code alone.
+      - if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee autogroup-test.log
+          if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" autogroup-test.log; then
+            echo "::error::AutogroupNicenessPrivilegeDrop_Case was skipped (NOTRUN) instead of actually running -- this runner is missing real root/autogroup coverage, which this step exists to guarantee. See the skip reason above."
+            exit 1
+          fi
+          grep -q "AutogroupNicenessPrivilegeDrop_Case OK" autogroup-test.log \
+            || { echo "::error::AutogroupNicenessPrivilegeDrop_Case did not report OK or NOTRUN -- unexpected output, treating as a failure."; exit 1; }
       # Build-provenance attestation for the actual shipped binaries.
       # Linux-only for now: the OIDC-based attestation API needs the repo's
       # GitHub Actions identity, which is simplest to exercise from one
