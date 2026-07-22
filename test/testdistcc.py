@@ -555,12 +555,21 @@ class IsSource_Case(SimpleDistCC_Case):
 
 class PathSafety_Case(SimpleDistCC_Case):
     def runtest(self):
-        """Test dcc_name_has_path_traversal() and dcc_cdir_has_path_traversal(),
-        which guard the NAME and CDIR tokens respectively.
+        """Test dcc_name_has_path_traversal(), dcc_cdir_has_path_traversal(),
+        and dcc_absolute_link_target_has_path_traversal(), which guard the
+        NAME, CDIR, and (partially) LINK tokens respectively.
 
         NAME validation guards dcc_r_many_files() (src/srvrpc.c) against a
         client-supplied path that could escape the server's per-job temp
         directory (issue #93).
+
+        LINK-target validation (absolute-style link_target only) guards the
+        same function's symlink-creation path against the same "/../ "
+        escape shape (issue #95) -- a relative link_target is deliberately
+        left unvalidated; see pathsafety.h's own comment on
+        dcc_absolute_link_target_has_path_traversal() for why that residual
+        case needs a real containment boundary (issue #289), not a text
+        check, to close properly.
 
         CDIR validation guards make_temp_dir_and_chdir_for_cpp() (src/serve.c)
         against a client-supplied current working directory that could allow
@@ -638,6 +647,35 @@ class PathSafety_Case(SimpleDistCC_Case):
             if o != expected:
                 raise AssertionError("h_pathsafety --cdir %s gave %s, expected %s" %
                                      (repr(cdir), repr(o), repr(expected)))
+
+        # Test dcc_absolute_link_target_has_path_traversal() behavior
+        # (LINK token's link_target, absolute-style only -- issue #95).
+        # Only closes the absolute-target case (same "/../ " shape as NAME);
+        # a relative link_target is deliberately not validated at all (see
+        # pathsafety.h's own comment on dcc_absolute_link_target_has_path_traversal()
+        # for why), so no relative cases are exercised here.
+        link_target_cases = (
+                 # Safe: rooted at '/', no ".." component anywhere.
+                 ( "/usr/include",          "safe" ),
+                 ( "/a/b/c",                "safe" ),
+                 ( "/",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component.
+                 ( "/../etc/passwd",        "unsafe" ),
+                 ( "/foo/../../etc/passwd", "unsafe" ),
+                 ( "/foo/..",               "unsafe" ),
+                 ( "/..",                   "unsafe" ),
+                )
+        for link_target, expected_safety in link_target_cases:
+            o, err = self.runcmd("h_pathsafety --link-target '%s'" % link_target)
+            expected = ("%s %s\n" % (expected_safety, link_target))
+            if o != expected:
+                raise AssertionError("h_pathsafety --link-target %s gave %s, expected %s" %
+                                     (repr(link_target), repr(o), repr(expected)))
 
 
 
