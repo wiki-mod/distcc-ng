@@ -269,9 +269,16 @@ jobs:
           printf '%s\n' "${digest}" > "digest-${{ matrix.platform }}.txt"
 
       - name: Upload this run's digest
+        # Artifact name includes github.run_attempt: GitHub's v4 artifacts
+        # can be fetched across previous attempts of the same run unless
+        # explicitly scoped, so a fresh arm64 failure on a rerun (retrying
+        # the same workflow run) could otherwise still recover an earlier
+        # attempt's successful arm64 digest artifact -- the exact stale-
+        # pairing risk this digest mechanism exists to prevent, just moved
+        # from the registry tag to the artifact store.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: image-digest-${{ matrix.platform }}
+          name: image-digest-${{ matrix.platform }}-${{ github.run_attempt }}
           path: digest-${{ matrix.platform }}.txt
 
   publish_manifest:
@@ -298,7 +305,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: image-digest-*
+          pattern: image-digest-*-${{ github.run_attempt }}
           path: digests
           merge-multiple: true
 
