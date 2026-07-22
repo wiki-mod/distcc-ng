@@ -12,6 +12,12 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to check (this workflow has no pull_request event context when run manually, so it must be given explicitly)"
+        required: true
+        type: string
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
@@ -30,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
         run: |
           if gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '.[].name' \
               | grep -qx 'no-changelog-needed'; then
