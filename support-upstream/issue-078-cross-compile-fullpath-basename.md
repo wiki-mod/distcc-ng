@@ -166,20 +166,27 @@ execs anything — but the `argv` it hands off *is* exec'd by a later
 stage, and a real gcc backing such a wrapper rejects `-target` outright,
 hard-failing the compile.
 
-**Resolved** (commit `9b4d8a2`): `dcc_add_clang_target()` now reuses
-`dcc_probe_is_clang()` — the same "ask the binary itself" probe
+**Resolved** (commit `9b4d8a2`, refined in `4aaf909`): `dcc_add_clang_target()`
+now reuses `dcc_probe_is_clang()` — the same "ask the binary itself" probe
 `dcc_rewrite_generic_compiler()` already uses for this identical class of
 bug — gated on the path-qualified case that introduced the risk (`base
 != argv[0]`); a bare name keeps its pre-existing, unchanged trust. A
-relative path-qualified name (e.g. `./clang`) is resolved via `realpath()`
-before probing so it can still be verified; if resolution or the probe
-itself fails, or `dcc_probe_is_clang()` isn't compiled at all (a build
-without `HAVE_FSTATAT`), the flag is omitted rather than trusting the
-basename — a genuine clang only loses the cross-compile triple hint in
-that case (falls back to its own default target detection), a strictly
-safer failure mode than a hard compile failure against a mismatched
-wrapper. See `src/compile.c`'s `dcc_add_clang_target()` comment for the
-current, up-to-date statement of this behavior.
+relative path-qualified name (e.g. `./clang`) has only its *directory*
+component resolved to an absolute path via `realpath()`, then rebuilt as
+`<resolved-dir>/clang` — not the whole path resolved via `realpath()`,
+which would follow a symlink at the final component too. That distinction
+matters for a ccache-style install where `clang` is itself a symlink to a
+dispatcher that decides its own behavior from `argv[0]`'s basename:
+resolving the whole path would probe the dispatcher's own identity instead
+of the name the caller actually invoked, silently failing to detect a real
+clang behind such a symlink. If directory resolution or the probe itself
+fails, or `dcc_probe_is_clang()` isn't compiled at all (a build without
+`HAVE_FSTATAT`), the flag is omitted rather than trusting the basename —
+a genuine clang only loses the cross-compile triple hint in that case
+(falls back to its own default target detection), a strictly safer
+failure mode than a hard compile failure against a mismatched wrapper.
+See `src/compile.c`'s `dcc_add_clang_target()` comment for the current,
+up-to-date statement of this behavior.
 
 A third instance of the same literal-`argv[0]`-comparison pattern exists
 in the same file, `dcc_rewrite_generic_compiler()`'s entry check
