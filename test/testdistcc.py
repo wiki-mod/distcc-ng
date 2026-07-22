@@ -128,8 +128,11 @@ Example:
 # TODO: Test a nasty cpp that always writes to stdout regardless of
 # -o.
 
-# TODO: Test giving up privilege using --user.  Difficult -- we may
-# need root privileges to run meaningful tests.
+# Giving up privilege using --user is now covered, root-only, by
+# AutogroupNicenessPrivilegeDrop_Case below: GitHub Actions runners give
+# real root via sudo on a real Linux kernel, so the "may need root
+# privileges" limitation that deferred this for 15+ years no longer
+# applies for at least this one --user scenario (Refs #77, PR #279).
 
 # TODO: Test that recursion safeguard works.
 
@@ -1891,6 +1894,132 @@ class NoDetachDaemon_Case(CompileHello_Case):
         self.assert_equal(self.pid, pid)
 
 
+class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
+    """Root-only: negative autogroup niceness after a --user privilege drop.
+
+    Exercises the exact scenario found by a Codex review on PR #279
+    (Refs #77): distccd started as root with a negative --nice value and
+    --user set to an unprivileged account. main()'s nice(opt_niceness) in
+    src/daemon.c runs while still root and succeeds, but
+    dcc_set_autogroup_niceness() (src/dparent.c) only runs much later, from
+    dcc_detach() after setsid(), by which point dcc_discard_root() has
+    already permanently dropped root/CAP_SYS_NICE. The kernel's
+    proc_sched_autogroup_set_nice() rejects a negative autogroup nice
+    write without that capability, so the write fails with EPERM: a real,
+    currently-unfixed, non-fatal (rs_log_warning only) gap. This test does
+    not fix the ordering -- see support-upstream/issue-077-autogroup-niceness.md
+    and the open PR #279 review thread for why: retaining CAP_SYS_NICE
+    across the privilege drop is a nontrivial, security-sensitive change to
+    src/setuid.c that hasn't been signed off on. This test only documents
+    that the gap is real, is actually surfaced as a warning (not silently
+    swallowed), and does not regress.
+
+    Root and Linux are both required to observe this at all: autogroups are
+    a Linux-only scheduler feature (gated by HAVE_LINUX in
+    dcc_set_autogroup_niceness() itself), and only a real root-started
+    distccd can exercise dcc_discard_root()'s privilege drop in the first
+    place -- see the 15+-year-old TODO this replaces, above, and
+    test/comfychair.py's require_root()/CheckRoot_Case for the existing
+    skip-unless-root convention this follows. `make check` itself must be
+    invoked as root (e.g. `sudo make check`) for this case to actually run;
+    it does not shell out to sudo per-command itself.
+    """
+
+    # "nobody" is a real, always-present unprivileged Linux account -- no
+    # dedicated test user needs to be created for this, unlike opt_user's
+    # own default of "distcc" (which does not exist on most systems and
+    # would just fall back to "nobody" anyway, see src/setuid.c's
+    # dcc_preferred_user()).
+    DROP_USER = "nobody"
+    NICE_VALUE = -5
+
+    def setup(self):
+        self.require_root()
+        if not sys.platform.startswith('linux'):
+            raise comfychair.NotRunError(
+                'autogroups are a Linux-only kernel feature')
+        try:
+            with open('/proc/sys/kernel/sched_autogroup_enabled', 'rt') as f:
+                if f.read().strip() != '1':
+                    raise comfychair.NotRunError(
+                        'kernel autogroup scheduling is disabled '
+                        '(sched_autogroup_enabled != 1)')
+        except IOError:
+            raise comfychair.NotRunError(
+                'kernel has no sched_autogroup_enabled knob (autogroups '
+                'unsupported on this kernel)')
+        # Deliberately calls SimpleDistCC_Case.setup(), not
+        # WithDaemon_Case.setup(): the latter starts the daemon with the
+        # default daemon_command() immediately, before this class's
+        # overridden daemon_command() (with --user/--nice) would apply.
+        SimpleDistCC_Case.setup(self)
+        self.daemon_pidfile = os.path.join(os.getcwd(), "daemonpid.tmp")
+        self.daemon_logfile = os.path.join(os.getcwd(), "distccd.log")
+        self.daemon_sysroot = os.getcwd()
+        self.server_port = DISTCC_TEST_PORT
+        self.startDaemon()
+
+    def daemon_command(self):
+        """Root, negative --nice, and --user together are what makes the
+        privilege-drop-before-autogroup-write ordering in dparent.c
+        actually observable; --log-level debug is needed to capture the
+        trace/warning lines this test also checks."""
+        return (self.distccd() +
+                "--verbose --log-level debug --daemon --nice %d --user %s "
+                "--lifetime=%d --log-file %s --pid-file %s --port %d "
+                "--allow 127.0.0.1 --enable-tcp-insecure --sysroot %s"
+                % (self.NICE_VALUE, self.DROP_USER, self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+    def runtest(self):
+        pid = int(open(self.daemon_pidfile, 'rt').read())
+
+        # Confirm the plain per-process niceness genuinely is negative --
+        # i.e. main()'s nice(opt_niceness), run while still root before
+        # dcc_discard_root(), really did succeed. If this were not
+        # negative, the autogroup-write failure checked below would be
+        # unsurprising for the wrong reason.
+        actual_niceness = os.getpriority(os.PRIO_PROCESS, pid)
+        self.assert_(actual_niceness < 0,
+                     "expected negative process niceness for pid %d, got %d"
+                     % (pid, actual_niceness))
+
+        # Read /proc/<pid>/autogroup DIRECTLY, per
+        # doc/verification-checklist.md's baseline item on reading real OS
+        # state rather than trusting a trace/log line as sufficient
+        # evidence on its own.
+        with open('/proc/%d/autogroup' % pid, 'rt') as f:
+            autogroup_content = f.read()
+        self.log("autogroup content for pid %d: %r" % (pid, autogroup_content))
+        m = re.search(r'nice (-?\d+)', autogroup_content)
+        self.assert_(m is not None,
+                     "could not parse /proc/%d/autogroup: %r"
+                     % (pid, autogroup_content))
+        autogroup_nice = int(m.group(1))
+
+        # This is the actual, currently-accepted limitation (see
+        # support-upstream/issue-077-autogroup-niceness.md and PR #279's
+        # review thread): setsid() (called from dcc_detach(), just before
+        # dcc_set_autogroup_niceness()) always allocates a fresh autogroup
+        # starting at nice 0, and the negative-nice write that would change
+        # that is rejected by the kernel because CAP_SYS_NICE is already
+        # gone by this point. If this assertion ever fails because the
+        # autogroup shows the real negative value instead, the ordering bug
+        # has been fixed and this test (and the support-upstream doc) need
+        # updating to match, not silencing.
+        self.assert_equal(autogroup_nice, 0)
+
+        log_contents = open(self.daemon_logfile, 'rt').read()
+        self.assert_(
+            re.search(r'autogroup nice -?\d+ failed: Operation not permitted',
+                      log_contents) is not None,
+            "expected an 'autogroup nice ... failed: Operation not permitted' "
+            "warning in the daemon log, got:\n%s" % log_contents)
+
+
 class ImplicitCompiler_Case(CompileHello_Case):
     """Test giving no compiler works"""
     def compileCmd(self):
@@ -2647,6 +2776,7 @@ tests = [
          BadInclude_Case,
          PreprocessPlainText_Case,
          NoDetachDaemon_Case,
+         AutogroupNicenessPrivilegeDrop_Case,
          SBeatsC_Case,
          DashD_Case,
          EmptyDefine_Case,

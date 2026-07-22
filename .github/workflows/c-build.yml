@@ -121,6 +121,22 @@ jobs:
       - run: make
       - run: ccache --show-stats
       - run: make check
+      # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py, Refs #77,
+      # PR #279) needs real root to exercise dcc_discard_root()'s privilege
+      # drop -- the plain `make check` above always runs as the unprivileged
+      # runner user, so that one root-only case is silently NOTRUN there
+      # (see test/comfychair.py's require_root()). ubuntu-latest gives real,
+      # working sudo on a genuine Linux kernel (same basis issue #264's
+      # container work already relies on for dcc_discard_root() coverage),
+      # so run just this one case again, this time under sudo, rather than
+      # re-running the whole suite as root (which would change behavior --
+      # umask/permission checks, etc. -- for many unrelated, non-root-aware
+      # cases). Linux-only: autogroups don't exist on macOS, and the case
+      # self-skips there anyway via its own sys.platform check.
+      # `single-test` depends on check_PROGRAMS, already built (non-root) by
+      # `make check` above, so this does not rebuild anything as root.
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test
       # Build-provenance attestation for the actual shipped binaries.
       # Linux-only for now: the OIDC-based attestation API needs the repo's
       # GitHub Actions identity, which is simplest to exercise from one

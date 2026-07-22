@@ -70,3 +70,21 @@ static void dcc_set_autogroup_niceness(void)
 ## Empirical verification
 
 Built and tested on a real Linux host: `distccd -N 7` (no inherited niceness) showed `/proc/<pid>/autogroup` reporting `nice 7`, matching `getpriority()`'s post-`nice(2)` value, confirmed via the daemon's own `autogroup niceness: 7` trace line. `make check` passes cleanly on both the Linux (`HAVE_LINUX`) and non-Linux (compiled with `-UHAVE_LINUX -Wunused-parameter -Werror` to confirm no dead-parameter warning) code paths.
+
+## Known limitation: negative autogroup nice after a `--user` privilege drop
+
+Found by a Codex review on PR #279 (`src/dparent.c:454`, "Preserve privilege for negative autogroup nice") and empirically confirmed live (root access, kernel 7.0.12, `sched_autogroup_enabled=1`): when `distccd` is started **as root** with a **negative** final niceness and `--user <unprivileged account>`, the autogroup write in `dcc_set_autogroup_niceness()` runs *after* `dcc_discard_root()` (`src/daemon.c`'s `main()`) has already permanently dropped root/`CAP_SYS_NICE` — by the time `dcc_detach()` calls `setsid()` and this function, the process can no longer lower its own (or its session's) niceness. The kernel's `proc_sched_autogroup_set_nice()` rejects the write with `EPERM`, so the new autogroup is left at `nice 0` even though the plain per-process niceness (set earlier, while still root) is correctly negative:
+
+```
+sudo ./distccd -N -5 --user nobody --daemon --allow 127.0.0.1 --port 43334 --log-file /tmp/distccd_test.log --log-level debug
+```
+```
+distccd[1673816] (dcc_detach) setsid to session 1673816
+distccd[1673816] (dcc_set_autogroup_niceness) autogroup niceness: -5
+distccd[1673816] (dcc_set_autogroup_niceness) Warning: autogroup nice -5 failed: Operation not permitted
+```
+`/proc/<pid>/autogroup` reads `nice 0` after startup; `ps -o pid,ni,cmd` for the same pid shows the real process `NI` as `-5` — so only the autogroup write is rejected, not the plain per-process niceness.
+
+This is a real, reproducible gap, but not a silent one: the existing `rs_log_warning` in `dcc_set_autogroup_niceness()` already surfaces it, which is why this is tracked here as a **known, deliberate limitation** rather than fixed in PR #279 itself. Fix options considered on the PR #279 review thread: (1) restructure `dcc_detach()`'s fork/`setsid()`/privilege-drop ordering — rejected as too invasive, risks the documented "errors go to stdout before detach" behavior and classic double-fork daemonization semantics; (2) retain `CAP_SYS_NICE` across the privilege drop via `prctl(PR_SET_KEEPCAPS)`/`capset()` — a nontrivial, security-sensitive change to `src/setuid.c` needing either a new `libcap` dependency (compatibility-policy sign-off) or hand-rolled raw capability syscalls. Neither has been decided on by the maintainer as of this writing; the PR #279 review thread is left open pending that decision, not resolved.
+
+**Test coverage**: `test/testdistcc.py`'s `AutogroupNicenessPrivilegeDrop_Case` (root-only, Linux-only, skips everywhere else via `require_root()`/`sys.platform` checks) starts a real `distccd -N -5 --user nobody --daemon`, reads `/proc/<pid>/autogroup` directly, and asserts the write is rejected (`nice 0`) with the expected `Operation not permitted` warning in the daemon log — i.e. it documents and pins down *current* behavior, it does not fix it. If either fix option above is ever implemented, this test's assertions (and this section) need updating to match, not silencing.
