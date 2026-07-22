@@ -24,6 +24,16 @@ rule this checklist operationalizes.
       **on its own proves nothing about new/changed behavior** — it only
       proves the change didn't break something already covered. Never
       report this alone as "verified."
+- [ ] If the change claims an OS-visible runtime effect that isn't
+      observable through `distcc`/`distccd`'s own log output (a `/proc`
+      entry, a scheduler/priority setting, a file-mode bit, a signal
+      disposition, etc.), read that OS state directly after triggering the
+      change (e.g. `cat /proc/<pid>/autogroup`) rather than trusting a
+      trace line claiming the syscall/write succeeded — a trace line only
+      proves the code was reached, not that the OS actually applied the
+      effect. Added after issue #77's autogroup-niceness fix, verified by
+      reading `/proc/<pid>/autogroup` directly rather than just trusting
+      `distccd`'s own trace log.
 
 ## 1. Permission / file-mode changes (`open()`/`fopen()` modes, umask handling)
 
