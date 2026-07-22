@@ -2,15 +2,13 @@
 
 **Fork issue:** [wiki-mod/distcc-ng#77](https://github.com/wiki-mod/distcc-ng/issues/77)
 **Fixed by:** [wiki-mod/distcc-ng#279](https://github.com/wiki-mod/distcc-ng/pull/279)
-**Upstream location:** `src/dparent.c`, function `dcc_detach()`
-**Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-21)
+**Upstream location:** `src/dparent.c`, function `dcc_detach()` (lines 343-369, `setsid()` call at lines 366-369)
+**Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-21; exact lines confirmed via `git show 8d569d19:src/dparent.c | grep -n "setsid\|dcc_detach"`)
 **Searched upstream issues/PRs for:** `autogroup` — found upstream's own **open, unmerged** PR that proposes exactly this fix: [distcc/distcc#468](https://github.com/distcc/distcc/pull/468) ("distccd: set autogroup niceness"). **Verified live via `gh api repos/distcc/distcc/pulls/468` on 2026-07-21: `state: open`, `merged: false`, last activity 2024-03-27.** This is a point-in-time observation, not a standing fact — re-check the PR's live state before citing it as still-open in any future work.
 
-## Note on scope: an open upstream PR, not a fork-only finding
-
-Same situation as `issue-076-serve-prefix-map.md`: issue #77 was opened specifically to port upstream PR #468's own fix, not from an independently-found fork bug. Documented here anyway per rule 57 (a support-upstream check is required on every code-changing PR), and the underlying gap — `src/dparent.c`'s current `master` has no autogroup handling at all — is a real, still-live condition in upstream's own source, not something upstream already addressed elsewhere. As of the 2026-07-21 check: **upstream has its own fix sitting open and unreviewed for close to two years** (last activity 2024-03-27); this fork adopted the underlying idea directly rather than waiting, though — see below — not as a literal port of #468's diff.
-
 ## The problem
+
+Not a bug this fork found independently — issue #77 was opened specifically to port upstream PR #468's own fix (same situation as `issue-076-serve-prefix-map.md`). Documented here anyway per rule 57 (a support-upstream check is required on every code-changing PR), since the underlying gap — `src/dparent.c`'s current `master` has no autogroup handling at all — is a real, still-live condition in upstream's own source, not something upstream already addressed elsewhere. As of the 2026-07-21 check: **upstream has its own fix sitting open and unreviewed for close to two years** (last activity 2024-03-27); this fork adopted the underlying idea directly rather than waiting, though — see "Fixed code" below — not as a literal port of #468's diff.
 
 `distccd`'s `main()` (`src/daemon.c`) calls `nice(opt_niceness)` early, before dropping root, to give the whole daemon process a lower CPU scheduling priority than interactive/foreground work on the same host — the sensible default for a background compile-farm daemon. But `dcc_detach()` (`src/dparent.c`) later calls `setsid()` to daemonize, and on a kernel with Linux's autogroup scheduling enabled (the default on most modern distros), `setsid()` allocates a **brand-new autogroup for the new session, starting at niceness 0** — independent of the per-process nice value already set. Autogroup scheduling ranks *groups* of processes (roughly: sessions) against each other first, then niceness within a group second; since the daemon's session was just reset to autogroup-niceness 0, the earlier `nice(2)` call only affects how the daemon's own child processes rank against each other, not how the daemon's session as a whole competes against an interactive user's shell session on the same machine — silently defeating the whole point of niceing the daemon in the first place.
 
