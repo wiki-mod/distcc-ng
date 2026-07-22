@@ -59,6 +59,7 @@
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 
 #include "exitcode.h"
 #include "distcc.h"
@@ -355,22 +356,44 @@ void dcc_remove_pid(void)
  * whole point of niceing a background compile-farm daemon in the first
  * place.
  *
- * ENOENT is treated as "no autogroup support" (older kernel, or
- * CONFIG_SCHED_AUTOGROUP=n) and is silently ignored rather than logged --
- * expected in plenty of real environments (older distros, some containers)
- * and not a fault of this daemon. Any other failure (e.g. EINVAL from a
- * niceness value outside [-20,19], or a permission-restricted /proc in a
- * hardened container) is logged as a warning, not an error: this is a
- * best-effort scheduling hint, never worth treating as fatal or noisier
- * than the plain nice(2) failure path in daemon.c's main(), which this
- * mirrors.
+ * Reads the *actual* current process niceness via getpriority() rather
+ * than taking a value from the caller: `-N`/opt_niceness is documented as
+ * an increment applied on top of whatever niceness the daemon already had
+ * (see main()'s `nice(opt_niceness)` call, and distccd.1's own wording),
+ * and nice(2) itself clamps the result to [-20,19] -- so the raw option
+ * value can differ from the process's real final niceness in either
+ * direction (`-N 20` clamps down to 19; already-niced parent + `-N 5`
+ * adds up to more than 5). getpriority() reports the true post-clamp,
+ * post-inheritance value, which is what the autogroup should actually
+ * track. getpriority() legitimately returns -1 for a process really at
+ * niceness -1, so errno must be cleared first and checked after, per its
+ * own man page, to tell that apart from a real failure.
+ *
+ * ENOENT (from opening /proc/self/autogroup) is treated as "no autogroup
+ * support" (older kernel, or CONFIG_SCHED_AUTOGROUP=n) and is silently
+ * ignored rather than logged -- expected in plenty of real environments
+ * (older distros, some containers) and not a fault of this daemon. Any
+ * other failure (a permission-restricted /proc in a hardened container,
+ * or a getpriority() failure) is logged as a warning, not an error: this
+ * is a best-effort scheduling hint, never worth treating as fatal or
+ * noisier than the plain nice(2) failure path in daemon.c's main(), which
+ * this mirrors.
  **/
-static void dcc_set_autogroup_niceness(int niceness)
+static void dcc_set_autogroup_niceness(void)
 {
 #ifdef HAVE_LINUX
-    FILE *fp = fopen("/proc/self/autogroup", "r+");
+    FILE *fp;
     int error = 0;
+    int niceness;
 
+    errno = 0;
+    niceness = getpriority(PRIO_PROCESS, 0);
+    if (niceness == -1 && errno != 0) {
+        rs_log_warning("getpriority failed: %s", strerror(errno));
+        return;
+    }
+
+    fp = fopen("/proc/self/autogroup", "r+");
     if (fp) {
         if (fprintf(fp, "%d\n", niceness) < 0) {
             error = errno;
@@ -386,10 +409,7 @@ static void dcc_set_autogroup_niceness(int niceness)
         rs_log_warning("autogroup nice %d failed: %s", niceness, strerror(error));
 #else
     /* Not built for Linux: autogrouping is a Linux-only kernel feature, so
-     * there is nothing to do here.  The parameter is kept (rather than
-     * `void`) so the call site in dcc_detach() doesn't need its own
-     * HAVE_LINUX guard. */
-    (void) niceness;
+     * there is nothing to do here. */
 #endif
 }
 
@@ -431,7 +451,7 @@ static void dcc_detach(void)
         /* Only meaningful for a session we just created: applying this to
          * an existing (inherited) session would change scheduling for
          * whatever unrelated processes are also in it. */
-        dcc_set_autogroup_niceness(opt_niceness);
+        dcc_set_autogroup_niceness();
     }
 #else /* no HAVE_SETSID */
 #ifdef TIOCNOTTY
