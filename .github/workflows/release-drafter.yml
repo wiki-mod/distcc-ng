@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       # Pinned to v7.5.1's commit (not the floating "v7" tag), per the
       # unpinned-third-party-action CodeQL finding. v7 (unlike v6) declares

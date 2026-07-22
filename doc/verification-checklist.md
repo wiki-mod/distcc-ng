@@ -105,6 +105,38 @@ Relevant to: any change to what gets distributed vs. forced local
       distribution surfaces as a hard error, not a quietly-successful
       local compile that happens to look the same.
 
+### 3a. Compiler identity/family resolution (`argv[0]`/basename comparisons deciding *which physical compiler runs*)
+
+Relevant to: any code that decides "is this gcc or clang", "is this a
+cross-compiler", or otherwise branches on a compiler's name or path —
+`src/arg.c`'s `dcc_resolve_march_native()`, `src/compile.c`'s
+`dcc_add_clang_target()`/`dcc_gcc_rewrite_fqn()`/
+`dcc_rewrite_generic_compiler()`, `src/climasq.c`'s masquerade path
+matching. Added after issues #78/#278 both touched this exact theme from
+opposite directions (one needed the *full path*, not a basename; the
+other needed the *basename*, not the raw path) in the same review round.
+
+- [ ] Test with a real dispatcher/wrapper binary that is **not** named
+      after the compiler family it actually is (e.g. a `#!/bin/sh; exec
+      /usr/bin/clang "$@"` script called `mycompiler`, or a real
+      cross-toolchain-prefixed name like `arm-linux-gnueabihf-gcc`) — a
+      bare, obviously-named invocation (`gcc`, `clang-19`) cannot
+      distinguish "matches by basename" from "matches by raw `argv[0]`"
+      bugs, since both happen to agree when there's no path and no
+      family-obscuring name involved.
+- [ ] If the fix execs or PATH-searches using the resolved name (not just
+      appending a flag), verify a directory-qualified original invocation
+      (e.g. `/opt/toolchain/bin/gcc`) still resolves to a binary in *that*
+      directory, not wherever `$PATH` happens to point — a rewrite that
+      drops the caller's directory can silently swap in a different
+      toolchain's same-named binary.
+- [ ] `docker/verify/`'s current toolchain does **not** include a real
+      cross-compiler (no `arm-linux-gnueabihf-gcc`-style package) — this
+      category's real-toolchain testing currently requires an external
+      host or a hand-built fake dispatcher script, not the verification
+      container. Note this limitation explicitly rather than silently
+      working around it if you hit it again.
+
 ## 4. External-host / network compatibility changes
 
 Relevant to: protocol changes, compiler masquerade/rewrite logic

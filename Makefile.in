@@ -604,9 +604,6 @@ h_parsemask@EXEEXT@: $(h_parsemask_obj)
 h_strip@EXEEXT@: $(h_strip_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_strip_obj) $(LIBS)
 
-h_dopt@EXEEXT@: $(h_dopt_obj)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
-
 h_stats@EXEEXT@: $(h_stats_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_stats_obj) $(LIBS)
 

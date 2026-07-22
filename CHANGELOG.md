@@ -141,6 +141,58 @@ See `doc/release-versioning.md` for the full versioning and release process.
   distcc/distccd's own runtime is dominated by network I/O rather than the
   CPU work `-O3` optimizes.
 
+### Fixed
+
+- **`src/arg.c`** (#280): `dcc_resolve_march_native()` now execs the
+  actually-invoked compiler binary (`argv[0]` unchanged) instead of a
+  basename stripped from it and re-resolved via a fresh `PATH` search.
+  Previously, an explicit compiler path (e.g. `distcc /opt/x/cc ...`, or a
+  masquerade symlink already resolved to one) was reduced to its basename
+  before `execlp()`, which could silently exec a *different* binary than
+  the one actually invoked, or fail to resolve at all if that basename
+  wasn't separately on `PATH` -- either way, `-march=native` silently fell
+  back to a local-only compile instead of distributing. `is_clang` family
+  detection itself was already correct (fixed via #245); only the exec
+  target was still basename-only. Added a targeted regression test
+  (`MarchNativeDispatcherPath_Case` in `test/testdistcc.py`) using a
+  non-"clang"-named dispatcher script at an explicit, not-on-`PATH`
+  location; verified both in the test suite and via a real two-host
+  distributed compile (separate client/server hosts), confirming a
+  `COMPILE_OK` entry in the server's own independent log both times, and
+  confirming the pre-fix code silently compiled locally with zero server
+  log activity for the identical command.
+- **`Makefile.in`** (#280): removed a duplicate `h_dopt@EXEEXT@:` target
+  recipe (one of two identical, back-to-back definitions), which was
+  making every clean build emit a spurious GNU make "overriding recipe for
+  target" warning.
+- **`.github/workflows/release-drafter.yml`** (#280): added
+  `pull-requests: read` to the `update_release_draft` job's permissions
+  block, which had been overridden down to `contents: write` only by the
+  job-level block -- Release Drafter needs read access to merged-PR
+  metadata to build its draft notes.
+- **`.github/workflows/scorecard.yml`** (#280): added `contents: read` to
+  the `analysis` job's permissions block, which had replaced the
+  workflow-level `read-all` with `security-events: write` and
+  `id-token: write` only, leaving `actions/checkout` without read access
+  on a token-scope-enforcing repo.
+- **`.github/workflows/package-release.yml`** (#280): the arm64 container
+  matrix leg is documented as best-effort but had no `continue-on-error`,
+  so `fail-fast: false` alone did not stop an arm64 failure from blocking
+  the release-gating jobs downstream (`publish_manifest`,
+  `publish_github_release`). Added `continue-on-error` scoped to the arm64
+  leg, and made the multi-arch manifest step probe the registry for the
+  arm64 tag first, falling back to an amd64-only manifest rather than
+  failing the whole release when the best-effort arch is unavailable.
+
+### Security
+
+- **`.github/workflows/nightly-publish.yml`** (#280): added
+  `--repo wiki-mod/distcc-ng` to the three `gh release` invocations
+  (`view`/`delete`/`create`) in the tag-move-and-republish step, which were
+  previously relying on `gh`'s ambient default-repo resolution -- per
+  AGENTS.md rule 18, every `gh` command in this repo must pass `--repo`
+  explicitly to prevent it from ever targeting the wrong repository.
+
 ## [3.6.0-NG] - 2026-07-19
 
 ### Security
