@@ -1,7 +1,7 @@
 # Zstd + server-side cpp (pump mode) combination has no protocol version
 
 **Fork issue:** [wiki-mod/distcc-ng#101](https://github.com/wiki-mod/distcc-ng/issues/101)
-**Fixed by:** wiki-mod/distcc-ng#TBD (opened alongside this entry)
+**Fixed by:** [wiki-mod/distcc-ng#301](https://github.com/wiki-mod/distcc-ng/pull/301)
 
 ## Note on scope: this is not a "still-broken upstream" entry
 
