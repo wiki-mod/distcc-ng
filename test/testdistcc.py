@@ -1252,13 +1252,12 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
     not a basename re-resolved via a fresh PATH search.
 
-    Regression test for arg.c's dcc_resolve_march_native() (wiki-mod/
-    distcc-ng#278, finding #2): argv[0] here is an explicit path to a
-    dispatcher script that is NOT named "clang" (and lives in a directory
-    that is deliberately not on $PATH), but the script execs the real local
-    clang underneath -- mirroring macOS's "cc", which is a small dispatch
-    binary rather than a symlink, and any other non-obviously-named
-    compiler wrapper.
+    Regression test for arg.c's dcc_resolve_march_native(): argv[0] here is
+    an explicit path to a dispatcher script that is NOT named "clang" (and
+    lives in a directory that is deliberately not on $PATH), but the script
+    execs the real local clang underneath -- mirroring macOS's "cc", which
+    is a small dispatch binary rather than a symlink, and any other
+    non-obviously-named compiler wrapper.
 
     Before the fix, dcc_resolve_march_native() stripped argv[0] down to its
     basename and ran execlp() on that basename alone; since the dispatcher's
@@ -1278,6 +1277,10 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
     apart."""
 
     def setup(self):
+        # Builds the fake dispatcher fixture described in the class
+        # docstring: a real, non-"clang"-named executable script that execs
+        # the real local clang, placed outside $PATH so a basename-only
+        # lookup (the pre-fix bug) cannot find it by name alone.
         CompileHello_Case.setup(self)
         clang = self._find_compiler("clang")
         self.require(clang is not None,
@@ -1305,11 +1308,18 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         os.chmod(self.dispatcher_path, 0o700)
 
     def compileCmd(self):
+        # Invokes the dispatcher by its full path (not a bare name), with
+        # DISTCC_FALLBACK disabled so a broken -march=native resolution
+        # surfaces as a hard failure instead of a silently-successful local
+        # compile that would mask the exact regression this test targets.
         return self.distcc_without_fallback() + \
                self.dispatcher_path + " -o testtmp.o -march=native " + \
                self.compileOpts() + " -c %s" % (self.sourceFilename())
 
     def linkCmd(self):
+        # Link step doesn't exercise -march=native resolution itself, but
+        # must still invoke the same full-path dispatcher as compileCmd()
+        # so the produced object file links against a consistent compiler.
         return self.distcc() + \
                self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
 
@@ -1348,6 +1358,12 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
             self.fail("compiler command %s produced error:\n%s" % (repr(cmd), residual))
 
     def runtest(self):
+        # A working binary alone can't distinguish a real remote
+        # distribution from a silent local fallback (both produce a valid
+        # testtmp) -- grepping the daemon's own independent log for
+        # COMPILE_OK is the actual proof the compile was distributed, per
+        # doc/verification-checklist.md section 3's real-two-host evidence
+        # bar.
         CompileHello_Case.runtest(self)
         daemon_log = open(self.daemon_logfile).read()
         self.assert_re_search(r'COMPILE_OK', daemon_log)
