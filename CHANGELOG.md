@@ -117,6 +117,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/testdistcc.py`**: `PathSafety_Case` (the NAME/CDIR/LINK-target
+  path-traversal unit tests, most recently extended in #290's fix for
+  #95) was defined but never added to the top-level `tests` list that
+  `make check`/a plain `testdistcc.py` run actually iterates over --
+  found while implementing #292's follow-up fix. It could still be run
+  directly by name (`onetest.py PathSafety_Case`), which is how earlier
+  verification in this session appeared to pass, but a full `make check`
+  silently never exercised it. Now registered; confirmed running (and
+  passing) in both the non-pump and pump `make check` runs.
 - **`include_server/setup.py`**: the include-server's separate Python
   C-extension build was showing both `-O2` and `-O3` on the same `gcc`
   invocation (#229's follow-up gap). `Makefile.in` forwards

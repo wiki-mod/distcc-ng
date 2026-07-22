@@ -3118,6 +3118,7 @@ tests = [
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,
+         PathSafety_Case,
          ScanArgs_Case,
          IncludeServerFileOrder_Case,
          StateFileAtomicWrite_Case,
