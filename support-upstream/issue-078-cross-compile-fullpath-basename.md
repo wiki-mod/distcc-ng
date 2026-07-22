@@ -255,13 +255,13 @@ build (`3.7.0-NG`, built fresh from the current tip):
   compile ran on the *remote* host, not locally:
   ```
   distcc[162050] (dcc_gcc_rewrite_fqn) Re-writing call to '/usr/bin/gcc' to '/usr/bin/x86_64-linux-gnu-gcc' to support cross-compilation.
-  distcc[162050] exec on 192.168.1.240:3632: /usr/bin/x86_64-linux-gnu-gcc -Werror -g -O3 -W -Wall -o .../bulk.o -c src/bulk.c
+  distcc[162050] exec on <host B>:3632: /usr/bin/x86_64-linux-gnu-gcc -Werror -g -O3 -W -Wall -o .../bulk.o -c src/bulk.c
   ```
   Confirmed from **host B's own independent log** (`journalctl -u
   distcc`, the real system `distccd`'s own record, not the client's
   claim), all 15 as `COMPILE_OK`:
   ```
-  distccd[147]: (dcc_job_summary) client: 192.168.1.229:60940 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:73ms /usr/bin/x86_64-linux-gnu-gcc src/bulk.c
+  distccd[147]: (dcc_job_summary) client: <host A>:60940 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:73ms /usr/bin/x86_64-linux-gnu-gcc src/bulk.c
   ```
   (and 14 further identically-shaped `COMPILE_OK` lines for the rest of
   the file set, one per source file, all `exit:0`).
@@ -276,7 +276,7 @@ build (`3.7.0-NG`, built fresh from the current tip):
   load, real parallelism. All 15 succeeded. Confirmed from **host A's own
   independent `distccd` log**, all 15 as `COMPILE_OK`:
   ```
-  distccd[161987]: (dcc_job_summary) client: 192.168.1.240:49664 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:28ms /usr/bin/gcc src/pathsafety.c
+  distccd[161987]: (dcc_job_summary) client: <host B>:49664 COMPILE_OK exit:0 sig:0 core:0 ret:0 time:28ms /usr/bin/gcc src/pathsafety.c
   ```
   (and 14 further identically-shaped lines for the rest of the file set).
 - `DISTCC_FALLBACK=0` was set for both directions throughout — a failure
