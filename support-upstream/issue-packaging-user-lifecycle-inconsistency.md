@@ -20,10 +20,10 @@ uses `-m` (create home directory) with `-d /var/run/distcc` — giving the unpri
 
 ```
 adduser --quiet --system --gid 11 \
-  --home /nonexistent --no-create-home $DISTCC_USER
+  --home / --no-create-home --uid 15 $DISTCC_USER
 ```
 
-deliberately does the opposite: `--no-create-home`, `--home /nonexistent`. The same package, in the same file, gives the exact same service user a home directory on one distro family and refuses to on the other, with no stated reason for the difference. Separately, the Debian branch's `%postun` (line 217) does `deluser --quiet --system distcc` on purge, while Debian's own actual, independently-maintained `distcc` package (verified live on a running Debian host, 2026-07-22 — see this fork's own `packaging/RedHat/rpm.spec` fix in this same change) never removes the user on purge at all. Upstream's RH branch is stricter than upstream's own Debian branch is stricter than Debian's actual package — three different behaviors for what should be one policy decision.
+is a strange middle ground: `--no-create-home` (so it won't try to create anything), but `--home /` — the user's recorded home directory is the filesystem root, not a genuinely empty/inert path like `/nonexistent`. The same package, in the same file, gives the service user a writable home on one distro family and a nominal-but-nonsensical one (`/`) on the other, with no stated reason for either choice. Separately, the Debian branch's `%postun` (line 217) does `deluser --quiet --system distcc` on purge, while Debian's own actual, independently-maintained `distcc` package (verified live on a running Debian host, 2026-07-22 — see this fork's own `packaging/RedHat/rpm.spec` fix in this same change) never removes the user on purge at all, and uses `--home /nonexistent` rather than `--home /`. Upstream's RH branch, upstream's own Debian branch, and Debian's actual shipped package all disagree — three different behaviors for what should be one policy decision.
 
 ## Upstream code (unchanged as of the commit above, upstream)
 
@@ -31,7 +31,7 @@ Both snippets above, byte-for-byte as shown, confirmed via `git show 8d569d19:pa
 
 ## Fixed code (this fork)
 
-This fork's `packaging/RedHat/rpm.spec` %postun` no longer removes the `distcc` user/group on Debian-based purge, matching Debian's own real package behavior (confirmed live on a running host). `docker/release/Dockerfile` (a fork-only addition, no upstream equivalent) was changed to `--no-create-home --home-dir /nonexistent`, matching the Debian branch's own intent within this same upstream file. Upstream's Red Hat branch's own `-m`/`-d /var/run/distcc` inconsistency is left as-is in this change (out of scope — this fork's RH branch wasn't touched), documented here as a live upstream finding rather than silently worked around.
+This fork's `packaging/RedHat/rpm.spec` `%postun` no longer removes the `distcc` user/group on Debian-based purge, matching Debian's own real package behavior (confirmed live on a running host). `docker/release/Dockerfile` (a fork-only addition, no upstream equivalent) was changed to `--no-create-home --home-dir /nonexistent`, matching Debian's own actual, independently-maintained package (not upstream's own Debian branch, which uses `--home /` — this fork's fix deliberately follows the real distro convention over upstream's own inconsistent one). Upstream's Red Hat branch's own `-m`/`-d /var/run/distcc` behavior and upstream's own Debian branch's `--home /` are left as-is in this change (out of scope — this fork's RH branch wasn't touched, and the Debian branch itself is upstream code, not this fork's), documented here as a live upstream finding rather than silently worked around.
 
 ## Empirical verification
 
