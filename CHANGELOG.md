@@ -211,6 +211,39 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `OLD`. Ported directly from upstream's own open (unmerged) fix,
   distcc/distcc#459; added `GdbPrefixMap_Case` to `test/testdistcc.py` to
   cover it, adapted from the same upstream PR's test.
+- **`test/e2e-full/`, `.github/workflows/nightly-publish.yml`** (refs #264):
+  full bidirectional native-compatibility distributed-build E2E test,
+  designed across issue #264's later comments — distinct from `test/e2e/`'s
+  existing quick two-container check, which is unchanged. Two containers
+  (a throwaway one built fresh from the checkout under test, and a stable
+  one carrying Debian's own packaged `distcc`/`distcc-pump`, pinned to the
+  same Debian release as `docker/release/Dockerfile`'s base image) exercise
+  both directions (this fork's client against the native server, and the
+  native client against this fork's server) in both plain and pump mode,
+  building a real, substantial third-party project (Samba by default,
+  Apache httpd present but flagged off via `WORKLOAD=apache`). Success is
+  the server's own log showing at least as many real `COMPILE_OK` entries
+  as the build actually produced object files for, with
+  `DISTCC_FALLBACK=0` throughout. New `full_bidirectional_e2e` job in
+  `nightly-publish.yml` (`workflow_dispatch`-only, targets whatever branch
+  it's dispatched against — `current_dev` in real use), scoped to a bounded
+  real Samba subset (`WAF_TARGETS`) to fit a GitHub-hosted runner's time
+  budget; the full, unrestricted build is intended to run on the project's
+  own Docker hosts (see `test/e2e-full/README.md`). A weekly schedule
+  (Fridays 02:00 CET, Apache as the lighter workload) is written into the
+  workflow but commented out, not armed, pending a separate decision.
+  Verified for real on an independent Docker host (not WSL2): both images
+  build, both plain-mode directions and both pump-mode directions each
+  completed a real distributed compile with the server's own log showing
+  the expected `COMPILE_OK` count — see the introducing PR for the full
+  command/log evidence. Also found and worked around, empirically, two
+  real snags along the way: Debian's `distcc-pump` needs an explicit
+  `,cpp,lzo` `DISTCC_HOSTS` suffix (unlike this fork's own `pump` wrapper's
+  issue #87 auto-append) and its own `--shutdown` handshake hangs under a
+  non-interactive `docker exec` (reproducing this fork's own
+  `support-upstream/issue-007-pump-fail-closed.md` finding), worked around
+  with a bounded `timeout` since these containers are torn down after each
+  run regardless.
 
 ### Fixed
 

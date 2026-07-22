@@ -24,6 +24,17 @@ on:
   schedule:
     # One hour after c-build.yml's 03:00 UTC nightly health check.
     - cron: '0 4 * * *'
+    # --- DISABLED: full_bidirectional_e2e's own weekly schedule --------------
+    # Issue #264's full bidirectional E2E design calls for a weekly run
+    # (Fridays 02:00 CET = 01:00 UTC, WORKLOAD=apache as the lighter workload)
+    # once this job has been proven out -- but arming it is an explicit,
+    # separate decision not yet made (see the full_bidirectional_e2e job's own
+    # comment below). This entry is deliberately commented out, not deleted,
+    # so the intended cadence is visible in the code rather than only in
+    # issue #264's own history. DO NOT UNCOMMENT without first getting the
+    # maintainer's explicit go-ahead -- a weekly full third-party-project
+    # build is a real, non-trivial CI cost commitment, not a free toggle.
+    # - cron: '0 1 * * 5'
 
 permissions:
   contents: write   # force-move the `nightly` tag and create/replace its release
@@ -152,6 +163,68 @@ jobs:
             --prerelease \
             --latest=false \
             --target "${BUILT_SHA}"
+
+  # --- Full bidirectional native-compatibility E2E (issue #264) -------------
+  # The "full automated distributed-build E2E test" designed across issue
+  # #264's later comments -- distinct from test/e2e/run-e2e.sh's existing
+  # quick two-container check (that check actually lives in c-build.yml's
+  # `distributed_e2e` job and is unchanged by this addition; an earlier draft
+  # of issue #264's own design comment referred to it as living in
+  # verify-image-build.yml, which does not match this repo's real workflow
+  # layout -- noted here rather than silently perpetuated).
+  #
+  # Placed in THIS file rather than a new workflow file (per AGENTS.md rule
+  # 61) because this file already: targets current_dev explicitly regardless
+  # of which branch/event triggered it, already has workflow_dispatch wired
+  # up, and already builds+validates current_dev fresh before doing anything
+  # heavier with it -- the exact shape issue #264's design calls for (manual
+  # trigger, current_dev target, build fresh in-test). It deliberately does
+  # NOT participate in this file's own concurrency group gate on `publish`
+  # (no `needs:` relationship either way) -- this job is independent
+  # verification, not a nightly-publish release gate, and must never block or
+  # be blocked by the nightly channel's own build/e2e/publish chain.
+  #
+  # workflow_dispatch-only: `if` below skips this job entirely on the
+  # schedule trigger, so the existing daily 04:00 UTC nightly-publish cadence
+  # never silently grows a full Samba build onto it. See this file's `on:`
+  # block above for the disabled weekly schedule this design calls for
+  # (commented out, not armed, pending a separate maintainer decision).
+  full_bidirectional_e2e:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # A full, unrestricted Samba build across all four legs (direction A/B x
+    # plain/pump) is expected to run long -- this is exactly why issue #264's
+    # design calls for workflow_dispatch only, never a per-PR/per-push gate.
+    # GITHUB_ACTIONS_MAX_JOB_TIMEOUT (360 minutes on GitHub-hosted runners)
+    # is the real ceiling; WAF_TARGETS below scopes this CI leg to a bounded
+    # real subset so a GitHub-hosted run finishes within that ceiling, while
+    # test/e2e-full/README.md documents how to run the full, unrestricted
+    # build on the project's own (non-GitHub-hosted) Docker hosts for the
+    # real full-scale evidence.
+    timeout-minutes: 340
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # No explicit ref: this job is workflow_dispatch-only, so
+        # github.sha/github.ref is always whatever the dispatcher actually
+        # picked (current_dev in real production use, or a feature branch
+        # when a maintainer/agent needs to prove this job out before it
+        # merges) -- unlike this file's schedule-triggered jobs above, which
+        # must redirect off the default branch explicitly.
+      - name: Run the full bidirectional native-compatibility E2E matrix
+        env:
+          WORKLOAD: samba
+          # Bounded real subset (see test/e2e-full/README.md) so this
+          # GitHub-hosted leg finishes within timeout-minutes above. Only
+          # affects the CI-hosted run -- a manual run on a project host with
+          # WAF_TARGETS unset gets the full, unrestricted build.
+          WAF_TARGETS: "replace,ldb,tdb,talloc,tevent"
+        run: bash test/e2e-full/run-bidirectional-e2e.sh
 
   # --- Failure/recovery reporting -------------------------------------------
   # Separate job with needs: on every other job and if: always(), so it fires
