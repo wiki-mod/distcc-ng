@@ -234,7 +234,7 @@ RUN set -eux; \
     #     failures are errors" rule as surely as skipping the check outright.
     #     The real functional trace tests live in
     #     docker/verify/selftest-ptrace.sh, run once against the built image
-    #     via `docker run --cap-add=SYS_PTRACE` (see docker/verify/README.md)
+    #     via `docker run --cap-add=SYS_PTRACE` (see doc/docker.md)
     #     -- that is the honest way to prove these tools work in the
     #     container's actual intended use (an agent's `docker run`, not
     #     `docker build`). ---

@@ -11,6 +11,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Removed
+
+- **`docker/base/`, `docker/compilers/`, `docker/build.sh`**: the original
+  upstream compiler-compatibility test harness (built distcc against
+  gcc-4.8/gcc-5/clang-3.8 on Ubuntu 16.04 Xenial). Not referenced by any
+  `.github/workflows/*.yml` — a manual-only tool, last touched in 2018
+  (pre-fork, Travis-CI era). Verified it still technically builds (real
+  `docker build` on a current host, `docker/base/Dockerfile` still pulls
+  and installs cleanly against Xenial's archive) but decided to drop it as
+  unmaintained, CI-disconnected cruft rather than keep updating it.
+
+### Documentation
+
+- **`doc/docker.md`** (new): consolidates what used to be three separate
+  READMEs scattered across `docker/README.md`, `docker/release/README.md`,
+  and `docker/verify/README.md` into one page under `doc/`, alongside this
+  fork's other topic docs (`doc/compatibility-policy.md`,
+  `doc/release-versioning.md`, etc.) instead of duplicating the pattern of
+  a README per subdirectory.
+
 ### Added
 
 - **`docker/release/Dockerfile`, `.github/workflows/package-release.yml`** (#181):
