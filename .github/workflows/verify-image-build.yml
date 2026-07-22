@@ -235,6 +235,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Stats logs go under $RUNNER_TEMP, never under the checked-out
+          # workspace: the su'd container command below runs `chown -R
+          # verify:verify /work/src` (needed so the non-root `verify` user
+          # can write the rebuilt src/dopt.o into the bind-mounted
+          # workspace), which changes that *host* directory's real
+          # ownership away from the runner's own user for the rest of this
+          # step -- a real, empirically-found failure here first: `tee
+          # first-run-stats.log` into the default (workspace) working
+          # directory failed with "Permission denied" once the chown from
+          # this step's own first `docker run` had already run.
           run_ccache_build () {
             local label="$1"
             local stats_file="$2"
@@ -258,10 +268,10 @@ jobs:
             echo "--- ${label}: ccache stats above ---"
           }
 
-          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" first-run-stats.log
-          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" second-run-stats.log
+          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log"
+          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log"
 
-          if ! grep -qE "Hits:[[:space:]]*[1-9]" second-run-stats.log; then
+          if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
             echo "::error::ccache reported no cache hit on the second, fresh container -- Redis remote storage did not actually serve the cached object"
             exit 1
           fi
