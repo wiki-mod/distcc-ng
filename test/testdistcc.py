@@ -157,7 +157,7 @@ Example:
 
 
 import time, sys, os, glob, re, socket, errno
-import signal, os.path
+import signal, os.path, pwd
 import comfychair
 
 from stat import *                      # this is safe
@@ -1958,6 +1958,53 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         self.daemon_sysroot = os.getcwd()
         self.server_port = DISTCC_TEST_PORT
         self.startDaemon()
+
+    def startDaemon(self):
+        """Root-only variant of WithDaemon_Case.startDaemon().
+
+        distccd drops privileges to self.DROP_USER (dcc_discard_root())
+        *before* opening its log file and writing its pidfile (src/daemon.c's
+        own comment: "Discard privileges before opening log so that if it's
+        created, it has the right ownership") -- but every directory here was
+        just created by this test process while still root (running under
+        `sudo make ... single-test`), so the dropped-privilege process can't
+        write into any of them without help. Narrowly chown just the
+        directories distccd actually needs to write into (the top-level test
+        dir holding the pidfile/log-file, and the TMPDIR-derived working
+        directory distccd chdir()s into after dropping root) to the drop
+        user, rather than loosening permissions world-wide -- same class of
+        gotcha as doc/verification-checklist.md section 9's root-owned bind
+        mount note, just triggered by sudo instead of a Docker mount.
+        """
+        drop_pw = pwd.getpwnam(self.DROP_USER)
+
+        old_tmpdir = os.environ['TMPDIR']
+        daemon_tmpdir = old_tmpdir + "/daemon_tmp"
+        os.mkdir(daemon_tmpdir)
+        os.chown(daemon_tmpdir, drop_pw.pw_uid, drop_pw.pw_gid)
+        os.environ['TMPDIR'] = daemon_tmpdir
+        os.mkdir("daemon")
+        os.chown("daemon", drop_pw.pw_uid, drop_pw.pw_gid)
+        os.chdir("daemon")
+        # self.daemon_pidfile/self.daemon_logfile are absolute paths under
+        # self.daemon_sysroot (the directory this test case started in,
+        # before the chdir above) -- that directory is still root-owned too.
+        os.chown(self.daemon_sysroot, drop_pw.pw_uid, drop_pw.pw_gid)
+        try:
+            while 1:
+                cmd = self.daemon_command()
+                result, out, err = self.runcmd_unchecked(cmd)
+                if result == 0:
+                    break
+                elif result == EXIT_BIND_FAILED:
+                    self.server_port += 1
+                    continue
+                else:
+                    self.fail("failed to start daemon: %d" % result)
+            self.add_cleanup(self.killDaemon)
+        finally:
+            os.environ['TMPDIR'] = old_tmpdir
+            os.chdir("..")
 
     def daemon_command(self):
         """Root, negative --nice, and --user together are what makes the
