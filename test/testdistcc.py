@@ -1959,6 +1959,58 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         self.server_port = DISTCC_TEST_PORT
         self.startDaemon()
 
+    def _log_ancestor_permissions(self, path):
+        """Log owner/mode of `path` and every ancestor directory, up to the
+        filesystem root.
+
+        Purely diagnostic (no side effect): opening a file requires execute
+        (traversal) permission on *every* ancestor directory in its path,
+        not just write permission on the immediate parent -- so a chown of
+        the leaf test directory alone can still leave the daemon unable to
+        reach it if some ancestor (e.g. a CI runner's own home directory,
+        commonly mode 0750 and thus closed to an unrelated "other" account
+        like nobody) blocks traversal. Logged unconditionally so a real
+        failure here shows the actual stat data instead of requiring a
+        second guess-and-rerun round trip.
+        """
+        p = os.path.abspath(path)
+        while True:
+            st = os.stat(p)
+            self.log("ancestor permission check: %s uid=%d gid=%d mode=%o"
+                      % (p, st.st_uid, st.st_gid, S_IMODE(st.st_mode)))
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+
+    def _ensure_ancestors_traversable(self, path, uid, gid):
+        """Grant `uid`/`gid` search (execute) permission on `path` and every
+        ancestor directory, up to the filesystem root.
+
+        Only adds the "other execute" bit where it is missing (a minimal
+        traversal grant -- existing read/write bits, and anything else
+        "other" could already do, are left untouched); does not touch
+        ownership of ancestors above the test's own directories, since
+        chown-ing e.g. a CI runner's home directory would reach well beyond
+        what this test needs or should touch. This exists because a
+        directory-level chown() (see below) is not sufficient on its own:
+        Unix requires execute permission on *every* ancestor directory to
+        open a file deep inside it, not just write permission on the
+        immediate parent.
+        """
+        p = os.path.abspath(path)
+        while True:
+            st = os.stat(p)
+            mode = S_IMODE(st.st_mode)
+            if not (mode & S_IXOTH):
+                os.chmod(p, mode | S_IXOTH)
+                self.log("chmod o+x on %s (was %o, owner uid=%d)"
+                          % (p, mode, st.st_uid))
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+
     def startDaemon(self):
         """Root-only variant of WithDaemon_Case.startDaemon().
 
@@ -1968,15 +2020,24 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         created, it has the right ownership") -- but every directory here was
         just created by this test process while still root (running under
         `sudo make ... single-test`), so the dropped-privilege process can't
-        write into any of them without help. Narrowly chown just the
-        directories distccd actually needs to write into (the top-level test
-        dir holding the pidfile/log-file, and the TMPDIR-derived working
-        directory distccd chdir()s into after dropping root) to the drop
-        user, rather than loosening permissions world-wide -- same class of
+        write into any of them without help. Two distinct fixes are needed,
+        not one: chown() the specific directories distccd actually needs to
+        write into (the TMPDIR-derived working directory, and the
+        comfychair-provided per-test directory holding the pidfile/log-file)
+        to the drop user; and separately, grant traversal (execute)
+        permission on every ancestor directory up to the filesystem root,
+        since a CI runner's own home directory (this test's whole directory
+        tree lives under it) is commonly mode 0750 and blocks an unrelated
+        account like nobody from reaching anything under it at all, no
+        matter what the leaf directories are chowned to. Same class of
         gotcha as doc/verification-checklist.md section 9's root-owned bind
         mount note, just triggered by sudo instead of a Docker mount.
         """
         drop_pw = pwd.getpwnam(self.DROP_USER)
+
+        self._log_ancestor_permissions(self.daemon_sysroot)
+        self._ensure_ancestors_traversable(
+            self.daemon_sysroot, drop_pw.pw_uid, drop_pw.pw_gid)
 
         old_tmpdir = os.environ['TMPDIR']
         daemon_tmpdir = old_tmpdir + "/daemon_tmp"
