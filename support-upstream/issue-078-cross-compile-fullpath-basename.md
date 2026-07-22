@@ -141,17 +141,37 @@ verification below distinguishes a directory-qualified full path with and
 without the target-prefixed sibling present, rather than only the bare-name
 case.
 
-This fix is safe because neither function *executes* `argv[0]` itself —
-they only use it for string classification and (for gcc) to build a new
-`argv[0]` value that a later stage of `dcc_build_somewhere()` will use.
-This is unlike the unrelated, opposite-shaped bug found in the same area
-of this fork (`src/arg.c`'s `dcc_resolve_march_native()`, tracked in
+This fix is safe **against the "wrong physical binary" risk specifically**
+because neither function *executes* `argv[0]` itself — they only use it
+for string classification and (for gcc) to build a new `argv[0]` value
+that a later stage of `dcc_build_somewhere()` will use. This is unlike the
+unrelated, opposite-shaped bug found in the same area of this fork
+(`src/arg.c`'s `dcc_resolve_march_native()`, tracked in
 issue-073-march-native-resolve.md / fixed alongside issue #278's Codex
 findings), where stripping to a basename before an actual `execlp()` call
 changes *which physical binary runs* (PATH search vs. the caller's
 originally-resolved path) — a real behavior change, not a safe
-normalization. No such risk exists here since these two functions never
-exec anything.
+normalization. That specific risk does not apply here since these two
+functions never exec anything themselves.
+
+**This does not mean the basename widening is risk-free overall.** A
+real, different regression was found and reproduced in
+`dcc_add_clang_target()` (the clang-target sibling of the two functions
+above, gated on the compiler being clang rather than gcc): widening its
+match from raw `argv[0]` to a basename means a path-qualified dispatcher
+or wrapper whose name merely says "clang" but actually execs a different
+compiler family (e.g. a real gcc) now gets `-target` appended to the
+`argv` this fix builds. `dcc_add_clang_target()` itself still never
+execs anything — but the `argv` it hands off *is* exec'd by a later
+stage, and a real gcc backing such a wrapper rejects `-target` outright,
+hard-failing the compile. See `src/compile.c`'s `dcc_add_clang_target()`
+comment (added alongside this note, commit `f3b404e`) for the up-to-date
+statement of this risk, and wiki-mod/distcc-ng#281's PR discussion for
+the open decision on how to close it (gate on `dcc_probe_is_clang()`, or
+narrow this fix back to bare names for that function only). Before that
+decision lands, "safe" in this section should be read narrowly as
+"does not reintroduce the wrong-physical-binary class of bug" — not as
+"carries no risk of any kind."
 
 A third instance of the same literal-`argv[0]`-comparison pattern exists
 in the same file, `dcc_rewrite_generic_compiler()`'s entry check
