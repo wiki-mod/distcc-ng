@@ -11,6 +11,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- **`.github/workflows/osv-scanner.yml`**: dropped the redundant top-level
+  `security-events: write` (and `actions: read`) permission grant — both
+  jobs (`scan-pr`, `scan-scheduled`) are mutually exclusive `if:`-gated and
+  already declare their own full job-level permissions block for the
+  reusable workflow they call, so nothing actually relied on the top-level
+  grant. Top-level floor is now `contents: read` only. Resolves Scorecard's
+  `TokenPermissionsID` finding #145 ("topLevel 'security-events' permission
+  set to 'write'") — refs #222/#267.
+
 ### Removed
 
 - **`doc/web/`**: deleted the old, conserved upstream distcc project website
