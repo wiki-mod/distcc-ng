@@ -36,18 +36,36 @@ datarootdir="$(sed -n 's/^datarootdir = //p' Makefile | sed "s|\${prefix}|$prefi
 dir_defs="-DLIBDIR=\"\\\"${prefix}/lib\\\"\" -DSYSCONFDIR=\"\\\"${sysconfdir}\\\"\" -DICONDIR=\"\\\"${datarootdir}/pixmaps\\\"\""
 
 # Compile every source file distcc-ng's real binaries share (see
-# Makefile.in's SRC list), except the ones that define their own main() --
-# only one main is allowed in the final fuzz binary, provided by
-# $LIB_FUZZING_ENGINE. Compiled directly with $CC/$CFLAGS (which already
-# carry the sanitizer/instrumentation flags this environment injects),
-# not through `make`, so those flags aren't overridden by Makefile.in's
-# own CFLAGS assignment.
+# Makefile.in's SRC list), except the ones that ONLY exist as a separate
+# test/tool binary with no other real caller (only one main is allowed in
+# the final fuzz binary, provided by $LIB_FUZZING_ENGINE). Compiled
+# directly with $CC/$CFLAGS (which already carry the sanitizer/
+# instrumentation flags this environment injects), not through `make`, so
+# those flags aren't overridden by Makefile.in's own CFLAGS assignment.
+#
 # Also excludes history.c/renderer.c: per Makefile.in's gnome_obj list,
 # both are compiled exclusively for distccmon-gnome (with $(GNOME_CFLAGS),
 # i.e. glib/gtk), alongside mon-gnome.c itself -- confirmed live:
 # renderer.c fails with "fatal error: 'glib.h' file not found" without
 # excluding it, and this fuzz target has no need for the GNOME GUI monitor.
-main_having_files="daemon distcc fix_debug_info h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text stringmap history renderer"
+#
+# fix_debug_info.c is NOT in this list despite having a main() -- that
+# main (and its rs_program_name) is entirely inside #ifdef TEST, which is
+# never defined here, so it compiles as pure library code with no
+# conflict (confirmed by reading the file, not assumed).
+main_having_files="distcc h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text history renderer"
+
+# daemon.c and stringmap.c DO have a real, unconditional main() (confirmed
+# by reading both files) -- but per Makefile.in's distccd_obj list, both
+# also provide real library functions this fuzz target's link needs
+# (daemon.c: dcc_should_be_inetd/dcc_set_lifetime/dcc_log_daemon_started/
+# dcc_daemon_wd/rs_program_name; stringmap.c: stringmap_load/
+# stringmap_lookup) -- confirmed live: excluding them entirely produces
+# undefined-reference link errors for exactly these symbols. Renaming
+# main via -Dmain=... keeps the rest of each file's real code compiling
+# and linking normally while avoiding a duplicate-main conflict with
+# $LIB_FUZZING_ENGINE's own main.
+main_renamed_files="daemon stringmap"
 
 objs=()
 for f in src/*.c; do
@@ -61,7 +79,14 @@ for f in src/*.c; do
     done
     [ "$skip" -eq 1 ] && continue
     obj="$OUT/${base}.o"
-    eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs -c "$f" -o "$obj"
+    extra_defs=""
+    for rn in $main_renamed_files; do
+        if [ "$base" = "$rn" ]; then
+            extra_defs="-Dmain=distccng_disabled_main_${base}"
+            break
+        fi
+    done
+    eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs "$extra_defs" -c "$f" -o "$obj"
     objs+=("$obj")
 done
 
