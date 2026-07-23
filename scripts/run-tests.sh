@@ -121,9 +121,27 @@ check_status=0
 make check >"$check_log" 2>&1 || check_status=$?
 cat "$check_log"
 
-if grep -qi 'warning:' "$check_log"; then
-    printf '[run-tests] ERROR: make check emitted a compiler warning (warnings are errors, AGENTS.md rule 31) -- matching line(s) from %s:\n' "$check_log" >&2
-    grep -i 'warning:' "$check_log" >&2
+# make check's "check_programs" prerequisite compiles the check_PROGRAMS
+# test-helper binaries (h_argvtostr, h_dopt, h_compile, etc.) for the
+# first time here -- they are not part of plain "make"'s default target --
+# so a real, silent compiler warning could in principle appear only at
+# this step, and still needs to be caught (AGENTS.md rule 31). But a
+# blanket "warning:" substring grep (as used for the build steps above)
+# is wrong for this particular log: test/testdistcc.py's own test cases
+# legitimately produce the literal substring "warning:" as expected data
+# that has nothing to do with a compiler diagnostic -- confirmed live
+# while verifying this script, where a blanket grep produced a false
+# positive on comfychair's own assertEquals failure text quoting gdb's
+# unrelated stderr ("warning: Error disabling address space
+# randomization"), masking the real signal (an actual test FAILURE caused
+# by a container capability/seccomp limitation, doc/verification-
+# checklist.md section 9) behind a misleading "compiler warning" message.
+# Anchor on gcc/clang's actual diagnostic line shape instead
+# ("path/file.c:LINE:[COL:] warning: ..."), which test output prose does
+# not incidentally reproduce.
+if grep -qE '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$check_log"; then
+    printf '[run-tests] ERROR: make check emitted a real compiler warning (warnings are errors, AGENTS.md rule 31) -- matching line(s) from %s:\n' "$check_log" >&2
+    grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$check_log" >&2
     exit 1
 fi
 
