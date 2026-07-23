@@ -739,10 +739,12 @@ class SymlinkTraversal_Case(SimpleDistCC_Case):
         first = os.path.join(legjob, "a", "b", "c", "first.h")
         second = os.path.join(legjob, "a", "b", "c", "d", "second.h")
         mirror = os.path.join(legjob, "a", "mirror.h")
-        if open(first).read() != "one":
-            raise AssertionError("legit: %s has wrong contents" % first)
-        if open(second).read() != "two":
-            raise AssertionError("legit: %s has wrong contents" % second)
+        with open(first) as f:
+            if f.read() != "one":
+                raise AssertionError("legit: %s has wrong contents" % first)
+        with open(second) as f:
+            if f.read() != "two":
+                raise AssertionError("legit: %s has wrong contents" % second)
         # A leaf mirror-style relative symlink (nothing nested under it) is
         # legitimate pump traffic and must be created, not rejected.
         if not os.path.islink(mirror):
@@ -1434,9 +1436,8 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         dispatch_dir = os.path.join(os.getcwd(), "not_on_path")
         os.mkdir(dispatch_dir)
         self.dispatcher_path = os.path.join(dispatch_dir, "mycompiler")
-        f = open(self.dispatcher_path, "w")
-        f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
-        f.close()
+        with open(self.dispatcher_path, "w") as f:
+            f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
         os.chmod(self.dispatcher_path, 0o700)
 
     def compileCmd(self):
@@ -1463,7 +1464,8 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         # doc/verification-checklist.md section 3's real-two-host evidence
         # bar.
         CompileHello_Case.runtest(self)
-        daemon_log = open(self.daemon_logfile).read()
+        with open(self.daemon_logfile) as f:
+            daemon_log = f.read()
         self.assert_re_search(r'COMPILE_OK', daemon_log)
 
 
@@ -2404,7 +2406,8 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
             time.sleep(0.2)
 
     def runtest(self):
-        pid = int(open(self.daemon_pidfile, 'rt').read())
+        with open(self.daemon_pidfile, 'rt') as f:
+            pid = int(f.read())
 
         # Confirm the plain per-process niceness genuinely is negative --
         # i.e. main()'s nice(opt_niceness), run while still root before
@@ -2423,7 +2426,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         # already completed (the log call is the last thing that function
         # does), so this doubles as the synchronization point for the
         # /proc read below, not just a check on its own.
-        log_contents = self._waitForLogPattern(
+        self._waitForLogPattern(
             r'autogroup nice -?\d+ failed: Operation not permitted',
             self.AUTOGROUP_WARNING_TIMEOUT)
 
@@ -2612,6 +2615,8 @@ class ZstdPumpCompile_Case(CompileHello_Case):
         try:
             os.remove('zstd_pump_test.d')
         except OSError:
+            # Fine if it doesn't exist -- this is best-effort cleanup of a
+            # possible leftover from a previous run, not a precondition.
             pass
         CompileHello_Case.runtest(self)
 
@@ -2619,14 +2624,16 @@ class ZstdPumpCompile_Case(CompileHello_Case):
         # token, with real content -- a silent decode failure on the new
         # 2-int DOTD path could leave the compile itself reporting success
         # while this file is absent, empty, or truncated.
-        deps = open('zstd_pump_test.d').read()
+        with open('zstd_pump_test.d') as f:
+            deps = f.read()
         self.assert_re_search(r"testhdr\.h", deps)
 
         # Confirm from the *server's own log* -- not just the client's exit
         # code -- that this job actually negotiated protocol version 5000
         # (zstd + server-side cpp), rather than a silent fallback to a
         # different protocol version or to local compilation.
-        log = open(self.daemon_logfile).read()
+        with open(self.daemon_logfile) as f:
+            log = f.read()
         self.assert_re_search(
             r"accepted job with protover 5000 \(compr \d+, cpp_where \d+\)",
             log)

@@ -230,10 +230,18 @@ jobs:
     strategy:
       matrix:
         variant: [plain, pump]
+        # platform must be a real matrix axis (not bare `include` entries
+        # with no variant key) -- an `include` entry that doesn't specify
+        # every existing axis key doesn't merge per-combination, it instead
+        # overwrites the added key for every generated job in list order,
+        # so the previous plain `include: [{platform: amd64...}, {platform:
+        # arm64...}]` silently made every job build arm64 only (the last
+        # entry wins), and amd64 -- documented as the required leg --
+        # never actually built. Caught live: publish_manifest's "Create
+        # multi-arch manifest" step failed with "digest-plain-amd64.txt:
+        # No such file or directory" since no amd64 leg had ever run.
+        platform: [amd64, arm64]
         include:
-          # amd64 is required; arm64 is best-effort, on GitHub's free
-          # native arm64 public-repo runners -- no QEMU emulation needed,
-          # each leg builds natively for its own architecture.
           - platform: amd64
             runs_on: ubuntu-latest
           - platform: arm64
