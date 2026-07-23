@@ -47,6 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libkrb5-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# Docker's default RUN shell is /bin/sh (dash on this image), which
+# doesn't support `set -o pipefail` -- confirmed live: "set: Illegal
+# option -o pipefail". bash is needed for the autoconf build step below.
+SHELL ["/bin/bash", "-c"]
+
 # autoconf 2.71+ built from source -- :v1's Ubuntu 20.04 base only ships
 # 2.69 via apt, but configure.ac requires AC_PREREQ([2.71]). sha256
 # computed directly from the real downloaded tarball, not copied from an
