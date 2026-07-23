@@ -436,19 +436,17 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
                                    enum dcc_compress *compr,
                                    enum dcc_cpp_where *cpp_where)
 {
-    /* Known protocol versions are NOT a contiguous range: 1-4 are the
-     * original low numbers (1-3 upstream-inherited, 4 this fork's earlier
-     * zstd addition, not yet migrated -- see #304), and this fork's
-     * newer extensions start at 5000+ (issue #304's numbering policy:
-     * the entire 0-3999 range is reserved for whatever upstream
-     * distcc/distcc itself might ever define, so this fork's own
-     * additions never collide with a future upstream protocol version).
-     * A simple "protover >= __DCC_VER_MAX" upper-bound check is therefore
-     * no longer sufficient to reject unknown values -- anything in the
-     * 5-4999 reserved-for-upstream range must be rejected explicitly
-     * too. */
+    /* Known protocol versions are NOT a contiguous range: 1-3 are
+     * upstream-inherited, and this fork's own extensions start at 4000+
+     * (issue #304's numbering policy, reserving the entire 0-3999 range
+     * for whatever upstream distcc/distcc itself might ever define, so
+     * this fork's own additions never collide with a future upstream
+     * protocol version). A simple "protover >= __DCC_VER_MAX" upper-bound
+     * check is therefore not sufficient to reject unknown values --
+     * anything in the 4-3999 reserved-for-upstream range must be rejected
+     * explicitly too. */
     if (protover != DCC_VER_1 && protover != DCC_VER_2 &&
-        protover != DCC_VER_3 && protover != DCC_VER_4 &&
+        protover != DCC_VER_3 && protover != DCC_VER_4000 &&
         protover != DCC_VER_5000) {
         *compr = DCC_COMPRESS_NONE;
         *cpp_where = DCC_CPP_ON_CLIENT;
@@ -457,11 +455,11 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
 
     if (protover == 2 || protover == 3) {
         *compr = DCC_COMPRESS_LZO1X;
-    } else if (protover == 4 || protover == 5000) {
+    } else if (protover == 4000 || protover == 5000) {
 #ifdef HAVE_ZSTD
         *compr = DCC_COMPRESS_ZSTD;
 #else
-        /* A peer claiming protover 4 or 5000 (zstd) against a distccd
+        /* A peer claiming protover 4000 or 5000 (zstd) against a distccd
          * built without zstd support must not be allowed to select a
          * compression mode this binary can't actually handle -- see
          * issue #225: dcc_x_file_compressed() (bulk.c) has no fallback
@@ -511,7 +509,7 @@ int dcc_get_protover_from_features(enum dcc_compress compr,
     }
 
     if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_CLIENT) {
-        *protover = DCC_VER_4;
+        *protover = DCC_VER_4000;
     }
 
     if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_SERVER) {

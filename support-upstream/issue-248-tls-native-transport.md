@@ -89,8 +89,10 @@ That sentence is this fork's design starting point.
   helpers), no parser changes needed.
 - **Protocol**: will need a new protocol version for capability negotiation
   (same shape as the zstd-protover idea in #228) and its own
-  `doc/protocol-5.txt` once the wire-level design is final, following this
-  project's existing `doc/protocol-1.txt`–`protocol-4.txt` convention.
+  `doc/protocol-NNNN.txt` once the wire-level design is final -- per issue
+  #304's numbering policy, this must be a 4000+ number, not a low one,
+  following this project's existing `doc/protocol-1.txt`–`protocol-3.txt`/
+  `protocol-4000.txt` convention.
 
 ## Status
 

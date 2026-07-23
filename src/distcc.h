@@ -130,32 +130,24 @@ enum dcc_protover {
     DCC_VER_1   = 1,            /**< vanilla */
     DCC_VER_2   = 2,            /**< LZO sprinkles */
     DCC_VER_3   = 3,            /**< server-side cpp */
-    DCC_VER_4   = 4,            /**< Zstandard compression and split dwarf.
-                                  *  TODO(#304): renumber to DCC_VER_4000 in
-                                  *  its own dedicated breaking-change PR --
-                                  *  the entire 0-3999 range is reserved for
-                                  *  whatever upstream distcc/distcc itself
-                                  *  might ever define, and this fork's own
-                                  *  extensions (zstd, and later e.g. #248's
-                                  *  TLS transport) must not collide with a
-                                  *  future upstream protocol version in
-                                  *  that range. */
     /* Fork-only protocol extensions start at 4000+ (issue #304): the
-     * entire 0-3999 range is reserved for whatever upstream distcc/distcc
-     * itself might ever define (currently DCC_VER_1/2/3 -- upstream
-     * verified, as of this decision, to go no higher than 3; it has taken
+     * ENTIRE 0-3999 range is deliberately left free for whatever upstream
+     * distcc/distcc itself might ever define (currently only up to
+     * DCC_VER_3, verified as of this decision -- upstream has taken
      * decades to get even that far, so this is a comfortable amount of
      * headroom, not an arbitrary buffer), so a future upstream protocol
-     * version can be adopted directly under the same number, and this
-     * fork's own additions can never collide with it. DCC_VER_4 predates
-     * this policy and still needs its own migration (see the TODO above);
-     * DCC_VER_5000 is the first version number chosen under it. */
+     * version can be adopted directly under the same number rather than
+     * needing to be remapped, and this fork's own additions -- zstd here,
+     * and future ones such as #248's planned TLS transport -- can never
+     * collide with it. DCC_VER_4 was originally numbered before this
+     * policy existed; migrated to DCC_VER_4000 (issue #304, PR #306). */
+    DCC_VER_4000 = 4000,        /**< Zstandard compression and split dwarf. */
     DCC_VER_5000 = 5000,        /**< Zstandard compression with server-side
-                                  *  cpp (pump mode). Unlike DCC_VER_4, split
-                                  *  dwarf (DDWO) is not part of this version:
-                                  *  pump mode's result-header ordering
-                                  *  (DOTO, then DOTD) has no slot for DDWO
-                                  *  between them without a further
+                                  *  cpp (pump mode). Unlike DCC_VER_4000,
+                                  *  split dwarf (DDWO) is not part of this
+                                  *  version: pump mode's result-header
+                                  *  ordering (DOTO, then DOTD) has no slot
+                                  *  for DDWO between them without a further
                                   *  wire-format bump, and split dwarf has
                                   *  never been wired for server-side cpp in
                                   *  the first place. The include-server's

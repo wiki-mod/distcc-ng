@@ -164,7 +164,7 @@ static int dcc_x_file_compressed(int out_fd,
             /* Defense in depth: this build has no zstd support, so
              * DCC_COMPRESS_ZSTD should never reach this function -- see
              * hosts.c's dcc_get_features_from_protover(), which now
-             * rejects protover 4 outright when HAVE_ZSTD is undefined.
+             * rejects protover 4000 outright when HAVE_ZSTD is undefined.
              * If it does anyway (e.g. a future negotiation path forgets
              * the same guard), fail cleanly here rather than falling
              * through to dcc_x_token_int()/dcc_writex() below with

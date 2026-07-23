@@ -967,9 +967,10 @@ static int dcc_run_job(int in_fd,
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0. The 2-int format must be
          * used here whenever the client will be expecting it -- i.e.
-         * whenever `compr` is zstd (DCC_VER_4 or DCC_VER_5000) -- not just for
-         * DCC_VER_4, or a DCC_VER_5000 (zstd, server-side cpp) client would
-         * desync trying to read a second int that was never sent. */
+         * whenever `compr` is zstd (DCC_VER_4000 or DCC_VER_5000) -- not
+         * just for DCC_VER_4000, or a DCC_VER_5000 (zstd, server-side cpp)
+         * client would desync trying to read a second int that was never
+         * sent. */
         if (compr == DCC_COMPRESS_ZSTD)
             dcc_x_token_2int(out_fd, "DOTO", 0, 0);
         else
@@ -995,15 +996,16 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
-        /* Split dwarf (DDWO) stays specific to DCC_VER_4, not generalized
-         * to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5000's result header ends
-         * with DOTD (see the cpp_where == DCC_CPP_ON_SERVER block below),
-         * and the client (dcc_retrieve_results() in clirpc.c) has no DDWO
-         * read between DOTO and DOTD for pump mode -- sending DDWO here for
+        /* Split dwarf (DDWO) stays specific to DCC_VER_4000, not
+         * generalized to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5000's
+         * result header ends with DOTD (see the cpp_where ==
+         * DCC_CPP_ON_SERVER block below), and the client
+         * (dcc_retrieve_results() in clirpc.c) has no DDWO read between
+         * DOTO and DOTD for pump mode -- sending DDWO here for
          * DCC_VER_5000 would desync the wire. Split dwarf support for
          * server-side cpp would need its own wire-format slot; that is a
          * separate enhancement, not part of wiring zstd+pump together. */
-        if (protover == DCC_VER_4) {
+        if (protover == DCC_VER_4000) {
             if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
                 goto out_cleanup;
         }

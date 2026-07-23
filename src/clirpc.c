@@ -176,7 +176,7 @@ int dcc_retrieve_results(int net_fd,
      * runs: dcc_r_bulk_zstd() (compress-zstd.c) needs the real uncompressed
      * size up front to size its output buffer, unlike LZO whose stream
      * carries its own uncompressed length. This must key off host->compr,
-     * not a specific protocol version, so it applies equally to DCC_VER_4
+     * not a specific protocol version, so it applies equally to DCC_VER_4000
      * (zstd, client-side cpp) and DCC_VER_5000 (zstd, server-side cpp/pump). */
     if (host->compr == DCC_COMPRESS_ZSTD) {
         if ((ret = dcc_r_token_2int(net_fd, "SERR", &len, &uncompr_len)))
@@ -227,7 +227,7 @@ int dcc_retrieve_results(int net_fd,
              * file produced by server-side cpp); there is no DDWO slot
              * after it (see distcc.h's DCC_VER_5000 comment), so this branch
              * always returns rather than falling through to the DDWO
-             * check below, which is reachable only for DCC_VER_4 (client-
+             * check below, which is reachable only for DCC_VER_4000 (client-
              * side cpp never sets cpp_where to DCC_CPP_ON_SERVER, so the
              * two branches are mutually exclusive). */
             if (host->compr == DCC_COMPRESS_ZSTD) {
@@ -245,7 +245,7 @@ int dcc_retrieve_results(int net_fd,
                                        host->compr);
             return ret;
         }
-        if (host->protover == DCC_VER_4) {
+        if (host->protover == DCC_VER_4000) {
             char *dwo_fname = NULL;
 
             if ((ret = dcc_r_token_2int(net_fd, "DDWO", &o_len, &uncompr_len)))
