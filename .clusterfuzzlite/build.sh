@@ -80,9 +80,15 @@ objs+=("$OUT/minilzo.o")
 resolved_libs="$(sed -n 's/^LIBS = //p' Makefile)"
 
 # ClusterFuzzLite requires linking fuzz target binaries with $CXX even for
-# a pure-C project (its own documented convention) -- $CXX still compiles
-# a .c file as C based on its extension.
+# a pure-C project (its own documented convention). This does NOT mean
+# clang++ treats a .c file as C by extension, though -- confirmed live:
+# without an explicit -x c, clang++ compiles fuzz_rpc_argv.c as C++ (with
+# a "treating 'c' input as 'c++'" deprecation warning), which then fails
+# on src/rpc.h's forward enum reference ("ISO C++ forbids forward
+# references to 'enum' types", valid C, invalid C++). -x c forces C mode
+# regardless of $CXX/file extension; the already-compiled .o files after
+# it are unaffected by -x (object files, not source).
 $CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
-    test/fuzz/fuzz_rpc_argv.c "${objs[@]}" \
+    -x c test/fuzz/fuzz_rpc_argv.c "${objs[@]}" \
     -o "$OUT/fuzz_rpc_argv" \
     $LIB_FUZZING_ENGINE $resolved_libs
