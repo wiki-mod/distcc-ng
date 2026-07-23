@@ -28,6 +28,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   had ever run to produce it. Fixed by making `platform: [amd64, arm64]` a
   real matrix axis, so `include` entries attach `runs_on` per matching
   platform instead of overwriting each other.
+- **`test/testdistcc.py`**: addressed 9 code-quality findings raised by
+  this PR's own review (unclosed file handles in `open(...).read()`
+  one-liners and a couple of `open()`/`write()`/`close()` sequences not
+  guarded against an exception between them; an unused `log_contents`
+  local; an empty `except OSError: pass` with no explanatory comment).
+  All file opens now use `with`; the unused variable was removed since
+  the call's only purpose was the wait side-effect; the empty except got
+  a one-line comment explaining it's best-effort cleanup of a possible
+  leftover file. No behavioral change.
 
 ### Documentation
 
