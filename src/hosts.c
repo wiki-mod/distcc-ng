@@ -439,13 +439,14 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
     /* Known protocol versions are NOT a contiguous range: 1-4 are the
      * original low numbers (1-3 upstream-inherited, 4 this fork's earlier
      * zstd addition, not yet migrated -- see #304), and this fork's
-     * newer extensions start at 5000+ (issue #304's numbering policy,
-     * reserving 0-3 for whatever upstream distcc/distcc itself defines
-     * and leaving a large gap so this fork's own additions never collide
-     * with a future upstream protocol version). A simple
-     * "protover >= __DCC_VER_MAX" upper-bound check is therefore no
-     * longer sufficient to reject unknown values -- anything in the
-     * 5-4999 gap must be rejected explicitly too. */
+     * newer extensions start at 5000+ (issue #304's numbering policy:
+     * the entire 0-3999 range is reserved for whatever upstream
+     * distcc/distcc itself might ever define, so this fork's own
+     * additions never collide with a future upstream protocol version).
+     * A simple "protover >= __DCC_VER_MAX" upper-bound check is therefore
+     * no longer sufficient to reject unknown values -- anything in the
+     * 5-4999 reserved-for-upstream range must be rejected explicitly
+     * too. */
     if (protover != DCC_VER_1 && protover != DCC_VER_2 &&
         protover != DCC_VER_3 && protover != DCC_VER_4 &&
         protover != DCC_VER_5000) {
