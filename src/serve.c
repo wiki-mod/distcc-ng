@@ -947,7 +947,7 @@ static int dcc_run_job(int in_fd,
             job_result = STATS_COMPILE_ERROR;
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0 */
-        if (protover == DCC_VER_4)
+        if (protover == DCC_VER_4000)
             dcc_x_token_2int(out_fd, "DOTO", 0, 0);
         else
             dcc_x_token_int(out_fd, "DOTO", 0);
@@ -972,7 +972,7 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
-        if (protover == DCC_VER_4) {
+        if (protover == DCC_VER_4000) {
             if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
                 goto out_cleanup;
         }

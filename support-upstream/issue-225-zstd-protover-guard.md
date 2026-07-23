@@ -66,3 +66,16 @@ zstd support:
 
 `make check`'s full real test suite passed with zero regressions on both
 the `--without-zstd` and normal (zstd-enabled) builds.
+
+## Numbering note (2026-07-23, added during a later review)
+
+Protocol version 4 (referenced throughout this document, accurately
+describing the state at the time this fix was made) was later renumbered
+to `DCC_VER_4000` per issue #304's numbering policy: versions 0-3 are
+reserved exclusively for whatever upstream `distcc/distcc` itself defines,
+and every fork-specific protocol extension gets its own number starting
+at 4000+, so this fork's own additions can never collide with a future
+upstream protocol version. This document's historical descriptions of
+"protocol version 4" are left as originally written -- they were correct
+when written -- see the `DCC_VER_4000` migration commit/PR for the
+current numbering.

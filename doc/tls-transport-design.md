@@ -175,10 +175,12 @@ Will need a new protocol version for capability negotiation, following the
 same shape as #228's proposed zstd-capability-negotiation protocol
 version: an incompatible/older peer must fail closed or fall back per an
 explicit, configured policy — never silently misbehave. Once the wire-
-level design is final, it gets its own `doc/protocol-5.txt` (or whatever
-the next free version number is by then), following the existing
-`doc/protocol-1.txt`–`protocol-4.txt` convention (short, factual,
-wire-format-only — design rationale belongs in this document, not there).
+level design is final, it gets its own `doc/protocol-NNNN.txt` (whatever
+the next free fork-extension number is by then, per issue #304's
+numbering policy — 4000+, not a low number), following the existing
+`doc/protocol-1.txt`–`protocol-3.txt`/`protocol-4000.txt` convention
+(short, factual, wire-format-only — design rationale belongs in this
+document, not there).
 
 ## Validation plan (once implemented)
 
