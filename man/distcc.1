@@ -570,9 +570,15 @@ servers with more than two processors.
 .B ,lzo
 Enables LZO compression for this TCP or SSH host.
 .TP
+.B ,zstd
+Enables Zstandard compression for this TCP or SSH host, if this build of
+distcc was compiled with zstd support. Can be combined with ",cpp" to use
+pump mode with Zstandard compression instead of LZO.
+.TP
 .B ,cpp
 Enables distcc-pump mode for this host.  Note: the build command must be
-wrapped in the pump script in order to start the include server.
+wrapped in the pump script in order to start the include server. Requires
+either ",lzo" or ",zstd" to also be given.
 .TP
 .B ,auth
 Enables GSSAPI-based mutual authentication for this host.
@@ -630,7 +636,8 @@ Using compression requires both client and server to use at least
 release 2.9 of distcc.  No server configuration is required: the
 server always responds with compressed replies to compressed requests.
 .PP
-Pump mode requires the servers to have the lzo host option on.
+Pump mode requires the servers to have either the lzo or the zstd host
+option on.
 .SH "SEARCH PATHS"
 .PP
 If the compiler name is an absolute path, it is passed verbatim to the

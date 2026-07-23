@@ -37,8 +37,60 @@ import os
 import re
 import shlex
 import sys
+import sysconfig
 
 OPTIONS_NOT_ALLOWED = ['-Iquote', '-Isystem', '-I-']
+
+
+def _rebase_python_build_optimization_level():
+  """Replace Python's own baked-in '-O2' with '-O3' in its sysconfig vars.
+
+  configure.ac bumps this fork's own CFLAGS from the autoconf default
+  '-O2' to '-O3' (see its "AC_PROG_CC defaults CFLAGS" comment) and the
+  Makefile forwards that CFLAGS into this script's environment so the
+  include-server C extension gets built at the same optimization level as
+  the rest of the project. But setuptools/distutils' own
+  customize_compiler() (setuptools._distutils.sysconfig, vendored from
+  CPython's distutils) does NOT substitute the environment CFLAGS for
+  Python's own compiled-in default -- it *appends* it after Python's own
+  sysconfig CFLAGS/OPT (and, separately, after LDSHARED for the link
+  step). That produced two optimization flags on the same gcc command
+  line ('-O2 ... -O3'); gcc's own "last flag wins" rule made the build
+  correct in practice, but left a confusing, easy-to-misread invocation
+  in the build log. Patching the *source* config vars here (instead of
+  relying on gcc's tie-break) removes the stray '-O2' at its origin.
+
+  Only fires when the environment CFLAGS this script was actually invoked
+  with contains '-O3' -- mirroring configure.ac's own guard that a
+  caller-supplied CFLAGS (e.g. a debug build's 'CFLAGS=-g
+  -fno-omit-frame-pointer', which carries no '-O' flag at all) is left
+  alone rather than forced onto our own optimization level. Without this
+  guard, this function would still overwrite Python's baked '-O2' with
+  '-O3' even when the project's own CFLAGS never asked for '-O3',
+  silently building the include-server extension optimized while the
+  rest of the project builds unoptimized for debugging.
+
+  sysconfig.get_config_vars() returns the *same* cached dict on every
+  call within a process, so mutating it here (before setuptools.setup()
+  is invoked) is visible to every later reader, including setuptools'
+  vendored distutils copy -- as long as this runs before that copy makes
+  its own one-time internal cache of the dict (it lazily
+  sysconfig.get_config_vars().copy()s on its first call, so this must
+  execute at module import time, before any setuptools.Extension/
+  setuptools.setup() call below).  Only the literal '-O2' substring is
+  replaced (mirroring configure.ac's own sed pattern), so any other flag
+  in these vars is left untouched, and hosts where Python wasn't built
+  with '-O2' at all are simply left alone.
+  """
+  if '-O3' not in os.environ.get('CFLAGS', ''):
+    return
+  cfg_vars = sysconfig.get_config_vars()
+  for key in ('CFLAGS', 'OPT', 'LDSHARED'):
+    value = cfg_vars.get(key)
+    if value and '-O2' in value:
+      cfg_vars[key] = value.replace('-O2', '-O3')
+
+_rebase_python_build_optimization_level()
 
 
 def _pep440_version(raw_version):

@@ -15,20 +15,29 @@ on:
     tags:
       - "v*"
 
+# Read-only floor: this file's real write scopes (contents: write for the
+# GitHub release, packages: write for the GHCR image pushes, id-token/
+# attestations: write for build provenance) are each pushed down to only the
+# specific job that actually uses them, rather than granted to every job in
+# this pipeline -- setup, build_check, and distributed_e2e never call the
+# GitHub API or push anything and previously inherited all four scopes for
+# no reason.
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   setup:
     runs-on: ubuntu-latest
+    # Pure metadata derivation (parses github.ref/github.run_number into
+    # step outputs) -- no checkout, no GitHub API call, no registry access.
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag_name: ${{ steps.meta.outputs.tag_name }}
       release_title: ${{ steps.meta.outputs.release_title }}
       image_base: ${{ steps.meta.outputs.image_base }}
+      pump_image_base: ${{ steps.meta.outputs.pump_image_base }}
       do_container: ${{ steps.meta.outputs.do_container }}
     steps:
       # Trial run (#58): audit-only egress monitoring, does not block any
@@ -59,6 +68,7 @@ jobs:
             printf 'tag_name=%s\n' "${GITHUB_REF_NAME}"
             printf 'release_title=%s\n' "${release_title}"
             printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
+            printf 'pump_image_base=ghcr.io/%s/distcc-ng-pump:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
             printf 'do_container=%s\n' "${do_container}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -66,6 +76,10 @@ jobs:
   build_check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # This job only checks out the tag and runs a local build + test -- no
+    # GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
@@ -75,11 +89,11 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-release-${{ github.run_id }}
@@ -90,7 +104,7 @@ jobs:
       # configure's own config.cache is deliberately NOT cached (its cached
       # dependency-detection results aren't safely invalidated by a
       # configure.ac/m4 hash alone).
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: autom4te.cache
           key: autoconf-release-${{ hashFiles('configure.ac', 'm4/*.m4') }}
@@ -105,6 +119,10 @@ jobs:
   distributed_e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # This job only checks out the tag and runs the local docker-compose e2e
+    # script -- no GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -112,7 +130,7 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run distributed-compile end-to-end test
         run: bash test/e2e/run-e2e.sh
 
@@ -120,6 +138,15 @@ jobs:
     needs: [setup, build_check, distributed_e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # contents: read for checkout; id-token/attestations: write are what
+    # actions/attest-build-provenance below actually needs to mint and
+    # record its provenance attestation -- this job never pushes to GHCR or
+    # touches the GitHub Releases API, so it gets neither packages: write
+    # nor contents: write.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -127,7 +154,7 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
@@ -138,17 +165,47 @@ jobs:
         run: |
           ./scripts/build-release-packages.sh
 
+      - name: Locate the built source tarball
+        # anchore/sbom-action's `file:` input needs one concrete path, not a
+        # glob -- resolve the actual tarball name build-release-packages.sh
+        # just produced (distcc-<version>.tar.gz, see Makefile.in's
+        # tarball/tarball_gz definitions) so the SBOM step below scans the
+        # exact release asset rather than guessing its name.
+        id: source_tarball
+        shell: bash
+        run: |
+          tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
+          tarball="${tarball#./}"
+          [ -n "${tarball}" ] || { echo "::error::no distcc-*.tar.gz produced by build-release-packages.sh" >&2; exit 1; }
+          printf 'path=%s\n' "${tarball}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate SBOM for release artifacts
+        # OSPS-QA-02.02 (OpenSSF Best Practices Baseline): compiled release
+        # assets must ship with a software bill of materials. Scans the
+        # actual source tarball being released (the same artifact uploaded
+        # to the GitHub release below) rather than the live build
+        # directory, so the SBOM describes exactly what a downstream
+        # consumer receives.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: ${{ steps.source_tarball.outputs.path }}
+          format: spdx-json
+          output-file: distcc-ng-${{ needs.setup.outputs.version }}.spdx.json
+          artifact-name: distcc-ng-${{ needs.setup.outputs.version }}.spdx.json
+          upload-release-assets: false
+
       - name: Generate build attestation
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: |
             distcc-*.tar.gz
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
+            distcc-ng-*.spdx.json
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: distcc-release-packages-${{ needs.setup.outputs.version }}
           path: |
@@ -156,22 +213,53 @@ jobs:
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
+            distcc-ng-*.spdx.json
 
   build_container:
     needs: [setup, build_check, distributed_e2e]
     if: needs.setup.outputs.do_container == 'true'
+    # contents: read for checkout; packages: write for the GHCR login and
+    # push below. Trivy/SBOM steps only inspect the already-built local
+    # image and upload a workflow artifact, neither of which needs any
+    # additional token scope -- this job never touches the Releases API or
+    # mints a provenance attestation, so it gets neither contents: write nor
+    # id-token/attestations: write.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
+        variant: [plain, pump]
+        # platform must be a real matrix axis (not bare `include` entries
+        # with no variant key) -- an `include` entry that doesn't specify
+        # every existing axis key doesn't merge per-combination, it instead
+        # overwrites the added key for every generated job in list order,
+        # so the previous plain `include: [{platform: amd64...}, {platform:
+        # arm64...}]` silently made every job build arm64 only (the last
+        # entry wins), and amd64 -- documented as the required leg --
+        # never actually built. Caught live: publish_manifest's "Create
+        # multi-arch manifest" step failed with "digest-plain-amd64.txt:
+        # No such file or directory" since no amd64 leg had ever run.
+        platform: [amd64, arm64]
         include:
-          # amd64 is required; arm64 is best-effort, on GitHub's free
-          # native arm64 public-repo runners -- no QEMU emulation needed,
-          # each leg builds natively for its own architecture.
           - platform: amd64
             runs_on: ubuntu-latest
           - platform: arm64
             runs_on: ubuntu-24.04-arm
       fail-fast: false
     runs-on: ${{ matrix.runs_on }}
+    # fail-fast: false only stops one leg's failure from cancelling the
+    # others -- it does NOT stop a failed leg from making this job's own
+    # overall result "failure", which needs: [build_container] downstream
+    # (publish_manifest) treats as blocking. arm64 is documented above as
+    # best-effort; continue-on-error is what actually makes that true --
+    # an arm64 failure is reported (not silently green) but no longer
+    # blocks the amd64 leg or downstream publish jobs, for either variant.
+    # publish_manifest itself independently confirms the arm64 image is
+    # actually present in the registry before including it in the
+    # multi-arch manifest, so a continue-on-error'd arm64 failure degrades
+    # to an amd64-only manifest rather than a broken multi-arch one.
+    continue-on-error: ${{ matrix.platform == 'arm64' }}
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -179,30 +267,52 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Resolve this leg's image tag and Dockerfile target
+        # variant/platform live in the matrix; the image base (which
+        # differs per variant -- distcc-ng vs the separate distcc-ng-pump
+        # package, issue #181) doesn't, since matrix entries can't
+        # reference job outputs directly.
+        id: leg
+        shell: bash
+        run: |
+          if [ "${{ matrix.variant }}" = "pump" ]; then
+            image_base="${{ needs.setup.outputs.pump_image_base }}"
+            dockerfile_target="runtime-pump"
+          else
+            image_base="${{ needs.setup.outputs.image_base }}"
+            dockerfile_target="runtime"
+          fi
+          {
+            printf 'image_tag=%s-%s\n' "${image_base}" "${{ matrix.platform }}"
+            printf 'dockerfile_target=%s\n' "${dockerfile_target}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Log in to GHCR
         shell: bash
         run: |
           printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build ${{ matrix.platform }} image
+      - name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
         shell: bash
         env:
-          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
+          DOCKERFILE_TARGET: ${{ steps.leg.outputs.dockerfile_target }}
           VERSION_LABEL: ${{ needs.setup.outputs.version }}
           VCS_REF: ${{ github.sha }}
         run: |
           docker build \
             --platform "linux/${{ matrix.platform }}" \
             --file docker/release/Dockerfile \
+            --target "${DOCKERFILE_TARGET}" \
             --build-arg "VCS_REF=${VCS_REF}" \
             --build-arg "VERSION=${VERSION_LABEL}" \
             --tag "${IMAGE_TAG}" \
             .
 
       - name: Prepare local Trivy cache
-        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}"
+        run: mkdir -p "/var/tmp/distcc-ng-trivy-cache/${{ matrix.variant }}/${{ matrix.platform }}"
 
       - name: Scan image with Trivy
         # Scans the locally-built image before it's ever pushed -- a
@@ -210,33 +320,78 @@ jobs:
         # match wiki-mod/lancache-ng's real, working setup.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          image-ref: ${{ steps.leg.outputs.image_tag }}
           scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
           hide-progress: true
           cache: "false"
-          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.platform }}
+          cache-dir: /var/tmp/distcc-ng-trivy-cache/${{ matrix.variant }}/${{ matrix.platform }}
           timeout: 10m
           exit-code: "1"
 
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          image: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          image: ${{ steps.leg.outputs.image_tag }}
           format: spdx-json
-          artifact-name: distcc-ng-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
+          artifact-name: distcc-ng-${{ matrix.variant }}-${{ needs.setup.outputs.version }}-${{ matrix.platform }}.spdx.json
 
-      - name: Push ${{ matrix.platform }} image
+      - name: Push ${{ matrix.variant }} ${{ matrix.platform }} image
+        id: push
         shell: bash
         env:
-          IMAGE_TAG: ${{ needs.setup.outputs.image_base }}-${{ matrix.platform }}
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
         run: docker push "${IMAGE_TAG}"
+
+      - name: Record this run's pushed digest
+        # Recording *this run's* digest (not just checking whether a tag by
+        # this name exists in the registry) is what makes the arm64 leg's
+        # continue-on-error actually safe: a rerun of this workflow for the
+        # same version tag, after an EARLIER successful arm64 push followed
+        # by a NEW failing arm64 attempt, would otherwise still find the
+        # old, stale arm64 tag sitting in the registry under the same
+        # mutable name and wrongly pair it with the current amd64 build in
+        # the manifest. Only reached when the push step above succeeded, so
+        # a failed/continued-past arm64 leg never uploads a digest here --
+        # publish_manifest below only trusts a digest artifact actually
+        # produced by this run, not the mutable tag's current registry
+        # state.
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.leg.outputs.image_tag }}
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | \
+                     python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          printf '%s\n' "${digest}" > "digest-${{ matrix.variant }}-${{ matrix.platform }}.txt"
+
+      - name: Upload this run's digest
+        # Artifact name includes github.run_attempt: GitHub's v4 artifacts
+        # can be fetched across previous attempts of the same run unless
+        # explicitly scoped, so a fresh arm64 failure on a rerun (retrying
+        # the same workflow run) could otherwise still recover an earlier
+        # attempt's successful arm64 digest artifact -- the exact stale-
+        # pairing risk this digest mechanism exists to prevent, just moved
+        # from the registry tag to the artifact store.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
 
   publish_manifest:
     needs: [setup, build_container]
     if: needs.setup.outputs.do_container == 'true'
+    # No checkout in this job (it only assembles a multi-arch manifest from
+    # already-pushed per-platform images); packages: write is what the GHCR
+    # login and the final `docker buildx imagetools create` push need.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [plain, pump]
+      fail-fast: false
     runs-on: ubuntu-latest
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
@@ -250,20 +405,64 @@ jobs:
         run: |
           printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      - name: Download this run's image digests
+        # continue-on-error: true so a rerun where arm64 failed (and never
+        # uploaded its digest artifact, see build_container's "Record this
+        # run's pushed digest" step) doesn't fail this job -- amd64-only is
+        # the intended degraded outcome, not an error.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-digest-${{ matrix.variant }}-*-${{ github.run_attempt }}
+          path: digests
+          merge-multiple: true
+
       - name: Create multi-arch manifest
         shell: bash
         env:
-          IMAGE_BASE: ${{ needs.setup.outputs.image_base }}
+          IMAGE_BASE: ${{ matrix.variant == 'pump' && needs.setup.outputs.pump_image_base || needs.setup.outputs.image_base }}
         run: |
+          set -euo pipefail
+          # arm64 is best-effort (continue-on-error in build_container, see
+          # that job's comment) -- its own leg can fail while amd64 still
+          # succeeds. Reference each platform by the DIGEST this specific
+          # run recorded, never by the mutable "-amd64"/"-arm64" tag: a
+          # rerun of this workflow for the same version tag, after an
+          # earlier successful arm64 push followed by a new failing arm64
+          # attempt, would otherwise still find the OLD arm64 tag sitting
+          # in the registry and wrongly pair it with the current amd64
+          # build. A digest artifact only exists if build_container's push
+          # step for that platform actually ran and succeeded in this exact
+          # run, so a missing file here means the best-effort arch is
+          # genuinely absent from this run, not just momentarily unfound.
+          amd64_digest="$(cat "digests/digest-${{ matrix.variant }}-amd64.txt")"
+          tags=("${IMAGE_BASE}@${amd64_digest}")
+          if [ -f "digests/digest-${{ matrix.variant }}-arm64.txt" ]; then
+            arm64_digest="$(cat "digests/digest-${{ matrix.variant }}-arm64.txt")"
+            tags+=("${IMAGE_BASE}@${arm64_digest}")
+          else
+            # A notice, not a warning: amd64-only degradation on a missing
+            # best-effort arm64 leg is the *intended* outcome of making
+            # that leg continue-on-error, not a fault -- this repo's
+            # warning-as-error rule (AGENTS.md rule 31) governs unexpected
+            # problems, not a documented, deliberate degradation path.
+            echo "::notice::no arm64 digest recorded by this run (best-effort leg failed or was skipped); publishing amd64-only manifest"
+          fi
           docker buildx imagetools create \
             --tag "${IMAGE_BASE}" \
-            "${IMAGE_BASE}-amd64" \
-            "${IMAGE_BASE}-arm64"
+            "${tags[@]}"
 
   publish_github_release:
     needs: [setup, build_packages, publish_manifest]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    # No checkout in this job (it only downloads the already-built package
+    # artifact); contents: write is what the `gh release create/upload/edit`
+    # calls below actually need -- this job never pushes to GHCR or mints an
+    # attestation, so it gets neither packages: write nor id-token/
+    # attestations: write.
+    permissions:
+      contents: write
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -271,7 +470,7 @@ jobs:
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: distcc-release-packages-${{ needs.setup.outputs.version }}
 
@@ -280,11 +479,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
+          PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
           RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
           TAG_NAME: ${{ needs.setup.outputs.tag_name }}
         run: |
           shopt -s nullglob
-          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb distcc-ng-*.spdx.json)
 
           notes_file="$(mktemp)"
           {
@@ -293,6 +493,7 @@ jobs:
             printf 'Source commit: %s\n' "${GITHUB_SHA}"
             printf 'Tag: %s\n\n' "${TAG_NAME}"
             printf 'Container image: %s\n' "${IMAGE_TAG}"
+            printf 'Container image (pump mode, issue #181): %s\n' "${PUMP_IMAGE_TAG}"
           } > "${notes_file}"
 
           if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then

@@ -7,7 +7,18 @@
 # byte-identical compiler toolchains -- a prerequisite for comparing a
 # distributed compile against a local-only one.
 
-ARG DEBIAN_IMAGE=debian:bookworm-slim
+#
+# Pinned to the real, live digest for the debian:bookworm-slim tag (verified
+# against Docker Hub's own registry API at pin time, 2026-07-23 -- not
+# guessed or copied from another Dockerfile's pin) for the same reason
+# docker/release/Dockerfile and docker/verify/Dockerfile already pin their
+# own DEBIAN_IMAGE default: OSSF Scorecard's PinnedDependenciesID flags an
+# unpinned tag as a supply-chain risk (the tag can be repointed to different
+# image content without notice). This image intentionally stays on the
+# bookworm-slim lineage (not trixie, unlike the other two Dockerfiles) since
+# it only needs to match distcc-ng's own supported-compiler baseline for the
+# e2e self-compile test, not the release/verification images' own lineage.
+ARG DEBIAN_IMAGE=debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 FROM ${DEBIAN_IMAGE}
 

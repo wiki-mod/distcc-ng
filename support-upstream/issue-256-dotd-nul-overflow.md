@@ -113,3 +113,35 @@ Also verified: a clean `-Werror` autoconf/automake build and the full
 `make check` suite (including `DotD_Case` and `Compile_c_Case`, which
 already exercise `dcc_fresh_dependency_exists()` through real compiles)
 pass unchanged on both trees.
+
+## Addendum (fork issue #268 / PR #271) — the TOCTOU pattern itself
+
+The `malloc(+1)` fix above closes the memory-safety consequence, but
+CodeQL alert #3 stayed **open** against this same function after #257
+merged: the flagged pattern is the `stat(dotd_fname, &stat_dotd)` at
+(then) `compile.c:282` followed by a separate `fopen(dotd_fname, "r")` a
+few lines later — two syscalls that each independently resolve
+`dotd_fname`, so the file the size/mtime check describes and the file
+actually read can differ if something replaces or grows it in between.
+
+**Checked against the same upstream commit** ([`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d)):
+upstream's `dcc_fresh_dependency_exists()` still does `stat(dotd_fname,
+&stat_dotd)` at line 282 followed by `fopen(dotd_fname, "r")` at line 305 —
+the check-then-act pattern is live and unchanged upstream, same as the
+overflow issue above.
+
+**Fork fix**: reorder to `fopen()` first, then `fstat(fileno(fp),
+&stat_dotd)` on the already-open descriptor instead of `stat()`-ing the
+path beforehand. `fstat()` on an open fd is guaranteed to describe the
+exact file subsequently read (same open file description/inode), so
+there is no window in which `dotd_fname` could resolve to a different
+file between the check and the read. This pattern is already idiomatic
+in this codebase (`src/config-parser.c`'s `fstat(fileno(fp), &st)`).
+This is a larger structural change than the one-line `+1` fix above (it
+reorders every early-return path in the function to `fclose()` the
+now-earlier-opened `fp`), so it is tracked and verified as its own
+fork issue/PR rather than folded into this one after the fact.
+
+Not proposed as an upstream contribution — this fork does not send
+patches upstream (see `AGENTS.md`); recorded here only as the required
+per-PR support-upstream cross-check.

@@ -203,12 +203,25 @@ static int dcc_resolve_march_native(char *argv[], char ***ret_newargv,
     if (l == 0 || !argv[0])
         return 0;
 
-    /* Only used to pick which program to exec below; the actual compiler
-     * family (is_clang) is determined later from what that program tells
-     * us about itself, not from its own invoked name -- see the fgets()
-     * loop below. */
-    compiler = strrchr(argv[0], '/');
-    compiler = (compiler == NULL) ? argv[0] : compiler + 1;
+    /* Used to pick which program to exec below; the actual compiler family
+     * (is_clang) is determined later from what that program tells us about
+     * itself, not from its own invoked name -- see the fgets() loop below.
+     *
+     * Deliberately NOT stripped to a basename here: argv[0] may already be
+     * an explicit path (the user ran "distcc /opt/x/cc ...", or a
+     * masquerade symlink resolved to one) rather than a bare name found on
+     * PATH. execlp() below already does the right thing with either shape
+     * on its own -- a name containing '/' is executed literally with no
+     * PATH search, a bare name is looked up on PATH -- so passing argv[0]
+     * through unchanged preserves the caller's original resolution intent.
+     * Stripping to a basename first (the previous behavior) discarded that
+     * distinction and always re-resolved via a fresh PATH search, which
+     * can silently pick a *different* binary than the one actually invoked
+     * (e.g. macOS's "cc" exposed as clang at an explicit dispatcher path
+     * not on PATH at all: the old code's PATH search for bare "cc" could
+     * fail or find an unrelated compiler, while the invoked binary itself
+     * was perfectly resolvable). */
+    compiler = argv[0];
     is_clang = 0;
 
     for (i = 0; i < l; i++) {

@@ -69,6 +69,32 @@ int dcc_name_has_path_traversal(const char *name)
     return 0;
 }
 
+/* Reject an absolute-style client-supplied LINK token's link_target (one
+ * starting with '/') that contains a ".." path component -- same "/../ "
+ * shape check as dcc_name_has_path_traversal(), since srvrpc.c prepends
+ * this value with the server's own temp dirname exactly the same way it
+ * does for NAME, so the same escape risk applies.
+ *
+ * Deliberately does NOT handle a relative link_target (one not starting
+ * with '/'): see this function's own header comment in pathsafety.h for
+ * why a text-only check can't close that case, and issue #289 for the
+ * real fix being tracked for it.
+ *
+ * Returns 1 (unsafe, reject) or 0 (safe to use).
+ */
+int dcc_absolute_link_target_has_path_traversal(const char *link_target)
+{
+    size_t len = strlen(link_target);
+
+    if (strstr(link_target, "/../") != NULL)
+        return 1;
+
+    if (len >= 3 && strcmp(link_target + len - 3, "/..") == 0)
+        return 1;
+
+    return 0;
+}
+
 /* Reject a client-supplied CDIR (current working directory) token that
  * contains ".." path components which could escape the intended directory
  * tree when concatenated with the server's temp directory.

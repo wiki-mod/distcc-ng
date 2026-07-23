@@ -137,10 +137,14 @@ if [ -s /etc/redhat-release ]; then
   /sbin/service distcc stop &>/dev/null || :
   if fgrep 'nice initlog $INITLOG_ARGS -c "su - $user' /etc/init.d/functions | fgrep -v '.-s ' > /dev/null 2>&1 ; then
     # Kludge: for Red Hat 6.2, don't use -s /sbin/nologin
-    /usr/sbin/useradd -d /var/run/distcc -m -r $DISTCC_USER &>/dev/null || :
+    # No -m/-d /var/run/distcc: a service user has no need for a home
+    # directory (maintainer decision, 2026-07-22) -- matches Debian's own
+    # real, independently-maintained distcc package's --home /nonexistent
+    # convention, confirmed live on a running Debian host.
+    /usr/sbin/useradd -d /nonexistent -r $DISTCC_USER &>/dev/null || :
   else
     # but do for everyone else
-    /usr/sbin/useradd -d /var/run/distcc -m -r -s /sbin/nologin $DISTCC_USER &>/dev/null || :
+    /usr/sbin/useradd -d /nonexistent -r -s /sbin/nologin $DISTCC_USER &>/dev/null || :
   fi
 else
   echo Creating $DISTCC_USER user...
@@ -148,8 +152,12 @@ else
     if ! id -g $DISTCC_USER > /dev/null 2>&1 ; then
       addgroup --system --gid 11 $DISTCC_USER
     fi
+    # --home /nonexistent, not upstream's own --home /: a service user has
+    # no need for a home directory (maintainer decision, 2026-07-22) --
+    # matches Debian's own real, independently-maintained distcc package's
+    # convention, confirmed live on a running Debian host.
     adduser --quiet --system --gid 11 \
-      --home / --no-create-home --uid 15 $DISTCC_USER
+      --home /nonexistent --no-create-home --uid 15 $DISTCC_USER
   fi
 fi
 
@@ -218,12 +226,15 @@ else
 fi
 
 %postun server
-# TODO(mtm) Should Red Hat also remove user/group?
+# Never remove the distcc user/group here, on Red Hat or Debian: Debian's
+# own distcc package deliberately keeps it across a purge (confirmed by
+# reading that package's real postrm on a live host, 2026-07-22 -- it
+# deletes /etc/default/distcc, log files, and the pid file on purge, but
+# has no deluser/delgroup call anywhere), and there is no reason for this
+# fork to be stricter than the package it forked from.
 if [ -s /etc/debian_version ]; then
   case "$1" in
     purge)
-      deluser --quiet --system distcc
-      delgroup --quiet --system distcc
       ;;
     remove)
       ;;

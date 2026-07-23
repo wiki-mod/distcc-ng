@@ -492,6 +492,60 @@ static int tweak_input_argument_for_server(char **argv,
 }
 
 
+static const char *prefix_map_options[] = {
+    "-ffile-prefix-map=",
+    "-fmacro-prefix-map=",
+    "-fdebug-prefix-map=",
+    "-fprofile-prefix-map=",
+    NULL
+};
+
+
+/**
+ * Prepend @p root_dir to arguments of -f*-prefix-map= options that are
+ * absolute.
+ *
+ * These options are used for reproducible builds: the compiler rewrites
+ * an embedded build-path prefix (e.g. in debug info or in __FILE__/__LINE__
+ * macro expansions) to something portable. Since distcc runs the actual
+ * compile inside the server's own root_dir-relative mirror of the client's
+ * filesystem, the OLD half of an OPTION=OLD=NEW argument must be rewritten
+ * the same way the include/input paths already are, or the compiler on the
+ * server never sees a path that actually matches what it's compiling, and
+ * silently fails to substitute it (the client-visible symptom is a
+ * debug-info path that still contains the server's build root).
+ **/
+static int tweak_prefix_map_arguments_for_server(char **argv,
+                                                 const char *root_dir)
+{
+    int index_of_first_filename_char = 0;
+    const char *prefix_map_option;
+    unsigned int i, j;
+    for (i = 0; argv[i]; ++i) {
+        for (j = 0; prefix_map_options[j]; ++j) {
+            if (str_startswith(prefix_map_options[j], argv[i])) {
+                prefix_map_option = prefix_map_options[j];
+                index_of_first_filename_char = strlen(prefix_map_option);
+                if (argv[i][index_of_first_filename_char] == '/') {
+                    char *buf;
+                    checked_asprintf(&buf, "%s%s%s",
+                                prefix_map_option,
+                                root_dir,
+                                argv[i] + index_of_first_filename_char);
+                    if (buf == NULL) {
+                        return EXIT_OUT_OF_MEMORY;
+                    }
+                    free(argv[i]);
+                    argv[i] = buf;
+                }
+                break;  /* from the inner loop; go look at the next argument */
+            }
+        }
+    }
+    return 0;
+}
+
+
 /**
  * Prepend @p root_dir to arguments of include options that are absolute.
  **/
@@ -604,6 +658,7 @@ static int tweak_arguments_for_server(char **argv,
     dcc_argv_append(*tweaked_argv, strdup(deps_fname));
 
     tweak_include_arguments_for_server(*tweaked_argv, root_dir);
+    tweak_prefix_map_arguments_for_server(*tweaked_argv, root_dir);
     tweak_input_argument_for_server(*tweaked_argv, root_dir);
     return 0;
 }
@@ -732,6 +787,14 @@ static int dcc_run_job(int in_fd,
         goto out_cleanup;
     }
 
+    /* Logged unconditionally (not just on rejection above) so a real
+     * distccd log can be used as independent evidence of which protocol
+     * version, compression, and cpp placement a given job actually used --
+     * e.g. to confirm a zstd+pump (DCC_VER_5000) job actually took that path
+     * rather than a silently different negotiated version. */
+    rs_log_info("accepted job with protover %d (compr %d, cpp_where %d)",
+                (int) protover, (int) compr, (int) cpp_where);
+
     if (cpp_where == DCC_CPP_ON_SERVER) {
         if ((ret = make_temp_dir_and_chdir_for_cpp(in_fd,
                           &temp_dir, &client_cwd, &server_cwd)))
@@ -795,10 +858,33 @@ static int dcc_run_job(int in_fd,
      * in a loop.
      */
     if (cpp_where == DCC_CPP_ON_SERVER) {
-        if (dcc_r_many_files(in_fd, temp_dir, compr)
-            || dcc_set_output(argv, temp_o)
-            || tweak_arguments_for_server(argv, temp_dir, deps_fname,
-                                          &dotd_target, &tweaked_argv))
+        /* Each call's return value must be captured into ret, not just
+         * used for its truthiness in the || chain: without this, a
+         * non-zero return (e.g. dcc_r_many_files()'s EXIT_PROTOCOL_ERROR
+         * on a rejected path-traversal attempt, see #95/#292) still
+         * triggers the goto correctly, but ret is left at its prior
+         * (successful) value, so out_cleanup's switch(ret) misclassifies
+         * the job's stats (job_result falls into the default case
+         * instead of STATS_REJ_BAD_REQ) and the function's own return
+         * value reports success. The connection is still torn down
+         * either way -- this only affects stats/monitoring visibility,
+         * not the rejection itself. */
+        /* The header closure sent by the include-server is always
+         * LZO-compressed regardless of the wire protocol's negotiated
+         * compression: include_server/compress_files.py hardcodes the
+         * ".lzo"/".lzo.abs" image format and never consults protover, so
+         * this must stay DCC_COMPRESS_LZO1X even for DCC_VER_5000 (zstd,
+         * server-side cpp) -- passing the negotiated `compr` (DCC_COMPRESS_
+         * ZSTD for DCC_VER_5000) here would make dcc_r_file_beneath() try to
+         * zstd-decompress bytes that are actually LZO-compressed. Only the
+         * result path below (SERR/SOUT/DOTO/DOTD) uses `compr` as
+         * negotiated, since that data really is compressed with whatever
+         * the client and server agreed on. */
+        if ((ret = dcc_r_many_files(in_fd, temp_dir, DCC_COMPRESS_LZO1X,
+                                    (mode_t) opt_job_file_mode))
+            || (ret = dcc_set_output(argv, temp_o))
+            || (ret = tweak_arguments_for_server(argv, temp_dir, deps_fname,
+                                          &dotd_target, &tweaked_argv)))
             goto out_cleanup;
         /* Repeat the switcharoo trick a few lines above. */
         dcc_free_argv(argv);
@@ -879,8 +965,13 @@ static int dcc_run_job(int in_fd,
         if (job_result == -1)
             job_result = STATS_COMPILE_ERROR;
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
-        /* Something went wrong, so send DOTO 0 */
-        if (protover == DCC_VER_4)
+        /* Something went wrong, so send DOTO 0. The 2-int format must be
+         * used here whenever the client will be expecting it -- i.e.
+         * whenever `compr` is zstd (DCC_VER_4000 or DCC_VER_5000) -- not
+         * just for DCC_VER_4000, or a DCC_VER_5000 (zstd, server-side cpp)
+         * client would desync trying to read a second int that was never
+         * sent. */
+        if (compr == DCC_COMPRESS_ZSTD)
             dcc_x_token_2int(out_fd, "DOTO", 0, 0);
         else
             dcc_x_token_int(out_fd, "DOTO", 0);
@@ -905,7 +996,16 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
-        if (protover == DCC_VER_4) {
+        /* Split dwarf (DDWO) stays specific to DCC_VER_4000, not
+         * generalized to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5000's
+         * result header ends with DOTD (see the cpp_where ==
+         * DCC_CPP_ON_SERVER block below), and the client
+         * (dcc_retrieve_results() in clirpc.c) has no DDWO read between
+         * DOTO and DOTD for pump mode -- sending DDWO here for
+         * DCC_VER_5000 would desync the wire. Split dwarf support for
+         * server-side cpp would need its own wire-format slot; that is a
+         * separate enhancement, not part of wiring zstd+pump together. */
+        if (protover == DCC_VER_4000) {
             if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
                 goto out_cleanup;
         }

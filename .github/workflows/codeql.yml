@@ -5,6 +5,7 @@ name: CodeQL
 # to catch issues in our active development branch (current_dev).
 # See: https://github.com/wiki-mod/distcc-ng/issues/155
 on:
+  workflow_dispatch:
   push:
     branches: [current_dev, master]
   pull_request:
@@ -18,16 +19,27 @@ concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
+# Read-only floor: the actual write scope (security-events: write, needed to
+# upload SARIF results) is pushed down to the analyze job's own permissions
+# block below rather than granted here, so a top-level Scorecard/security
+# scan of this file sees no broader-than-read default token scope.
 permissions:
   contents: read
-  actions: read
-  security-events: write
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # actions: read lets codeql-action/init resolve this workflow's own run
+    # context (needed on some repo configurations); security-events: write
+    # is what actually lets codeql-action/analyze upload SARIF results to
+    # the code scanning API -- both scoped to this job, not the whole
+    # workflow, since it's the only job that calls either.
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     strategy:
       fail-fast: false
@@ -36,10 +48,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           languages: ${{ matrix.language }}
           # Use extended query suite (security + code quality checks)
@@ -66,6 +78,6 @@ jobs:
           make
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           category: '/language:${{ matrix.language }}'

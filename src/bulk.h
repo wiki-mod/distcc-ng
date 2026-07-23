@@ -24,6 +24,20 @@
 int dcc_r_file(int ifd, const char *filename, unsigned size,
                unsigned uncompr_size,
                enum dcc_compress);
+/* Symlink-safe variant of dcc_r_file() that creates the final component
+ * @p leaf relative to an already-open directory @p parent_fd with
+ * O_NOFOLLOW, used by the server's multi-file receive path to prevent a
+ * symlink at the leaf from redirecting the write outside the job directory
+ * (issue #292). @p mode is caller-supplied (rather than a hardcoded
+ * constant) since this shared-object function is linked into both distcc
+ * and distccd (see Makefile.in's common_obj) and must not depend on
+ * distccd-only option state. See the definition in bulk.c for the full
+ * rationale. */
+int dcc_r_file_beneath(int ifd, int parent_fd, const char *leaf,
+                       unsigned size,
+                       unsigned uncompr_size,
+                       enum dcc_compress,
+                       mode_t mode);
 int dcc_r_fifo(int ifd, const char *fifo_name, size_t len);
 
 int dcc_x_file(int ofd, const char *fname, const char *token,
@@ -47,7 +61,11 @@ int dcc_x_many_files(int ofd,
                      unsigned int n_files,
                      char **fnames);
 
-/* srvrpc.c */
+/* srvrpc.c. @p file_mode is the permission bits (subject to umask) for
+ * received FILE entries -- caller-supplied since srvrpc.c is linked into
+ * more than just distccd (see dcc_r_many_files()'s own comment in
+ * srvrpc.c). distccd's real caller (src/serve.c) passes opt_job_file_mode. */
 int dcc_r_many_files(int in_fd,
                      const char *dirname,
-                     enum dcc_compress compr);
+                     enum dcc_compress compr,
+                     mode_t file_mode);

@@ -82,3 +82,38 @@ this reason.
   `--with-system-popt`/`--without-system-popt` for forcing one path or the
   other. This reduces, rather than removes, a pre-existing hard requirement,
   and does not raise any minimum version.
+
+## Dependency management policy
+
+This section documents how this fork selects, obtains, and tracks its
+dependencies (raised by issue #267's OSSF Scorecard/Baseline review,
+criterion `OSPS-DO-06.01`).
+
+- **GitHub Actions** (the workflows under `.github/workflows/`) are the one
+  category of dependency with automated update tooling: `.github/dependabot.yml`
+  opens a weekly update PR per action, for both `master` and `current_dev`.
+  Each such PR still goes through the same review, CI, and (for `master`)
+  explicit maintainer-approval gates as any other pull request — Dependabot
+  only proposes the update, it never merges one itself. `.github/workflows/osv-scanner.yml`
+  adds a real-time gate on top of that periodic cadence: every pull request
+  and push is checked against OSV.dev's advisory database for known-
+  vulnerable action versions (see `SECURITY.md`'s SCA policy section).
+- **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`)
+  are detected at `./configure` time via `configure.ac`'s `PKG_CHECK_MODULES`
+  calls against whatever the build host already provides, per the
+  compatibility policy above (optional where possible, a documented
+  minimum version otherwise). There is no package-manager-native manifest
+  format for autoconf/C dependencies of this kind, so there is nothing for
+  an automated dependency-update tool to act on here; version floors are
+  reviewed manually as part of normal `configure.ac` changes.
+- **`include_server/setup.py`** (the Python include-server build) declares
+  no external Python dependencies (no `install_requires`) — nothing to
+  track for that ecosystem either.
+- **Vendored code** (e.g. `lzo/`'s bundled minilzo, `popt/`'s bundled popt
+  fallback) is reviewed manually rather than through an automated tool:
+  this project is actively maintained, and a proposal to replace vendored
+  code is evaluated case by case against real alternatives when one is
+  raised. For example, `lzo/`'s vendored minilzo has no alternative worth
+  adopting, since upstream `distcc/distcc` itself vendors the identical
+  minilzo implementation — replacing it here would create a divergence
+  from upstream's own approach without a corresponding benefit.

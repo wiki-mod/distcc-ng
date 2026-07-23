@@ -23,6 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - current_dev
@@ -34,10 +35,14 @@ permissions:
 
 jobs:
   update_release_draft:
-    if: github.event_name == 'push'
+    # workflow_dispatch included: manually refreshing the draft release is
+    # safe/idempotent (unlike auto_label below, which needs a real PR event
+    # context to know which PR to label, so it's left push/pull_request-only).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       # Pinned to v7.5.1's commit (not the floating "v7" tag), per the
       # unpinned-third-party-action CodeQL finding. v7 (unlike v6) declares

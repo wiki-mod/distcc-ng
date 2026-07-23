@@ -116,7 +116,7 @@ dist_files =							\
 	$(dist_extra)						\
 	$(gnome_data)
 
-dist_dirs = m4 include_server/test_data
+dist_dirs = include_server/test_data
 
 dist_lzo = lzo/minilzo.c \
 	lzo/minilzo.h \
@@ -160,8 +160,8 @@ dist_contrib = contrib/distcc-absolutify	\
 dist_include_server_SH = \
 	pump.in
 
-pkgdoc_DOCS = AUTHORS COPYING NEWS \
-	README README.pump \
+pkgdoc_DOCS = COPYING \
+	README.md \
 	INSTALL \
 	TODO \
 	doc/protocol-1.txt doc/status-1.txt \
@@ -202,7 +202,6 @@ update_distcc_symlinks_PY = update-distcc-symlinks.py
 
 # These are included in the distribution but not installed anywhere.
 dist_extra =							\
-	README.packaging ChangeLog \
 	packaging/RedHat/rpm.spec \
 	packaging/RedHat/logrotate.d/distcc \
 	packaging/RedHat/init.d/distcc \
@@ -243,7 +242,6 @@ tarball_bz2 = $(tarball).bz2
 tarball_gz = $(tarball).gz
 tarball_sig_bz2 = $(tarball_bz2).asc
 tarball_sig_gz = $(tarball_gz).asc
-distnews = $(PACKAGE_TARNAME)-$(VERSION).NEWS
 
 rpm_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.rpm
 deb_glob_pattern = "$(PACKAGE)"*[-_.]"$(VERSION)"[-_.]*.deb
@@ -344,6 +342,15 @@ h_getline_obj = src/h_getline.o $(common_obj)
 # No common_obj: pathsafety.c is deliberately dependency-free (see its file
 # comment), so this test binary links only the two objects it needs.
 h_pathsafety_obj = src/h_pathsafety.o src/pathsafety.o
+# End-to-end harness for the server-side multi-file receive path: pulls in
+# the real src/srvrpc.o (which is otherwise only in distccd_obj) on top of
+# common_obj so dcc_r_many_files() itself can be driven from testdistcc.py.
+# Also needs src/dopt.o (for the real opt_job_file_mode default, rather than
+# a duplicated literal) and, transitively, src/access.o + @BUILD_POPT@ --
+# same extra dependencies dopt.o already needs in h_dopt_obj above, since
+# dopt.c itself calls dcc_parse_mask() (access.c) and uses popt directly.
+h_srvrpc_obj = src/h_srvrpc.o src/srvrpc.o $(common_obj) src/dopt.o \
+               src/access.o @BUILD_POPT@
 
 # All source files, for the purposes of building the distribution
 SRC =	src/stats.c							\
@@ -367,6 +374,7 @@ SRC =	src/stats.c							\
 	src/mon-gnome.c							\
 	src/ncpus.c src/netutil.c					\
 	src/h_pathsafety.c src/pathsafety.c				\
+	src/h_srvrpc.c							\
 	src/prefork.c src/pump.c					\
 	src/remote.c src/renderer.c src/rpc.c				\
 	src/safeguard.c src/sandbox-config.c src/sandbox-seccomp.c	\
@@ -468,7 +476,8 @@ check_PROGRAMS = \
 	h_dotd@EXEEXT@ \
 	h_compile@EXEEXT@ \
 	h_getline@EXEEXT@ \
-	h_pathsafety@EXEEXT@
+	h_pathsafety@EXEEXT@ \
+	h_srvrpc@EXEEXT@
 
 check_include_server_PY = \
 	include_server/c_extensions_test.py \
@@ -603,9 +612,6 @@ h_parsemask@EXEEXT@: $(h_parsemask_obj)
 h_strip@EXEEXT@: $(h_strip_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_strip_obj) $(LIBS)
 
-h_dopt@EXEEXT@: $(h_dopt_obj)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_dopt_obj) $(LIBS)
-
 h_stats@EXEEXT@: $(h_stats_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_stats_obj) $(LIBS)
 
@@ -626,6 +632,9 @@ h_getline@EXEEXT@: $(h_getline_obj)
 
 h_pathsafety@EXEEXT@: $(h_pathsafety_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_pathsafety_obj) $(LIBS)
+
+h_srvrpc@EXEEXT@: $(h_srvrpc_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_srvrpc_obj) $(LIBS)
 
 
 src/h_fix_debug_info.o: src/fix_debug_info.c
@@ -704,7 +713,6 @@ dist:
 		$(BZIP2_BIN) -vfc "$(tarball)" > "$(tarball_bz2)"
 	rm -f "$(tarball)"
 	rm -fr "$(distdir)"
-	cp "$(srcdir)/NEWS" "$(distnews)"
 
 # We create two new directories: one for the build and one to install,
 # and make sure we can build and install from different directories

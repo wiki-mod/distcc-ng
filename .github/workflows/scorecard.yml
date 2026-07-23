@@ -43,11 +43,16 @@ jobs:
       # repo's code-scanning alerts. id-token: write is unused while
       # publish_results is false, but kept so flipping that flag later (see
       # note above) doesn't also require a follow-up permissions change.
+      # contents: read is required here because this job-level block
+      # replaces (rather than adds to) the workflow-level `read-all` --
+      # without it, actions/checkout below has no contents permission at
+      # all on a repo/token where scope enforcement is strict.
+      contents: read
       security-events: write
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -61,13 +66,13 @@ jobs:
           publish_results: false
 
       - name: Upload SARIF as an artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scorecard-results
           path: results.sarif
           retention-days: 5
 
       - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           sarif_file: results.sarif

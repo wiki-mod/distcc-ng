@@ -128,8 +128,11 @@ Example:
 # TODO: Test a nasty cpp that always writes to stdout regardless of
 # -o.
 
-# TODO: Test giving up privilege using --user.  Difficult -- we may
-# need root privileges to run meaningful tests.
+# Giving up privilege using --user is now covered, root-only, by
+# AutogroupNicenessPrivilegeDrop_Case below: GitHub Actions runners give
+# real root via sudo on a real Linux kernel, so the "may need root
+# privileges" limitation that deferred this for 15+ years no longer
+# applies for at least this one --user scenario.
 
 # TODO: Test that recursion safeguard works.
 
@@ -154,7 +157,7 @@ Example:
 
 
 import time, sys, os, glob, re, socket, errno
-import signal, os.path
+import signal, os.path, pwd, tempfile, shutil
 import comfychair
 
 from stat import *                      # this is safe
@@ -552,12 +555,21 @@ class IsSource_Case(SimpleDistCC_Case):
 
 class PathSafety_Case(SimpleDistCC_Case):
     def runtest(self):
-        """Test dcc_name_has_path_traversal() and dcc_cdir_has_path_traversal(),
-        which guard the NAME and CDIR tokens respectively.
+        """Test dcc_name_has_path_traversal(), dcc_cdir_has_path_traversal(),
+        and dcc_absolute_link_target_has_path_traversal(), which guard the
+        NAME, CDIR, and (partially) LINK tokens respectively.
 
         NAME validation guards dcc_r_many_files() (src/srvrpc.c) against a
         client-supplied path that could escape the server's per-job temp
         directory (issue #93).
+
+        LINK-target validation (absolute-style link_target only) guards the
+        same function's symlink-creation path against the same "/../ "
+        escape shape (issue #95) -- a relative link_target is deliberately
+        left unvalidated; see pathsafety.h's own comment on
+        dcc_absolute_link_target_has_path_traversal() for why that residual
+        case needs a real containment boundary (issue #289), not a text
+        check, to close properly.
 
         CDIR validation guards make_temp_dir_and_chdir_for_cpp() (src/serve.c)
         against a client-supplied current working directory that could allow
@@ -636,6 +648,112 @@ class PathSafety_Case(SimpleDistCC_Case):
                 raise AssertionError("h_pathsafety --cdir %s gave %s, expected %s" %
                                      (repr(cdir), repr(o), repr(expected)))
 
+        # Test dcc_absolute_link_target_has_path_traversal() behavior
+        # (LINK token's link_target, absolute-style only -- issue #95).
+        # Only closes the absolute-target case (same "/../ " shape as NAME);
+        # a relative link_target is deliberately not validated at all (see
+        # pathsafety.h's own comment on dcc_absolute_link_target_has_path_traversal()
+        # for why), so no relative cases are exercised here.
+        link_target_cases = (
+                 # Safe: rooted at '/', no ".." component anywhere.
+                 ( "/usr/include",          "safe" ),
+                 ( "/a/b/c",                "safe" ),
+                 ( "/",                     "safe" ),
+                 # A ".." that is part of a longer name, not a path
+                 # component of its own, must NOT be rejected.
+                 ( "/foo/..bar",            "safe" ),
+                 ( "/foo/bar..",            "safe" ),
+                 # Unsafe: ".." as a leading, embedded, or trailing
+                 # path component.
+                 ( "/../etc/passwd",        "unsafe" ),
+                 ( "/foo/../../etc/passwd", "unsafe" ),
+                 ( "/foo/..",               "unsafe" ),
+                 ( "/..",                   "unsafe" ),
+                )
+        for link_target, expected_safety in link_target_cases:
+            o, err = self.runcmd("h_pathsafety --link-target '%s'" % link_target)
+            expected = ("%s %s\n" % (expected_safety, link_target))
+            if o != expected:
+                raise AssertionError("h_pathsafety --link-target %s gave %s, expected %s" %
+                                     (repr(link_target), repr(o), repr(expected)))
+
+
+
+class SymlinkTraversal_Case(SimpleDistCC_Case):
+    """End-to-end regression for issue #292: distccd's multi-file receive
+    (dcc_r_many_files() in src/srvrpc.c) must not follow a symlink sitting at
+    an intermediate NAME component when materializing a later entry in the
+    same NFIL batch.
+
+    Unlike PathSafety_Case (which exercises the NAME/CDIR/LINK-target *string*
+    checks in isolation), this drives the real dcc_r_many_files() code path
+    via the h_srvrpc harness, feeding it the exact escape sequence from the
+    issue: entry 1 creates a symlink NAME "/safe" with a relative,
+    deliberately-unvalidated target pointing at a sibling directory, then
+    entry 2 sends a FILE whose NAME "/safe/pwned" is nested underneath that
+    symlink. A vulnerable server follows the symlink and writes outside the
+    job directory; the fixed server rejects entry 2 with EXIT_PROTOCOL_ERROR
+    (109) and nothing lands in the escape target.
+    """
+    def runtest(self):
+        # --- Malicious sequence: must be rejected, must not escape. ---
+        atk = os.path.join(self.tmpdir, "atk")
+        jobdir = os.path.join(atk, "job")
+        escape = os.path.join(atk, "escape")
+        os.makedirs(jobdir)
+        os.makedirs(escape)
+
+        # From jobdir, "../escape" resolves to the sibling escape dir; the
+        # symlink target is relative, so it passes every current string
+        # check (this is exactly the case #290 leaves unvalidated).
+        o, err = self.runcmd("h_srvrpc attack '%s' ../escape" % jobdir)
+        if o != "ret=109\n":
+            raise AssertionError(
+                "attack sequence not rejected: h_srvrpc gave %s (stderr: %s), "
+                "expected 'ret=109\\n'" % (repr(o), repr(err)))
+
+        # The first entry's leaf symlink must exist (proving the test really
+        # reached the vulnerable second step, not bailed out earlier)...
+        safe = os.path.join(jobdir, "safe")
+        if not os.path.islink(safe):
+            raise AssertionError(
+                "expected job/safe to have been created as a symlink; "
+                "the attack never reached the nested-FILE step")
+        # ...and the escape target must be empty: the nested FILE must NOT
+        # have been written through the symlink.
+        pwned = os.path.join(escape, "pwned")
+        if os.path.exists(pwned):
+            raise AssertionError(
+                "PATH TRAVERSAL: nested FILE escaped the job directory and "
+                "was written to %s" % pwned)
+
+        # --- Benign nested sequence: must still succeed. ---
+        legjob = os.path.join(self.tmpdir, "leg", "job")
+        os.makedirs(legjob)
+        o, err = self.runcmd("h_srvrpc legit '%s'" % legjob)
+        if o != "ret=0\n":
+            raise AssertionError(
+                "legit sequence rejected: h_srvrpc gave %s (stderr: %s), "
+                "expected 'ret=0\\n'" % (repr(o), repr(err)))
+
+        first = os.path.join(legjob, "a", "b", "c", "first.h")
+        second = os.path.join(legjob, "a", "b", "c", "d", "second.h")
+        mirror = os.path.join(legjob, "a", "mirror.h")
+        with open(first) as f:
+            if f.read() != "one":
+                raise AssertionError("legit: %s has wrong contents" % first)
+        with open(second) as f:
+            if f.read() != "two":
+                raise AssertionError("legit: %s has wrong contents" % second)
+        # A leaf mirror-style relative symlink (nothing nested under it) is
+        # legitimate pump traffic and must be created, not rejected.
+        if not os.path.islink(mirror):
+            raise AssertionError(
+                "legit: expected %s to be created as a symlink" % mirror)
+        if os.readlink(mirror) != "../elsewhere/real.h":
+            raise AssertionError(
+                "legit: %s points at %s, expected '../elsewhere/real.h'"
+                % (mirror, os.readlink(mirror)))
 
 
 class ScanArgs_Case(SimpleDistCC_Case):
@@ -1248,6 +1366,109 @@ int main(void) {
 }
 """
 
+class MarchNativeDispatcherPath_Case(CompileHello_Case):
+    """-march=native must resolve using the compiler binary actually invoked,
+    not a basename re-resolved via a fresh PATH search.
+
+    Regression test for arg.c's dcc_resolve_march_native(): argv[0] here is
+    an explicit path to a dispatcher script that is NOT named "clang" (and
+    lives in a directory that is deliberately not on $PATH), but the script
+    execs the real local clang underneath -- mirroring macOS's "cc", which
+    is a small dispatch binary rather than a symlink, and any other
+    non-obviously-named compiler wrapper.
+
+    Before the fix, dcc_resolve_march_native() stripped argv[0] down to its
+    basename and ran execlp() on that basename alone; since the dispatcher's
+    own basename is not on $PATH here, that lookup fails, "-march=native"
+    is left unresolved, and the existing hard-fail-to-local path silently
+    routes the whole compile through a local fallback instead of
+    distributing it. After the fix, execlp() is handed argv[0] unchanged,
+    so a path containing '/' is executed literally (no PATH search) --
+    the dispatcher runs for real, "-march=native" resolves to concrete
+    clang flags, and the compile distributes normally.
+
+    A real remote distribution (not just "the resulting binary works",
+    which a silent local fallback would also produce) is confirmed by
+    grepping the daemon's own independent log for a COMPILE_OK entry, per
+    doc/verification-checklist.md section 3's real-two-host evidence bar --
+    a trace line or a working binary alone cannot tell these two cases
+    apart."""
+
+    def setup(self):
+        # Builds the fake dispatcher fixture described in the class
+        # docstring: a real, non-"clang"-named executable script that execs
+        # the real local clang, placed outside $PATH so a basename-only
+        # lookup (the pre-fix bug) cannot find it by name alone.
+        CompileHello_Case.setup(self)
+        clang = self._find_compiler("clang")
+        self.require(clang is not None,
+                     "no clang found on $PATH to build the fake dispatcher from")
+        # -march=native's acceptance is itself arch/compiler-dependent (e.g.
+        # some clang/AArch64 combinations reject it outright). If the local
+        # clang doesn't accept it at all, dcc_resolve_march_native()'s probe
+        # fails regardless of this fix, the compile falls through to a local
+        # gcc/clang invocation of "-march=native" that ALSO errors there --
+        # a real compile failure, not a clean skip -- so this must be
+        # checked before relying on the flag being usable at all here.
+        probe_rc, _, probe_err = self.runcmd_unchecked(
+            "%s -march=native -E -x c - < /dev/null > /dev/null" % clang)
+        self.require(probe_rc == 0,
+                     "local clang does not accept -march=native on this arch")
+        # Some hosts' clang legitimately emits its own warning while
+        # resolving "-march=native" (seen: "invalid feature combination:
+        # +avx10.1-256; will be promoted to avx10.1-512") -- this is the
+        # SYSTEM/dispatcher clang commenting on its own flag resolution,
+        # not a diagnostic about distcc-ng's source, but this test's
+        # compile() (inherited, unmodified) fails on any non-empty stderr,
+        # same as every other compile in this suite. Silently filtering a
+        # known warning pattern out of that check (tried once, reverted)
+        # would weaken the warnings-are-errors discipline for exactly the
+        # cases where a real regression could hide behind a real one; skip
+        # cleanly instead of degrading what "pass" means for this test.
+        self.require(probe_err == '',
+                     "local clang's own -march=native resolution emits a "
+                     "warning on this host (%r) -- skipping rather than "
+                     "filtering it out of this test's warning-as-error "
+                     "check" % probe_err)
+        # Deliberately not on $PATH and deliberately not named anything
+        # containing "clang"/"gcc"/"cc" -- a basename-only PATH search (the
+        # pre-fix behavior) must not be able to resolve this by name alone.
+        dispatch_dir = os.path.join(os.getcwd(), "not_on_path")
+        os.mkdir(dispatch_dir)
+        self.dispatcher_path = os.path.join(dispatch_dir, "mycompiler")
+        with open(self.dispatcher_path, "w") as f:
+            f.write("#!/bin/sh\nexec %s \"$@\"\n" % clang)
+        os.chmod(self.dispatcher_path, 0o700)
+
+    def compileCmd(self):
+        # Invokes the dispatcher by its full path (not a bare name), with
+        # DISTCC_FALLBACK disabled so a broken -march=native resolution
+        # surfaces as a hard failure instead of a silently-successful local
+        # compile that would mask the exact regression this test targets.
+        return self.distcc_without_fallback() + \
+               self.dispatcher_path + " -o testtmp.o -march=native " + \
+               self.compileOpts() + " -c %s" % (self.sourceFilename())
+
+    def linkCmd(self):
+        # Link step doesn't exercise -march=native resolution itself, but
+        # must still invoke the same full-path dispatcher as compileCmd()
+        # so the produced object file links against a consistent compiler.
+        return self.distcc() + \
+               self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
+
+    def runtest(self):
+        # A working binary alone can't distinguish a real remote
+        # distribution from a silent local fallback (both produce a valid
+        # testtmp) -- grepping the daemon's own independent log for
+        # COMPILE_OK is the actual proof the compile was distributed, per
+        # doc/verification-checklist.md section 3's real-two-host evidence
+        # bar.
+        CompileHello_Case.runtest(self)
+        with open(self.daemon_logfile) as f:
+            daemon_log = f.read()
+        self.assert_re_search(r'COMPILE_OK', daemon_log)
+
+
 class LanguageSpecific_Case(Compilation_Case):
     """Abstract base class to test building non-C programs."""
     def runtest(self):
@@ -1502,6 +1723,9 @@ class Gdb_Case(CompileHello_Case):
 
         CompileHello_Case.runtest (self)
 
+    def gdbCommands(self):
+        return 'break main\nrun\nnext\n'
+
     def checkBuiltProgram(self):
         # On windows, the binary may be called testtmp.exe.  Check both
         if os.path.exists('link/testtmp.exe'):
@@ -1515,7 +1739,7 @@ class Gdb_Case(CompileHello_Case):
         # the gdb commands directly on the commandline using gdb --ex,
         # is not as portable since only newer gdb's support it.)
         f = open('gdb_commands', 'w')
-        f.write('break main\nrun\nnext\n')
+        f.write(self.gdbCommands())
         f.close()
         out, errs = self.runcmd("gdb -nh --batch --command=gdb_commands "
                                 "link/%s </dev/null" % testtmp_exe)
@@ -1606,6 +1830,25 @@ class GdbOpt3_Case(Gdb_Case):
     def compiler(self):
         """Command for compiling and linking."""
         return self._cc + " -g -O3 ";
+
+class GdbPrefixMap_Case(Gdb_Case):
+    """Test that -fdebug-prefix-map= paths are rewritten correctly by a
+    distccd running in a different directory than the client (this is
+    exactly the scenario tweak_prefix_map_arguments_for_server() exists
+    for)."""
+
+    def compiler(self):
+        """Command for compiling and linking."""
+        # Before GCC 6, the -fdebug-prefix-map=... option was recorded in the
+        # DW_AT_producer section: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=69821
+        # Here, use -gno-record-gcc-switches so that we do not see
+        # "replaced 1 occurrences of" from dcc_fix_debug_info in distccd.log.
+        # We could check this automatically, but it doesn't add much value.
+        return (self._cc + " -g -fdebug-prefix-map=%s=." % os.getcwd() +
+                " -gno-record-gcc-switches")
+
+    def gdbCommands(self):
+        return 'directory %s\n' % os.getcwd() + super().gdbCommands()
 
 class CompressedCompile_Case(CompileHello_Case):
     """Test compilation with compression.
@@ -1869,6 +2112,350 @@ class NoDetachDaemon_Case(CompileHello_Case):
         self.assert_equal(self.pid, pid)
 
 
+class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
+    """Root-only: negative autogroup niceness after a --user privilege drop.
+
+    Exercises a real scenario found by automated review: distccd started
+    as root with a negative --nice value and --user set to an unprivileged
+    account. main()'s nice(opt_niceness) in src/daemon.c runs while still
+    root and succeeds, but dcc_set_autogroup_niceness() (src/dparent.c)
+    only runs much later, from dcc_detach() after setsid(), by which point
+    dcc_discard_root() has already permanently dropped root/CAP_SYS_NICE.
+    The kernel's proc_sched_autogroup_set_nice() rejects a negative
+    autogroup nice write without that capability, so the write fails with
+    EPERM: a real, currently-unfixed, non-fatal (rs_log_warning only) gap.
+    This test does not fix the ordering -- see
+    support-upstream/issue-077-autogroup-niceness.md for why: retaining
+    CAP_SYS_NICE across the privilege drop is a nontrivial,
+    security-sensitive change to src/setuid.c that hasn't been signed off
+    on. This test only documents that the gap is real, is actually
+    surfaced as a warning (not silently swallowed), and does not regress.
+
+    Root and Linux are both required to observe this at all: autogroups are
+    a Linux-only scheduler feature (gated by HAVE_LINUX in
+    dcc_set_autogroup_niceness() itself), and only a real root-started
+    distccd can exercise dcc_discard_root()'s privilege drop in the first
+    place -- see the 15+-year-old TODO this replaces, above, and
+    test/comfychair.py's require_root()/CheckRoot_Case for the existing
+    skip-unless-root convention this follows. `make check` itself must be
+    invoked as root (e.g. `sudo make check`) for this case to actually run;
+    it does not shell out to sudo per-command itself.
+    """
+
+    # "nobody" is a real, always-present unprivileged Linux account -- no
+    # dedicated test user needs to be created for this, unlike opt_user's
+    # own default of "distcc" (which does not exist on most systems and
+    # would just fall back to "nobody" anyway, see src/setuid.c's
+    # dcc_preferred_user()).
+    DROP_USER = "nobody"
+    NICE_VALUE = -5
+
+    def _enter_rundir(self):
+        """Root the scratch directory under /tmp instead of comfychair's
+        default '<checkout>/_testtmp/<class name>'.
+
+        This test needs real root to run, so every directory it creates
+        starts out root-owned; granting a dropped-privilege account
+        traversal permission on those directories' ancestors (see
+        _ensure_ancestors_traversable() below) would, under the checkout's
+        own location, mean touching whatever the checkout happens to sit
+        under -- a developer's private $HOME at mode 0700, for instance --
+        which would be a persistent, unintended host-permission change
+        reaching outside this test's own scratch tree. /tmp is expected to
+        already be world-traversable (mode 1777) on any normal Linux distro
+        or CI runner, so rooting the scratch tree there instead means the
+        ancestor-traversal logic below almost never needs to touch anything
+        this test doesn't itself own and remove again on cleanup.
+        """
+        self.basedir = os.getcwd()
+        self.add_cleanup(self._restore_directory)
+        self.rundir = tempfile.mkdtemp(prefix='distccd-autogroup-niceness-')
+        self.tmpdir = os.path.join(self.rundir, 'tmp')
+        os.makedirs(self.tmpdir)
+        os.chdir(self.rundir)
+        self.add_cleanup(self._remove_rundir)
+
+    def _remove_rundir(self):
+        """Cleanup for _enter_rundir()'s tempfile.mkdtemp() scratch tree.
+
+        Cleanups run in LIFO order (test/comfychair.py's apply_cleanups()),
+        so this runs before _restore_directory's chdir back to basedir --
+        i.e. while the process's cwd is still (the now-deleted) rundir.
+        That is harmless on Linux: unlinking a directory tree doesn't
+        depend on any process's cwd being inside it, and the next cleanup
+        step chdir()s via the absolute self.basedir path, not a relative
+        one, so it does not depend on the old cwd resolving to anything."""
+        shutil.rmtree(self.rundir, ignore_errors=True)
+
+    def setup(self):
+        self.require_root()
+        if not sys.platform.startswith('linux'):
+            raise comfychair.NotRunError(
+                'autogroups are a Linux-only kernel feature')
+        try:
+            with open('/proc/sys/kernel/sched_autogroup_enabled', 'rt') as f:
+                if f.read().strip() != '1':
+                    raise comfychair.NotRunError(
+                        'kernel autogroup scheduling is disabled '
+                        '(sched_autogroup_enabled != 1)')
+        except IOError:
+            raise comfychair.NotRunError(
+                'kernel has no sched_autogroup_enabled knob (autogroups '
+                'unsupported on this kernel)')
+        # Deliberately calls SimpleDistCC_Case.setup(), not
+        # WithDaemon_Case.setup(): the latter starts the daemon with the
+        # default daemon_command() immediately, before this class's
+        # overridden daemon_command() (with --user/--nice) would apply.
+        SimpleDistCC_Case.setup(self)
+        self.daemon_pidfile = os.path.join(os.getcwd(), "daemonpid.tmp")
+        self.daemon_logfile = os.path.join(os.getcwd(), "distccd.log")
+        self.daemon_sysroot = os.getcwd()
+        self.server_port = DISTCC_TEST_PORT
+        self.startDaemon()
+
+    def _log_ancestor_permissions(self, path):
+        """Log owner/mode of `path` and every ancestor directory, up to the
+        filesystem root.
+
+        Purely diagnostic (no side effect): opening a file requires execute
+        (traversal) permission on *every* ancestor directory in its path,
+        not just write permission on the immediate parent -- so a chown of
+        the leaf test directory alone can still leave the daemon unable to
+        reach it if some ancestor (e.g. a CI runner's own home directory,
+        commonly mode 0750 and thus closed to an unrelated "other" account
+        like nobody) blocks traversal. Logged unconditionally so a real
+        failure here shows the actual stat data instead of requiring a
+        second guess-and-rerun round trip.
+        """
+        p = os.path.abspath(path)
+        while True:
+            st = os.stat(p)
+            self.log("ancestor permission check: %s uid=%d gid=%d mode=%o"
+                      % (p, st.st_uid, st.st_gid, S_IMODE(st.st_mode)))
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+
+    def _restore_ancestor_modes(self, saved_modes):
+        """Cleanup counterpart to _ensure_ancestors_traversable(): put back
+        the exact original mode on every ancestor directory this test
+        changed, so no permission change outlives the test run.
+
+        `saved_modes` is a list of (path, original_mode) pairs, in the
+        order they were changed; restored in reverse so a directory is
+        never left transiently unreachable partway through (not that it
+        matters much for a mode-only change, but it mirrors how the
+        original chmod walk proceeded)."""
+        for p, original_mode in reversed(saved_modes):
+            try:
+                os.chmod(p, original_mode)
+                self.log("restored mode %o on %s" % (original_mode, p))
+            except OSError as e:
+                # Best-effort: a missing ancestor (e.g. already removed by
+                # _remove_rundir()) or a permission race is not worth
+                # failing the test over at cleanup time.
+                self.log("could not restore mode on %s: %s" % (p, e))
+
+    def _ensure_ancestors_traversable(self, path, uid, gid):
+        """Grant `uid`/`gid` search (execute) permission on `path` and every
+        ancestor directory, up to the filesystem root.
+
+        Only adds the "other execute" bit where it is missing (a minimal
+        traversal grant -- existing read/write bits, and anything else
+        "other" could already do, are left untouched); does not touch
+        ownership of ancestors above the test's own directories, since
+        chown-ing e.g. a CI runner's home directory would reach well beyond
+        what this test needs or should touch. This exists because a
+        directory-level chown() (see below) is not sufficient on its own:
+        Unix requires execute permission on *every* ancestor directory to
+        open a file deep inside it, not just write permission on the
+        immediate parent. _enter_rundir() roots this test's own directories
+        under /tmp specifically so this loop normally has nothing to do
+        for anything above them, but if it ever does (e.g. a nonstandard
+        $TMPDIR), every change it makes is recorded and restored via a
+        cleanup registered here -- this must never be a permanent host
+        permission change, only a change scoped to this test run.
+        """
+        changed = []
+        p = os.path.abspath(path)
+        while True:
+            st = os.stat(p)
+            mode = S_IMODE(st.st_mode)
+            if not (mode & S_IXOTH):
+                os.chmod(p, mode | S_IXOTH)
+                changed.append((p, mode))
+                self.log("chmod o+x on %s (was %o, owner uid=%d)"
+                          % (p, mode, st.st_uid))
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+        if changed:
+            self.add_cleanup(lambda: self._restore_ancestor_modes(changed))
+
+    def startDaemon(self):
+        """Root-only variant of WithDaemon_Case.startDaemon().
+
+        distccd drops privileges to self.DROP_USER (dcc_discard_root())
+        *before* opening its log file and writing its pidfile (src/daemon.c's
+        own comment: "Discard privileges before opening log so that if it's
+        created, it has the right ownership") -- but every directory here was
+        just created by this test process while still root (running under
+        `sudo make ... single-test`), so the dropped-privilege process can't
+        write into any of them without help. Two distinct fixes are needed,
+        not one: chown() the specific directories distccd actually needs to
+        write into (the TMPDIR-derived working directory, and the
+        comfychair-provided per-test directory holding the pidfile/log-file)
+        to the drop user; and separately, grant traversal (execute)
+        permission on every ancestor directory up to the filesystem root,
+        since a CI runner's own home directory (this test's whole directory
+        tree lives under it) is commonly mode 0750 and blocks an unrelated
+        account like nobody from reaching anything under it at all, no
+        matter what the leaf directories are chowned to. Same class of
+        gotcha as doc/verification-checklist.md section 9's root-owned bind
+        mount note, just triggered by sudo instead of a Docker mount.
+        """
+        drop_pw = pwd.getpwnam(self.DROP_USER)
+
+        self._log_ancestor_permissions(self.daemon_sysroot)
+        self._ensure_ancestors_traversable(
+            self.daemon_sysroot, drop_pw.pw_uid, drop_pw.pw_gid)
+
+        old_tmpdir = os.environ['TMPDIR']
+        daemon_tmpdir = old_tmpdir + "/daemon_tmp"
+        os.mkdir(daemon_tmpdir)
+        os.chown(daemon_tmpdir, drop_pw.pw_uid, drop_pw.pw_gid)
+        os.environ['TMPDIR'] = daemon_tmpdir
+        os.mkdir("daemon")
+        os.chown("daemon", drop_pw.pw_uid, drop_pw.pw_gid)
+        os.chdir("daemon")
+        # self.daemon_pidfile/self.daemon_logfile are absolute paths under
+        # self.daemon_sysroot (the directory this test case started in,
+        # before the chdir above) -- that directory is still root-owned too.
+        os.chown(self.daemon_sysroot, drop_pw.pw_uid, drop_pw.pw_gid)
+        try:
+            while 1:
+                cmd = self.daemon_command()
+                result, out, err = self.runcmd_unchecked(cmd)
+                if result == 0:
+                    break
+                elif result == EXIT_BIND_FAILED:
+                    self.server_port += 1
+                    continue
+                else:
+                    self.fail("failed to start daemon: %d" % result)
+            self.add_cleanup(self.killDaemon)
+        finally:
+            os.environ['TMPDIR'] = old_tmpdir
+            os.chdir("..")
+
+    def daemon_command(self):
+        """Root, negative --nice, and --user together are what makes the
+        privilege-drop-before-autogroup-write ordering in dparent.c
+        actually observable; --log-level debug is needed to capture the
+        trace/warning lines this test also checks."""
+        return (self.distccd() +
+                "--verbose --log-level debug --daemon --nice %d --user %s "
+                "--lifetime=%d --log-file %s --pid-file %s --port %d "
+                "--allow 127.0.0.1 --enable-tcp-insecure --sysroot %s"
+                % (self.NICE_VALUE, self.DROP_USER, self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+    # How long to wait for the detached child to actually reach
+    # dcc_set_autogroup_niceness() before giving up. dcc_detach()'s parent
+    # process exits (_exit(0)) immediately after fork(), well before the
+    # child calls setsid()/dcc_set_autogroup_niceness() -- so the pidfile
+    # existing (which is all startDaemon() waits for) does not mean the
+    # autogroup write has happened yet. 15s is generous for a single fork
+    # and a couple of syscalls even on a heavily loaded CI runner; this is
+    # a wait-for-condition poll, not a fixed sleep, so it normally returns
+    # in well under a second.
+    AUTOGROUP_WARNING_TIMEOUT = 15
+
+    def _waitForLogPattern(self, pattern, timeout):
+        """Poll self.daemon_logfile for `pattern`, up to `timeout` seconds.
+
+        Needed because the event being waited for (dcc_set_autogroup_niceness()
+        actually running and logging its result) happens in a forked child
+        well after this test's startDaemon() already returned -- a single
+        one-shot read right after startDaemon() can race a slow/contended
+        CI runner and either miss a warning that is logged a moment later,
+        or (worse) read /proc/<pid>/autogroup before the write it's
+        checking has even happened. Returns the full log content once
+        `pattern` is found; fails the test with the log seen so far if the
+        timeout is reached without a match.
+        """
+        deadline = time.time() + timeout
+        log_contents = ""
+        while True:
+            try:
+                with open(self.daemon_logfile, 'rt') as f:
+                    log_contents = f.read()
+            except IOError:
+                log_contents = ""
+            if re.search(pattern, log_contents) is not None:
+                return log_contents
+            if time.time() > deadline:
+                self.fail(
+                    "timed out after %ds waiting for %r in the daemon log, "
+                    "got:\n%s" % (timeout, pattern, log_contents))
+            time.sleep(0.2)
+
+    def runtest(self):
+        with open(self.daemon_pidfile, 'rt') as f:
+            pid = int(f.read())
+
+        # Confirm the plain per-process niceness genuinely is negative --
+        # i.e. main()'s nice(opt_niceness), run while still root before
+        # dcc_discard_root(), really did succeed. If this were not
+        # negative, the autogroup-write failure checked below would be
+        # unsurprising for the wrong reason. Safe to check immediately:
+        # this value is set in main(), long before dcc_detach() forks.
+        actual_niceness = os.getpriority(os.PRIO_PROCESS, pid)
+        self.assert_(actual_niceness < 0,
+                     "expected negative process niceness for pid %d, got %d"
+                     % (pid, actual_niceness))
+
+        # Wait for the actual autogroup-write attempt to be logged before
+        # reading anything else: by the time this warning is written,
+        # dcc_set_autogroup_niceness()'s fopen/fprintf/fclose sequence has
+        # already completed (the log call is the last thing that function
+        # does), so this doubles as the synchronization point for the
+        # /proc read below, not just a check on its own.
+        self._waitForLogPattern(
+            r'autogroup nice -?\d+ failed: Operation not permitted',
+            self.AUTOGROUP_WARNING_TIMEOUT)
+
+        # Read /proc/<pid>/autogroup DIRECTLY, per
+        # doc/verification-checklist.md's baseline item on reading real OS
+        # state rather than trusting a trace/log line as sufficient
+        # evidence on its own.
+        with open('/proc/%d/autogroup' % pid, 'rt') as f:
+            autogroup_content = f.read()
+        self.log("autogroup content for pid %d: %r" % (pid, autogroup_content))
+        m = re.search(r'nice (-?\d+)', autogroup_content)
+        self.assert_(m is not None,
+                     "could not parse /proc/%d/autogroup: %r"
+                     % (pid, autogroup_content))
+        autogroup_nice = int(m.group(1))
+
+        # This is the actual, currently-accepted limitation (see
+        # support-upstream/issue-077-autogroup-niceness.md): setsid()
+        # (called from dcc_detach(), just before
+        # dcc_set_autogroup_niceness()) always allocates a fresh autogroup
+        # starting at nice 0, and the negative-nice write that would change
+        # that is rejected by the kernel because CAP_SYS_NICE is already
+        # gone by this point. If this assertion ever fails because the
+        # autogroup shows the real negative value instead, the ordering bug
+        # has been fixed and this test (and the support-upstream doc) need
+        # updating to match, not silencing.
+        self.assert_equal(autogroup_nice, 0)
+
+
 class ImplicitCompiler_Case(CompileHello_Case):
     """Test giving no compiler works"""
     def compileCmd(self):
@@ -1983,6 +2570,74 @@ class DashWpMD_Case(CompileHello_Case):
         deps = open('depsfile').read()
         self.assert_re_search(r"testhdr\.h", deps)
         self.assert_re_search(r"stdio\.h", deps)
+
+
+class ZstdPumpCompile_Case(CompileHello_Case):
+    """Real distributed compile exercising protocol version 5: Zstandard
+    compression combined with server-side cpp (pump mode) -- see issue #101
+    and distcc.h's DCC_VER_5000 comment. This forces ',zstd,cpp' for its own
+    DISTCC_HOSTS regardless of the suite-wide _server_options (typically
+    ',lzo,cpp' under --pump), so it always negotiates DCC_VER_5000 specifically
+    rather than DCC_VER_3 (lzo+pump).
+
+    Only meaningful under an actual pump-mode test run (see Makefile.in's
+    pump-maintainer-check / --pump target, both driven through the `pump`
+    wrapper script): the include server that materializes the header
+    closure server-side has to actually be running for ',cpp' to work at
+    all, independent of which compression this test itself asks for.
+    """
+
+    def compileOpts(self):
+        # -MD forces a real DOTD (dependency file) round trip -- exactly
+        # the wire path that needed fixing for DCC_VER_5000: clirpc.c's
+        # dcc_retrieve_results() previously assumed DOTD always used LZO's
+        # single-int length format, which would desync (or silently drop
+        # the deps file while still reporting compile success) once DOTD is
+        # zstd-compressed and needs the 2-int compressed/uncompressed
+        # length format instead.
+        return "-MD -MFzstd_pump_test.d"
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "zstd+pump (DCC_VER_5000) needs an actual pump-mode test run "
+                "(see --pump); this run has no include server available")
+        CompileHello_Case.setup(self)
+        os.environ['DISTCC_HOSTS'] = (
+            '127.0.0.1:%d,zstd,cpp' % self.server_port)
+
+    def runtest(self):
+        out, unused_err = self.runcmd(self.distcc() + "--version")
+        if 'Zstd compression support' not in out:
+            raise comfychair.NotRunError(
+                "this distcc build has no zstd support (configure "
+                "--without-zstd)")
+        try:
+            os.remove('zstd_pump_test.d')
+        except OSError:
+            # Fine if it doesn't exist -- this is best-effort cleanup of a
+            # possible leftover from a previous run, not a precondition.
+            pass
+        CompileHello_Case.runtest(self)
+
+        # The dependency file must have actually arrived via the DOTD wire
+        # token, with real content -- a silent decode failure on the new
+        # 2-int DOTD path could leave the compile itself reporting success
+        # while this file is absent, empty, or truncated.
+        with open('zstd_pump_test.d') as f:
+            deps = f.read()
+        self.assert_re_search(r"testhdr\.h", deps)
+
+        # Confirm from the *server's own log* -- not just the client's exit
+        # code -- that this job actually negotiated protocol version 5000
+        # (zstd + server-side cpp), rather than a silent fallback to a
+        # different protocol version or to local compilation.
+        with open(self.daemon_logfile) as f:
+            log = f.read()
+        self.assert_re_search(
+            r"accepted job with protover 5000 \(compr \d+, cpp_where \d+\)",
+            log)
+
 
 class ScanIncludes_Case(CompileHello_Case):
     """Test --scan-includes"""
@@ -2592,6 +3247,7 @@ class Getline_Case(comfychair.TestCase):
 # All the tests defined in this suite
 tests = [
          CompileHello_Case,
+         MarchNativeDispatcherPath_Case,
          CommaInFilename_Case,
          ComputedInclude_Case,
          BackslashInMacro_Case,
@@ -2605,9 +3261,12 @@ tests = [
          GdbOpt1_Case,
          GdbOpt2_Case,
          GdbOpt3_Case,
+         GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,
+         PathSafety_Case,
          ScanArgs_Case,
+         SymlinkTraversal_Case,
          IncludeServerFileOrder_Case,
          StateFileAtomicWrite_Case,
          ParseMask_Case,
@@ -2624,10 +3283,12 @@ tests = [
          BadInclude_Case,
          PreprocessPlainText_Case,
          NoDetachDaemon_Case,
+         AutogroupNicenessPrivilegeDrop_Case,
          SBeatsC_Case,
          DashD_Case,
          EmptyDefine_Case,
          DashWpMD_Case,
+         ZstdPumpCompile_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
          BinFalse_Case,

@@ -50,6 +50,28 @@
 
 int opt_niceness = 5;           /* default */
 
+/**
+ * Permission bits (subject to umask) for the per-job input files
+ * dcc_r_many_files() materializes into the server's own job directory
+ * (headers/sources sent by a pump-mode client for server-side
+ * preprocessing -- see src/srvrpc.c and src/bulk.c's
+ * dcc_r_file_beneath()). These files are created and later read by the
+ * exact same process/uid throughout a job's lifetime (dcc_discard_root()
+ * only ever runs once, at daemon startup, before any connection is
+ * accepted -- see src/setuid.c), so no other user legitimately needs
+ * access. Defaults to the tightest useful value, 0600 (owner only) --
+ * verified for real (a live build+run on a real host, not just reasoned
+ * about) to actually produce 0600-mode files on disk before being made
+ * the default. Configurable via --job-file-mode for sites that want e.g.
+ * 0660 so an operator in the same group can inspect a running job's
+ * files without the daemon's own uid. Unrelated to dcc_r_file()'s own
+ * hardcoded 0666, which is the *client's* copy of the final compiled .o
+ * output and must match what a local (non-distributed) compiler
+ * invocation would have produced (see test/testdistcc.py's
+ * ModeBits_Case).
+ */
+int opt_job_file_mode = 0600;
+
 #ifdef HAVE_LINUX
 int opt_oom_score_adj = INT_MIN; /* default is not to change */
 #endif
@@ -160,6 +182,7 @@ const struct poptOption options[] = {
     { "log-level", 0,    POPT_ARG_STRING, 0, opt_log_level, 0, 0 },
     { "log-stderr", 0,   POPT_ARG_NONE, &opt_log_stderr, 0, 0, 0 },
     { "job-lifetime", 0, POPT_ARG_INT, &opt_job_lifetime, 'l', 0, 0 },
+    { "job-file-mode", 0, POPT_ARG_STRING, 0, 'm', 0, 0 },
     { "nice", 'N',       POPT_ARG_INT,  &opt_niceness,  0, 0, 0 },
     { "no-detach", 0,    POPT_ARG_NONE, &opt_no_detach, 0, 0, 0 },
     { "no-fifo", 0,      POPT_ARG_NONE, &opt_no_fifo, 0, 0, 0 },
@@ -211,6 +234,9 @@ static void distccd_show_usage(void)
 "    --user USER                if run by root, change to this persona\n"
 "    --jobs, -j LIMIT           maximum tasks at any time\n"
 "    --job-lifetime SECONDS     maximum lifetime of a compile request\n"
+"    --job-file-mode MODE       octal permission bits for per-job input\n"
+"                               files (headers/sources materialized for\n"
+"                               server-side preprocessing), default 0600\n"
 "  Networking:\n"
 "    -p, --port PORT            TCP port to listen on\n"
 "    --listen ADDRESS           IP address to listen on\n"
@@ -329,6 +355,29 @@ int distccd_parse_options(int argc, const char **argv)
             }
             dcc_job_lifetime = opt_job_lifetime;
             break;
+
+        case 'm': {
+            /* Always parsed as octal (base 8), matching chmod(1)/mode_t
+             * convention -- deliberately not popt's own POPT_ARG_INT
+             * (which would need a base-0 auto-detect that isn't
+             * guaranteed across popt versions) so "0660" always means
+             * octal 0660 regardless of platform. */
+            const char *arg = poptGetOptArg(po);
+            char *end = NULL;
+            long mode;
+
+            errno = 0;
+            mode = strtol(arg, &end, 8);
+            if (errno != 0 || end == arg || *end != '\0'
+                || mode < 0 || mode > 0777) {
+                rs_log_error("--job-file-mode must be an octal permission "
+                             "value from 0 to 0777, got \"%s\"", arg);
+                exitcode = EXIT_BAD_ARGUMENTS;
+                goto out_exit;
+            }
+            opt_job_file_mode = (int) mode;
+            break;
+        }
 
 #ifdef HAVE_GSSAPI
         case 'P': {

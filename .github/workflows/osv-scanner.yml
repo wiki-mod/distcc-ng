@@ -1,0 +1,66 @@
+name: OSV-Scanner
+
+# New file, not a job folded into an existing one (per AGENTS.md rule 61):
+# no existing workflow's topic fits. codeql.yml is SAST (static analysis of
+# this repo's own source); scorecard.yml is supply-chain *practice*
+# scoring. This is SCA (software composition analysis) -- checking already-
+# known vulnerabilities in *dependencies* -- a genuinely different topic
+# from either, satisfying OSPS-VM-05.03 (automated dependency-vulnerability
+# scanning) from the OpenSSF Best Practices Baseline (issue #267).
+#
+# Coverage note (keep in sync with doc/compatibility-policy.md's
+# "Dependency management policy" section, added in #311): OSV-Scanner has
+# no lockfile/manifest to read for this project's C library dependencies
+# (libzstd, libpopt, libavahi-client, libseccomp) -- there is no
+# package-manager-native dependency manifest for autoconf/C projects of
+# this kind, the same gap that section already documents for Dependabot.
+# What this workflow *does* meaningfully cover is the GitHub Actions
+# ecosystem: every `uses:` reference pinned across `.github/workflows/**`
+# is checked against OSV's advisory database for known-vulnerable versions,
+# which is real, automated, and enforced -- not merely a periodic
+# Dependabot suggestion PR (see scan-pr below, which gates a pull request
+# rather than just proposing an update).
+
+on:
+  pull_request:
+    branches: [current_dev, master]
+  push:
+    branches: [current_dev, master]
+  schedule:
+    # Sunday 07:00 UTC -- does not collide with c-build.yml (03:00 daily),
+    # nightly-publish.yml (04:00 daily), codeql.yml (05:00 Sunday),
+    # master-heartbeat.yml (05:00 Monday), or scorecard.yml (06:00 Sunday).
+    - cron: '0 7 * * 0'
+  workflow_dispatch:
+
+permissions:
+  # Required to upload SARIF file to CodeQL's code-scanning API -- see
+  # https://github.com/github/codeql-action/issues/2117, the same reason
+  # codeql.yml's analyze job needs it.
+  actions: read
+  security-events: write
+  contents: read
+
+jobs:
+  # Scan-on-pull-request: fails the check if the PR's branch introduces a
+  # new known-vulnerable GitHub Actions dependency versus the target
+  # branch. This is the real-time gate the task calls for, distinct from
+  # Dependabot's periodic "here's an update PR" cadence.
+  scan-pr:
+    if: github.event_name == 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    permissions:
+      actions: read
+      security-events: write
+      contents: read
+
+  # Scan on push/schedule: a full scan of the repository state, reporting
+  # (not just diffing) every known vulnerability OSV.dev has for whatever
+  # this repo's GitHub Actions dependencies currently resolve to.
+  scan-scheduled:
+    if: github.event_name != 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    permissions:
+      actions: read
+      security-events: write
+      contents: read

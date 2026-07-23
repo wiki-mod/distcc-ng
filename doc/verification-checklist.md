@@ -24,6 +24,26 @@ rule this checklist operationalizes.
       **on its own proves nothing about new/changed behavior** — it only
       proves the change didn't break something already covered. Never
       report this alone as "verified."
+- [ ] If the change claims an OS-visible runtime effect that isn't
+      observable through `distcc`/`distccd`'s own log output (a `/proc`
+      entry, a scheduler/priority setting, a file-mode bit, a signal
+      disposition, etc.), read that OS state directly after triggering the
+      change (e.g. `cat /proc/<pid>/autogroup`) rather than trusting a
+      trace line claiming the syscall/write succeeded — a trace line only
+      proves the code was reached, not that the OS actually applied the
+      effect. Added after issue #77's autogroup-niceness fix, verified by
+      reading `/proc/<pid>/autogroup` directly rather than just trusting
+      `distccd`'s own trace log.
+- [ ] State explicitly which user/uid `distcc` and `distccd` actually ran as
+      during this verification: root with no privilege drop, root that then
+      drops via `--user`, or already non-root/non-root-in-container. Several
+      categories below (permission/file-mode, sandbox/seccomp) can behave
+      differently under root than under a dropped-privilege user — root
+      often bypasses a check a non-root run would actually exercise (e.g.
+      `open()`/`fopen()` mode restrictions, or a seccomp filter that a
+      privileged process interacts with differently) — so "it worked"
+      without saying which case was exercised leaves the other case
+      unverified. If only one case was tested, say so and name which.
 
 ## 1. Permission / file-mode changes (`open()`/`fopen()` modes, umask handling)
 
@@ -104,6 +124,38 @@ Relevant to: any change to what gets distributed vs. forced local
       path in `src/compile.c`) so a failure to correctly skip
       distribution surfaces as a hard error, not a quietly-successful
       local compile that happens to look the same.
+
+### 3a. Compiler identity/family resolution (`argv[0]`/basename comparisons deciding *which physical compiler runs*)
+
+Relevant to: any code that decides "is this gcc or clang", "is this a
+cross-compiler", or otherwise branches on a compiler's name or path —
+`src/arg.c`'s `dcc_resolve_march_native()`, `src/compile.c`'s
+`dcc_add_clang_target()`/`dcc_gcc_rewrite_fqn()`/
+`dcc_rewrite_generic_compiler()`, `src/climasq.c`'s masquerade path
+matching. Added after issues #78/#278 both touched this exact theme from
+opposite directions (one needed the *full path*, not a basename; the
+other needed the *basename*, not the raw path) in the same review round.
+
+- [ ] Test with a real dispatcher/wrapper binary that is **not** named
+      after the compiler family it actually is (e.g. a `#!/bin/sh; exec
+      /usr/bin/clang "$@"` script called `mycompiler`, or a real
+      cross-toolchain-prefixed name like `arm-linux-gnueabihf-gcc`) — a
+      bare, obviously-named invocation (`gcc`, `clang-19`) cannot
+      distinguish "matches by basename" from "matches by raw `argv[0]`"
+      bugs, since both happen to agree when there's no path and no
+      family-obscuring name involved.
+- [ ] If the fix execs or PATH-searches using the resolved name (not just
+      appending a flag), verify a directory-qualified original invocation
+      (e.g. `/opt/toolchain/bin/gcc`) still resolves to a binary in *that*
+      directory, not wherever `$PATH` happens to point — a rewrite that
+      drops the caller's directory can silently swap in a different
+      toolchain's same-named binary.
+- [ ] `docker/verify/`'s current toolchain does **not** include a real
+      cross-compiler (no `arm-linux-gnueabihf-gcc`-style package) — this
+      category's real-toolchain testing currently requires an external
+      host or a hand-built fake dispatcher script, not the verification
+      container. Note this limitation explicitly rather than silently
+      working around it if you hit it again.
 
 ## 4. External-host / network compatibility changes
 
@@ -224,6 +276,82 @@ flag value.
 - [ ] Any temporarily moved/renamed system state (e.g. a masquerade
       directory moved aside to test its absence) restored to its original
       state.
+- [ ] Report any leftovers found that **predate this run** (a container,
+      process, or file that was already there before this verification
+      started) rather than silently cleaning it up or leaving it
+      unmentioned — say explicitly "found and left/removed pre-existing X",
+      not just "no leftovers" when what's meant is "no *new* leftovers".
+      Conflating the two hides whether an earlier session's cleanup already
+      failed.
+
+## 9. Container-based verification (Docker/`docker/verify/`-based build+test runs)
+
+Relevant to: any verification claim backed by a `docker build`/`docker run`
+against `docker/verify/Dockerfile` or a similar ad-hoc container, especially
+one exercising `gdb`/`strace`/`ltrace`, a real `distccd` privilege drop, or
+any other permission-sensitive behavior. Two real, non-obvious permission
+traps were found and fixed building `docker/verify/Dockerfile` itself
+(issue #264) — both produced a plausible-looking but wrong diagnosis before
+the real cause was pinned down, so they're recorded here rather than left
+for the next container-based verification effort (e.g. the fuller
+Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
+
+- [ ] **Seccomp is not capabilities.** `--cap-add=SYS_PTRACE` alone does
+      *not* guarantee `gdb`/`strace`/`ltrace`/ptrace-based syscalls
+      (including `gdb`'s own default ASLR-disabling `personality(2)` call)
+      actually work in the container — Docker's seccomp filter is a
+      *separate* gate from Linux capabilities, and the default seccomp
+      profile can still deny the syscall (or a specific argument value,
+      e.g. `personality()`'s `ADDR_NO_RANDOMIZE` flag) even once the
+      capability is granted. The failure mode is identical-looking to a
+      missing-capability failure (the same "Operation not permitted" from
+      the tool), which makes it easy to mistake for "the capability didn't
+      take effect" rather than "a second, independent gate is still
+      closed." Real verification: after adding `--cap-add=SYS_PTRACE`, if
+      the identical error still reproduces verbatim, that itself is the
+      diagnostic signal to add `--security-opt seccomp=unconfined` (or a
+      custom seccomp profile explicitly allowing the denied syscall) rather
+      than re-checking the capability flag again.
+- [ ] **A root-owned bind mount breaks `distccd`'s own privilege-drop
+      test.** Running the whole build+test step as container root (often
+      needed to work around a bind-mounted host checkout being owned by a
+      different uid than the image's own non-root user) arms `distccd`'s
+      real `dcc_discard_root()` privilege-drop-to-`uid=65534`/nobody
+      behavior (`test/testdistcc.py`'s `Unicode_Case`, exercised via `make
+      check`'s `maintainer-check-no-set-path` target) — which then fails
+      with a real "Permission denied" writing into the still-root-owned
+      test directory. This is not a bug in the drop behavior itself, only
+      a mismatch between "root in the container" and "a test that
+      deliberately changes uid mid-run." Do not fix this by making the
+      tree world-writable (masks real permission bugs) or skipping the
+      test (loses real coverage). Fix by using root only transiently to
+      `chown` the mounted tree to the image's own non-root user, then
+      actually running the build+test as that non-root user (`su -s
+      /bin/bash <user> -c '...'`) — matching how a real local `docker run`
+      already behaves when the same host user owns both sides of the
+      mount. **This resolves the immediate symptom, but reaching for root
+      at all — even transiently, even for a narrow `chown` — should not
+      become the unquestioned standing convention for every future
+      container-based verification effort just because it was the first
+      thing that worked.** Whether a build-arg matching the host uid,
+      Docker's own `--user` flag, or rootless Docker/user-namespace
+      remapping can avoid needing root here at all is tracked separately in
+      issue #286, not decided here.
+- [ ] **A root-only test needs the specific capability its own syscall
+      requires, not just "run as root."** Docker's default root capability
+      set is not the same as a real host root's — `AutogroupNicenessPrivilegeDrop_Case`
+      (root-only, exercises `dcc_set_autogroup_niceness()`'s `nice(2)` call
+      in `src/dparent.c`) failed inside a container run as root with
+      `nice -5 failed: Operation not permitted`, an error that reads
+      identically to a genuine code regression. The real cause: Docker's
+      default root capability set does not include `CAP_SYS_NICE`, which
+      `nice(2)`'s negative-value case requires regardless of uid. Fixed by
+      adding `--cap-add=SYS_NICE` explicitly — same failure shape and same
+      lesson as this section's `SYS_PTRACE`/seccomp entry above (root
+      inside a container is not equivalent to root on a real host; check
+      which specific capability the syscall under test actually needs
+      before treating an "Operation not permitted" as a code bug). Found
+      verifying the 3.6.1-NG release (2026-07-23).
 
 ## Keeping this checklist current
 
@@ -237,7 +365,25 @@ because "there's no checklist item for this." Section 6 (config file
 changes) was added this way, prompted by issue #207 introducing this
 repo's first client-side config file. Section 7 (input/argument
 validation) was added the same way, prompted by issue #226's `lsdistcc`
-format-string fix having no matching section to verify against.
+format-string fix having no matching section to verify against. Section 9
+(container-based verification) was added the same way, prompted by issue
+#264's `docker/verify/Dockerfile` work hitting two real, non-obvious
+permission traps (seccomp-vs-capabilities, root-mount-vs-privilege-drop)
+that cost real CI iterations to diagnose and had no matching section to
+record them against.
+
+Every example above was added *after* a gap actually caused a real
+diagnosis cost — reactively, once the missing coverage had already bitten
+once. Don't wait for that as the only trigger: as part of verifying any
+non-trivial change, explicitly ask "did anything about this change's
+actual behavior not fit cleanly into an existing section?" — not just
+"did an existing section's checks pass." A change that technically
+satisfies the letter of an existing section while clearly testing
+something the section wasn't written for is itself a signal this list
+needs extending, in the same PR, not a note for later. This is a
+standing habit for every relevant PR, not a one-time backfill exercise —
+the list will never reach a final, complete state, because the set of
+changes this repo makes keeps growing too.
 
 ## Reporting
 

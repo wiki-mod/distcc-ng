@@ -50,6 +50,7 @@
 #include "trace.h"
 #include "exitcode.h"
 #include "util.h"
+#include "snprintf.h"
 #include "hosts.h"
 #include "bulk.h"
 #include "implicit.h"
@@ -290,16 +291,31 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
     char *dep_name;
 
     *result = NULL;
-    /* Allocate buffer for dotd contents and open it. */
-    res = stat(dotd_fname, &stat_dotd);
+    /* Open the .d file first, then fstat() the resulting descriptor
+     * instead of stat()-ing the path and opening it as a second, separate
+     * step. fstat() on an already-open fd is guaranteed to describe
+     * exactly the file this function goes on to read (same open file
+     * description/inode) -- there is no window in which dotd_fname could
+     * resolve to a different or replaced file between the freshness/size
+     * check and the read. A stat(path) followed by a later open(path) (the
+     * previous shape here) is the check-then-act pattern CodeQL's
+     * cpp/toctou-race-condition flags, since those two syscalls can each
+     * independently resolve the same path to different underlying files. */
+    if ((fp = fopen(dotd_fname, "r")) == NULL) {
+        rs_trace("could not open \"%s\": %s", dotd_fname, strerror(errno));
+        return 0;
+    }
+    res = fstat(fileno(fp), &stat_dotd);
     if (res) {
-        rs_trace("could not stat \"%s\": %s", dotd_fname, strerror(errno));
+        rs_trace("could not fstat \"%s\": %s", dotd_fname, strerror(errno));
+        fclose(fp);
         return 0;
     }
     if (stat_dotd.st_mtime < reference_time) {
         /* That .d file appears to be too old; don't trust it for this
          * analysis. */
         rs_trace("old dotd file \"%s\"", dotd_fname);
+        fclose(fp);
         return 0;
     }
     dotd_fname_size = stat_dotd.st_size;
@@ -308,22 +324,20 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
         /* +1 reserves the NUL-terminator slot: the copy loop below bounds-
          * checks each byte it writes against dotd_fname_size (i >=
          * dotd_fname_size), but the terminator write after the loop
-         * (dep_name[i] = '\0') does not re-check i. If the .d file grows
-         * between this stat() and the read below, i can legitimately reach
-         * dotd_fname_size, and without this extra byte the terminator
-         * write lands one past the end of the allocation. */
+         * (dep_name[i] = '\0') does not re-check i. Kept even though the
+         * fopen()-then-fstat() ordering above removes the path-level
+         * TOCTOU: another writer sharing this same underlying file could
+         * still append to it between this fstat() and the read loop below,
+         * so i can still legitimately reach dotd_fname_size. */
         dep_name = malloc((size_t) dotd_fname_size + 1);
         if (!dep_name) {
             rs_log_error("failed to allocate space for dotd file");
+            fclose(fp);
             return EXIT_OUT_OF_MEMORY;
         }
     } else { /* This is exceedingly unlikely. */
         rs_trace("file \"%s\" is too big", dotd_fname);
-        return 0;
-    }
-    if ((fp = fopen(dotd_fname, "r")) == NULL) {
-        rs_trace("could not open \"%s\": %s", dotd_fname, strerror(errno));
-        free(dep_name);
+        fclose(fp);
         return 0;
     }
 
@@ -343,9 +357,11 @@ int dcc_fresh_dependency_exists(const char *dotd_fname,
                (!isspace(c) || c == '\\')) {
             if (i >= dotd_fname_size) {
                 /* Not actually impossible: this fires if the .d file grows
-                 * between the stat() above and this read (TOCTOU), so a
-                 * dependency name can be longer than what the buffer was
-                 * sized for. Bail out rather than overrun dep_name. */
+                 * between the fstat() above and this read (the file is
+                 * still being written to by something else even though we
+                 * hold it open), so a dependency name can be longer than
+                 * what the buffer was sized for. Bail out rather than
+                 * overrun dep_name. */
                 rs_log_error("not enough room for dependency name");
                 goto return_0;
             }
@@ -674,19 +690,98 @@ static void dcc_rewrite_generic_compiler(char **argv)
 
 /* Clang is a native cross-compiler, but needs to be told to what target it is
  * building.
- * TODO: actually probe clang with clang --version, instead of trusting
- * autoheader.
+ *
+ * argv[0] may be a full path (e.g. the user ran "distcc /usr/bin/clang-15
+ * ...", or a masquerade/wrapper resolved to an absolute path further up the
+ * call chain) rather than a bare name found via PATH -- match against the
+ * basename, not the raw argv[0], so this still fires in that case.
+ *
+ * This function itself never execs argv[0], but a name-only match is not
+ * automatically safe: a full-path dispatcher or wrapper whose basename merely
+ * *says* "clang" but actually invokes a different compiler family gets the
+ * "-target" flag appended regardless, and that flag is forwarded to whatever
+ * the wrapper really execs by a later stage of dcc_build_somewhere() -- a
+ * real gcc behind such a wrapper rejects "-target" outright and the whole
+ * compile fails. Reproduced empirically with a real, non-symlink dispatcher
+ * script named "clang" that execs gcc.
+ *
+ * Only the path-qualified case is at risk: a bare name ("clang") is trusted
+ * exactly as before this basename widening, unchanged risk profile. When
+ * argv[0] is path-qualified, reuse dcc_probe_is_clang() (below) -- the same
+ * "ask the binary itself" probe dcc_rewrite_generic_compiler() already uses
+ * to close this identical class of bug for "cc"/"c++" -- instead of trusting
+ * the basename alone, so the flag is only added once the binary has actually
+ * confirmed it is clang. dcc_probe_is_clang() requires an absolute path; a
+ * relative path-qualified argv[0] (e.g. "./clang") has only its directory
+ * component resolved to an absolute path (not the whole path via realpath())
+ * so the final "clang" path component -- and therefore argv[0] as seen by
+ * whatever actually execs it -- is preserved even if it is itself a symlink
+ * to a dispatcher (e.g. a ccache install using a "clang"-named symlink,
+ * which decides its own behavior from argv[0]'s basename): fully resolving
+ * the symlink via realpath() would probe the dispatcher's own identity
+ * instead of the identity the caller's invocation actually resolves to. If
+ * directory resolution fails, or the probe otherwise can't verify (exec
+ * failure, etc), that is treated the same as a failed probe: omit the flag
+ * rather than risk appending one that hard-fails a real gcc wrapper.
+ * Omitting "-target" for a genuine clang only loses the cross-compile
+ * triple hint (clang falls back to its own default target detection) -- a
+ * strictly safer failure mode than a hard compile failure. dcc_probe_is_clang()
+ * itself only exists when HAVE_FSTATAT is defined (see its own guard above);
+ * on a build without it, a path-qualified name can't be verified at all and
+ * is handled the same as an unverifiable probe.
  */
 static void dcc_add_clang_target(char **argv)
 {
         /* defined by autoheader */
     const char *target = NATIVE_COMPILER_TRIPLE;
+    const char *base = dcc_find_basename(argv[0]);
 
-    if (strcmp(argv[0], "clang") == 0 || strncmp(argv[0], "clang-", strlen("clang-")) == 0 ||
-        strcmp(argv[0], "clang++") == 0 || strncmp(argv[0], "clang++-", strlen("clang++-")) == 0)
+    if (strcmp(base, "clang") == 0 || strncmp(base, "clang-", strlen("clang-")) == 0 ||
+        strcmp(base, "clang++") == 0 || strncmp(base, "clang++-", strlen("clang++-")) == 0)
         ;
     else
         return;
+
+#ifdef HAVE_FSTATAT
+    if (base != argv[0]) {
+        const char *probe_path = argv[0];
+        char resolved[MAXPATHLEN + 1];
+
+        if (argv[0][0] != '/') {
+            /* Resolve only the directory component to an absolute path --
+             * NOT the whole path via realpath(), which would follow a
+             * symlink at the final component and probe the *target*'s
+             * identity instead of the name the caller actually invoked
+             * (see the function comment above). */
+            size_t dirlen = (size_t) (base - argv[0]); /* includes trailing '/' */
+            char dirbuf[MAXPATHLEN + 1];
+            char resolved_dir[MAXPATHLEN + 1];
+
+            if (dirlen > 0 && dirlen < sizeof(dirbuf)) {
+                memcpy(dirbuf, argv[0], dirlen);
+                dirbuf[dirlen] = '\0';
+                if (realpath(dirbuf, resolved_dir) != NULL &&
+                    snprintf(resolved, sizeof(resolved), "%s/%s",
+                             resolved_dir, base) < (int) sizeof(resolved))
+                    probe_path = resolved;
+            }
+        }
+        if (dcc_probe_is_clang(probe_path) != 1) {
+            /* Path-qualified, and either confirmed not-clang, or the probe
+             * itself couldn't verify it (resolution failed, non-absolute
+             * path, exec failure, etc). Do not trust the basename alone
+             * here -- see the function comment above. */
+            return;
+        }
+    }
+#else
+    if (base != argv[0]) {
+        /* No dcc_probe_is_clang() available on this build (HAVE_FSTATAT
+         * undefined) -- a path-qualified name can't be verified at all;
+         * treat the same as an unverifiable probe. */
+        return;
+    }
+#endif
 
     /* -target aarch64-linux-gnu */
     if (dcc_argv_search(argv, "-target"))
@@ -704,38 +799,91 @@ static void dcc_add_clang_target(char **argv)
 
 /*
  * Cross compilation for gcc
+ *
+ * As with dcc_add_clang_target() above, argv[0] may be a full path rather
+ * than a bare name found via PATH -- match and rewrite against the
+ * basename, not the raw argv[0], so a compiler invoked as e.g.
+ * "/usr/bin/gcc-11" is still recognised as plain "gcc-11" for the
+ * fully-qualified-name rewrite below. The rewritten command name itself
+ * must also be built from the basename: concatenating the *original*
+ * argv[0] here would produce a malformed name embedding the caller's
+ * original path (e.g. "aarch64-linux-gnu-/usr/bin/gcc-11") instead of the
+ * intended "aarch64-linux-gnu-gcc-11".
 */
 static int dcc_gcc_rewrite_fqn(char **argv)
 {
         /* defined by autoheader */
     const char *target_with_vendor = NATIVE_COMPILER_TRIPLE;
+    const char *base = dcc_find_basename(argv[0]);
     char *newcmd, *t, *path;
     int pathlen = 0;
     int newcmd_len = 0;
 
-    if (strcmp(argv[0], "gcc") == 0 || strncmp(argv[0], "gcc-", strlen("gcc-")) == 0 ||
-        strcmp(argv[0], "g++") == 0 || strncmp(argv[0], "g++-", strlen("g++-")) == 0)
+    if (strcmp(base, "gcc") == 0 || strncmp(base, "gcc-", strlen("gcc-")) == 0 ||
+        strcmp(base, "g++") == 0 || strncmp(base, "g++-", strlen("g++-")) == 0)
         ;
     else
         return -ENOENT;
 
 
-    newcmd_len = strlen(target_with_vendor) + 1 + strlen(argv[0]) + 1;
+    /* Built via snprintf (rather than malloc()+strcpy()+strcat()+strcat())
+     * so the buffer size and the writes are both expressed in a single
+     * call each -- CodeQL's cpp/unbounded-write check cannot trace a size
+     * computed via separate strlen() calls forward to a later strcat(),
+     * even when (as here) the arithmetic is in fact exact; snprintf makes
+     * the bound self-evident at the write site instead of relying on a
+     * remembered invariant from a few lines above. */
+    newcmd_len = strlen(target_with_vendor) + 1 + strlen(base) + 1;
     newcmd = malloc(newcmd_len);
     if (!newcmd)
         return -ENOMEM;
-    memset(newcmd, 0, newcmd_len);
+    snprintf(newcmd, newcmd_len, "%s-%s", target_with_vendor, base);
 
-    strcpy(newcmd, target_with_vendor);
+    /* If the caller gave a directory (e.g. "/opt/toolchain/bin/gcc"), the
+     * eventual execvp() of the rewritten name must still resolve inside
+     * that same directory, not wherever $PATH happens to point -- a bare
+     * rewritten name searched globally could silently pick up a different
+     * cross-toolchain's same-named binary if one exists earlier on $PATH,
+     * silently swapping toolchains instead of using the one the build
+     * system explicitly selected. So: look for the target-prefixed binary
+     * alongside the original directory first; only fall through to a
+     * global $PATH search when argv[0] itself had no directory component
+     * (i.e. it was already found via $PATH, so searching $PATH again for
+     * the rewritten name carries the same resolution semantics as the
+     * original invocation, not a change in them). */
+    if (base != argv[0]) {
+        size_t dirlen = (size_t) (base - argv[0]); /* includes trailing '/' */
+        int dirbinlen = (int) dirlen + newcmd_len;
+        char *dirbin = malloc(dirbinlen);
 
-
-    strcat(newcmd, "-");
-    strcat(newcmd, argv[0]);
+        if (!dirbin) {
+            free(newcmd);
+            return -ENOMEM;
+        }
+        memcpy(dirbin, argv[0], dirlen);
+        memcpy(dirbin + dirlen, newcmd, newcmd_len);
+        if (access(dirbin, X_OK) == 0) {
+            rs_log_info("Re-writing call to '%s' to '%s' to support cross-compilation.",
+                        argv[0], dirbin);
+            free(argv[0]);
+            free(newcmd);
+            argv[0] = dirbin;
+            return 0;
+        }
+        free(dirbin);
+        free(newcmd);
+        return -ENOENT;
+    }
 
     /* TODO, is this the right PATH? */
     path = getenv("PATH");
+    if (!path) {
+        free(newcmd);
+        return -ENOENT;
+    }
     do {
-        char binname[strlen(path) + 1 + strlen(newcmd) + 1];
+        int binname_len = strlen(path) + 1 + strlen(newcmd) + 1;
+        char binname[binname_len];
         int r;
 
         /* emulate strchrnul() */
@@ -747,8 +895,7 @@ static int dcc_gcc_rewrite_fqn(char **argv)
             break;
         strncpy(binname, path, pathlen);
         binname[pathlen] = '\0';
-        strcat(binname, "/");
-        strcat(binname, newcmd);
+        snprintf(binname + pathlen, binname_len - pathlen, "/%s", newcmd);
         r = access(binname, X_OK);
         if (r < 0)
             continue;

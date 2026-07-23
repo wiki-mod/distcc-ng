@@ -1,0 +1,63 @@
+# Two-container bidirectional native-compatibility harness (issue #264's full
+# E2E design). Unlike test/e2e/docker-compose.yml (one image, two roles),
+# these are two DIFFERENT images built from the same Dockerfile's `ng` and
+# `native` stages -- see that file's own header comment for why the
+# maintainer's design calls for two separate containers rather than one.
+#
+# Neither service declares a `command`: both stay up on `sleep infinity`
+# (see the Dockerfile) so run-bidirectional-e2e.sh can `docker compose exec`
+# into either one, in either server or client role, per leg of the matrix --
+# a fixed command/healthcheck per service would not fit a script that flips
+# which side runs distccd across the four legs (direction A/B x plain/pump).
+#
+# Subnet is deliberately different from test/e2e/docker-compose.yml's
+# 10.88.0.0/24 so both harnesses could in principle run concurrently on the
+# same Docker host without a network collision.
+
+services:
+  ng-node:
+    build:
+      context: ../..
+      dockerfile: test/e2e-full/Dockerfile
+      target: ng
+    image: distcc-ng-e2e-full-ng:local
+    # lib.sh/workload-*.sh live on the host, not baked into either image
+    # (see the Dockerfile's own header comment on why workload source stays
+    # out of the image) -- mounted read-only into both containers so
+    # run-bidirectional-e2e.sh's `docker compose exec` calls can run them.
+    volumes:
+      - ./:/e2e-scripts:ro
+    networks:
+      distccfullnet:
+        ipv4_address: 10.89.0.10
+    cap_add:
+      # Reused directly from docker/verify/Dockerfile's own hard-won lesson
+      # (issue #264, doc/verification-checklist.md section 9): needed if a
+      # failure investigation reaches for gdb/strace inside these containers.
+      # Harmless when unused.
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+
+  native-node:
+    build:
+      context: ../..
+      dockerfile: test/e2e-full/Dockerfile
+      target: native
+    image: distcc-ng-e2e-full-native:local
+    volumes:
+      - ./:/e2e-scripts:ro
+    networks:
+      distccfullnet:
+        ipv4_address: 10.89.0.20
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+
+networks:
+  distccfullnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.89.0.0/24
