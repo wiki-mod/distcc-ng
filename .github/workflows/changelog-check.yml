@@ -1,11 +1,23 @@
-name: Changelog check
+name: PR metadata checks
 
-# Fails a PR that doesn't touch CHANGELOG.md, so entries can't silently
-# fall behind again (see issue #50 -- CHANGELOG.md went unmaintained for
-# ~10 merged PRs before anyone noticed). Apply the `no-changelog-needed`
-# label for changes that genuinely don't need an entry (pure
-# investigation/design docs, internal refactors with no user-visible
-# effect, etc).
+# Two related PR-gating checks, kept in one file per the "prefer shared
+# workflow files" convention rather than one file per job:
+#
+# - require_changelog: fails a PR that doesn't touch CHANGELOG.md, so
+#   entries can't silently fall behind again (see issue #50 -- CHANGELOG.md
+#   went unmaintained for ~10 merged PRs before anyone noticed). Apply the
+#   `no-changelog-needed` label for changes that genuinely don't need an
+#   entry (pure investigation/design docs, internal refactors with no
+#   user-visible effect, a merge-ancestry-only reconciliation, etc).
+# - pr_tracking_metadata: enforces AGENTS.md rule 3 (adapted from
+#   wiki-mod/lancache-ng's own AG-GH-008/check-pr-tracking-metadata.sh) --
+#   a PR must carry at least one label and a milestone, and (once
+#   PROJECT_AUTOMATION_PAT is configured) be on the project board. This is
+#   the actual root-cause fix for issue #50's class of problem (metadata
+#   silently missing) rather than require_changelog's narrower
+#   file-touch symptom check; the two are kept side by side for now
+#   rather than one replacing the other -- see AGENTS.md rule 3's own
+#   note on this pairing.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,7 +31,7 @@ on:
         required: true
         type: string
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled, milestoned, demilestoned, ready_for_review]
     branches:
       - current_dev
       - master
@@ -55,3 +67,51 @@ jobs:
                "change genuinely has no user-visible effect (e.g. pure docs/" \
                "investigation work)."
           exit 1
+
+  pr_tracking_metadata:
+    name: PR tracking metadata (labels/milestone/project)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Fetch current labels/milestone live
+        # github.event.pull_request.labels/.milestone is a snapshot taken
+        # when THIS event fired, and can go stale if metadata changes after
+        # (e.g. a milestone set moments after `opened` fires, before this
+        # job starts) -- fetched live via `gh pr view` instead, same fix
+        # lancache-ng's own pr-tracking-metadata-check applies.
+        id: live-metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels -q '.labels' > /tmp/pr-labels-live.json
+          milestone_title="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json milestone -q '.milestone.title // ""')"
+          {
+            echo "labels_file=/tmp/pr-labels-live.json"
+            echo "milestone_title=$milestone_title"
+          } >> "$GITHUB_OUTPUT"
+      - name: Validate labels, milestone, and project-board placement
+        env:
+          PR_LABELS_JSON_FILE: ${{ steps.live-metadata.outputs.labels_file }}
+          PR_MILESTONE_TITLE: ${{ steps.live-metadata.outputs.milestone_title }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          # GitHub does not pass repository secrets (other than the
+          # read-only GITHUB_TOKEN) to pull_request-triggered runs from a
+          # forked repository, so GH_TOKEN above is empty for every
+          # external contributor's PR even once PROJECT_AUTOMATION_PAT is
+          # configured. Telling the script whether this run is from a fork
+          # lets it warn with the right explanation instead of implying the
+          # secret is simply unconfigured.
+          PR_IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          PR_LABELS_JSON="$(cat "$PR_LABELS_JSON_FILE")" bash scripts/check-pr-tracking-metadata.sh

@@ -1,0 +1,48 @@
+name: Add to project board
+
+# Automatically adds newly opened issues and pull requests to the
+# distcc-ng project board (AGENTS.md rule 3, https://github.com/orgs/wiki-mod/projects/11).
+# Adapted from wiki-mod/lancache-ng's own add-to-project.yml. The default
+# Actions GITHUB_TOKEN cannot write to an org-owned Projects v2 board, so
+# this requires a PROJECT_AUTOMATION_PAT repository secret (a classic PAT
+# with the `project` scope, created by a repo/org admin). Until that
+# secret exists, the second step below is skipped rather than run-and-fail
+# -- actions/add-to-project requires a non-empty github-token input and
+# errors out immediately on a blank one, which would otherwise leave a red
+# run on every single new issue/PR before the secret is ever configured.
+# GitHub Actions does not allow the `secrets` context in ANY `if:`
+# condition (job- or step-level), so the presence check happens in its own
+# earlier step instead: read the secret into an env var, decide there, and
+# publish the boolean as a step output for the next step's `if:` to use.
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  add-to-project:
+    name: Add to distcc-ng project board
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for automation PAT
+        id: check-pat
+        env:
+          PROJECT_AUTOMATION_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: |
+          if [ -n "$PROJECT_AUTOMATION_PAT" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Add issue/PR to project board
+        if: steps.check-pat.outputs.available == 'true'
+        uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
+        with:
+          project-url: https://github.com/orgs/wiki-mod/projects/11
+          github-token: ${{ secrets.PROJECT_AUTOMATION_PAT }}
