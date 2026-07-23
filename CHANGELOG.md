@@ -13,6 +13,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
+  own AG-GH-018/`check-pr-title-convention.sh`. New `pr_title_convention`
+  job in `.github/workflows/changelog-check.yml` validates a PR title
+  against AGENTS.md rule 71's taxonomy (`feat`/`fix`/`security`/`docs`/etc.,
+  with a documented scope list). Currently `warn`-only
+  (`PR_TITLE_LINT_MODE` repository variable) since almost none of this
+  repo's real PR-title history already follows the convention -- unlike
+  `lancache-ng`'s own audit, where most already did. Closes #307.
+
 - **PR tracking-metadata enforcement, path-based auto-labeling, and
   project-board automation**, adapted from `wiki-mod/lancache-ng`'s own
   AG-GH-008/`labeler.yml`/`add-to-project.yml`:
