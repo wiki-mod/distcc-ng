@@ -1,0 +1,66 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# Dependabot configuration for automated dependency updates.
+#
+# Every ecosystem is duplicated once per target-branch. Dependabot's own
+# target-branch key accepts exactly one branch per update entry -- there is
+# no way to list multiple branches in a single block -- and defaults to the
+# repo's default branch (master) when omitted. Real day-to-day work in this
+# fork lands on the long-lived current_dev branch, not master (which only
+# receives merges once current_dev is ready), so relying on the implicit
+# default would silently leave current_dev with zero automated dependency
+# scanning. master keeps its own entries too rather than losing coverage.
+#
+# github-actions is the only ecosystem with anything to manage here:
+# include_server/setup.py declares no external Python dependencies
+# (no install_requires), and the C library dependencies (libzstd,
+# libseccomp, popt, avahi-client) are detected via configure.ac's
+# PKG_CHECK_MODULES/autoconf checks against whatever the build host already
+# provides -- there is no package-manager-native manifest format for
+# autoconf/C dependencies for Dependabot to parse. See
+# doc/compatibility-policy.md's "Dependency management policy" section for
+# the maintainer's documented reasoning on why those C/Python-level
+# dependencies are tracked manually instead.
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: master
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: current_dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Docker base images (both Dockerfiles already pin a base image digest;
+  # Dependabot keeps that pinned digest current instead of leaving it to
+  # rot at whatever digest it was set to on the day it was written).
+  - package-ecosystem: docker
+    directory: /docker/release
+    target-branch: master
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /docker/release
+    target-branch: current_dev
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /docker/verify
+    target-branch: master
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /docker/verify
+    target-branch: current_dev
+    schedule:
+      interval: weekly
