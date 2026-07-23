@@ -160,7 +160,7 @@ dist_contrib = contrib/distcc-absolutify	\
 dist_include_server_SH = \
 	pump.in
 
-pkgdoc_DOCS = AUTHORS COPYING \
+pkgdoc_DOCS = COPYING \
 	README.md \
 	INSTALL \
 	TODO \

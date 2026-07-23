@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Makefile.in`**: removed the stale `AUTHORS` entry from `pkgdoc_DOCS` —
+  `AUTHORS` was deleted from the repo in an earlier commit, but `Makefile.in`
+  still listed it, breaking `make install-doc`/`make dist`/anything that
+  runs `make install` (`make: *** No rule to make target 'AUTHORS', needed
+  by 'install-doc'. Stop.`) — caught live by this PR's own
+  "Distributed compile E2E" CI check once `required_status_checks` made it
+  a real merge gate.
+
 ### Documentation
 
 - **`README`, `README.pump` removed; `README.md` is now the single root
