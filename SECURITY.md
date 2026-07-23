@@ -62,6 +62,17 @@ This project runs CodeQL and OSSF Scorecard continuously against the codebase; o
 
 **Remediation threshold**: this project's policy is zero-tolerance for open CodeQL security alerts on the default branch. This is enforced, not aspirational — the `distcc-ng-default` repository ruleset carries a `code_scanning` rule with `alerts_threshold: "all"`, which technically blocks merging any pull request while any CodeQL security alert is open, not merely a recommendation to fix them.
 
+**Dismissed-alert transparency**: a CodeQL alert dismissed as a false positive or accepted design tradeoff is not simply closed and forgotten — see `doc/distcc-ng.openvex.json`, an [OpenVEX](https://github.com/openvex/spec) document recording every currently-dismissed alert's real disposition (`not_affected` with a machine-readable justification, or `under_investigation` for the handful not yet finally triaged under issue #143) plus the actual reasoning behind it. This is the honest, auditable trail this project's own dismissal comments already contained, made consumable by external VEX tooling rather than left only in GitHub's UI.
+
+### 5. Dependency vulnerability (SCA) policy
+
+This project distinguishes two dependency ecosystems, consistent with `doc/compatibility-policy.md`'s "Dependency management policy" section (added in #311):
+
+- **GitHub Actions** (`.github/workflows/**`): the one ecosystem with both a manifest (each workflow's `uses:` lines) and real automated tooling. **OSV-Scanner** (`.github/workflows/osv-scanner.yml`) gates every pull request and push to `current_dev`/`master` against OSV.dev's advisory database, in addition to Dependabot's periodic update PRs (`.github/dependabot.yml`).
+- **C library dependencies** (`libzstd`, `libpopt`, `libavahi-client`, `libseccomp`): detected at `./configure` time from whatever the build host provides — there is no package-manager-native manifest format for autoconf/C dependencies of this kind, so no automated SCA tool (OSV-Scanner included) has anything to scan here. This is a real, honestly-stated coverage gap, not a claimed capability; version floors for these are reviewed manually as part of normal `configure.ac` changes.
+
+**Threshold**: a known **critical** or **high**-severity vulnerability in a scanned (GitHub Actions) dependency blocks a release — it must be remediated (an update, a pin change, or a documented, maintainer-approved risk acceptance) before a tagged release is cut. **Medium**/**low**-severity findings are tracked (an issue is opened) but do not block a release by themselves. This mirrors the zero-tolerance CodeQL threshold above in spirit — a real gate, not a recommendation — scoped to what OSV-Scanner can actually see.
+
 ## Secrets and Credentials Policy
 
 distcc-ng does not commit or otherwise store long-lived credentials in the repository. In practice:

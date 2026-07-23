@@ -94,7 +94,10 @@ criterion `OSPS-DO-06.01`).
   opens a weekly update PR per action, for both `master` and `current_dev`.
   Each such PR still goes through the same review, CI, and (for `master`)
   explicit maintainer-approval gates as any other pull request — Dependabot
-  only proposes the update, it never merges one itself.
+  only proposes the update, it never merges one itself. `.github/workflows/osv-scanner.yml`
+  adds a real-time gate on top of that periodic cadence: every pull request
+  and push is checked against OSV.dev's advisory database for known-
+  vulnerable action versions (see `SECURITY.md`'s SCA policy section).
 - **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`)
   are detected at `./configure` time via `configure.ac`'s `PKG_CHECK_MODULES`
   calls against whatever the build host already provides, per the

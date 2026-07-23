@@ -11,6 +11,45 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`.github/workflows/package-release.yml`**: `build_packages` now generates
+  a real SPDX SBOM (via `anchore/sbom-action`) for the released source
+  tarball, uploaded both as a workflow artifact and as an additional
+  GitHub Release asset alongside the existing `.tar.gz`/`.tar.bz2`/`.rpm`/
+  `.deb` files, and covered by the same build-provenance attestation.
+  Closes `OSPS-QA-02.02` (refs #267).
+- **`.github/workflows/osv-scanner.yml`** (new file, refs #267): adds
+  `google/osv-scanner-action`'s reusable workflows as a real-time SCA gate
+  on pull requests, pushes to `current_dev`/`master`, and a weekly schedule
+  — checking every pinned GitHub Actions dependency against OSV.dev's
+  advisory database. Closes `OSPS-VM-05.03`'s automated-enforcement
+  requirement for the one dependency ecosystem this project's C/autoconf
+  build actually has a manifest for (GitHub Actions); the C library
+  dependencies (`libzstd`, `libpopt`, `libavahi-client`, `libseccomp`)
+  remain outside any SCA tool's reach, consistent with
+  `doc/compatibility-policy.md`'s existing Dependency management policy
+  section.
+- **`doc/threat-model.md`** (new): a real threat model and attack-surface
+  analysis — actors, trust boundaries, the wire-protocol parsers' concrete
+  fixed-vulnerability history (#95/#292/#293), the seccomp sandbox's
+  fail-open/fail-closed boundary, and the residual risk if `distccd` is
+  ever exposed beyond a trusted LAN. Closes `OSPS-SA-03.02` (refs #267),
+  linked from `doc/security-assessment.md`.
+- **`doc/distcc-ng.openvex.json`** (new): a real [OpenVEX](https://github.com/openvex/spec)
+  document covering all 30 of this repository's currently-dismissed CodeQL
+  alerts (19 `not_affected` with a machine-readable justification, 11
+  `under_investigation` where the dismissal comment itself says final
+  triage under issue #143 isn't finished). Closes `OSPS-VM-04.02` (refs
+  #267) with this project's real dismissed-alert history, not a fabricated
+  "nothing to report" placeholder.
+- **`SECURITY.md`**: new "Dependency vulnerability (SCA) policy" section
+  documenting the critical/high-blocks-a-release, medium/low-tracked-only
+  threshold and the same GitHub-Actions-only coverage honesty as above;
+  new "Dismissed-alert transparency" note pointing at
+  `doc/distcc-ng.openvex.json`. Closes `OSPS-VM-05.01`/`OSPS-VM-05.02`
+  (refs #267).
+
 ### Documentation
 
 - **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
