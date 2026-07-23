@@ -1,15 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "simple",
   "include-component-in-tag": false,
   "tag-separator": "-",
   "bootstrap-sha": "d19cd23",
-  "extra-files": [
-    {
-      "type": "generic",
-      "path": "configure.ac"
-    }
-  ],
   "changelog-sections": [
     { "type": "security", "section": "Security" },
     { "type": "fix", "section": "Fixed" },
@@ -20,5 +13,16 @@
     { "type": "perf", "section": "Changed", "hidden": false },
     { "type": "test", "section": "Changed", "hidden": true },
     { "type": "ci", "section": "Changed", "hidden": false }
-  ]
+  ],
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "configure.ac"
+        }
+      ]
+    }
+  }
 }
