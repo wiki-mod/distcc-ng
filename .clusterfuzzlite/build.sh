@@ -119,4 +119,19 @@ resolved_libs="$(sed -n 's/^LIBS = //p' Makefile)"
 $CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
     -x c test/fuzz/fuzz_rpc_argv.c -x none "${objs[@]}" \
     -o "$OUT/fuzz_rpc_argv" \
+    -Wl,-rpath,'$ORIGIN' \
     $LIB_FUZZING_ENGINE $resolved_libs
+
+# ClusterFuzzLite's run/verification environment is not the same image as
+# this build environment -- confirmed live: the build succeeds, but the
+# post-build "bad build check" fails with "error while loading shared
+# libraries: libavahi-common.so.3: cannot open shared object file", since
+# that dynamically-linked dependency isn't installed in the run
+# environment. Only $OUT itself carries over between build and run, so
+# copy every shared library this binary actually needs (per ldd, not
+# guessed) into $OUT -- the -rpath,$ORIGIN added above makes the binary
+# look next to itself first, where these copies will be.
+for lib in $(ldd "$OUT/fuzz_rpc_argv" | awk '/=>/{print $3} !/=>/{if ($1 ~ /^\//) print $1}'); do
+    [ -f "$lib" ] || continue
+    cp -L "$lib" "$OUT/"
+done
