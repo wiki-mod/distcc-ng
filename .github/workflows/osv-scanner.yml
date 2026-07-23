@@ -34,11 +34,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Required to upload SARIF file to CodeQL's code-scanning API -- see
-  # https://github.com/github/codeql-action/issues/2117, the same reason
-  # codeql.yml's analyze job needs it.
-  actions: read
-  security-events: write
+  # Top-level floor only: both jobs below are mutually exclusive (`if:`
+  # gated) and each already declares its own full job-level permissions
+  # block (actions: read / security-events: write / contents: read) for
+  # the reusable workflow it calls. A top-level security-events: write
+  # would be a redundant over-grant with no job actually relying on it
+  # inherited -- Scorecard's TokenPermissionsID correctly flags this
+  # pattern (topLevel permission set to 'write'); see #267/#222.
   contents: read
 
 jobs:
