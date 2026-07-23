@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.2-NG] - 2026-07-23
+
 ### Added
 
 - **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
