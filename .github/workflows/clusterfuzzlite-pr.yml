@@ -1,0 +1,49 @@
+name: ClusterFuzzLite PR fuzzing
+
+# Fuzzes the code-change introduced by a pull request using libFuzzer
+# against test/fuzz/fuzz_rpc_argv.c (src/rpc.c's dcc_r_argv(), the
+# untrusted-peer argument-list parser -- see that file's own header
+# comment for why this specific surface). Closes Scorecard's FuzzingID
+# finding (refs #267); ClusterFuzzLite was chosen over OSS-Fuzz itself
+# since OSS-Fuzz requires "a significant user base and/or [being]
+# critical to the global IT infrastructure" to be accepted, which a
+# young fork does not realistically meet.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/fuzz/**'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/clusterfuzzlite-pr.yml'
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  PR:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - name: Build Fuzzers (${{ matrix.sanitizer }})
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: c
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run Fuzzers (${{ matrix.sanitizer }})
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 300
+          mode: 'code-change'
+          sanitizer: ${{ matrix.sanitizer }}
+          output-sarif: true

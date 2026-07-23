@@ -11,6 +11,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
+  `.github/workflows/clusterfuzzlite-pr.yml`): fuzzes `src/rpc.c`'s
+  `dcc_r_argv()` (the untrusted-peer argument-list parser) via libFuzzer
+  on every PR touching `src/**`. Closes Scorecard's `FuzzingID` finding
+  (refs #267). OSS-Fuzz itself was evaluated and rejected -- it requires
+  "a significant user base and/or [being] critical to the global IT
+  infrastructure" to be accepted, which a young fork does not realistically
+  meet; ClusterFuzzLite has no such gate. Scoped to PR-triggered fuzzing
+  only for now -- scheduled/batch continuous fuzzing needs a separate
+  corpus-storage repository, a bigger follow-on decision not bundled here.
+
 ### Security
 
 - **`.github/workflows/actionlint.yml`**: replaced the `curl <script> |

@@ -1,0 +1,149 @@
+#!/bin/bash -eu
+#
+# ClusterFuzzLite build script for distcc-ng (refs #267). Runs inside the
+# .clusterfuzzlite/Dockerfile environment, with $CC/$CXX/$CFLAGS/$CXXFLAGS/
+# $LIB_FUZZING_ENGINE/$OUT already set by that environment (OSS-Fuzz/
+# ClusterFuzzLite convention, not defined by this script).
+
+./autogen.sh
+# --disable-pump-mode: the fuzz target only exercises src/rpc.c's wire-
+# protocol parsing, not the Python include-server -- skips a real Python
+# C-extension build this target doesn't need, reducing build surface.
+# PYTHON=python3 matches this repo's own documented convention (CLAUDE.md).
+# --with-auth: this build compiles every non-main src/*.c file together
+# (see below), which includes src/auth_common.c -- but that file is only
+# ever compiled by the real Makefile.in when --with-auth was given
+# (configure.ac's AUTH_COMMON_OBJS assignment), and it uses
+# EXIT_GSSAPI_FAILED unconditionally, which is only defined when
+# HAVE_GSSAPI is set (also only set by --with-auth's own AC_SEARCH_LIBS
+# check succeeding). Confirmed live: without --with-auth, this fails with
+# "use of undeclared identifier 'EXIT_GSSAPI_FAILED'". libkrb5-dev
+# (already installed above for gssapi.h) also provides libgssapi_krb5,
+# which configure.ac's AC_SEARCH_LIBS([gss_init_sec_context], [gssapi
+# gssapi_krb5 gss], ...) successfully finds.
+./configure PYTHON=python3 --disable-pump-mode --with-auth
+
+# Makefile.in's DIR_DEFS (-DLIBDIR/-DSYSCONFDIR/-DICONDIR, derived from
+# $(prefix)/$(sysconfdir)/$(datarootdir)/pixmaps) is part of every real
+# compile's CPPFLAGS, but is a pure Makefile-level substitution, never
+# baked into config.h -- so it has to be reconstructed here too. Confirmed
+# live: src/hosts.c fails with "use of undeclared identifier 'SYSCONFDIR'"
+# without it. Read the resolved autoconf variables from the generated
+# Makefile (same pattern as LIBS below) rather than hand-guessing a path.
+prefix="$(sed -n 's/^prefix = //p' Makefile)"
+sysconfdir="$(sed -n 's/^sysconfdir = //p' Makefile | sed "s|\${prefix}|$prefix|; s|\$(prefix)|$prefix|")"
+datarootdir="$(sed -n 's/^datarootdir = //p' Makefile | sed "s|\${prefix}|$prefix|; s|\$(prefix)|$prefix|")"
+dir_defs="-DLIBDIR=\"\\\"${prefix}/lib\\\"\" -DSYSCONFDIR=\"\\\"${sysconfdir}\\\"\" -DICONDIR=\"\\\"${datarootdir}/pixmaps\\\"\""
+
+# Compile every source file distcc-ng's real binaries share (see
+# Makefile.in's SRC list), except the ones that ONLY exist as a separate
+# test/tool binary with no other real caller (only one main is allowed in
+# the final fuzz binary, provided by $LIB_FUZZING_ENGINE). Compiled
+# directly with $CC/$CFLAGS (which already carry the sanitizer/
+# instrumentation flags this environment injects), not through `make`, so
+# those flags aren't overridden by Makefile.in's own CFLAGS assignment.
+#
+# Also excludes history.c/renderer.c: per Makefile.in's gnome_obj list,
+# both are compiled exclusively for distccmon-gnome (with $(GNOME_CFLAGS),
+# i.e. glib/gtk), alongside mon-gnome.c itself -- confirmed live:
+# renderer.c fails with "fatal error: 'glib.h' file not found" without
+# excluding it, and this fuzz target has no need for the GNOME GUI monitor.
+#
+# fix_debug_info.c is NOT in this list despite having a main() -- that
+# main (and its rs_program_name) is entirely inside #ifdef TEST, which is
+# never defined here, so it compiles as pure library code with no
+# conflict (confirmed by reading the file, not assumed).
+main_having_files="distcc h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text history renderer"
+
+# daemon.c and stringmap.c DO have a real, unconditional main() (confirmed
+# by reading both files) -- but per Makefile.in's distccd_obj list, both
+# also provide real library functions this fuzz target's link needs
+# (daemon.c: dcc_should_be_inetd/dcc_set_lifetime/dcc_log_daemon_started/
+# dcc_daemon_wd/rs_program_name; stringmap.c: stringmap_load/
+# stringmap_lookup) -- confirmed live: excluding them entirely produces
+# undefined-reference link errors for exactly these symbols. Renaming
+# main via -Dmain=... keeps the rest of each file's real code compiling
+# and linking normally while avoiding a duplicate-main conflict with
+# $LIB_FUZZING_ENGINE's own main.
+main_renamed_files="daemon stringmap"
+
+objs=()
+for f in src/*.c; do
+    base="$(basename "$f" .c)"
+    skip=0
+    for ex in $main_having_files; do
+        if [ "$base" = "$ex" ]; then
+            skip=1
+            break
+        fi
+    done
+    [ "$skip" -eq 1 ] && continue
+    obj="$OUT/${base}.o"
+    extra_defs=""
+    for rn in $main_renamed_files; do
+        if [ "$base" = "$rn" ]; then
+            extra_defs="-Dmain=distccng_disabled_main_${base}"
+            break
+        fi
+    done
+    eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs "$extra_defs" -c "$f" -o "$obj"
+    objs+=("$obj")
+done
+
+# lzo/minilzo.c: the bundled LZO compressor (always built, per Makefile.in's
+# own dist_lzo/distcc_obj lists) -- src/compress-lzox1.c #includes
+# "minilzo.h" from this directory, and the symbols it defines are needed
+# at final link time too. Confirmed live: without -Ilzo, compress-lzox1.c
+# fails with "fatal error: 'minilzo.h' file not found".
+eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs -c lzo/minilzo.c -o "$OUT/minilzo.o"
+objs+=("$OUT/minilzo.o")
+
+# Same libraries the real distccd/distcc binaries link against (Makefile.in's
+# LIBS = @LIBS@ @POPT_LIBS@, resolved by the ./configure just run) -- read
+# from the generated Makefile rather than hand-guessed, so this stays
+# correct if configure's library detection ever changes.
+resolved_libs="$(sed -n 's/^LIBS = //p' Makefile)"
+
+# ClusterFuzzLite requires linking fuzz target binaries with $CXX even for
+# a pure-C project (its own documented convention). This does NOT mean
+# clang++ treats a .c file as C by extension, though -- confirmed live:
+# without an explicit -x c, clang++ compiles fuzz_rpc_argv.c as C++ (with
+# a "treating 'c' input as 'c++'" deprecation warning), which then fails
+# on src/rpc.h's forward enum reference ("ISO C++ forbids forward
+# references to 'enum' types", valid C, invalid C++). -x c forces C mode
+# for that one file -- but -x stays in effect for every argument after it
+# until reset, so without an explicit -x none before the .o file list,
+# clang tries to parse each already-compiled .o as C *source* too.
+# Confirmed live: raw ELF binary bytes dumped as a "C source" compile
+# error without the reset.
+$CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
+    -x c test/fuzz/fuzz_rpc_argv.c -x none "${objs[@]}" \
+    -o "$OUT/fuzz_rpc_argv" \
+    -Wl,-rpath,'$ORIGIN' \
+    $LIB_FUZZING_ENGINE $resolved_libs
+
+# ClusterFuzzLite's run/verification environment is not the same image as
+# this build environment -- confirmed live: the build succeeds, but the
+# post-build "bad build check" fails with "error while loading shared
+# libraries: libavahi-common.so.3: cannot open shared object file", since
+# that dynamically-linked dependency isn't installed in the run
+# environment. Only $OUT itself carries over between build and run.
+#
+# Only copy libavahi*/libpopt* -- distcc-ng's own genuinely optional,
+# non-universal dependencies -- NOT every library ldd reports. Confirmed
+# live the hard way: an earlier version of this script copied every
+# shared library ldd listed, including glibc/system-core ones (libc.so.6,
+# ld-linux-x86-64.so.2, libgcc_s.so.1, etc.) -- the run environment then
+# preferred this build environment's own libc.so.6 (via -rpath,$ORIGIN)
+# over its own matching one, and crashed immediately with "undefined
+# symbol: _dl_audit_symbind_alt, version GLIBC_PRIVATE" (a glibc/ld.so
+# version mismatch). glibc/kernel-adjacent libraries must come from the
+# run environment itself, never be shadowed by a copied one.
+for lib in $(ldd "$OUT/fuzz_rpc_argv" | awk '/=>/{print $3} !/=>/{if ($1 ~ /^\//) print $1}'); do
+    case "$(basename "$lib")" in
+        libavahi-*|libpopt.*) ;;
+        *) continue ;;
+    esac
+    [ -f "$lib" ] || continue
+    cp -L "$lib" "$OUT/"
+done
