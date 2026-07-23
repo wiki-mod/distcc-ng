@@ -13,6 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`docker/verify/Dockerfile`**: added `actionlint` (built from source and
+  version-pinned, v1.7.12 -- avoids stale Go-stdlib CVEs in the official
+  static release binary, same rationale/version as `wiki-mod/lancache-ng`'s
+  own build-tools image), plus `shellcheck` and `jq`, each with a real
+  build-time self-test (a deliberately broken script/workflow/JSON doc).
+  Groundwork for closing Scorecard's `PinnedDependenciesID` finding
+  (refs #222/#267) in `.github/workflows/actionlint.yml` -- done as a
+  separate, follow-on change once this image's new `:latest` is actually
+  published (publish only happens on push to `current_dev`, not on this
+  PR itself).
+
 - **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
   own AG-GH-018/`check-pr-title-convention.sh`. New `pr_title_convention`
   job in `.github/workflows/changelog-check.yml` validates a PR title
