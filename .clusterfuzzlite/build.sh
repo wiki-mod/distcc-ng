@@ -10,7 +10,18 @@
 # protocol parsing, not the Python include-server -- skips a real Python
 # C-extension build this target doesn't need, reducing build surface.
 # PYTHON=python3 matches this repo's own documented convention (CLAUDE.md).
-./configure PYTHON=python3 --disable-pump-mode
+# --with-auth: this build compiles every non-main src/*.c file together
+# (see below), which includes src/auth_common.c -- but that file is only
+# ever compiled by the real Makefile.in when --with-auth was given
+# (configure.ac's AUTH_COMMON_OBJS assignment), and it uses
+# EXIT_GSSAPI_FAILED unconditionally, which is only defined when
+# HAVE_GSSAPI is set (also only set by --with-auth's own AC_SEARCH_LIBS
+# check succeeding). Confirmed live: without --with-auth, this fails with
+# "use of undeclared identifier 'EXIT_GSSAPI_FAILED'". libkrb5-dev
+# (already installed above for gssapi.h) also provides libgssapi_krb5,
+# which configure.ac's AC_SEARCH_LIBS([gss_init_sec_context], [gssapi
+# gssapi_krb5 gss], ...) successfully finds.
+./configure PYTHON=python3 --disable-pump-mode --with-auth
 
 # Compile every source file distcc-ng's real binaries share (see
 # Makefile.in's SRC list), except the ones that define their own main() --
