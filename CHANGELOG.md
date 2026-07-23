@@ -11,8 +11,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Makefile.in`**: removed the stale `AUTHORS` entry from `pkgdoc_DOCS` —
+  `AUTHORS` was deleted from the repo in an earlier commit, but `Makefile.in`
+  still listed it, breaking `make install-doc`/`make dist`/anything that
+  runs `make install` (`make: *** No rule to make target 'AUTHORS', needed
+  by 'install-doc'. Stop.`) — caught live by this PR's own
+  "Distributed compile E2E" CI check once `required_status_checks` made it
+  a real merge gate.
+
 ### Documentation
 
+- **`README`, `README.pump` removed; `README.md` is now the single root
+  README** (refs #316): `README` was a stale, already-diverged duplicate of
+  `README.md` (missing this fork's own URL/Security/Licence/Resources
+  sections); `README.pump`'s real technical content (include-server header
+  analysis, absolute-include-path handling via inserted `#line` directives,
+  build flow, performance characteristics) was folded into `README.md` as a
+  new `## Pump mode` section rather than summarized away. Updated
+  `Makefile.in`'s `pkgdoc_DOCS` and `INSTALL`'s cross-reference accordingly;
+  verified for real that `README.md` (not the removed files) is what
+  actually ships in `make dist`/`make install-doc` output.
 - **`doc/security-assessment.md`** (new): a minimal index/pointer document
   (trust model, actors, known risk history, upstream context) linking to
   existing docs (`SECURITY.md`, `doc/protocol-*.txt`,
