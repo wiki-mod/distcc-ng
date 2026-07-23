@@ -30,6 +30,15 @@ on:
   schedule:
     - cron: '0 3 * * *'
 
+# Read-only floor: every job below already declares its own job-level
+# permissions block scoped to what its own steps need (id-token/attestations
+# only on make_check's Linux leg, nothing beyond checkout elsewhere) -- this
+# top-level block only exists so the workflow has an explicit, minimal
+# default instead of silently falling back to the broader legacy
+# GITHUB_TOKEN default if a future job is ever added without its own block.
+permissions:
+  contents: read
+
 jobs:
   make_check:
     strategy:

@@ -15,15 +15,23 @@ on:
     tags:
       - "v*"
 
+# Read-only floor: this file's real write scopes (contents: write for the
+# GitHub release, packages: write for the GHCR image pushes, id-token/
+# attestations: write for build provenance) are each pushed down to only the
+# specific job that actually uses them, rather than granted to every job in
+# this pipeline -- setup, build_check, and distributed_e2e never call the
+# GitHub API or push anything and previously inherited all four scopes for
+# no reason.
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   setup:
     runs-on: ubuntu-latest
+    # Pure metadata derivation (parses github.ref/github.run_number into
+    # step outputs) -- no checkout, no GitHub API call, no registry access.
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag_name: ${{ steps.meta.outputs.tag_name }}
@@ -68,6 +76,10 @@ jobs:
   build_check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # This job only checks out the tag and runs a local build + test -- no
+    # GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
@@ -107,6 +119,10 @@ jobs:
   distributed_e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # This job only checks out the tag and runs the local docker-compose e2e
+    # script -- no GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -122,6 +138,15 @@ jobs:
     needs: [setup, build_check, distributed_e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # contents: read for checkout; id-token/attestations: write are what
+    # actions/attest-build-provenance below actually needs to mint and
+    # record its provenance attestation -- this job never pushes to GHCR or
+    # touches the GitHub Releases API, so it gets neither packages: write
+    # nor contents: write.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -162,6 +187,15 @@ jobs:
   build_container:
     needs: [setup, build_check, distributed_e2e]
     if: needs.setup.outputs.do_container == 'true'
+    # contents: read for checkout; packages: write for the GHCR login and
+    # push below. Trivy/SBOM steps only inspect the already-built local
+    # image and upload a workflow artifact, neither of which needs any
+    # additional token scope -- this job never touches the Releases API or
+    # mints a provenance attestation, so it gets neither contents: write nor
+    # id-token/attestations: write.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         variant: [plain, pump]
@@ -309,6 +343,12 @@ jobs:
   publish_manifest:
     needs: [setup, build_container]
     if: needs.setup.outputs.do_container == 'true'
+    # No checkout in this job (it only assembles a multi-arch manifest from
+    # already-pushed per-platform images); packages: write is what the GHCR
+    # login and the final `docker buildx imagetools create` push need.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         variant: [plain, pump]
@@ -377,6 +417,13 @@ jobs:
     needs: [setup, build_packages, publish_manifest]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    # No checkout in this job (it only downloads the already-built package
+    # artifact); contents: write is what the `gh release create/upload/edit`
+    # calls below actually need -- this job never pushes to GHCR or mints an
+    # attestation, so it gets neither packages: write nor id-token/
+    # attestations: write.
+    permissions:
+      contents: write
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.

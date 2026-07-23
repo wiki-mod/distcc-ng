@@ -19,16 +19,27 @@ concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
+# Read-only floor: the actual write scope (security-events: write, needed to
+# upload SARIF results) is pushed down to the analyze job's own permissions
+# block below rather than granted here, so a top-level Scorecard/security
+# scan of this file sees no broader-than-read default token scope.
 permissions:
   contents: read
-  actions: read
-  security-events: write
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # actions: read lets codeql-action/init resolve this workflow's own run
+    # context (needed on some repo configurations); security-events: write
+    # is what actually lets codeql-action/analyze upload SARIF results to
+    # the code scanning API -- both scoped to this job, not the whole
+    # workflow, since it's the only job that calls either.
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     strategy:
       fail-fast: false
