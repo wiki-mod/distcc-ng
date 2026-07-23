@@ -23,6 +23,18 @@
 # gssapi_krb5 gss], ...) successfully finds.
 ./configure PYTHON=python3 --disable-pump-mode --with-auth
 
+# Makefile.in's DIR_DEFS (-DLIBDIR/-DSYSCONFDIR/-DICONDIR, derived from
+# $(prefix)/$(sysconfdir)/$(datarootdir)/pixmaps) is part of every real
+# compile's CPPFLAGS, but is a pure Makefile-level substitution, never
+# baked into config.h -- so it has to be reconstructed here too. Confirmed
+# live: src/hosts.c fails with "use of undeclared identifier 'SYSCONFDIR'"
+# without it. Read the resolved autoconf variables from the generated
+# Makefile (same pattern as LIBS below) rather than hand-guessing a path.
+prefix="$(sed -n 's/^prefix = //p' Makefile)"
+sysconfdir="$(sed -n 's/^sysconfdir = //p' Makefile | sed "s|\${prefix}|$prefix|; s|\$(prefix)|$prefix|")"
+datarootdir="$(sed -n 's/^datarootdir = //p' Makefile | sed "s|\${prefix}|$prefix|; s|\$(prefix)|$prefix|")"
+dir_defs="-DLIBDIR=\"\\\"${prefix}/lib\\\"\" -DSYSCONFDIR=\"\\\"${sysconfdir}\\\"\" -DICONDIR=\"\\\"${datarootdir}/pixmaps\\\"\""
+
 # Compile every source file distcc-ng's real binaries share (see
 # Makefile.in's SRC list), except the ones that define their own main() --
 # only one main is allowed in the final fuzz binary, provided by
@@ -44,7 +56,7 @@ for f in src/*.c; do
     done
     [ "$skip" -eq 1 ] && continue
     obj="$OUT/${base}.o"
-    $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H -c "$f" -o "$obj"
+    eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs -c "$f" -o "$obj"
     objs+=("$obj")
 done
 
@@ -53,7 +65,7 @@ done
 # "minilzo.h" from this directory, and the symbols it defines are needed
 # at final link time too. Confirmed live: without -Ilzo, compress-lzox1.c
 # fails with "fatal error: 'minilzo.h' file not found".
-$CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H -c lzo/minilzo.c -o "$OUT/minilzo.o"
+eval $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H $dir_defs -c lzo/minilzo.c -o "$OUT/minilzo.o"
 objs+=("$OUT/minilzo.o")
 
 # Same libraries the real distccd/distcc binaries link against (Makefile.in's
