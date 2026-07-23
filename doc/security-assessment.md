@@ -5,6 +5,14 @@ referenced document. Satisfies OpenSSF Best Practices Baseline criteria
 `OSPS-SA-01.01` (design/actors) and `OSPS-SA-03.01` (security assessment),
 raised during issue #267's review.
 
+## Threat model and attack surface analysis
+
+`doc/threat-model.md`: the real threat model and attack-surface enumeration
+required by `OSPS-SA-03.02` — actors, trust boundaries, the wire-protocol
+parsers' concrete fixed-vulnerability history (#95/#292/#293), the seccomp
+sandbox's fail-open/fail-closed boundary, and what changes if `distccd` is
+ever exposed beyond a trusted LAN. Not duplicated here.
+
 ## Trust model and actors
 
 - **Client (`distcc`) / server (`distccd`) / include-server (`pump` mode)**
@@ -16,6 +24,15 @@ raised during issue #267's review.
   flow, and format in full.
 - **Planned transport hardening**: `doc/tls-transport-design.md`.
 - **Sandboxing**: `doc/seccomp-sandbox.md`.
+
+## Vulnerability exploitability exchange (VEX)
+
+`doc/distcc-ng.openvex.json`: an [OpenVEX](https://github.com/openvex/spec)
+document declaring the real, current disposition of every dismissed CodeQL
+alert on this repository (`not_affected` with a justification, or
+`under_investigation` where triage under issue #143 isn't finished yet) —
+see `SECURITY.md`'s "Continuous static and supply-chain analysis" section
+for the policy this implements.
 
 ## Known risk history
 
