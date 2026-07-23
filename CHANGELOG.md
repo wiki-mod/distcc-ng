@@ -11,7 +11,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
-### Added
+### Security
+
+- **`.github/workflows/actionlint.yml`**: replaced the `curl <script> |
+  bash` actionlint install with the pinned `distcc-ng-buildtools` image
+  (#332), resolving Scorecard's `PinnedDependenciesID` finding
+  ("downloadThenRun not pinned by hash", refs #222/#267). Also removed an
+  unused `pull-requests: write` permission -- the job never comments on or
+  labels a PR, same class of over-grant as #324's `osv-scanner.yml` fix.
 
 - **`docker/verify/Dockerfile`**: added `actionlint` (built from source and
   version-pinned, v1.7.12 -- avoids stale Go-stdlib CVEs in the official
