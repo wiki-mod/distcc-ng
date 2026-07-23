@@ -52,6 +52,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/verification-checklist.md`**: added a third container-verification
+  gotcha to section 9 — Docker's default root capability set lacks
+  `CAP_SYS_NICE`, so a root-only test exercising `nice(2)` with a negative
+  value (`AutogroupNicenessPrivilegeDrop_Case`) fails with an
+  "Operation not permitted" error that reads identically to a real code
+  regression unless `--cap-add=SYS_NICE` is added explicitly. Found while
+  verifying the 3.6.1-NG release.
 - **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
   Actions secrets are the only secret material in use; least-privilege
   workflow permissions per #308; `secret_scanning` +
