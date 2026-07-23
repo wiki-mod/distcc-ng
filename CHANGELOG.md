@@ -13,6 +13,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`scripts/run-tests.sh`** (new): a dev-convenience wrapper that runs the
+  real verification steps (`./autogen.sh`, `./configure PYTHON=python3` with
+  pass-through for extra configure args, `make`, `make check`) in order,
+  fails fast and loud on any step's non-zero exit or on a compiler warning
+  (AGENTS.md rule 31), and parses `make check`'s comfychair-based
+  `test/testdistcc.py` output into a concise OK/NOTRUN/FAILED summary
+  instead of requiring a manual `tail`/`grep` of the log. Does not replace
+  `make check` or `test/testdistcc.py` itself (refs #238).
 - **`.github/workflows/package-release.yml`**: `build_packages` now generates
   a real SPDX SBOM (via `anchore/sbom-action`) for the released source
   tarball, uploaded both as a workflow artifact and as an additional
