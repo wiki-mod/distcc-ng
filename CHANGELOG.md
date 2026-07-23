@@ -44,9 +44,33 @@ See `doc/release-versioning.md` for the full versioning and release process.
     write`; `gh release`/tag operations need `contents: write`; build
     provenance attestation needs `id-token: write` + `attestations:
     write`).
+- **OSSF Scorecard: `DependencyUpdateToolID` finding from #267** — added
+  `.github/dependabot.yml`, covering the `github-actions` ecosystem (the
+  only ecosystem with anything to manage: `include_server/setup.py` has no
+  external Python dependencies, and the C library dependencies are detected
+  via `configure.ac`'s autoconf/`PKG_CHECK_MODULES` checks, which have no
+  package-manager-native manifest for Dependabot to parse) plus a `docker`
+  ecosystem entry for `docker/release/Dockerfile` and `docker/verify/Dockerfile`'s
+  already-pinned base image digests. Each ecosystem is duplicated once per
+  `target-branch` (`master` and `current_dev`), since Dependabot's own
+  `target-branch` key accepts exactly one branch and silently defaults to
+  the repo's default branch (`master`) when omitted — refs #267.
 
 ### Documentation
 
+- **`doc/compatibility-policy.md`: dependency management policy** (refs
+  #267, OpenSSF Baseline `OSPS-DO-06.01`): new "Dependency management
+  policy" section documenting how this fork selects, obtains, and tracks
+  its GitHub Actions, C library, Python, and vendored-code dependencies,
+  including the maintainer's reasoning for why vendored code like `lzo/`'s
+  minilzo is reviewed manually rather than replaced (upstream `distcc/distcc`
+  itself vendors the identical implementation).
+- **`AGENTS.md`: "Project Roles" section** (refs #267, OpenSSF Baseline
+  `OSPS-GV-01.01`/`OSPS-GV-01.02`): documents the project's actual
+  membership — the sole human maintainer (`djdomi`, with exclusive access
+  to sensitive resources) and AI coding agents operating under this file's
+  governance with no standing write access beyond what a task explicitly
+  delegates.
 - **`SECURITY.md`** (new, refs #267): security-vulnerability reporting policy —
   private disclosure via GitHub Security Advisories, a supported-versions
   table tied to `doc/release-versioning.md`'s `-NG` scheme, and a "Known
