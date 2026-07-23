@@ -23,6 +23,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`CONTRIBUTING.md`** (new): a contributor guide covering project scope,
+  before-you-start expectations, PR/issue-linking conventions, changelog
+  and comment-style expectations, local verification (build+test,
+  `actionlint`, the `distcc-ng-buildtools` container), release process,
+  and how to report security issues. Adapted from sister repo
+  `wiki-mod/lancache-ng`'s own `CONTRIBUTING.md`, substituting distcc-ng's
+  actual mechanisms throughout rather than copying lancache-ng-specific
+  ones. Closes the `OSPS-GV-03.02` gap from issue #267's OpenSSF Best
+  Practices Baseline review.
 - **`README`, `README.pump` removed; `README.md` is now the single root
   README** (refs #316): `README` was a stale, already-diverged duplicate of
   `README.md` (missing this fork's own URL/Security/Licence/Resources
