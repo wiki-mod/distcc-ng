@@ -171,7 +171,7 @@ int dcc_retrieve_results(int net_fd,
     if ((ret = dcc_r_cc_status(net_fd, status)))
         return ret;
 
-    if (host->protover == DCC_VER_4) {
+    if (host->protover == DCC_VER_4000) {
         if ((ret = dcc_r_token_2int(net_fd, "SERR", &len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "SERR", &len)))
@@ -193,7 +193,7 @@ int dcc_retrieve_results(int net_fd,
     if (dcc_add_file_to_log_email("server-side stderr", server_stderr_fname))
         return ret;
 
-    if (host->protover == DCC_VER_4) {
+    if (host->protover == DCC_VER_4000) {
         if ((ret = dcc_r_token_2int(net_fd, "SOUT", &len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "SOUT", &len)))
@@ -203,7 +203,7 @@ int dcc_retrieve_results(int net_fd,
                              host->compr)))
         return ret;
 
-    if (host->protover == DCC_VER_4) {
+    if (host->protover == DCC_VER_4000) {
         if ((ret = dcc_r_token_2int(net_fd, "DOTO", &o_len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "DOTO", &o_len)))
@@ -222,7 +222,7 @@ int dcc_retrieve_results(int net_fd,
                 return ret;
             }
         }
-        if (host->protover == DCC_VER_4) {
+        if (host->protover == DCC_VER_4000) {
             char *dwo_fname = NULL;
 
             if ((ret = dcc_r_token_2int(net_fd, "DDWO", &o_len, &uncompr_len)))

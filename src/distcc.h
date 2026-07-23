@@ -130,8 +130,18 @@ enum dcc_protover {
     DCC_VER_1   = 1,            /**< vanilla */
     DCC_VER_2   = 2,            /**< LZO sprinkles */
     DCC_VER_3   = 3,            /**< server-side cpp */
-    DCC_VER_4   = 4,            /**< Zstandard compression and split dwarf. */
-    __DCC_VER_MAX = 5            /**< canary */
+    /* Fork-only protocol extensions start at 4000+ (issue #304): versions
+     * 0-3 are reserved exclusively for whatever upstream distcc/distcc
+     * itself defines (verified as of this decision to go no higher than
+     * DCC_VER_3), so this fork's own additions -- zstd here, and future
+     * ones such as #248's planned TLS transport -- can never collide with
+     * a future upstream protocol version. DCC_VER_4 was originally
+     * numbered before this policy existed; this migration moves it to
+     * DCC_VER_4000 while it still has near-zero real-world adoption,
+     * the cheapest possible time to make this a breaking wire-protocol
+     * change. */
+    DCC_VER_4000 = 4000,        /**< Zstandard compression and split dwarf. */
+    __DCC_VER_MAX = 4001         /**< canary */
 };
 
 

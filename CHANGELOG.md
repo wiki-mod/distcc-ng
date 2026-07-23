@@ -11,6 +11,29 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `DCC_VER_4` (zstd + client-side cpp) renumbered to
+  `DCC_VER_4000`** (`src/distcc.h`, `src/hosts.c`, `src/serve.c`,
+  `src/clirpc.c`, `src/srvrpc.c`, `src/bulk.c`, `doc/protocol-4000.txt`) —
+  per issue #304's numbering policy: protocol versions 0-3 are reserved
+  exclusively for whatever upstream `distcc/distcc` itself defines
+  (verified against upstream's actual current source to top out at
+  `DCC_VER_3`), and every fork-specific protocol extension (this one, and
+  future ones such as #248's planned TLS transport) gets its own number
+  starting at 4000+, so this fork's own additions can never collide with
+  a future upstream protocol version. This is a real wire-protocol
+  incompatibility with any distcc-ng build predating this change that
+  still uses `,zstd` -- done now deliberately, while real-world adoption
+  of zstd is still effectively zero, since this is the cheapest point at
+  which to make this breaking change. Also hardened `src/hosts.c`'s and
+  `src/srvrpc.c`'s protocol-version validation: with a gap between 3 and
+  4000, a simple upper-bound check could no longer reject an unknown
+  value in that gap -- both now explicitly check against the known set of
+  versions instead. Verified for real: full build with `-Wall -Werror`
+  and `make check` both exit 0/pass on a real host, zstd-enabled and
+  `--without-zstd` builds alike.
+
 ### Removed
 
 - **`ChangeLog`, `NEWS`** (root-level, not `CHANGELOG.md`): deleted as old

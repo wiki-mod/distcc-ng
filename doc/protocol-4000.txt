@@ -21,8 +21,8 @@ protocol
 
 Protocol 2.1 is a variation of protocol 2.
 
-The protocol number (DIST) sent by the client is set to 4.  The server
-must respond (DONE) in version 4.
+The protocol number (DIST) sent by the client is set to 4000.  The server
+must respond (DONE) in version 4000.
 
 The content of the "bulk" tokens (DOTI, DOTO, SERR, SOUT) are
 compressed using the Zstd algorithm.
