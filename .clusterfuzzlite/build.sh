@@ -86,9 +86,12 @@ resolved_libs="$(sed -n 's/^LIBS = //p' Makefile)"
 # a "treating 'c' input as 'c++'" deprecation warning), which then fails
 # on src/rpc.h's forward enum reference ("ISO C++ forbids forward
 # references to 'enum' types", valid C, invalid C++). -x c forces C mode
-# regardless of $CXX/file extension; the already-compiled .o files after
-# it are unaffected by -x (object files, not source).
+# for that one file -- but -x stays in effect for every argument after it
+# until reset, so without an explicit -x none before the .o file list,
+# clang tries to parse each already-compiled .o as C *source* too.
+# Confirmed live: raw ELF binary bytes dumped as a "C source" compile
+# error without the reset.
 $CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
-    -x c test/fuzz/fuzz_rpc_argv.c "${objs[@]}" \
+    -x c test/fuzz/fuzz_rpc_argv.c -x none "${objs[@]}" \
     -o "$OUT/fuzz_rpc_argv" \
     $LIB_FUZZING_ENGINE $resolved_libs
