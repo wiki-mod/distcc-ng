@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
+  or bug-fixing PR should add or update an automated test in
+  `test/testdistcc.py`, with an honest escape hatch for changes that
+  genuinely aren't testable that way (documentation-only, etc.). Closes
+  `OSPS-QA-06.03` (refs #267) — a real gap found while re-verifying Baseline
+  Level 3 status against current `master` state rather than trusting an
+  earlier recollection.
+
 ### Security
 
 - **`.github/workflows/osv-scanner.yml`**: dropped the redundant top-level

@@ -28,6 +28,13 @@ monitoring tools (`distccmon-text`, `distccmon-gnome`, `lsdistcc`).
   can go straight to a PR.
 - Keep unrelated changes in separate pull requests — a PR should bundle
   only what's causally necessary for its own stated goal.
+- A behavior-changing or bug-fixing change should add or update an
+  automated test (`test/testdistcc.py`) covering it, not just a manual
+  local check — see "Baseline build and test" below for how the suite is
+  run. If a change genuinely can't be covered this way (e.g. it's purely
+  documentation, or the behavior isn't practically testable in
+  `test/testdistcc.py`'s harness), say so explicitly in the PR rather than
+  silently omitting test coverage.
 - Do not commit credentials, tokens, private hostnames/IPs, or other
   environment-specific values (see `AGENTS.md`'s "Secrets And Sensitive
   Data" section) — use GitHub Secrets/Variables instead, even for a value
