@@ -59,3 +59,25 @@ This section documents intentional security design decisions and known tradeoffs
 ### 4. Continuous static and supply-chain analysis
 
 This project runs CodeQL and OSSF Scorecard continuously against the codebase; open findings are tracked as GitHub issues rather than dismissed silently.
+
+**Remediation threshold**: this project's policy is zero-tolerance for open CodeQL security alerts on the default branch. This is enforced, not aspirational — the `distcc-ng-default` repository ruleset carries a `code_scanning` rule with `alerts_threshold: "all"`, which technically blocks merging any pull request while any CodeQL security alert is open, not merely a recommendation to fix them.
+
+## Secrets and Credentials Policy
+
+distcc-ng does not commit or otherwise store long-lived credentials in the repository. In practice:
+
+- **GitHub Actions secrets are the only secret material this project uses** (e.g. registry/publish tokens consumed by `.github/workflows/*.yml`). No API keys, passwords, or private keys are checked into source, workflows, or docs (see `AGENTS.md` rules 46-49).
+- **Least-privilege workflow permissions**: workflow files default to `contents: read` at the top level, with each job declaring only the specific additional write scope it actually needs (e.g. `attestations: write` only on the job that mints a build-provenance attestation, `packages: write` only on the job that pushes to GHCR) — see `.github/workflows/package-release.yml` for the current example, tightened repo-wide in #308.
+- **Secret scanning is enabled as an enforcement backstop**, not just a suggestion: both `secret_scanning` and `secret_scanning_push_protection` are enabled on this repository (verified live via `gh api repos/wiki-mod/distcc-ng --jq '.security_and_analysis'`), so a credential accidentally staged for commit is blocked at push time, in addition to being flagged if one is ever found in history.
+
+## Verifying Release Artifacts
+
+Every tagged release built by `.github/workflows/package-release.yml` is accompanied by a real [Sigstore](https://www.sigstore.dev/) build-provenance attestation, generated via [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) for each release asset. This lets a downstream user verify both that an artifact was not tampered with after being built (integrity) and that it was actually built by this repository's own GitHub Actions workflow rather than by some other party claiming to be this project (authenticity/author identity).
+
+To verify a downloaded release asset (requires the [GitHub CLI](https://cli.github.com/), `gh`, version with the `attestation` subcommand):
+
+```bash
+gh attestation verify <path-to-downloaded-artifact> --repo wiki-mod/distcc-ng
+```
+
+(`--owner wiki-mod` also works if you want to trust any repository under the `wiki-mod` organization rather than this specific one.) A successful verification cryptographically confirms the artifact's checksum matches an attestation signed by this repository's own `package-release.yml` workflow run — i.e. it was built here, by this project's CI, and not modified since. See `gh attestation verify --help` for additional flags (e.g. pinning a specific signer workflow path).

@@ -11,6 +11,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
+  Actions secrets are the only secret material in use; least-privilege
+  workflow permissions per #308; `secret_scanning` +
+  `secret_scanning_push_protection` both enabled, verified live), a Verifying
+  Release Artifacts section documenting the `gh attestation verify` command
+  for checking a release asset's Sigstore build-provenance attestation, and
+  an explicit statement of this project's zero-tolerance CodeQL alert
+  remediation threshold (`alerts_threshold: "all"` on the
+  `distcc-ng-default` repository ruleset). Closes three small documentation
+  gaps (`OSPS-BR-07.02`, `OSPS-DO-03.01`/`OSPS-DO-03.02`, `OSPS-VM-06.01`)
+  identified while working toward OpenSSF Best Practices Baseline Level 3
+  (refs #267).
+
 ### Fixed
 
 - **`Makefile.in`**: removed the stale `AUTHORS` entry from `pkgdoc_DOCS` —
