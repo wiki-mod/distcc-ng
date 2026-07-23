@@ -1,0 +1,38 @@
+# Proposed replacement for release-drafter.yml + changelog-update-on-release.yml
+# (see issue #307). NOT yet enabled for real: workflow_dispatch only, no push
+# trigger, so it never runs automatically until the maintainer has seen a real
+# dry-run preview and explicitly decides to cut over.
+#
+# release-please computes the next version (semver bump from Conventional
+# Commits: feat: -> minor, BREAKING CHANGE/! -> major, everything else,
+# including fix:/security: -> patch), maintains an accumulating "release PR"
+# containing the CHANGELOG.md update and the configure.ac AC_INIT version
+# bump (via the x-release-please-version marker, see configure.ac), and cuts
+# the tag + GitHub Release when that PR is merged. See release-please-config.json
+# and .release-please-manifest.json for the actual configuration.
+#
+# The -NG suffix is carried in semver's prerelease slot (e.g. 3.7.0-NG parses
+# as major=3 minor=7 patch=0 preRelease=NG) and is preserved verbatim across
+# ordinary bumps by release-please's default versioning strategy -- this is
+# an implementation detail of the current release-please version, not a
+# documented contract, so don't switch to the "prerelease" versioning
+# strategy (it has graduation semantics that would break this).
+name: release-please
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
