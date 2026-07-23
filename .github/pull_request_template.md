@@ -5,7 +5,10 @@
 <!-- One or two sentences: what does this PR do? -->
 
 ## Linked Issues
-<!-- Use `Refs #...` for tracking/parent/umbrella issues. Use `Closes #...` only if merging this PR should close that issue. If no issue exists, explain why. -->
+<!-- Use `Refs #...` for tracking/parent/umbrella issues. Use `Closes #...` only if merging this PR should close that issue.
+A standalone, self-contained PR does not need an issue opened first -- leave this section as "N/A, standalone fix" rather
+than opening one purely as a formality (see AGENTS.md rule 4). Open an issue first only for large/behavior-changing work,
+something needing discussion before implementation, or work that's genuinely part of a larger tracked effort. -->
 
 ## What This Actually Changes
 <!-- Before/after framing: what was true before this PR, what's different after, and why that gap mattered.
