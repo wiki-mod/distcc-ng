@@ -45,6 +45,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
     provenance attestation needs `id-token: write` + `attestations:
     write`).
 
+### Documentation
+
+- **`SECURITY.md`** (new, refs #267): security-vulnerability reporting policy —
+  private disclosure via GitHub Security Advisories, a supported-versions
+  table tied to `doc/release-versioning.md`'s `-NG` scheme, and a "Known
+  Security Tradeoffs and Design Decisions" section documenting this project's
+  intentional trust-boundary choices (LAN-oriented deployment model,
+  seccomp sandboxing as defense-in-depth rather than a hard guarantee,
+  TLS transport not yet implemented — see `doc/tls-transport-design.md`).
+  Closes the `SecurityPolicyID`/`OSPS-VM-02.01` gap identified while
+  triaging OSSF Scorecard findings (#267) and preparing the project's
+  OpenSSF Best Practices (Baseline) badge submission.
+
 ### Added
 
 - **Protocol version 5000: Zstandard compression with server-side cpp (pump
