@@ -165,6 +165,35 @@ jobs:
         run: |
           ./scripts/build-release-packages.sh
 
+      - name: Locate the built source tarball
+        # anchore/sbom-action's `file:` input needs one concrete path, not a
+        # glob -- resolve the actual tarball name build-release-packages.sh
+        # just produced (distcc-<version>.tar.gz, see Makefile.in's
+        # tarball/tarball_gz definitions) so the SBOM step below scans the
+        # exact release asset rather than guessing its name.
+        id: source_tarball
+        shell: bash
+        run: |
+          tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
+          tarball="${tarball#./}"
+          [ -n "${tarball}" ] || { echo "::error::no distcc-*.tar.gz produced by build-release-packages.sh" >&2; exit 1; }
+          printf 'path=%s\n' "${tarball}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate SBOM for release artifacts
+        # OSPS-QA-02.02 (OpenSSF Best Practices Baseline): compiled release
+        # assets must ship with a software bill of materials. Scans the
+        # actual source tarball being released (the same artifact uploaded
+        # to the GitHub release below) rather than the live build
+        # directory, so the SBOM describes exactly what a downstream
+        # consumer receives.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: ${{ steps.source_tarball.outputs.path }}
+          format: spdx-json
+          output-file: distcc-ng-${{ needs.setup.outputs.version }}.spdx.json
+          artifact-name: distcc-ng-${{ needs.setup.outputs.version }}.spdx.json
+          upload-release-assets: false
+
       - name: Generate build attestation
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
@@ -173,6 +202,7 @@ jobs:
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
+            distcc-ng-*.spdx.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -183,6 +213,7 @@ jobs:
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
+            distcc-ng-*.spdx.json
 
   build_container:
     needs: [setup, build_check, distributed_e2e]
@@ -453,7 +484,7 @@ jobs:
           TAG_NAME: ${{ needs.setup.outputs.tag_name }}
         run: |
           shopt -s nullglob
-          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+          assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb distcc-ng-*.spdx.json)
 
           notes_file="$(mktemp)"
           {
