@@ -177,7 +177,7 @@ int dcc_retrieve_results(int net_fd,
      * size up front to size its output buffer, unlike LZO whose stream
      * carries its own uncompressed length. This must key off host->compr,
      * not a specific protocol version, so it applies equally to DCC_VER_4
-     * (zstd, client-side cpp) and DCC_VER_5 (zstd, server-side cpp/pump). */
+     * (zstd, client-side cpp) and DCC_VER_5000 (zstd, server-side cpp/pump). */
     if (host->compr == DCC_COMPRESS_ZSTD) {
         if ((ret = dcc_r_token_2int(net_fd, "SERR", &len, &uncompr_len)))
             return ret;
@@ -225,7 +225,7 @@ int dcc_retrieve_results(int net_fd,
         if (host->cpp_where == DCC_CPP_ON_SERVER) {
             /* Pump mode's result header ends with DOTD (the dependency
              * file produced by server-side cpp); there is no DDWO slot
-             * after it (see distcc.h's DCC_VER_5 comment), so this branch
+             * after it (see distcc.h's DCC_VER_5000 comment), so this branch
              * always returns rather than falling through to the DDWO
              * check below, which is reachable only for DCC_VER_4 (client-
              * side cpp never sets cpp_where to DCC_CPP_ON_SERVER, so the

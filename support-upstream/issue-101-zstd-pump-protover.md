@@ -12,7 +12,7 @@ established that upstream `distcc/distcc`'s `dcc_get_features_from_protover()`
 `enum dcc_protover` (`src/distcc.h`) tops out at `DCC_VER_3` (verified
 against upstream commit
 [`8d569d1`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d),
-`master`, checked 2026-07-23 — no `DCC_VER_4` or `DCC_VER_5` at all).
+`master`, checked 2026-07-23 — no `DCC_VER_4` or `DCC_VER_5000` at all).
 Zstd support was proposed upstream as
 [distcc/distcc#232](https://github.com/distcc/distcc/pull/232) (2017,
 closed unmerged) and again as
@@ -47,7 +47,7 @@ rather than fixing the underlying gap).
 
 ## Fixed code (changed code as of the commit from distcc-ng fork)
 
-`src/distcc.h` gained `DCC_VER_5` for `(ZSTD, SERVER)`; `src/hosts.c`'s
+`src/distcc.h` gained `DCC_VER_5000` for `(ZSTD, SERVER)`; `src/hosts.c`'s
 `dcc_get_protover_from_features()`/`dcc_get_features_from_protover()` now
 recognize it symmetrically. Wiring the two previously-independent features
 (zstd compression, server-side cpp) together surfaced two real interaction
@@ -56,7 +56,7 @@ bugs, not just an additive change:
 - `src/serve.c`'s `dcc_r_many_files()` call (the header-closure receive,
   used only in pump mode) was passing the top-level negotiated `compr`
   straight through. For `DCC_VER_3` that happened to be `DCC_COMPRESS_LZO1X`
-  already, so the bug was invisible; for `DCC_VER_5` it would have been
+  already, so the bug was invisible; for `DCC_VER_5000` it would have been
   `DCC_COMPRESS_ZSTD` — but the include server
   (`include_server/compress_files.py`) always LZO-compresses that closure
   regardless of the negotiated wire protocol, so this would have fed
@@ -64,22 +64,34 @@ bugs, not just an additive change:
   call site to `DCC_COMPRESS_LZO1X` explicitly.
 - `src/clirpc.c`'s `dcc_retrieve_results()` read the `DOTD` (dependency
   file) token with the single-int length format unconditionally whenever
-  `cpp_where == DCC_CPP_ON_SERVER`, because until `DCC_VER_5` that
+  `cpp_where == DCC_CPP_ON_SERVER`, because until `DCC_VER_5000` that
   combination only ever paired with LZO (`DCC_VER_3`), whose format needs
-  no separate uncompressed length. `DCC_VER_5` sends `DOTD` zstd-compressed
+  no separate uncompressed length. `DCC_VER_5000` sends `DOTD` zstd-compressed
   (2-int format, needed because `dcc_r_bulk_zstd()` requires the real
   uncompressed size up front), so the client would have desynced reading
   it. Fixed by keying the format choice off `host->compr` instead.
 
-Split dwarf (`DDWO`) was deliberately *not* extended to `DCC_VER_5`: pump
+Split dwarf (`DDWO`) was deliberately *not* extended to `DCC_VER_5000`: pump
 mode's result-header ordering ends at `DOTD`, with no slot for a `DDWO`
 token in between without a further wire-format bump, and split dwarf has
 never been wired for server-side cpp in any prior protocol version either.
-See `doc/protocol-5.txt` and `src/distcc.h`'s `DCC_VER_5` comment.
+See `doc/protocol-5000.txt` and `src/distcc.h`'s `DCC_VER_5000` comment.
+
+## Numbering note (2026-07-23, added during review)
+
+Originally implemented as `DCC_VER_5`. Renumbered to `DCC_VER_5000` before
+merge per issue #304's numbering policy: versions 0-3 are reserved
+exclusively for whatever upstream `distcc/distcc` itself defines (verified
+above to top out at `DCC_VER_3`), and every fork-specific protocol
+extension gets its own number starting at 4000+, so this fork's own
+additions can never collide with a future upstream protocol version in
+the low range. `src/hosts.c`'s and `src/srvrpc.c`'s protocol-version
+validation was also hardened at the same time to explicitly reject the
+now-real 5-4999 gap, rather than relying on a simple upper-bound check.
 
 ## Empirical verification
 
 See the PR body for wiki-mod/distcc-ng#101's fix for the full real
 two-host verification (real `distccd` + real pump client, `DISTCC_FALLBACK=0`,
-server log confirming `DCC_VER_5` negotiation) and `make check` results —
+server log confirming `DCC_VER_5000` negotiation) and `make check` results —
 not duplicated here since none of it involves upstream code.

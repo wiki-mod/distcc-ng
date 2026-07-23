@@ -130,25 +130,41 @@ enum dcc_protover {
     DCC_VER_1   = 1,            /**< vanilla */
     DCC_VER_2   = 2,            /**< LZO sprinkles */
     DCC_VER_3   = 3,            /**< server-side cpp */
-    DCC_VER_4   = 4,            /**< Zstandard compression and split dwarf. */
-    DCC_VER_5   = 5,            /**< Zstandard compression with server-side cpp
-                                  *  (pump mode). Unlike DCC_VER_4, split dwarf
-                                  *  (DDWO) is not part of this version: pump
-                                  *  mode's result-header ordering (DOTO, then
-                                  *  DOTD) has no slot for DDWO between them
-                                  *  without a further wire-format bump, and
-                                  *  split dwarf has never been wired for
-                                  *  server-side cpp in the first place. The
-                                  *  include-server's header-closure transfer
-                                  *  (NFIL/NAME/FILE) stays LZO-compressed
-                                  *  regardless of this version, since it is
-                                  *  produced independently by
+    DCC_VER_4   = 4,            /**< Zstandard compression and split dwarf.
+                                  *  TODO(#304): renumber to DCC_VER_4000 in
+                                  *  its own dedicated breaking-change PR --
+                                  *  versions 0-3 are reserved for whatever
+                                  *  upstream distcc/distcc itself defines,
+                                  *  and this fork's own extensions (zstd,
+                                  *  and later e.g. #248's TLS transport)
+                                  *  must not collide with a future upstream
+                                  *  protocol version in that low range. */
+    /* Fork-only protocol extensions start at 4000+ (issue #304): versions
+     * 0-3 are reserved exclusively for whatever upstream distcc/distcc
+     * itself defines (currently DCC_VER_1/2/3 -- upstream verified, as of
+     * this decision, to go no higher than 3), so this fork's own additions
+     * can never collide with a future upstream protocol version. DCC_VER_4
+     * predates this policy and still needs its own migration (see the TODO
+     * above); DCC_VER_5000 is the first version number chosen under it. */
+    DCC_VER_5000 = 5000,        /**< Zstandard compression with server-side
+                                  *  cpp (pump mode). Unlike DCC_VER_4, split
+                                  *  dwarf (DDWO) is not part of this version:
+                                  *  pump mode's result-header ordering
+                                  *  (DOTO, then DOTD) has no slot for DDWO
+                                  *  between them without a further
+                                  *  wire-format bump, and split dwarf has
+                                  *  never been wired for server-side cpp in
+                                  *  the first place. The include-server's
+                                  *  header-closure transfer (NFIL/NAME/FILE)
+                                  *  stays LZO-compressed regardless of this
+                                  *  version, since it is produced
+                                  *  independently by
                                   *  include_server/compress_files.py, which
                                   *  hardcodes LZO and does not consult the
-                                  *  negotiated wire protocol version; only the
-                                  *  result path (SERR/SOUT/DOTO/DOTD) uses
-                                  *  Zstandard for this version. */
-    __DCC_VER_MAX = 6            /**< canary */
+                                  *  negotiated wire protocol version; only
+                                  *  the result path (SERR/SOUT/DOTO/DOTD)
+                                  *  uses Zstandard for this version. */
+    __DCC_VER_MAX = 5001         /**< canary */
 };
 
 

@@ -1,4 +1,4 @@
-description of distcc protocol version 5
+description of distcc protocol version 5000
 
 disclaimer
 ----------
@@ -10,14 +10,14 @@ code are an error in the document.
 protocol
 --------
 
-Protocol 5 combines protocol 3's server-side preprocessing (pump mode) with
+Protocol 5000 combines protocol 3's server-side preprocessing (pump mode) with
 protocol 4's Zstandard compression of the request/response bulk tokens.
 It exists to fill a combination that protocols 1-4 left unreachable: a host
 specification requesting both ",cpp" (server-side cpp) and ",zstd" would
 previously fail to resolve to any protocol version at all.
 
-The protocol number (DIST) sent by the client is set to 5.  The server must
-respond (DONE) in version 5.
+The protocol number (DIST) sent by the client is set to 5000.  The server must
+respond (DONE) in version 5000.
 
 request
 -------
@@ -48,7 +48,7 @@ DOTD <compressed-len> <uncompressed-len> <bytes>
 Notes
 -----
 
-Protocol 5 does not send a DDWO (split dwarf, `-gsplit-dwarf`) token: that
+Protocol 5000 does not send a DDWO (split dwarf, `-gsplit-dwarf`) token: that
 would need a wire-format slot between DOTO and DOTD that this protocol
 version doesn't define, and split dwarf has never been implemented for
 server-side cpp in any earlier protocol version either (protocol 3 has no

@@ -790,7 +790,7 @@ static int dcc_run_job(int in_fd,
     /* Logged unconditionally (not just on rejection above) so a real
      * distccd log can be used as independent evidence of which protocol
      * version, compression, and cpp placement a given job actually used --
-     * e.g. to confirm a zstd+pump (DCC_VER_5) job actually took that path
+     * e.g. to confirm a zstd+pump (DCC_VER_5000) job actually took that path
      * rather than a silently different negotiated version. */
     rs_log_info("accepted job with protover %d (compr %d, cpp_where %d)",
                 (int) protover, (int) compr, (int) cpp_where);
@@ -873,9 +873,9 @@ static int dcc_run_job(int in_fd,
          * LZO-compressed regardless of the wire protocol's negotiated
          * compression: include_server/compress_files.py hardcodes the
          * ".lzo"/".lzo.abs" image format and never consults protover, so
-         * this must stay DCC_COMPRESS_LZO1X even for DCC_VER_5 (zstd,
+         * this must stay DCC_COMPRESS_LZO1X even for DCC_VER_5000 (zstd,
          * server-side cpp) -- passing the negotiated `compr` (DCC_COMPRESS_
-         * ZSTD for DCC_VER_5) here would make dcc_r_file_beneath() try to
+         * ZSTD for DCC_VER_5000) here would make dcc_r_file_beneath() try to
          * zstd-decompress bytes that are actually LZO-compressed. Only the
          * result path below (SERR/SOUT/DOTO/DOTD) uses `compr` as
          * negotiated, since that data really is compressed with whatever
@@ -967,8 +967,8 @@ static int dcc_run_job(int in_fd,
     } else if (WIFSIGNALED(status) || WEXITSTATUS(status)) {
         /* Something went wrong, so send DOTO 0. The 2-int format must be
          * used here whenever the client will be expecting it -- i.e.
-         * whenever `compr` is zstd (DCC_VER_4 or DCC_VER_5) -- not just for
-         * DCC_VER_4, or a DCC_VER_5 (zstd, server-side cpp) client would
+         * whenever `compr` is zstd (DCC_VER_4 or DCC_VER_5000) -- not just for
+         * DCC_VER_4, or a DCC_VER_5000 (zstd, server-side cpp) client would
          * desync trying to read a second int that was never sent. */
         if (compr == DCC_COMPRESS_ZSTD)
             dcc_x_token_2int(out_fd, "DOTO", 0, 0);
@@ -996,11 +996,11 @@ static int dcc_run_job(int in_fd,
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
         /* Split dwarf (DDWO) stays specific to DCC_VER_4, not generalized
-         * to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5's result header ends
+         * to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5000's result header ends
          * with DOTD (see the cpp_where == DCC_CPP_ON_SERVER block below),
          * and the client (dcc_retrieve_results() in clirpc.c) has no DDWO
          * read between DOTO and DOTD for pump mode -- sending DDWO here for
-         * DCC_VER_5 would desync the wire. Split dwarf support for
+         * DCC_VER_5000 would desync the wire. Split dwarf support for
          * server-side cpp would need its own wire-format slot; that is a
          * separate enhancement, not part of wiring zstd+pump together. */
         if (protover == DCC_VER_4) {

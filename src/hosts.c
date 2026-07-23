@@ -436,23 +436,40 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
                                    enum dcc_compress *compr,
                                    enum dcc_cpp_where *cpp_where)
 {
+    /* Known protocol versions are NOT a contiguous range: 1-4 are the
+     * original low numbers (1-3 upstream-inherited, 4 this fork's earlier
+     * zstd addition, not yet migrated -- see #304), and this fork's
+     * newer extensions start at 5000+ (issue #304's numbering policy,
+     * reserving 0-3 for whatever upstream distcc/distcc itself defines
+     * and leaving a large gap so this fork's own additions never collide
+     * with a future upstream protocol version). A simple
+     * "protover >= __DCC_VER_MAX" upper-bound check is therefore no
+     * longer sufficient to reject unknown values -- anything in the
+     * 5-4999 gap must be rejected explicitly too. */
+    if (protover != DCC_VER_1 && protover != DCC_VER_2 &&
+        protover != DCC_VER_3 && protover != DCC_VER_4 &&
+        protover != DCC_VER_5000) {
+        *compr = DCC_COMPRESS_NONE;
+        *cpp_where = DCC_CPP_ON_CLIENT;
+        return 1;
+    }
+
     if (protover == 2 || protover == 3) {
         *compr = DCC_COMPRESS_LZO1X;
-    } else if (protover == 4 || protover == 5) {
+    } else if (protover == 4 || protover == 5000) {
 #ifdef HAVE_ZSTD
         *compr = DCC_COMPRESS_ZSTD;
 #else
-        /* A peer claiming protover 4 or 5 (zstd) against a distccd built
-         * without zstd support must not be allowed to select a
+        /* A peer claiming protover 4 or 5000 (zstd) against a distccd
+         * built without zstd support must not be allowed to select a
          * compression mode this binary can't actually handle -- see
          * issue #225: dcc_x_file_compressed() (bulk.c) has no fallback
          * for DCC_COMPRESS_ZSTD when HAVE_ZSTD is undefined, so silently
          * selecting it here left out_buf/out_len uninitialized on the
          * send path. Reject the protocol version outright instead,
-         * matching this function's own protover==0/>=__DCC_VER_MAX
-         * rejection below and the pattern already used correctly by
-         * this file's ",zstd" hostspec parsing and pump.c's
-         * dcc_r_bulk() dispatch. */
+         * matching this function's own unknown-protover rejection above
+         * and the pattern already used correctly by this file's ",zstd"
+         * hostspec parsing and pump.c's dcc_r_bulk() dispatch. */
         rs_log_error("peer requested protocol version %d (zstd), but this "
                      "build has no zstd support", (int) protover);
         *compr = DCC_COMPRESS_NONE;
@@ -461,17 +478,13 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
     } else {
         *compr = DCC_COMPRESS_NONE;
     }
-    if (protover == 3 || protover == 5) {
+    if (protover == 3 || protover == 5000) {
         *cpp_where = DCC_CPP_ON_SERVER;
     } else {
         *cpp_where = DCC_CPP_ON_CLIENT;
     }
 
-    if (protover == 0 || protover >= __DCC_VER_MAX) {
-        return 1;
-    } else {
-        return 0;
-    }
+    return 0;
 }
 
 /** Given a host with its feature fields set, set
@@ -501,7 +514,7 @@ int dcc_get_protover_from_features(enum dcc_compress compr,
     }
 
     if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_SERVER) {
-        *protover = DCC_VER_5;
+        *protover = DCC_VER_5000;
     }
 
     if (compr == DCC_COMPRESS_NONE && cpp_where == DCC_CPP_ON_SERVER) {

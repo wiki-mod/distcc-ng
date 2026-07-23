@@ -2572,9 +2572,9 @@ class DashWpMD_Case(CompileHello_Case):
 class ZstdPumpCompile_Case(CompileHello_Case):
     """Real distributed compile exercising protocol version 5: Zstandard
     compression combined with server-side cpp (pump mode) -- see issue #101
-    and distcc.h's DCC_VER_5 comment. This forces ',zstd,cpp' for its own
+    and distcc.h's DCC_VER_5000 comment. This forces ',zstd,cpp' for its own
     DISTCC_HOSTS regardless of the suite-wide _server_options (typically
-    ',lzo,cpp' under --pump), so it always negotiates DCC_VER_5 specifically
+    ',lzo,cpp' under --pump), so it always negotiates DCC_VER_5000 specifically
     rather than DCC_VER_3 (lzo+pump).
 
     Only meaningful under an actual pump-mode test run (see Makefile.in's
@@ -2586,7 +2586,7 @@ class ZstdPumpCompile_Case(CompileHello_Case):
 
     def compileOpts(self):
         # -MD forces a real DOTD (dependency file) round trip -- exactly
-        # the wire path that needed fixing for DCC_VER_5: clirpc.c's
+        # the wire path that needed fixing for DCC_VER_5000: clirpc.c's
         # dcc_retrieve_results() previously assumed DOTD always used LZO's
         # single-int length format, which would desync (or silently drop
         # the deps file while still reporting compile success) once DOTD is
@@ -2597,7 +2597,7 @@ class ZstdPumpCompile_Case(CompileHello_Case):
     def setup(self):
         if _server_options.find('cpp') == -1:
             raise comfychair.NotRunError(
-                "zstd+pump (DCC_VER_5) needs an actual pump-mode test run "
+                "zstd+pump (DCC_VER_5000) needs an actual pump-mode test run "
                 "(see --pump); this run has no include server available")
         CompileHello_Case.setup(self)
         os.environ['DISTCC_HOSTS'] = (
@@ -2623,12 +2623,12 @@ class ZstdPumpCompile_Case(CompileHello_Case):
         self.assert_re_search(r"testhdr\.h", deps)
 
         # Confirm from the *server's own log* -- not just the client's exit
-        # code -- that this job actually negotiated protocol version 5
+        # code -- that this job actually negotiated protocol version 5000
         # (zstd + server-side cpp), rather than a silent fallback to a
         # different protocol version or to local compilation.
         log = open(self.daemon_logfile).read()
         self.assert_re_search(
-            r"accepted job with protover 5 \(compr \d+, cpp_where \d+\)",
+            r"accepted job with protover 5000 \(compr \d+, cpp_where \d+\)",
             log)
 
 

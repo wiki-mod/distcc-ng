@@ -13,26 +13,37 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **Protocol version 5: Zstandard compression with server-side cpp (pump
+- **Protocol version 5000: Zstandard compression with server-side cpp (pump
   mode)** (`src/distcc.h`, `src/hosts.c`) — closes the combination gap left
   by protocol versions 1-4: a host specification requesting both `,cpp`
   (pump mode) and `,zstd` previously failed to resolve to any protocol
   version at all ("invalid host options"). `dcc_get_protover_from_features()`
   / `dcc_get_features_from_protover()` (`src/hosts.c`) now recognize this
-  combination as `DCC_VER_5`. Fixed two real interaction bugs found while
-  wiring the two previously-independent features together (`src/serve.c`,
-  `src/clirpc.c`): the header-closure transfer (`NFIL`/`NAME`/`FILE`, always
-  LZO-compressed by the include-server regardless of the negotiated wire
-  protocol) was at risk of being fed through zstd decompression instead once
-  the top-level negotiated compression became zstd; and the client's `DOTD`
-  (dependency-file) read assumed LZO's single-int length format
-  unconditionally, which would desync once `DOTD` is zstd-compressed and
-  needs the 2-int compressed/uncompressed length format. Split dwarf
-  (`DDWO`) is deliberately *not* extended to this version — see
-  `doc/protocol-5.txt` and `src/distcc.h`'s `DCC_VER_5` comment for why.
-  See `doc/protocol-5.txt` for the full wire-format description and
-  `test/testdistcc.py`'s new `ZstdPumpCompile_Case` for real daemon+compile
-  test coverage of this combination. Refs #101.
+  combination as `DCC_VER_5000`. Numbered 5000, not 5, per issue #304's
+  numbering policy decided during this same review: versions 0-3 are
+  reserved exclusively for whatever upstream `distcc/distcc` itself defines,
+  and every fork-specific protocol extension (this one, and future ones
+  like #248's planned TLS transport) gets its own number starting at
+  4000+, so this fork's own additions can never collide with a future
+  upstream protocol version in the low range. Fixed two real interaction
+  bugs found while wiring the two previously-independent features together
+  (`src/serve.c`, `src/clirpc.c`): the header-closure transfer
+  (`NFIL`/`NAME`/`FILE`, always LZO-compressed by the include-server
+  regardless of the negotiated wire protocol) was at risk of being fed
+  through zstd decompression instead once the top-level negotiated
+  compression became zstd; and the client's `DOTD` (dependency-file) read
+  assumed LZO's single-int length format unconditionally, which would
+  desync once `DOTD` is zstd-compressed and needs the 2-int
+  compressed/uncompressed length format. Split dwarf (`DDWO`) is
+  deliberately *not* extended to this version — see `doc/protocol-5000.txt`
+  and `src/distcc.h`'s `DCC_VER_5000` comment for why. Also hardened
+  `src/hosts.c`'s and `src/srvrpc.c`'s protocol-version validation to
+  reject the (now real, since 5000 leaves a gap above 4) unassigned-version
+  range explicitly, rather than relying on a simple upper-bound check that
+  the gap would otherwise slip through. See `doc/protocol-5000.txt` for the
+  full wire-format description and `test/testdistcc.py`'s new
+  `ZstdPumpCompile_Case` for real daemon+compile test coverage of this
+  combination. Refs #101, #304.
 
 ### Removed
 
