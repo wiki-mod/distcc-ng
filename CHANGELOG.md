@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.1-NG] - 2026-07-23
+
 ### Documentation
 
 - **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
