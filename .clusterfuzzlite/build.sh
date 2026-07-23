@@ -44,9 +44,17 @@ for f in src/*.c; do
     done
     [ "$skip" -eq 1 ] && continue
     obj="$OUT/${base}.o"
-    $CC $CFLAGS -Isrc -DHAVE_CONFIG_H -c "$f" -o "$obj"
+    $CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H -c "$f" -o "$obj"
     objs+=("$obj")
 done
+
+# lzo/minilzo.c: the bundled LZO compressor (always built, per Makefile.in's
+# own dist_lzo/distcc_obj lists) -- src/compress-lzox1.c #includes
+# "minilzo.h" from this directory, and the symbols it defines are needed
+# at final link time too. Confirmed live: without -Ilzo, compress-lzox1.c
+# fails with "fatal error: 'minilzo.h' file not found".
+$CC $CFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H -c lzo/minilzo.c -o "$OUT/minilzo.o"
+objs+=("$OUT/minilzo.o")
 
 # Same libraries the real distccd/distcc binaries link against (Makefile.in's
 # LIBS = @LIBS@ @POPT_LIBS@, resolved by the ./configure just run) -- read
@@ -57,7 +65,7 @@ resolved_libs="$(sed -n 's/^LIBS = //p' Makefile)"
 # ClusterFuzzLite requires linking fuzz target binaries with $CXX even for
 # a pure-C project (its own documented convention) -- $CXX still compiles
 # a .c file as C based on its extension.
-$CXX $CXXFLAGS -Isrc -DHAVE_CONFIG_H \
+$CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
     test/fuzz/fuzz_rpc_argv.c "${objs[@]}" \
     -o "$OUT/fuzz_rpc_argv" \
     $LIB_FUZZING_ENGINE $resolved_libs
