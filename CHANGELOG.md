@@ -11,6 +11,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`README.md`**: added the OpenSSF Best Practices (Baseline) badge, linking
+  the project's public submission at bestpractices.dev. Refs #267.
+
 ### Security
 
 - **OSSF Scorecard: remaining `PinnedDependenciesID`/`TokenPermissionsID`
