@@ -13,6 +13,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/security-assessment.md`** (new): a minimal index/pointer document
+  (trust model, actors, known risk history, upstream context) linking to
+  existing docs (`SECURITY.md`, `doc/protocol-*.txt`,
+  `doc/tls-transport-design.md`, `doc/seccomp-sandbox.md`) rather than
+  restating their content. Closes the `OSPS-SA-01.01`/`OSPS-SA-03.01` gap
+  from issue #267's OpenSSF Best Practices Baseline review.
 - **`README.md`**: added the OpenSSF Best Practices (Baseline) badge, linking
   the project's public submission at bestpractices.dev. Refs #267.
 
