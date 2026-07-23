@@ -161,7 +161,7 @@ dist_include_server_SH = \
 	pump.in
 
 pkgdoc_DOCS = AUTHORS COPYING \
-	README README.pump \
+	README.md \
 	INSTALL \
 	TODO \
 	doc/protocol-1.txt doc/status-1.txt \
