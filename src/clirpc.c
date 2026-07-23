@@ -171,7 +171,14 @@ int dcc_retrieve_results(int net_fd,
     if ((ret = dcc_r_cc_status(net_fd, status)))
         return ret;
 
-    if (host->protover == DCC_VER_4000) {
+    /* The 2-int (compressed + uncompressed length) wire format is needed
+     * whenever the negotiated compression is zstd, regardless of where cpp
+     * runs: dcc_r_bulk_zstd() (compress-zstd.c) needs the real uncompressed
+     * size up front to size its output buffer, unlike LZO whose stream
+     * carries its own uncompressed length. This must key off host->compr,
+     * not a specific protocol version, so it applies equally to DCC_VER_4000
+     * (zstd, client-side cpp) and DCC_VER_5000 (zstd, server-side cpp/pump). */
+    if (host->compr == DCC_COMPRESS_ZSTD) {
         if ((ret = dcc_r_token_2int(net_fd, "SERR", &len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "SERR", &len)))
@@ -193,7 +200,7 @@ int dcc_retrieve_results(int net_fd,
     if (dcc_add_file_to_log_email("server-side stderr", server_stderr_fname))
         return ret;
 
-    if (host->protover == DCC_VER_4000) {
+    if (host->compr == DCC_COMPRESS_ZSTD) {
         if ((ret = dcc_r_token_2int(net_fd, "SOUT", &len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "SOUT", &len)))
@@ -203,7 +210,7 @@ int dcc_retrieve_results(int net_fd,
                              host->compr)))
         return ret;
 
-    if (host->protover == DCC_VER_4000) {
+    if (host->compr == DCC_COMPRESS_ZSTD) {
         if ((ret = dcc_r_token_2int(net_fd, "DOTO", &o_len, &uncompr_len)))
             return ret;
     } else if ((ret = dcc_r_token_int(net_fd, "DOTO", &o_len)))
@@ -216,11 +223,27 @@ int dcc_retrieve_results(int net_fd,
                                     host->compr)))
             return ret;
         if (host->cpp_where == DCC_CPP_ON_SERVER) {
-            if ((ret = dcc_r_token_int(net_fd, "DOTD", &len) == 0)
-                && deps_fname != NULL) {
-                ret = dcc_r_file_timed(net_fd, deps_fname, len, 0, host->compr);
-                return ret;
+            /* Pump mode's result header ends with DOTD (the dependency
+             * file produced by server-side cpp); there is no DDWO slot
+             * after it (see distcc.h's DCC_VER_5000 comment), so this branch
+             * always returns rather than falling through to the DDWO
+             * check below, which is reachable only for DCC_VER_4000 (client-
+             * side cpp never sets cpp_where to DCC_CPP_ON_SERVER, so the
+             * two branches are mutually exclusive). */
+            if (host->compr == DCC_COMPRESS_ZSTD) {
+                if ((ret = dcc_r_token_2int(net_fd, "DOTD", &len,
+                                            &uncompr_len)))
+                    return ret;
+            } else {
+                if ((ret = dcc_r_token_int(net_fd, "DOTD", &len)))
+                    return ret;
+                uncompr_len = 0;
             }
+            ret = 0;
+            if (deps_fname != NULL)
+                ret = dcc_r_file_timed(net_fd, deps_fname, len, uncompr_len,
+                                       host->compr);
+            return ret;
         }
         if (host->protover == DCC_VER_4000) {
             char *dwo_fname = NULL;

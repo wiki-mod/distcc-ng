@@ -140,11 +140,27 @@ enum dcc_protover {
      * needing to be remapped, and this fork's own additions -- zstd here,
      * and future ones such as #248's planned TLS transport -- can never
      * collide with it. DCC_VER_4 was originally numbered before this
-     * policy existed; this migration moves it to DCC_VER_4000 while it
-     * still has near-zero real-world adoption, the cheapest possible time
-     * to make this a breaking wire-protocol change. */
+     * policy existed; migrated to DCC_VER_4000 (issue #304, PR #306). */
     DCC_VER_4000 = 4000,        /**< Zstandard compression and split dwarf. */
-    __DCC_VER_MAX = 4001         /**< canary */
+    DCC_VER_5000 = 5000,        /**< Zstandard compression with server-side
+                                  *  cpp (pump mode). Unlike DCC_VER_4000,
+                                  *  split dwarf (DDWO) is not part of this
+                                  *  version: pump mode's result-header
+                                  *  ordering (DOTO, then DOTD) has no slot
+                                  *  for DDWO between them without a further
+                                  *  wire-format bump, and split dwarf has
+                                  *  never been wired for server-side cpp in
+                                  *  the first place. The include-server's
+                                  *  header-closure transfer (NFIL/NAME/FILE)
+                                  *  stays LZO-compressed regardless of this
+                                  *  version, since it is produced
+                                  *  independently by
+                                  *  include_server/compress_files.py, which
+                                  *  hardcodes LZO and does not consult the
+                                  *  negotiated wire protocol version; only
+                                  *  the result path (SERR/SOUT/DOTO/DOTD)
+                                  *  uses Zstandard for this version. */
+    __DCC_VER_MAX = 5001         /**< canary */
 };
 
 

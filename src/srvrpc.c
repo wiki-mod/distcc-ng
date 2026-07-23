@@ -68,14 +68,14 @@ int dcc_r_request_header(int ifd,
     /* Known protocol versions are not a contiguous range (see #304's
      * numbering policy: the entire 0-3999 range is reserved for whatever
      * upstream distcc/distcc might ever define, and this fork's own
-     * extensions start at 4000+), so "vers >= __DCC_VER_MAX" alone can't
-     * reject an unknown value that falls in the reserved-for-upstream
-     * range -- dcc_get_features_from_protover() (hosts.c) still rejects
-     * it properly one step later, before any ARGV/file data is
+     * extensions start at 4000+/5000+), so "vers >= __DCC_VER_MAX" alone
+     * can't reject an unknown value that falls in the reserved-for-
+     * upstream range -- dcc_get_features_from_protover() (hosts.c) still
+     * rejects it properly one step later, before any ARGV/file data is
      * exchanged, but reject it here too for an accurate error message
      * and to keep this function's own stated contract honest. */
     if (vers != DCC_VER_1 && vers != DCC_VER_2 && vers != DCC_VER_3 &&
-        vers != DCC_VER_4000) {
+        vers != DCC_VER_4000 && vers != DCC_VER_5000) {
         rs_log_error("can't handle requested protocol version is %d", vers);
         return EXIT_PROTOCOL_ERROR;
     }

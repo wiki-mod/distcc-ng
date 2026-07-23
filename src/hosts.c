@@ -446,7 +446,8 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
      * anything in the 4-3999 reserved-for-upstream range must be rejected
      * explicitly too. */
     if (protover != DCC_VER_1 && protover != DCC_VER_2 &&
-        protover != DCC_VER_3 && protover != DCC_VER_4000) {
+        protover != DCC_VER_3 && protover != DCC_VER_4000 &&
+        protover != DCC_VER_5000) {
         *compr = DCC_COMPRESS_NONE;
         *cpp_where = DCC_CPP_ON_CLIENT;
         return 1;
@@ -454,12 +455,12 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
 
     if (protover == 2 || protover == 3) {
         *compr = DCC_COMPRESS_LZO1X;
-    } else if (protover == 4000) {
+    } else if (protover == 4000 || protover == 5000) {
 #ifdef HAVE_ZSTD
         *compr = DCC_COMPRESS_ZSTD;
 #else
-        /* A peer claiming protover 4000 (zstd) against a distccd built
-         * without zstd support must not be allowed to select a
+        /* A peer claiming protover 4000 or 5000 (zstd) against a distccd
+         * built without zstd support must not be allowed to select a
          * compression mode this binary can't actually handle -- see
          * issue #225: dcc_x_file_compressed() (bulk.c) has no fallback
          * for DCC_COMPRESS_ZSTD when HAVE_ZSTD is undefined, so silently
@@ -476,7 +477,7 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
     } else {
         *compr = DCC_COMPRESS_NONE;
     }
-    if (protover == 3) {
+    if (protover == 3 || protover == 5000) {
         *cpp_where = DCC_CPP_ON_SERVER;
     } else {
         *cpp_where = DCC_CPP_ON_CLIENT;
@@ -509,6 +510,10 @@ int dcc_get_protover_from_features(enum dcc_compress compr,
 
     if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_CLIENT) {
         *protover = DCC_VER_4000;
+    }
+
+    if (compr == DCC_COMPRESS_ZSTD && cpp_where == DCC_CPP_ON_SERVER) {
+        *protover = DCC_VER_5000;
     }
 
     if (compr == DCC_COMPRESS_NONE && cpp_where == DCC_CPP_ON_SERVER) {
