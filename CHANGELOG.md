@@ -11,6 +11,40 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- **OSSF Scorecard: remaining `PinnedDependenciesID`/`TokenPermissionsID`
+  findings from #267** (`.github/workflows/verify-image-build.yml`,
+  `test/e2e/Dockerfile`, `.github/workflows/c-build.yml`, `codeql.yml`,
+  `nightly-publish.yml`, `package-release.yml`) — refs #267 (not all of
+  #267's findings are addressed; see that issue for the remaining
+  maintainer-decision items).
+  - `verify-image-build.yml`'s two remaining floating `actions/checkout@v7`
+    references pinned to `9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0` (`#
+    v7.0.0`, live-verified against the GitHub API at pin time), matching the
+    SHA every other workflow file in this repo already uses.
+  - `test/e2e/Dockerfile`'s `ARG DEBIAN_IMAGE` default pinned from the
+    floating `debian:bookworm-slim` tag to its real digest
+    (`sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818`,
+    live-verified against Docker Hub's registry API), matching the existing
+    digest-pin precedent already used by `docker/release/Dockerfile` and
+    `docker/verify/Dockerfile`'s own `DEBIAN_IMAGE` defaults.
+  - `TokenPermissionsID` least-privilege pass: `c-build.yml` was missing a
+    top-level `permissions:` block entirely (every job already had its own
+    minimal block, so this is a defense-in-depth default, not a behavior
+    change); `codeql.yml` had `security-events: write` at the top level
+    instead of scoped to the one job that needs it; `nightly-publish.yml`'s
+    and `package-release.yml`'s top-level blocks granted `contents: write`/
+    `packages: write`/`id-token: write`/`attestations: write` to every job
+    in each file regardless of whether that job's own steps ever used them
+    (e.g. pure build/test gate jobs that only check out and run `make
+    check` or a local e2e script) — both files' top-level blocks demoted to
+    `contents: read`, with each job now declaring only the specific write
+    scope(s) its own steps actually call (GHCR push needs `packages:
+    write`; `gh release`/tag operations need `contents: write`; build
+    provenance attestation needs `id-token: write` + `attestations:
+    write`).
+
 ### Documentation
 
 - **`SECURITY.md`** (new, refs #267): security-vulnerability reporting policy —

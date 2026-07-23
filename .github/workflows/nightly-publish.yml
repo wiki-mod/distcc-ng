@@ -36,9 +36,13 @@ on:
     # build is a real, non-trivial CI cost commitment, not a free toggle.
     # - cron: '0 1 * * 5'
 
+# Read-only floor: the actual write scopes (force-moving the nightly tag,
+# creating/replacing its release, pushing the GHCR image) are pushed down to
+# the publish job's own permissions block below, since build_check and
+# distributed_e2e are pure build/test gates that never touch the GitHub API
+# or a registry and shouldn't inherit write access they never use.
 permissions:
-  contents: write   # force-move the `nightly` tag and create/replace its release
-  packages: write   # push the distcc-ng-nightly:latest image to GHCR
+  contents: read
 
 env:
   # Hardcoded and never derived: the ONLY tag this workflow may force-move, and
@@ -50,6 +54,10 @@ jobs:
   build_check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # This job only checks out current_dev and runs a local build + test --
+    # no GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
@@ -74,6 +82,10 @@ jobs:
   distributed_e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # This job only checks out current_dev and runs the local docker-compose
+    # e2e script -- no GitHub API or registry write of any kind.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -86,6 +98,13 @@ jobs:
     needs: [build_check, distributed_e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # This job needs both write scopes the top-level block used to grant to
+    # every job: contents: write to force-move the `nightly` tag and
+    # create/replace its GitHub release, packages: write to push the
+    # distcc-ng-nightly:latest image to GHCR.
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
