@@ -337,6 +337,21 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       Docker's own `--user` flag, or rootless Docker/user-namespace
       remapping can avoid needing root here at all is tracked separately in
       issue #286, not decided here.
+- [ ] **A root-only test needs the specific capability its own syscall
+      requires, not just "run as root."** Docker's default root capability
+      set is not the same as a real host root's — `AutogroupNicenessPrivilegeDrop_Case`
+      (root-only, exercises `dcc_set_autogroup_niceness()`'s `nice(2)` call
+      in `src/dparent.c`) failed inside a container run as root with
+      `nice -5 failed: Operation not permitted`, an error that reads
+      identically to a genuine code regression. The real cause: Docker's
+      default root capability set does not include `CAP_SYS_NICE`, which
+      `nice(2)`'s negative-value case requires regardless of uid. Fixed by
+      adding `--cap-add=SYS_NICE` explicitly — same failure shape and same
+      lesson as this section's `SYS_PTRACE`/seccomp entry above (root
+      inside a container is not equivalent to root on a real host; check
+      which specific capability the syscall under test actually needs
+      before treating an "Operation not permitted" as a code bug). Found
+      verifying the 3.6.1-NG release (2026-07-23).
 
 ## Keeping this checklist current
 

@@ -38,8 +38,32 @@ See `doc/release-versioning.md` for the full versioning and release process.
   a one-line comment explaining it's best-effort cleanup of a possible
   leftover file. No behavioral change.
 
+### Removed
+
+- **`doc/web/`**: deleted the old, conserved upstream distcc project website
+  (index/FAQ/benchmark/results/scenarios/security pages, man-page HTML
+  mirrors, and static assets) — historical project marketing/docs content
+  this fork doesn't maintain or serve. `master` already had this removed
+  directly; this brings `current_dev` in line with it.
+- **`Makefile.in`'s `man-html`/`upload-man`/`upload-dist` targets,
+  `packaging/googlecode_upload.py`**: dead maintainer-only upstream
+  tooling found while removing `doc/web/` — `man-html`/`upload-man`
+  directly wrote into (and `svn commit`'d) the now-deleted `doc/web/man/`,
+  and `upload-dist` called `googlecode_upload.py` to upload release
+  tarballs to Google Code, which shut down in 2016. None of this fork's
+  own release process (`.github/workflows/package-release.yml`, GHCR)
+  uses any of it.
+
 ### Added
 
+- **`scripts/run-tests.sh`** (new): a dev-convenience wrapper that runs the
+  real verification steps (`./autogen.sh`, `./configure PYTHON=python3` with
+  pass-through for extra configure args, `make`, `make check`) in order,
+  fails fast and loud on any step's non-zero exit or on a compiler warning
+  (AGENTS.md rule 31), and parses `make check`'s comfychair-based
+  `test/testdistcc.py` output into a concise OK/NOTRUN/FAILED summary
+  instead of requiring a manual `tail`/`grep` of the log. Does not replace
+  `make check` or `test/testdistcc.py` itself (refs #238).
 - **`.github/workflows/package-release.yml`**: `build_packages` now generates
   a real SPDX SBOM (via `anchore/sbom-action`) for the released source
   tarball, uploaded both as a workflow artifact and as an additional
@@ -79,6 +103,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/verification-checklist.md`**: added a third container-verification
+  gotcha to section 9 — Docker's default root capability set lacks
+  `CAP_SYS_NICE`, so a root-only test exercising `nice(2)` with a negative
+  value (`AutogroupNicenessPrivilegeDrop_Case`) fails with an
+  "Operation not permitted" error that reads identically to a real code
+  regression unless `--cap-add=SYS_NICE` is added explicitly. Found while
+  verifying the 3.6.1-NG release.
 - **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
   Actions secrets are the only secret material in use; least-privilege
   workflow permissions per #308; `secret_scanning` +
