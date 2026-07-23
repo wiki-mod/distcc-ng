@@ -95,6 +95,25 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/openssf-baseline-recheck.yml`** (new, refs #267,
+  #312): recurring re-verification of the OpenSSF Best Practices Baseline
+  criteria (bestpractices.dev project 13760) that are checkable from live
+  repo/org state — the repo ruleset's `pull_request`/`deletion` rules,
+  workflow-trigger and permission greps, GitHub secret-scanning status,
+  absence of tracked binary artifacts, `SECURITY.md`/dependency-policy/
+  project-roles doc presence — so drift (an action becoming unpinned again,
+  a ruleset rule removed, secret scanning disabled) is caught between manual
+  self-assessments. Runs on the 1st and 15th of each month (a practical
+  fixed-day approximation of a 14-day cadence, since cron has no native
+  "every N days" primitive) plus `workflow_dispatch`, and posts/updates a
+  single marker-tagged status comment on #312 with a per-baseline-level
+  breakdown, an explicit REGRESSED callout for anything that was previously
+  confirmed Met and no longer is, and ready-to-click bestpractices.dev
+  proposal links for whatever currently verifies as Met. Never writes to
+  bestpractices.dev itself — that platform's badge-criteria-update mechanism
+  is a URL-query-parameter form meant to be opened and submitted by a
+  logged-in human, with no API/headless write path.
+
 - **Protocol version 5000: Zstandard compression with server-side cpp (pump
   mode)** (`src/distcc.h`, `src/hosts.c`) — closes the combination gap left
   by protocol versions 1-4: a host specification requesting both `,cpp`
