@@ -34,7 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libzstd-dev \
       libseccomp-dev \
       python3-dev \
-      python3-setuptools && \
+      python3-setuptools \
+      # src/auth.h unconditionally includes <gssapi/gssapi.h> -- confirmed
+      # live (build failure: "fatal error: 'gssapi/gssapi.h' file not
+      # found"). libkrb5-dev provides it (verified via Ubuntu's own
+      # packages.ubuntu.com file-list for noble/libkrb5-dev), same package
+      # docker/verify/Dockerfile already installs for its Samba-sized
+      # dependency surface.
+      libkrb5-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY . $SRC/distcc-ng
