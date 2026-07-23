@@ -1,0 +1,57 @@
+name: OpenSSF Baseline recheck
+
+# Recurring re-verification of the mechanically-checkable OpenSSF Best
+# Practices Baseline criteria (bestpractices.dev project 13760), so drift
+# (an action becoming unpinned again, a ruleset rule removed, secret
+# scanning disabled, etc) gets caught between the manual self-assessments
+# instead of silently rotting. Only checks criteria that are re-derivable
+# from live repo/org state -- criteria that need a human-written document
+# that doesn't exist yet (threat model, DCO/CLA policy, SBOM generation) are
+# out of scope here, see .github/scripts/openssf-baseline-recheck.sh's
+# header comment and issue #312 for the full rationale.
+#
+# This workflow never writes to bestpractices.dev itself -- that platform's
+# badge-criteria-update mechanism is a URL-query-parameter form meant to be
+# opened and submitted by a logged-in human (no API token / headless write
+# endpoint exists). The only output is a status comment with fresh proposal
+# links for a human to click through.
+#
+# cron has no native "every 14 days" primitive that stays aligned across
+# month boundaries, so the 1st and 15th of each month is used as a practical
+# fixed-day approximation of a 14-day cadence (worst case ~3 days off from
+# exactly 14, which is immaterial for a drift-detection cadence like this).
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 1st and 15th of each month, 06:00 UTC.
+    - cron: '0 6 1,15 * *'
+
+permissions:
+  contents: read
+
+jobs:
+  recheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: current_dev
+      - name: Re-check Baseline criteria and post/update the status comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # The recurring drift re-check tracking issue (see its own body
+          # for the full rationale) -- a normal, closeable issue, not #267
+          # itself (which is scoped to close once its own triage is done).
+          ISSUE_NUMBER: "312"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/openssf-baseline-recheck.sh
