@@ -13,6 +13,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [3.6.1-NG] - 2026-07-23
 
+### Fixed
+
+- **`.github/workflows/package-release.yml`**: `build_container`'s matrix
+  had `variant: [plain, pump]` with a separate `include` list specifying
+  only `platform`/`runs_on` (no `variant` key) — since GitHub Actions only
+  merges an `include` entry into an existing combination when it shares a
+  matching axis key, an entry with none of the original axis keys instead
+  overwrites the added key for *every* generated job, in list order. The
+  last entry (`arm64`) therefore won for every job, silently making
+  `amd64` — documented as the required leg — never build at all. Caught
+  live: this PR's own `publish_manifest` job failed with
+  `digest-plain-amd64.txt: No such file or directory`, since no amd64 leg
+  had ever run to produce it. Fixed by making `platform: [amd64, arm64]` a
+  real matrix axis, so `include` entries attach `runs_on` per matching
+  platform instead of overwriting each other.
+
 ### Documentation
 
 - **`SECURITY.md`**: added a Secrets and Credentials Policy section (GitHub
@@ -695,6 +711,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
   previously relying on `gh`'s ambient default-repo resolution -- per
   AGENTS.md rule 18, every `gh` command in this repo must pass `--repo`
   explicitly to prevent it from ever targeting the wrong repository.
+
+### Removed
+
+- **`doc/web/`**: deleted the old, conserved upstream distcc project
+  website (index/FAQ/benchmark/results/scenarios/security pages, man-page
+  HTML mirrors, and static assets) — historical project marketing/docs
+  content this fork doesn't maintain or serve.
+
+- **`Makefile.in`'s `man-html`/`upload-man`/`upload-dist` targets,
+  `packaging/googlecode_upload.py`**: dead maintainer-only upstream
+  tooling found while removing `doc/web/` — `man-html`/`upload-man`
+  directly wrote into (and `svn commit`'d) the now-deleted
+  `doc/web/man/`, and `upload-dist` called `googlecode_upload.py` to
+  upload release tarballs to Google Code, which shut down in 2016. None
+  of this fork's own release process (`.github/workflows/package-release.yml`,
+  GHCR) uses any of it.
 
 ## [3.6.0-NG] - 2026-07-19
 
