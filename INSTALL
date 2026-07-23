@@ -249,7 +249,7 @@ another machine.  If you have many hosts (say ten or more), it's probably
 better to leave localhost out of the list.
 
 The host list also needs ",cpp,lzo" after each host if you're using
-pump mode - see README.pump for details.  Another alternative if you're
+pump mode - see the "Pump mode" section of README.md for details.  Another alternative if you're
 using pump mode is to set the DISTCC_POTENTIAL_HOSTS environment
 variable; in that case, the pump script will use "lsdistcc" to
 set DISTCC_HOSTS, automatically eliminating hosts that are down
