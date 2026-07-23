@@ -42,7 +42,12 @@ dir_defs="-DLIBDIR=\"\\\"${prefix}/lib\\\"\" -DSYSCONFDIR=\"\\\"${sysconfdir}\\\
 # carry the sanitizer/instrumentation flags this environment injects),
 # not through `make`, so those flags aren't overridden by Makefile.in's
 # own CFLAGS assignment.
-main_having_files="daemon distcc fix_debug_info h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text stringmap"
+# Also excludes history.c/renderer.c: per Makefile.in's gnome_obj list,
+# both are compiled exclusively for distccmon-gnome (with $(GNOME_CFLAGS),
+# i.e. glib/gtk), alongside mon-gnome.c itself -- confirmed live:
+# renderer.c fails with "fatal error: 'glib.h' file not found" without
+# excluding it, and this fuzz target has no need for the GNOME GUI monitor.
+main_having_files="daemon distcc fix_debug_info h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text stringmap history renderer"
 
 objs=()
 for f in src/*.c; do
