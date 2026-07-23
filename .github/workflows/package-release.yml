@@ -174,7 +174,8 @@ jobs:
         id: source_tarball
         shell: bash
         run: |
-          tarball="$(ls distcc-*.tar.gz | head -n1)"
+          tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
+          tarball="${tarball#./}"
           [ -n "${tarball}" ] || { echo "::error::no distcc-*.tar.gz produced by build-release-packages.sh" >&2; exit 1; }
           printf 'path=%s\n' "${tarball}" >> "${GITHUB_OUTPUT}"
 
