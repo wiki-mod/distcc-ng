@@ -13,6 +13,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`README`, `README.pump` removed; `README.md` is now the single root
+  README** (refs #316): `README` was a stale, already-diverged duplicate of
+  `README.md` (missing this fork's own URL/Security/Licence/Resources
+  sections); `README.pump`'s real technical content (include-server header
+  analysis, absolute-include-path handling via inserted `#line` directives,
+  build flow, performance characteristics) was folded into `README.md` as a
+  new `## Pump mode` section rather than summarized away. Updated
+  `Makefile.in`'s `pkgdoc_DOCS` and `INSTALL`'s cross-reference accordingly;
+  verified for real that `README.md` (not the removed files) is what
+  actually ships in `make dist`/`make install-doc` output.
 - **`doc/security-assessment.md`** (new): a minimal index/pointer document
   (trust model, actors, known risk history, upstream context) linking to
   existing docs (`SECURITY.md`, `doc/protocol-*.txt`,
