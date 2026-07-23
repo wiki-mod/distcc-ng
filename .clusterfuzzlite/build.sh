@@ -127,11 +127,23 @@ $CXX $CXXFLAGS -Isrc -Ilzo -DHAVE_CONFIG_H \
 # post-build "bad build check" fails with "error while loading shared
 # libraries: libavahi-common.so.3: cannot open shared object file", since
 # that dynamically-linked dependency isn't installed in the run
-# environment. Only $OUT itself carries over between build and run, so
-# copy every shared library this binary actually needs (per ldd, not
-# guessed) into $OUT -- the -rpath,$ORIGIN added above makes the binary
-# look next to itself first, where these copies will be.
+# environment. Only $OUT itself carries over between build and run.
+#
+# Only copy libavahi*/libpopt* -- distcc-ng's own genuinely optional,
+# non-universal dependencies -- NOT every library ldd reports. Confirmed
+# live the hard way: an earlier version of this script copied every
+# shared library ldd listed, including glibc/system-core ones (libc.so.6,
+# ld-linux-x86-64.so.2, libgcc_s.so.1, etc.) -- the run environment then
+# preferred this build environment's own libc.so.6 (via -rpath,$ORIGIN)
+# over its own matching one, and crashed immediately with "undefined
+# symbol: _dl_audit_symbind_alt, version GLIBC_PRIVATE" (a glibc/ld.so
+# version mismatch). glibc/kernel-adjacent libraries must come from the
+# run environment itself, never be shadowed by a copied one.
 for lib in $(ldd "$OUT/fuzz_rpc_argv" | awk '/=>/{print $3} !/=>/{if ($1 ~ /^\//) print $1}'); do
+    case "$(basename "$lib")" in
+        libavahi-*|libpopt.*) ;;
+        *) continue ;;
+    esac
     [ -f "$lib" ] || continue
     cp -L "$lib" "$OUT/"
 done
