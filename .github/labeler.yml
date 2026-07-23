@@ -1,0 +1,46 @@
+# Path-based auto-labeling config for actions/labeler (see
+# .github/workflows/labeler.yml). Adapted from wiki-mod/lancache-ng's own
+# .github/labeler.yml -- reduces, but does not replace, AGENTS.md rule 3's
+# requirement that a PR carry at least one label -- this can only infer
+# which area changed from file paths, it has no way to know the correct
+# issue Type or Milestone. Only maps to labels that already exist in this
+# repository's real label set (verified via `gh api repos/wiki-mod/distcc-ng/labels`),
+# same principle lancache-ng's own config follows. Keep in sync with the
+# label list in repository settings and with the directories referenced
+# here when either changes.
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "doc/**"
+          - "**/*.md"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+
+packaging:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packaging/**"
+          - "docker/**"
+
+pump:
+  - changed-files:
+      - any-glob-to-any-file: "include_server/**"
+
+seccomp:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/sandbox-seccomp.*"
+          - "src/sandbox-config.*"
+
+zstd:
+  - changed-files:
+      - any-glob-to-any-file: "src/compress-zstd.c"
+
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/config-parser.*"
+          - "src/client-config.*"

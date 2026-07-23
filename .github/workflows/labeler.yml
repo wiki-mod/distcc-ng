@@ -1,0 +1,21 @@
+name: Pull Request Labeler
+
+# Auto-labels pull requests by changed file paths, using .github/labeler.yml.
+# Adapted from wiki-mod/lancache-ng's own labeler.yml. Reduces, but does not
+# eliminate, the manual labeling requirement from AGENTS.md rule 3 -- this
+# can only infer area labels from paths, not an issue Type or Milestone.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  labeler:
+    name: Apply path-based labels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@b8dd2d9be0f68b860e7dae5dae7d772984eacd6d # v6.2.0

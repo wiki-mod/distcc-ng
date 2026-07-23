@@ -11,7 +11,44 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **PR tracking-metadata enforcement, path-based auto-labeling, and
+  project-board automation**, adapted from `wiki-mod/lancache-ng`'s own
+  AG-GH-008/`labeler.yml`/`add-to-project.yml`:
+  - `.github/workflows/changelog-check.yml` gained a new
+    `pr_tracking_metadata` job enforcing rule 3 (a PR must carry at least
+    one label and a milestone, and -- once `PROJECT_AUTOMATION_PAT` is
+    configured -- be on the project board) as a real, blocking CI check,
+    not just a written convention. This is the actual root-cause fix for
+    issue #50's class of problem (CHANGELOG.md went unmaintained for ~10
+    merged PRs before anyone noticed); `require_changelog`'s file-touch
+    check stays alongside it rather than being replaced.
+  - `.github/labeler.yml` + `.github/workflows/labeler.yml`: path-based
+    auto-labeling (documentation, ci, packaging, pump, seccomp, zstd,
+    config) using this repo's real, existing label set.
+  - `.github/workflows/add-to-project.yml`: auto-adds new issues/PRs to
+    the distcc-ng project board (https://github.com/orgs/wiki-mod/projects/11),
+    skipped gracefully (not failed) until `PROJECT_AUTOMATION_PAT` is
+    configured as a repository secret.
+  - `scripts/check-pr-tracking-metadata.sh`: the check script itself,
+    adapted to run directly on GitHub-hosted `ubuntu-latest` (no
+    container needed, unlike lancache-ng's self-hosted-runner original).
+
 ### Documentation
+
+- **`AGENTS.md`**: rule 3 rewritten to cover PRs as well as issues (labels,
+  Milestone, Project-board — previously issue-only) and to reference the
+  new CI enforcement above. Added rule 70 -- a `release/X.Y.Z-NG` branch
+  must never be patched live once cut; any fix found while verifying it
+  goes through `current_dev` normally, then the release branch is re-cut
+  fresh. Found necessary after the 3.6.1-NG release's matrix-bug and
+  testdistcc.py fixes were patched directly on `release/3.6.1-NG`, silently
+  leaving `current_dev` behind `master`. Also clarified rule 4: a
+  standalone PR does not require an issue opened first.
+- **`.github/pull_request_template.md`**: relaxed the "Linked Issues"
+  section to explicitly say a standalone PR doesn't need an issue,
+  matching rule 4's clarification.
 
 - **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
   or bug-fixing PR should add or update an automated test in
