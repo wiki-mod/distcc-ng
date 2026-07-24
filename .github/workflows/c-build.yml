@@ -102,7 +102,16 @@ jobs:
 
   make_check:
     needs: changes
-    if: needs.changes.outputs.relevant == 'true'
+    # No job-level `if:` here (unlike the other three gated jobs below) --
+    # a matrixed job's `if:` is evaluated BEFORE the matrix is expanded, so
+    # a false job-level `if:` collapses both legs into a single check-run
+    # named plain "make_check", not "make_check (ubuntu-latest)"/
+    # "make_check (macOS-latest)" -- the two exact context strings master's
+    # ruleset requires. That means the required checks would go right back
+    # to silently never existing on a docs-only PR, just one layer deeper
+    # (confirmed live on PR #336, after #337/#338 had already "fixed" this
+    # once). Gating every step instead keeps the matrix expansion intact --
+    # both named check-runs always exist, they just skip their real work.
     strategy:
       matrix:
         os:
@@ -128,16 +137,19 @@ jobs:
       # traffic yet. Must be the very first step -- it can't retroactively
       # cover network calls made by steps that already ran.
       - name: Harden Runner
+        if: needs.changes.outputs.relevant == 'true'
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - if: needs.changes.outputs.relevant == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # schedule always evaluates using the default branch (master);
           # redirect the nightly run to current_dev instead of re-checking
           # master, which push/pull_request already cover on every change.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - if: needs.changes.outputs.relevant == 'true'
+        uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
@@ -146,14 +158,16 @@ jobs:
           apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
           # brew-cask: TODO
           # choco: TODO
-      - run: which python3.13 || which python3
+      - if: needs.changes.outputs.relevant == 'true'
+        run: which python3.13 || which python3
       # Cache ccache's own object cache, not distcc's source -- content-
       # addressed, so a stale/missing cache never produces wrong results,
       # only a slower build. Rolling key: always restore the latest for
       # this OS, always save a new one (actions/cache no-ops a save on an
       # exact key collision, so bumping github.run_id into the key avoids
       # that and keeps the cache warm across runs).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - if: needs.changes.outputs.relevant == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ matrix.os }}-${{ github.run_id }}
@@ -175,23 +189,29 @@ jobs:
       # risk silently reusing wrong dependency-detection results.) Key on the
       # actual autoconf inputs so a real configure.ac/m4 change still gets a
       # fresh (initially empty) cache instead of reusing pre-change traces.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - if: needs.changes.outputs.relevant == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: autom4te.cache
           key: autoconf-${{ matrix.os }}-${{ hashFiles('configure.ac', 'm4/*.m4') }}
           restore-keys: |
             autoconf-${{ matrix.os }}-
-      - run: ./autogen.sh
+      - if: needs.changes.outputs.relevant == 'true'
+        run: ./autogen.sh
       # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
       # CC must reference ccache by absolute path: `make check`'s
       # maintainer-check-no-set-path target runs `$(CC) --version` under a
       # restricted PATH (/usr/local/bin:/bin:/usr/bin, Makefile.in's
       # RESTRICTED_PATH) that deliberately excludes Homebrew's /opt/homebrew/bin
       # on the arm64 macOS runner -- a bare "ccache" would fail to resolve there.
-      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
-      - run: make
-      - run: ccache --show-stats
-      - run: make check
+      - if: needs.changes.outputs.relevant == 'true'
+        run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
+      - if: needs.changes.outputs.relevant == 'true'
+        run: make
+      - if: needs.changes.outputs.relevant == 'true'
+        run: ccache --show-stats
+      - if: needs.changes.outputs.relevant == 'true'
+        run: make check
       # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py) needs real
       # root to exercise dcc_discard_root()'s privilege drop -- the plain
       # `make check` above always runs as the unprivileged
@@ -213,7 +233,7 @@ jobs:
       # of the root/autogroup behavior it exists to check. Capture the
       # test's own reported line and fail explicitly on a skip, rather than
       # trusting the process exit code alone.
-      - if: matrix.os == 'ubuntu-latest'
+      - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           set -o pipefail
           sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee autogroup-test.log
@@ -231,11 +251,11 @@ jobs:
       # github.sha (which the attestation records) is master's tip, so a
       # scheduled attestation would tie current_dev binaries to the wrong
       # commit. Attestation is meaningful for the push/PR builds anyway.
-      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
+      - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         run: |
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
-      - if: matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
+      - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: /tmp/attest-subjects/*
