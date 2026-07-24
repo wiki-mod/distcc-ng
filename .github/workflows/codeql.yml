@@ -27,8 +27,88 @@ permissions:
   contents: read
 
 jobs:
+  # `Analyze (c-cpp/python/actions)` are all required status checks on
+  # master's ruleset, so -- same lesson as c-build.yml (refs #267/#336) --
+  # any gating here has to keep all three check-runs genuinely present,
+  # not skip the whole workflow via a path filter. Unlike c-build.yml this
+  # was never a MERGE-BLOCKING bug (this workflow never had a path filter
+  # to begin with), just a waste: every PR ran a full C build + CodeQL
+  # scan for all three languages even when e.g. only README.md changed.
+  # This job computes one relevant/not-relevant flag per language so each
+  # matrix leg can skip its own real work independently.
+  changes:
+    name: Detect relevant changes per CodeQL language
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      c_cpp: ${{ steps.filter.outputs.c_cpp }}
+      python: ${{ steps.filter.outputs.python }}
+      actions: ${{ steps.filter.outputs.actions }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "schedule" ]; then
+            {
+              echo "c_cpp=true"
+              echo "python=true"
+              echo "actions=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "forced by $EVENT_NAME -- always runs the full scan"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            from="$BASE_SHA"
+          else
+            from="$BEFORE_SHA"
+          fi
+          if [ -z "$from" ] || [ "$from" = "0000000000000000000000000000000000000000" ]; then
+            {
+              echo "c_cpp=true"
+              echo "python=true"
+              echo "actions=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "no diffable base ($from) -- failing open"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$from" "$HEAD_SHA")"
+          echo "changed files:"
+          echo "$changed"
+          # c-cpp: anything CodeQL's manual C build step below actually
+          # compiles or that configure/make read to produce it.
+          if printf '%s\n' "$changed" | grep -qE '^(src|lzo|popt|include_server/c_extensions|test/fuzz|m4)/|^(configure\.ac|Makefile\.in|autogen\.sh)$|\.(c|h|cc|cpp)$'; then
+            echo "c_cpp=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "c_cpp=false" >> "$GITHUB_OUTPUT"
+          fi
+          # python: the include-server and its tests, plus any stray .py
+          # elsewhere (e.g. scripts/) as a catch-all.
+          if printf '%s\n' "$changed" | grep -qE '^(include_server|test)/|\.py$'; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "python=false" >> "$GITHUB_OUTPUT"
+          fi
+          # actions: workflow YAML plus this repo's one composite action
+          # (.github/actions/nightly-status).
+          if printf '%s\n' "$changed" | grep -qE '^\.github/(workflows|actions)/'; then
+            echo "actions=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "actions=false" >> "$GITHUB_OUTPUT"
+          fi
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 360
     # actions: read lets codeql-action/init resolve this workflow's own run
@@ -47,10 +127,25 @@ jobs:
         language: [c-cpp, python, actions]
 
     steps:
+      # No job-level `if:` on this job (see the `changes` job's own
+      # comment) -- a matrixed job's `if:` is evaluated before the matrix
+      # expands, which would collapse all three legs into a single
+      # unnamed "analyze" check-run instead of the three exact contexts
+      # (Analyze (c-cpp)/(python)/(actions)) master's ruleset requires.
+      # This step instead picks out just this leg's own relevance from
+      # the `changes` job's three outputs, so every later step can gate
+      # on one flag regardless of which language this matrix leg is.
+      - id: gate
+        env:
+          LANG_RELEVANT: ${{ matrix.language == 'c-cpp' && needs.changes.outputs.c_cpp || matrix.language == 'python' && needs.changes.outputs.python || needs.changes.outputs.actions }}
+        run: echo "relevant=$LANG_RELEVANT" >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
+        if: steps.gate.outputs.relevant == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Initialize CodeQL
+        if: steps.gate.outputs.relevant == 'true'
         uses: github/codeql-action/init@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           languages: ${{ matrix.language }}
@@ -62,7 +157,7 @@ jobs:
       # pattern as c-build.yml (without ccache overhead, which is not needed
       # for a one-off CodeQL scan).
       - name: Install dependencies (C/C++ only)
-        if: matrix.language == 'c-cpp'
+        if: steps.gate.outputs.relevant == 'true' && matrix.language == 'c-cpp'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -71,13 +166,14 @@ jobs:
             python3-dev python3-setuptools
 
       - name: Build (C/C++ only)
-        if: matrix.language == 'c-cpp'
+        if: steps.gate.outputs.relevant == 'true' && matrix.language == 'c-cpp'
         run: |
           ./autogen.sh
           ./configure PYTHON=python3
           make
 
       - name: Perform CodeQL Analysis
+        if: steps.gate.outputs.relevant == 'true'
         uses: github/codeql-action/analyze@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3
         with:
           category: '/language:${{ matrix.language }}'
