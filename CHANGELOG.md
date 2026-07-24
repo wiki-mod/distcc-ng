@@ -35,6 +35,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [3.6.2-NG] - 2026-07-23
 
+- **`.github/workflows/c-build.yml`**: the `make_check` fix above (job-level
+  `if:`) turned out to be incomplete -- confirmed live on PR #336 again,
+  after the first fix (#337) had already merged. A matrixed job's `if:` is
+  evaluated *before* the matrix expands, so a false condition collapses
+  both legs into one plain `make_check` check-run instead of the two exact
+  contexts (`make_check (ubuntu-latest)`, `make_check (macOS-latest)`)
+  master's ruleset actually requires -- silently reproducing the "required
+  check never existed" problem one layer deeper. Moved the `if:` from the
+  job down to every individual step instead, which keeps the matrix
+  expansion (and both named check-runs) intact while still skipping all
+  real work on a docs-only diff. The other three gated jobs
+  (`popt_fallback_build`, `popt_vendor_check`, `distributed_e2e`) are not
+  matrixed and were unaffected.
+
 ### Added
 
 - **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
