@@ -26,6 +26,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **`.github/workflows/actionlint.yml`** (renamed to reflect its now-broader
+  scope): added a new `shellcheck` job linting this repo's own real shell
+  scripts (`scripts/*.sh`), using the same pinned `distcc-ng-buildtools`
+  image and plain `docker run` invocation as the existing `action-lint`
+  job. `shellcheck` was installed into that image by #332 but never
+  actually wired into a CI job -- this was the last remaining gap
+  identified in the best-practices-driven CI audit (refs #267).
+
 - **`.github/workflows/actionlint.yml`**: replaced the `curl <script> |
   bash` actionlint install with the pinned `distcc-ng-buildtools` image
   (#332), resolving Scorecard's `PinnedDependenciesID` finding

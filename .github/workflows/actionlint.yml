@@ -1,4 +1,18 @@
-name: actionlint
+name: Static lint (actionlint / shellcheck)
+
+# Two independent static-lint jobs, kept in one file per the "prefer shared
+# workflow files" convention rather than one file per job (see
+# changelog-check.yml's own header comment for the same rationale): both
+# jobs run a linter from the pinned ghcr.io/wiki-mod/distcc-ng-buildtools
+# image against files already checked out locally, neither has any
+# side effects, and splitting them into separate workflow files would
+# just be more YAML to keep in sync for no isolation benefit.
+#
+# - action-lint: lints .github/workflows/*.yml (see below).
+# - shellcheck: lints this repo's own real shell scripts (scripts/*.sh) --
+#   closes the last remaining gap identified in the 2026-07-24
+#   best-practices-driven CI audit: shellcheck was installed into the
+#   buildtools image by #332 but never actually wired into a job.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,6 +23,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/*.yml"
+      - "scripts/*.sh"
   push:
     # Was "main", which has never existed in this repo (only current_dev/
     # master) -- this trigger had never once fired. Found 2026-07-16 via a
@@ -18,6 +33,7 @@ on:
       - master
     paths:
       - ".github/workflows/*.yml"
+      - "scripts/*.sh"
 
 permissions:
   # pull-requests: write was an unused over-grant -- this job never
@@ -56,3 +72,25 @@ jobs:
             -w /work \
             ghcr.io/wiki-mod/distcc-ng-buildtools:latest \
             bash -c 'actionlint -color $(find .github/workflows -name "*.yml" -type f ! -name release.yml -print)'
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Check shell scripts
+        # Same pinned, source-installed buildtools image and plain `docker
+        # run` invocation as the action-lint job above (see that job's own
+        # comment for why `container:` isn't used here either). Targets
+        # this repo's real, hand-maintained shell scripts under scripts/ --
+        # not test/ or packaging/*.sh, which are comfychair/packaging
+        # helpers with their own separate provenance and weren't part of
+        # this audit's scope.
+        shell: bash
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work:ro" \
+            -w /work \
+            ghcr.io/wiki-mod/distcc-ng-buildtools:latest \
+            bash -c 'shellcheck scripts/*.sh'

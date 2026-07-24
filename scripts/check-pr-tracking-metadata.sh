@@ -89,6 +89,10 @@ if [ -z "${GH_TOKEN:-}" ]; then
     fi
 else
     repo_name="${repo#*/}"
+    # Single quotes are deliberate here: this is a Python heredoc-style
+    # string with shell variables interpolated only at the specific
+    # '"$var"' break-outs below, not throughout.
+    # shellcheck disable=SC2016
     query=$(python3 -c '
 import json
 q = """
