@@ -42,6 +42,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (`popt_fallback_build`, `popt_vendor_check`, `distributed_e2e`) are not
   matrixed and were unaffected.
 
+### Changed
+
+- **`.github/workflows/codeql.yml`**: `Analyze (c-cpp)`, `Analyze (python)`,
+  and `Analyze (actions)` are also required status checks, but unlike
+  `c-build.yml`/`action-lint`, this workflow never had a path filter --
+  every PR ran a full C build plus all three CodeQL language scans, even
+  a README-only change. Not merge-blocking (no filter means the checks
+  always existed), just wasteful. Added a `changes` job computing one
+  relevant/not-relevant flag per language (c-cpp: `src/`, `lzo/`, `popt/`,
+  `include_server/c_extensions/`, `test/fuzz/`, `m4/`, `configure.ac`,
+  `Makefile.in`, `autogen.sh`, or any `.c`/`.h`/`.cc`/`.cpp`; python:
+  `include_server/`, `test/`, or any `.py`; actions:
+  `.github/workflows/`, `.github/actions/`). Each matrix leg reads its own
+  language's flag via a per-step `gate` step (same job-level-`if`-collapses-
+  the-matrix pitfall as `make_check`, refs the `Fixed` entry above --
+  avoided the same way, by gating steps instead of the job).
+  `workflow_dispatch`/`schedule` always force a full scan.
+
 ### Added
 
 - **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
