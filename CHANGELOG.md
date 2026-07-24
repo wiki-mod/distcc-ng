@@ -11,6 +11,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
+  doc-only PR (e.g. README.md) could never merge into `master`, because
+  master's branch ruleset requires `make_check (ubuntu-latest/macOS-latest)`,
+  `Bundled popt fallback build`, `Vendored popt/ version and compile check`,
+  `Distributed compile E2E (2-container)`, and `action-lint` to pass -- but
+  those workflows' own `paths-ignore`/`paths` filters meant the check-runs
+  never even started on a docs-only diff, and GitHub blocks a merge on a
+  required check that never ran, not just one that fails. Confirmed live on
+  PR #336. `c-build.yml` gained a cheap `changes` job (plain `git diff
+  --name-only`, no third-party action) that the four heavy jobs now depend
+  on and skip (not: never start) when nothing outside `**/*.md`/`doc/**`
+  changed; `workflow_dispatch`/`schedule` always force a full run.
+  `actionlint.yml` simply dropped its path filter entirely -- both its jobs
+  are cheap enough to just always run.
+
 ### Added
 
 - **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
