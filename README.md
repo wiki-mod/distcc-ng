@@ -1,6 +1,6 @@
 # distcc -- a free distributed C/C++ compiler system
 
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13760/badge)](https://www.bestpractices.dev/projects/13760)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/13760/baseline)](https://www.bestpractices.dev/projects/13760)
 
 by Martin Pool
 
