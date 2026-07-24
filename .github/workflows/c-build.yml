@@ -11,17 +11,24 @@ on:
   # full matrix build + E2E job twice per commit (found via a lancache-ng
   # CI-cost comparison, 2026-07-16). pull_request stays unfiltered by
   # branch -- that's the one meant to cover every PR commit.
+  #
+  # No paths-ignore here (removed 2026-07-24, refs #267/#336): every job
+  # below is required by master's branch ruleset, and a required status
+  # check that never runs (because a path filter skipped its whole
+  # workflow) permanently blocks merging any PR that doesn't happen to
+  # touch a matching path -- confirmed live on PR #336, a README-only
+  # change that could never satisfy required checks that simply never
+  # started. The `changes` job below now does that filtering itself, at
+  # the job level, so a doc-only PR still gets a real (skipped, not
+  # missing) check-run for each required job -- GitHub treats a skipped
+  # job's check-run as passing for required-status-check purposes, same
+  # as this workflow's own `scan-scheduled`/`update_release_draft`-style
+  # conditional jobs elsewhere in this repo's CI.
   push:
     branches:
       - current_dev
       - master
-    paths-ignore:
-      - '**/*.md'
-      - 'doc/**'
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'doc/**'
   # Lets us check a branch's build health on demand (e.g. current_dev or
   # master) without needing a new commit/PR to trigger CI.
   workflow_dispatch:
@@ -40,7 +47,62 @@ permissions:
   contents: read
 
 jobs:
+  # Cheap, always-runs gate that replaces the old workflow-level
+  # paths-ignore (see the `on:` block's comment above) with a per-job one:
+  # every heavy job below depends on this and skips (not: never starts)
+  # when only docs changed. workflow_dispatch/schedule always force a full
+  # run -- those exist specifically to check real build health on demand,
+  # so they must never silently no-op.
+  changes:
+    name: Detect relevant (non-docs) changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "schedule" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "forced by $EVENT_NAME -- always runs the full build"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            from="$BASE_SHA"
+          else
+            from="$BEFORE_SHA"
+          fi
+          # A missing/all-zero `before` (e.g. a branch's first push) can't
+          # be diffed -- fail open (relevant=true) rather than silently
+          # skipping required checks on an un-diffable event.
+          if [ -z "$from" ] || [ "$from" = "0000000000000000000000000000000000000000" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no diffable base ($from) -- failing open"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$from" "$HEAD_SHA")"
+          echo "changed files:"
+          echo "$changed"
+          if printf '%s\n' "$changed" | grep -qvE '\.md$|^doc/'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   make_check:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     strategy:
       matrix:
         os:
@@ -187,6 +249,8 @@ jobs:
   # default.
   popt_fallback_build:
     name: Bundled popt fallback build (no system libpopt)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # This job only checks out and builds the tree, it doesn't need
@@ -250,6 +314,8 @@ jobs:
   # compile cleanly.
   popt_vendor_check:
     name: Vendored popt/ version and compile check
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same rationale as popt_fallback_build above: read-only checkout and
@@ -320,6 +386,8 @@ jobs:
   # Linux/docker-only, so it is a standalone job rather than a macOS matrix leg.
   distributed_e2e:
     name: Distributed compile E2E (2-container)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # This job only checks out the repo and runs a local docker-compose e2e

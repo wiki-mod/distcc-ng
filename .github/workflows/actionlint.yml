@@ -6,9 +6,15 @@ concurrency:
 
 on:
   workflow_dispatch:
+  # No path filter (removed 2026-07-24, refs #267/#336): action-lint is
+  # required by master's branch ruleset, and a required check that's
+  # skipped by a path filter rather than actually running permanently
+  # blocks merging any PR whose diff doesn't happen to match -- confirmed
+  # live on PR #336 (a README-only change). Both jobs here are cheap
+  # (well under a minute each against the pinned, already-cached
+  # buildtools image), so running them unconditionally on every PR/push
+  # costs little and keeps every required check genuinely present.
   pull_request:
-    paths:
-      - ".github/workflows/*.yml"
   push:
     # Was "main", which has never existed in this repo (only current_dev/
     # master) -- this trigger had never once fired. Found 2026-07-16 via a
@@ -16,8 +22,6 @@ on:
     branches:
       - current_dev
       - master
-    paths:
-      - ".github/workflows/*.yml"
 
 permissions:
   contents: read
