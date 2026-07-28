@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`src/cleanup.c`**: `dcc_add_cleanup()`'s first call passed a `NULL`
+  source pointer to `memcpy()` at a zero length -- technically undefined
+  behavior (libc declares `memcpy()`'s source parameter `nonnull`), flagged
+  by UBSan on every single `distcc`/`distccd` invocation (#266). Harmless in
+  practice (a zero-length copy never dereferences anything), but now
+  skipped outright when `cleanups_size == 0` rather than relying on that.
+
 ### Added
 
 - **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,

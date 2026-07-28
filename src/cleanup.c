@@ -143,7 +143,12 @@ int dcc_add_cleanup(const char *filename)
             rs_log_crit("malloc failed - too many cleanups");
             return EXIT_OUT_OF_MEMORY;
         }
-        memcpy(new_cleanups, (char **)cleanups, cleanups_size * sizeof(char *));
+        /* On the very first call, cleanups is still NULL and cleanups_size
+         * is 0 -- skip the copy rather than passing a NULL source to
+         * memcpy(), which is undefined behavior even at a zero length (libc
+         * declares memcpy()'s source parameter nonnull). */
+        if (cleanups_size > 0)
+            memcpy(new_cleanups, (char **)cleanups, cleanups_size * sizeof(char *));
         old_cleanups = (char **)cleanups;
         cleanups = new_cleanups;           /* Atomic assignment. */
         cleanups_size = new_cleanups_size; /* Atomic assignment. */
