@@ -146,6 +146,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`.github/pull_request_template.md`**: relaxed the "Linked Issues"
   section to explicitly say a standalone PR doesn't need an issue,
   matching rule 4's clarification.
+- **`AGENTS.md`**: added rule 72 -- before proposing a fix for something
+  that looks like a bug in existing code, verify it isn't a deliberate,
+  consistent design choice (check the pattern's history/upstream PR
+  review discussion, and whether it repeats consistently elsewhere in the
+  codebase) before concluding it's a defect. Found necessary while
+  investigating issue #263's `ccache_heartbeat` failure: an `errno`-after-
+  `getline()` check in `src/remote.c` turned out to be a real bug (its
+  original `errno = 0;` reset was removed in distcc/distcc#461's review
+  for stylistic reasons only, no technical justification), but a second
+  suspected issue in the same file (`gettimeofday()`'s warn-and-continue
+  handling) turned out to be a deliberate, project-wide convention used
+  identically in every other `gettimeofday()` call across the codebase.
 
 - **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
   or bug-fixing PR should add or update an automated test in
