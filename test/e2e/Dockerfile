@@ -104,17 +104,27 @@ USER builder
 # test workflows use, on the loopback interface only (--allow 127.0.0.1),
 # entirely self-contained within this one build step.
 #
-# The COMPILE_OK check below polls with a bounded wait rather than a single
-# immediate grep: distcc can return as soon as it receives the compiled
-# output (DOTO), while distccd's own job-summary write (the COMPILE_OK line)
-# happens afterward in its cleanup path, so an immediate check could flake
-# on a loaded builder (Codex review finding on this Dockerfile).
+# Both checks below poll with a bounded wait rather than assuming a fixed
+# delay is enough: distccd forking, initializing, and binding its port is
+# itself an async operation the client's first attempt could race (a fixed
+# `sleep 1` before the first compile attempt is exactly the same class of
+# flake as the immediate-grep issue below, just one step earlier -- Codex
+# review finding on this Dockerfile), and separately distcc can return as
+# soon as it receives the compiled output (DOTO), while distccd's own
+# job-summary write (the COMPILE_OK line) happens afterward in its cleanup
+# path, so an immediate log check could flake too.
 RUN set -eux; \
     mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
     echo 'int main(void) { return 0; }' > ok.c; \
     /usr/local/bin/distccd --daemon --allow 127.0.0.1 --port 3633 --log-file distccd.log; \
-    sleep 1; \
-    DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c; \
+    compiled=0; \
+    for _ in 1 2 3 4 5 6 7 8 9 10; do \
+      DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c 2>/tmp/e2e-selftest-distcc.log \
+        && { compiled=1; break; }; \
+      sleep 0.5; \
+    done; \
+    [ "${compiled}" = "1" ] \
+      || { echo "ERROR: self-test distributed compile never succeeded after waiting for distccd"; cat /tmp/e2e-selftest-distcc.log distccd.log; exit 1; }; \
     test -f ok.o \
       || { echo "ERROR: self-test distributed compile did not produce ok.o"; cat distccd.log; exit 1; }; \
     found=0; \

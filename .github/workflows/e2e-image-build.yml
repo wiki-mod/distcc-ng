@@ -94,15 +94,40 @@ jobs:
       - name: Build test/e2e/Dockerfile
         run: docker build -f test/e2e/Dockerfile -t distcc-ng-e2e:selftest .
 
+      # Saved and handed to publish as an artifact rather than rebuilt there:
+      # the base image is deliberately unpinned (see the Dockerfile's own
+      # comment), so a second independent `docker build` in publish -- on a
+      # different runner, possibly minutes later -- is not guaranteed to
+      # produce byte-identical content to the image that actually passed
+      # the self-test above (an upstream apt mirror update landing in
+      # between could resolve different package versions). Saving the
+      # exact image that was proven and loading it in publish closes that
+      # gap (Sonnet review finding on this PR).
+      - name: Save the proven image for publish
+        run: docker save distcc-ng-e2e:selftest -o /tmp/distcc-ng-e2e.tar
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: distcc-ng-e2e-image
+          path: /tmp/distcc-ng-e2e.tar
+          retention-days: 1
+
   # --- Publish, only after a successful build+selftest, never from a PR -----
   # Same reasoning as verify-image-build.yml's publish job: a pull_request
   # event could carry an attacker-modified Dockerfile, so gating on
   # !pull_request means only a push to current_dev (already reviewed and
   # merged), an explicit manual workflow_dispatch, or the daily schedule can
-  # ever reach GHCR.
+  # ever reach GHCR. push is already scoped to current_dev via this file's
+  # own `on:` block above; workflow_dispatch has no such branch restriction
+  # from GitHub itself, so it's scoped explicitly here too -- otherwise
+  # manually dispatching this workflow from an arbitrary branch (e.g. an old
+  # feature branch carrying a stale copy of this file) would publish that
+  # branch's Dockerfile to the moving :latest tag (Sonnet review finding on
+  # this PR).
   publish:
     needs: build_and_selftest
-    if: ${{ github.event_name != 'pull_request' }}
+    if: >-
+      ${{ github.event_name != 'pull_request' &&
+          (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/current_dev') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -120,30 +145,34 @@ jobs:
       - name: Log in to GHCR
         run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push distcc-ng-e2e:latest
-        # Rebuilt here rather than re-tagging build_and_selftest's image --
-        # jobs run on separate runners with no shared Docker daemon/image
-        # cache, so this is the only way to get the already-proven Dockerfile
-        # into GHCR. Tagged :latest (moving, what the test workflows will
-        # pull once the follow-up lands) and a SHORT_SHA-DATE tag, not a bare
-        # short commit SHA alone: the daily schedule can rebuild on a day
-        # current_dev's HEAD hasn't moved, and since the base image is
-        # deliberately unpinned (see the Dockerfile), that rebuild can still
-        # produce different image content -- a bare commit-SHA tag would
-        # then silently point at different content across runs, breaking
-        # the "pin to what this exact run proved" guarantee such a tag
-        # implies (Codex review finding on this PR).
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distcc-ng-e2e-image
+          path: /tmp
+
+      - name: Load and push the already-proven image
+        # Loaded from build_and_selftest's saved artifact rather than
+        # rebuilt here -- see that job's own comment on why: the base
+        # image is deliberately unpinned, so a second independent `docker
+        # build` on a different runner is not guaranteed to reproduce the
+        # exact content that passed the self-test. Tagged :latest (moving,
+        # what the test workflows will pull once the follow-up lands) and
+        # a SHORT_SHA-DATE tag, not a bare short commit SHA alone: the
+        # daily schedule can rebuild on a day current_dev's HEAD hasn't
+        # moved, and since the base image is unpinned, that rebuild can
+        # still produce different image content -- a bare commit-SHA tag
+        # would then silently point at different content across runs,
+        # breaking the "pin to what this exact run proved" guarantee such
+        # a tag implies (Codex review finding on this PR).
         env:
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
         run: |
           set -euo pipefail
+          docker load -i /tmp/distcc-ng-e2e.tar
           SHORT_SHA="$(git rev-parse --short HEAD)"
           BUILD_DATE="$(date -u +%Y%m%d)"
-          docker build \
-            --file test/e2e/Dockerfile \
-            --tag "${IMAGE_BASE}:latest" \
-            --tag "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}" \
-            .
+          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
+          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}"
           docker push "${IMAGE_BASE}:latest"
           docker push "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}"
 
