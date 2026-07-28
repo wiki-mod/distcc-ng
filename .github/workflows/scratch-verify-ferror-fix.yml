@@ -1,0 +1,69 @@
+name: SCRATCH verify ferror fix (temporary, removed before merge)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Build and run isomorphic repro of the errno-vs-ferror logic
+        run: |
+          cat > /tmp/repro.c <<'EOF'
+          #include <stdio.h>
+          #include <errno.h>
+          #include <unistd.h>
+
+          int main(void) {
+              /* Case 1: clean EOF, but errno holds a stale EAGAIN left over
+               * from an earlier, unrelated syscall -- the exact repro of the
+               * bug being fixed (dcc_compile_remote's own non-blocking
+               * network I/O leaves EAGAIN in errno as a matter of course). */
+              FILE *f1 = tmpfile();
+              fprintf(f1, "hello\nworld\n");
+              rewind(f1);
+              errno = EAGAIN;
+              char *line = NULL; size_t len = 0; ssize_t n;
+              while ((n = getline(&line, &len, f1)) != -1) {}
+              int old_would_warn = (n < 0 && errno != 0);
+              int new_would_warn = (n < 0 && ferror(f1));
+              printf("Case 1 (clean EOF, stale errno=EAGAIN before the loop):\n");
+              printf("  old (errno-based) would warn: %s\n", old_would_warn ? "YES -- false positive" : "no");
+              printf("  new (ferror-based) would warn: %s (expected: no)\n", new_would_warn ? "YES" : "no");
+              free(line);
+              fclose(f1);
+
+              /* Case 2: a genuine read error (yank the underlying fd out
+               * from under the FILE* so the next read really does fail). */
+              FILE *f2 = tmpfile();
+              fprintf(f2, "hello\nworld\n");
+              rewind(f2);
+              close(fileno(f2));
+              errno = 0;
+              line = NULL; len = 0;
+              while ((n = getline(&line, &len, f2)) != -1) {}
+              int old_warns2 = (n < 0 && errno != 0);
+              int new_warns2 = (n < 0 && ferror(f2));
+              printf("Case 2 (genuine read error via closed underlying fd):\n");
+              printf("  old (errno-based) warns: %s\n", old_warns2 ? "yes" : "NO -- missed a real error");
+              printf("  new (ferror-based) warns: %s (expected: yes)\n", new_warns2 ? "yes" : "NO");
+              free(line);
+
+              if (new_would_warn) {
+                  fprintf(stderr, "FAIL: ferror()-based check false-positived on clean EOF\n");
+                  return 1;
+              }
+              if (!new_warns2) {
+                  fprintf(stderr, "FAIL: ferror()-based check missed a genuine read error\n");
+                  return 1;
+              }
+              printf("PASS: ferror() correctly distinguishes a clean EOF (even with a stale errno) from a genuine read error.\n");
+              return 0;
+          }
+          EOF
+          gcc -Wall -Wextra -o /tmp/repro /tmp/repro.c
+          /tmp/repro
