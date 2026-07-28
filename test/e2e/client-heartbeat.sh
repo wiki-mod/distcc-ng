@@ -13,7 +13,11 @@ set -euo pipefail
 
 # Pinned to a released ccache tag rather than a moving branch, so the heartbeat
 # validates distribution -- not whatever churn happens to be on ccache's HEAD.
-readonly CCACHE_TAG="v4.13.6"
+# Read from the environment (set once, workflow-level, in
+# master-heartbeat.yml) rather than duplicated as a second literal, so the
+# diagnostic control build (test/e2e/control-build.sh) always builds the
+# exact same ccache revision this script does.
+readonly CCACHE_TAG="${CCACHE_HEARTBEAT_TAG:-v4.13.6}"
 readonly SRC_DIR="/tmp/ccache-src"
 readonly BUILD_DIR="/tmp/ccache-build"
 JOBS="$(nproc)"

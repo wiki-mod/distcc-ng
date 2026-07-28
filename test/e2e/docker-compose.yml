@@ -55,6 +55,13 @@ services:
       # exists to catch.
       DISTCC_FALLBACK: "0"
       DISTCC_VERBOSE: "1"
+      # Forwarded from the host so client-heartbeat.sh and the diagnostic
+      # control-build.sh (run separately, see master-heartbeat.yml's
+      # ccache_control_build job) always build the same pinned ccache tag.
+      # Empty/unset for callers that don't set it (e.g. the plain
+      # distcc-ng self-compile in client-build.sh, which ignores it) --
+      # client-heartbeat.sh falls back to its own default in that case.
+      CCACHE_HEARTBEAT_TAG: "${CCACHE_HEARTBEAT_TAG:-}"
     working_dir: /work
     # Pluggable client workload: run-e2e.sh exports E2E_CLIENT_SCRIPT (the
     # distcc-ng self-compile by default, the ccache heartbeat when set).

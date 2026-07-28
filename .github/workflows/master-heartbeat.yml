@@ -28,10 +28,23 @@ on:
 permissions:
   contents: read
 
+env:
+  # Single source of truth for the pinned ccache tag both the distributed
+  # build (client-heartbeat.sh) and the diagnostic control build
+  # (control-build.sh) must build, so the two can never silently drift onto
+  # different revisions of ccache.
+  CCACHE_HEARTBEAT_TAG: v4.13.6
+
 jobs:
   ccache_heartbeat:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Raised from the original 40 to give E2E_MAX_ATTEMPTS: "2" below room for
+    # a full second attempt (image rebuild is mostly docker-layer-cache hits,
+    # but the distributed ccache build itself is not) -- a job timeout killing
+    # a retry mid-flight would silently discard the "not retrying further,
+    # this is a real failure" exit path and read as a worse-classified failure
+    # than today's single-attempt job, defeating the point of retrying at all.
+    timeout-minutes: 75
     steps:
       # No ref override: this validates master, and schedule/dispatch already
       # evaluate from master (the default branch).
@@ -48,7 +61,60 @@ jobs:
           # non-distributing build (launcher ignored) reports 0 and goes red.
           E2E_MIN_REMOTE_JOBS: "20"
           E2E_SCENARIO: ccache weekly heartbeat
+          # Absorbs a one-off network/container flake in this heavier weekly
+          # build without hiding a real, reproducible distcc bug -- run-e2e.sh
+          # only stops retrying early on success, so a failure that recurs on
+          # every attempt still exits non-zero and still goes red here. Kept
+          # at 2 (one retry), not higher, to stay inside timeout-minutes above
+          # with real margin.
+          E2E_MAX_ATTEMPTS: "2"
         run: bash test/e2e/run-e2e.sh
+
+  # Diagnostic only: builds the exact same pinned ccache source with this
+  # image's plain compiler, entirely independent of distcc/distccd (no
+  # daemon, no network hop, no launcher). Never gates ccache_heartbeat's own
+  # result -- the report job below keys exclusively off
+  # needs.ccache_heartbeat.result, this job is not in its needs: at all -- it
+  # only helps classify a same-run ccache_heartbeat failure as a real
+  # distcc-ng bug versus a compiler/toolchain/ccache-version problem (see
+  # issue #263, where exactly that ambiguity took real effort to untangle
+  # from the raw distccd trace log alone).
+  ccache_control_build:
+    name: Control build (plain compiler, no distcc) -- diagnostic only
+    runs-on: ubuntu-latest
+    # This job gets a fresh runner (no image-layer cache carried over from
+    # ccache_heartbeat's own runner) and still has to build the e2e image
+    # from scratch plus a full ccache build, so it is given the same order of
+    # budget as the heartbeat job itself rather than a smaller one -- a
+    # timeout kill here would skip the always()-summary step and read as a
+    # misclassified "plain compiler can't build ccache", exactly the outcome
+    # this job exists to avoid.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the e2e image (same toolchain as the heartbeat job)
+        run: docker compose -f test/e2e/docker-compose.yml build distccd-server
+      - name: Build ccache directly inside the image, no distcc/distccd at all
+        id: control_build
+        continue-on-error: true
+        run: |
+          docker run --rm -e CCACHE_HEARTBEAT_TAG \
+            distcc-ng-e2e:latest bash test/e2e/control-build.sh
+      - name: Record classification in the job summary
+        if: always()
+        run: |
+          {
+            echo "### Control build (plain compiler, no distcc)"
+            echo
+            if [ "${{ steps.control_build.outcome }}" = "success" ]; then
+              echo "ccache's source built cleanly with a plain compiler on this image, ruling out a plain source/toolchain incompatibility. If \`ccache_heartbeat\` failed in this run, that failure is not explained by a compiler/toolchain problem on unpreprocessed source alone -- it needs its own investigation (distcc preprocesses source before sending it, so a preprocessing-specific issue can still exist even when this plain build succeeds)."
+            else
+              echo "**ccache's source FAILED to build with a plain compiler, with distcc/distccd out of the loop entirely.** If \`ccache_heartbeat\` also failed in this run, the failure is very likely a compiler/toolchain/ccache-version problem (see issue #263) -- not a distcc-ng bug. See this job's own build step log above for the real compiler error."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Surface this job's own pass/fail (does not affect ccache_heartbeat)
+        if: steps.control_build.outcome != 'success'
+        run: exit 1
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success. Separate job with if: always() so it reports even when the
