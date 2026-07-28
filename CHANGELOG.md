@@ -13,6 +13,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
+  which included `CHANGELOG.md` -- since almost every PR touches that
+  file (`changelog-check.yml`'s own requirement), `documentation` was
+  firing on nearly every PR regardless of what it actually changed.
+  Excluded `CHANGELOG.md` explicitly (without suppressing the label for a
+  genuine documentation PR that also updates its `CHANGELOG.md` entry, the
+  routine case); `doc/**` and other real `.md` files (README, etc.) are
+  unaffected.
+
 - **`src/cleanup.c`**: `dcc_add_cleanup()`'s first call passed a `NULL`
   source pointer to `memcpy()` at a zero length -- technically undefined
   behavior (libc declares `memcpy()`'s source parameter `nonnull`), flagged
