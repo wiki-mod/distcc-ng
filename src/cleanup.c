@@ -61,9 +61,12 @@ void dcc_cleanup_tempfiles(void)
     dcc_cleanup_tempfiles_inner(0);
 }
 
-/* Signal-handler entry point: must stay async-signal-safe, so it skips
- * free() and tracing (see dcc_cleanup_tempfiles_inner()'s from_signal_handler
- * handling below). */
+/* Signal-handler entry point: skips free() and tracing (see
+ * dcc_cleanup_tempfiles_inner()'s from_signal_handler handling below) to
+ * stay closer to async-signal-safe, though dcc_getenv_bool()'s getenv()
+ * call below is still not on POSIX's async-signal-safe list -- a
+ * pre-existing, accepted limitation, not something this comment claims is
+ * fully solved. */
 void dcc_cleanup_tempfiles_from_signal_handler(void)
 {
     dcc_cleanup_tempfiles_inner(1);
