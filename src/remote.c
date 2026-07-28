@@ -205,11 +205,14 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
      * returns -1 without ever touching the FILE stream (the failure is in
      * realloc(), not in a stream read), so plain EOF and an allocation
      * failure look identical to ferror() there. errno is the fallback
-     * signal for that case -- realloc() sets errno=ENOMEM on failure, and
-     * resetting errno to 0 immediately above (rather than leaving it
-     * unset, as this check used to) means any nonzero value seen here was
-     * set during this specific read, not stale from something unrelated
-     * earlier in the process. */
+     * signal for that case -- util.c's getline() sets errno=ENOMEM
+     * explicitly on that path, and resetting errno to 0 immediately above
+     * (rather than leaving it unset, as this check used to) means any
+     * nonzero value seen here was set during this specific read, not stale
+     * from something unrelated earlier in the process. Verified against
+     * glibc's real getline() on large (multi-MB, multi-refill) files that
+     * errno stays 0 through a clean EOF, so this disjunct does not
+     * reintroduce the false positive it's meant to avoid. */
     if (bytes_read < 0 && (ferror(cpp_f) || errno != 0))
         rs_log_warning("%s: getline failed: %s (%d), file %s", __func__, strerror(errno), errno, cpp_fname);
 out:
