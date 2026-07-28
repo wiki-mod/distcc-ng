@@ -13,6 +13,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/remote.c`**: `dcc_check_unsupported_directives()` misreported a
+  misleading `getline failed: Resource temporarily unavailable` warning on
+  plain end-of-file, not just on a genuine read error. `getline()` returns
+  -1 for both cases and does not guarantee `errno` is reset to 0 on the
+  EOF path, so a stale `errno` left over from an unrelated earlier syscall
+  in the same process (e.g. this same client's own non-blocking network
+  I/O) could be misattributed to this read. Root-caused live via issue
+  #263's `ccache_heartbeat` failure and confirmed against the original
+  upstream review (distcc/distcc#461): a v1 `errno = 0;` reset was removed
+  in review for stylistic reasons only, no technical justification (see
+  AGENTS.md rule 72). Switched to `ferror(cpp_f)`, which reflects only
+  this stream's own error state and works identically whether `getline()`
+  resolves to glibc's or this project's own `util.c` compat
+  implementation. Purely a misleading-log-message fix -- `ret` (whether to
+  recompile locally) was unaffected either way, so this never masked or
+  caused a real failure.
+
 - **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
   doc-only PR (e.g. README.md) could never merge into `master`, because
   master's branch ruleset requires `make_check (ubuntu-latest/macOS-latest)`,

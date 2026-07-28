@@ -98,6 +98,16 @@ static int dcc_remote_connect(struct dcc_hostdef *host,
 }
 
 
+/**
+ * Wait for the background preprocessor to finish, if one was started.
+ *
+ * @param cpp_pid pid of the preprocessor, or 0 if none was started
+ * @param status on return, the preprocessor's wait status
+ * @param input_fname source file name, used only for logging
+ *
+ * @return 0 on success (including "no preprocessor was running"); nonzero
+ * only if collecting the child itself failed.
+ */
 static int dcc_wait_for_cpp(pid_t cpp_pid,
                             int *status,
                             const char *input_fname)
@@ -183,7 +193,18 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
 	}
     }
 
-    if (bytes_read < 0 && errno != 0)
+    /* getline() returns -1 both on a genuine read error and on plain EOF,
+     * and does not guarantee errno is left at 0 on the EOF path -- checking
+     * errno here can misreport a stale value left over from an unrelated
+     * earlier syscall (e.g. this same process's own non-blocking network
+     * I/O) as if it were this read failing. ferror() reflects only this
+     * FILE stream's own error state, so it can't be polluted by anything
+     * else in the process, and works the same whether getline() here
+     * resolves to glibc's or this project's own compat implementation
+     * (util.c's #ifndef HAVE_GETLINE fallback). See AGENTS.md rule 72's
+     * live incident for the full history of the errno-based check this
+     * replaces. */
+    if (bytes_read < 0 && ferror(cpp_f))
         rs_log_warning("%s: getline failed: %s (%d), file %s", __func__, strerror(errno), errno, cpp_fname);
 out:
     if (line)
