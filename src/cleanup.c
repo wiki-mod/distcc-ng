@@ -61,12 +61,10 @@ void dcc_cleanup_tempfiles(void)
     dcc_cleanup_tempfiles_inner(0);
 }
 
-/* Signal-handler entry point: skips free() and tracing (see
- * dcc_cleanup_tempfiles_inner()'s from_signal_handler handling below) to
- * stay closer to async-signal-safe, though dcc_getenv_bool()'s getenv()
- * call below is still not on POSIX's async-signal-safe list -- a
- * pre-existing, accepted limitation, not something this comment claims is
- * fully solved. */
+/* Signal-handler entry point: skips free(), tracing, and the
+ * DISTCC_SAVE_TEMPS getenv() lookup (see
+ * dcc_cleanup_tempfiles_inner()'s from_signal_handler handling below),
+ * none of which are on POSIX's async-signal-safe function list. */
 void dcc_cleanup_tempfiles_from_signal_handler(void)
 {
     dcc_cleanup_tempfiles_inner(1);
@@ -85,12 +83,20 @@ void dcc_cleanup_tempfiles_from_signal_handler(void)
  * deleted, which can be good for debugging.  However, we still need
  * to remove them from the list, otherwise it will eventually overflow
  * in prefork mode.
+ *
+ * The $DISTCC_SAVE_TEMPS lookup itself is skipped when from_signal_handler
+ * is set: dcc_getenv_bool() calls getenv(), which is not on POSIX's
+ * async-signal-safe function list, so this path always proceeds to
+ * actually delete (as if DISTCC_SAVE_TEMPS were unset) rather than risk
+ * calling it from a signal handler. A process exiting via a signal should
+ * have its temp files cleaned up regardless of a debug-preservation flag
+ * anyway.
  */
 static void dcc_cleanup_tempfiles_inner(int from_signal_handler)
 {
     int i;
     int done = 0;
-    int save = dcc_getenv_bool("DISTCC_SAVE_TEMPS", 0);
+    int save = from_signal_handler ? 0 : dcc_getenv_bool("DISTCC_SAVE_TEMPS", 0);
 
     /* do the unlinks from the last to the first file.
      * This way, directories get deleted after their files. */
