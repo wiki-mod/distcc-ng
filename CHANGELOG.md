@@ -16,13 +16,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`.github/workflows/e2e-image-build.yml`, `test/e2e/Dockerfile`,
   `test/e2e/README.md`**: the two-container distributed-compile e2e test
   image (used by `c-build.yml`'s per-push gate and `master-heartbeat.yml`'s
-  weekly ccache heartbeat) is now pre-built, validated via a real embedded
+  weekly ccache heartbeat) is now built, validated via a real embedded
   self-test (a distcc-through-distccd compile checked against the daemon's
-  own log), and published to GHCR as `distcc-ng-e2e:latest`, instead of
-  being reassembled from scratch on every test run. Rebuilt daily
-  (deliberately unpinned base image, unlike this fork's other two images)
-  so it always carries the latest Debian trixie-slim security/backport
-  updates, acting as an early-warning canary for an upstream package update
+  own log), and published to GHCR as `distcc-ng-e2e:latest` -- the actual
+  test workflows don't pull it yet (a deliberately separate follow-up, see
+  `test/e2e/README.md`). Rebuilt daily (deliberately unpinned base image,
+  unlike this fork's other two images) so it always carries the latest
+  Debian trixie-slim security/backport updates, acting as an early-warning
+  canary for an upstream package update
   breaking this project's build.
 
 - **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,

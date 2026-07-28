@@ -10,28 +10,42 @@ name: E2E test image build+publish
 # different schedule) per AGENTS.md rule 61's own precedent of picking a fit
 # by actual trigger/purpose shape, not just topical similarity.
 #
-# Maintainer decision, 2026-07-28: this image is deliberately NOT built fresh
-# on every test run (the prior approach, `docker compose build` inside
-# run-e2e.sh) -- it is pre-built here, validated by its own self-test, and
-# published so the actual test workflows can just pull a known-good image
-# instead of reassembling it live each time. It is also deliberately NOT
-# pinned to a fixed base-image digest (see test/e2e/Dockerfile's own
-# comment): the schedule trigger below rebuilds it once a day so it always
-# picks up the latest Debian trixie-slim security/backport updates, acting
-# as an early-warning canary for an upstream package update breaking this
-# project's build -- a fixed digest would defeat that purpose. 02:00 UTC is
-# deliberately chosen to not overlap with this repo's other daily/weekly
-# schedules (c-build.yml 03:00, nightly-publish.yml 04:00, codeql.yml Sun
-# 05:00, master-heartbeat.yml Mon 05:00, scorecard.yml Sun 06:00,
-# openssf-baseline-recheck.yml 1st/15th 06:00, osv-scanner.yml Sun 07:00).
+# Maintainer decision, 2026-07-28: this image should not be built fresh on
+# every test run (the current approach, `docker compose build` inside
+# run-e2e.sh) -- instead it's pre-built here, validated by its own
+# self-test, and published, so a follow-up PR can switch the actual test
+# workflows to pull a known-good image instead of reassembling it live each
+# time. That consumer switch is NOT part of this PR (see
+# test/e2e/README.md's "not yet done" section for why, and a real design
+# constraint it surfaced) -- this PR only builds and publishes the image
+# itself; nothing pulls it yet.
+#
+# It is also deliberately NOT pinned to a fixed base-image digest (see
+# test/e2e/Dockerfile's own comment): the schedule trigger below rebuilds it
+# once a day so it always picks up the latest Debian trixie-slim
+# security/backport updates, acting as an early-warning canary for an
+# upstream package update breaking this project's build -- a fixed digest
+# would defeat that purpose. 02:00 UTC is deliberately chosen to not overlap
+# with this repo's other daily/weekly schedules (c-build.yml 03:00,
+# nightly-publish.yml 04:00, codeql.yml Sun 05:00, master-heartbeat.yml Mon
+# 05:00, scorecard.yml Sun 06:00, openssf-baseline-recheck.yml 1st/15th
+# 06:00, osv-scanner.yml Sun 07:00).
+#
+# Same structural limitation as nightly-publish.yml/master-heartbeat.yml
+# (see issue #81's history): GitHub only honors `schedule` from the
+# workflow file copy on the default branch (master). This file lands via
+# current_dev, so the daily rebuild has no effect until the next
+# current_dev->master promotion -- push/pull_request/workflow_dispatch are
+# all exercisable now, the schedule is not (Codex review finding on this
+# PR).
 #
 # On a pull_request, only build_and_selftest runs (proves the Dockerfile
 # still builds and self-tests clean) -- publish is skipped so a PR can never
 # push a package, same guard as verify-image-build.yml. On push to
-# current_dev, workflow_dispatch, or the daily schedule, publish also runs,
-# rebuilding the now-proven image and pushing it to GHCR as
-# distcc-ng-e2e:latest (own package, separate from distcc-ng/
-# distcc-ng-nightly/distcc-ng-buildtools).
+# current_dev, workflow_dispatch, or the daily schedule (once live on
+# master), publish also runs, rebuilding the now-proven image and pushing
+# it to GHCR as distcc-ng-e2e:latest (own package, separate from
+# distcc-ng/distcc-ng-nightly/distcc-ng-buildtools).
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -110,21 +124,28 @@ jobs:
         # Rebuilt here rather than re-tagging build_and_selftest's image --
         # jobs run on separate runners with no shared Docker daemon/image
         # cache, so this is the only way to get the already-proven Dockerfile
-        # into GHCR. Tagged both :latest (moving, what the test workflows
-        # pull) and the short commit SHA (so a given pull can be pinned to
-        # the exact revision that was proven by this run).
+        # into GHCR. Tagged :latest (moving, what the test workflows will
+        # pull once the follow-up lands) and a SHORT_SHA-DATE tag, not a bare
+        # short commit SHA alone: the daily schedule can rebuild on a day
+        # current_dev's HEAD hasn't moved, and since the base image is
+        # deliberately unpinned (see the Dockerfile), that rebuild can still
+        # produce different image content -- a bare commit-SHA tag would
+        # then silently point at different content across runs, breaking
+        # the "pin to what this exact run proved" guarantee such a tag
+        # implies (Codex review finding on this PR).
         env:
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
         run: |
           set -euo pipefail
           SHORT_SHA="$(git rev-parse --short HEAD)"
+          BUILD_DATE="$(date -u +%Y%m%d)"
           docker build \
             --file test/e2e/Dockerfile \
             --tag "${IMAGE_BASE}:latest" \
-            --tag "${IMAGE_BASE}:${SHORT_SHA}" \
+            --tag "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}" \
             .
           docker push "${IMAGE_BASE}:latest"
-          docker push "${IMAGE_BASE}:${SHORT_SHA}"
+          docker push "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}"
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success -- but only for the runs this actually matters for (the daily

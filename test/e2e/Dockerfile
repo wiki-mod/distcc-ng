@@ -103,6 +103,12 @@ USER builder
 # docker-compose). Runs as the same unprivileged `builder` user the real
 # test workflows use, on the loopback interface only (--allow 127.0.0.1),
 # entirely self-contained within this one build step.
+#
+# The COMPILE_OK check below polls with a bounded wait rather than a single
+# immediate grep: distcc can return as soon as it receives the compiled
+# output (DOTO), while distccd's own job-summary write (the COMPILE_OK line)
+# happens afterward in its cleanup path, so an immediate check could flake
+# on a loaded builder (Codex review finding on this Dockerfile).
 RUN set -eux; \
     mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
     echo 'int main(void) { return 0; }' > ok.c; \
@@ -111,8 +117,13 @@ RUN set -eux; \
     DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c; \
     test -f ok.o \
       || { echo "ERROR: self-test distributed compile did not produce ok.o"; cat distccd.log; exit 1; }; \
-    grep -q "COMPILE_OK" distccd.log \
-      || { echo "ERROR: distccd's own log does not show a COMPILE_OK entry"; cat distccd.log; exit 1; }; \
+    found=0; \
+    for _ in 1 2 3 4 5 6 7 8 9 10; do \
+      grep -q "COMPILE_OK" distccd.log && { found=1; break; }; \
+      sleep 0.5; \
+    done; \
+    [ "${found}" = "1" ] \
+      || { echo "ERROR: distccd's own log does not show a COMPILE_OK entry after waiting"; cat distccd.log; exit 1; }; \
     pkill -u "$(id -u)" distccd || true; \
     cd / && rm -rf /tmp/e2e-selftest
 
