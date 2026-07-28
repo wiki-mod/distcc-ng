@@ -8,17 +8,22 @@
 # distributed compile against a local-only one.
 
 #
-# Pinned to the real, live digest for the debian:bookworm-slim tag (verified
-# against Docker Hub's own registry API at pin time, 2026-07-23 -- not
-# guessed or copied from another Dockerfile's pin) for the same reason
-# docker/release/Dockerfile and docker/verify/Dockerfile already pin their
-# own DEBIAN_IMAGE default: OSSF Scorecard's PinnedDependenciesID flags an
-# unpinned tag as a supply-chain risk (the tag can be repointed to different
-# image content without notice). This image intentionally stays on the
-# bookworm-slim lineage (not trixie, unlike the other two Dockerfiles) since
-# it only needs to match distcc-ng's own supported-compiler baseline for the
-# e2e self-compile test, not the release/verification images' own lineage.
-ARG DEBIAN_IMAGE=debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+# Deliberately NOT pinned to a fixed digest, unlike docker/release/Dockerfile
+# and docker/verify/Dockerfile (whose DEBIAN_IMAGE pins exist specifically so
+# OSSF Scorecard's PinnedDependenciesID doesn't flag an unpinned tag as a
+# supply-chain risk). This image's whole purpose (maintainer decision,
+# 2026-07-28) is the opposite: it's rebuilt from scratch once a day
+# (.github/workflows/e2e-image-build.yml's schedule trigger) specifically so
+# it always carries the latest trixie-slim security/backport updates, acting
+# as an early-warning canary for an upstream Debian package update breaking
+# this project's build -- pinning to a fixed digest would defeat that
+# purpose outright. "trixie-slim" (a suite name, not the literal "latest"
+# tag) still bounds it to the current Debian stable generation, matching
+# docker/release/Dockerfile and docker/verify/Dockerfile's own lineage
+# (this image previously tracked the older bookworm-slim lineage on its
+# own, a divergence with no remaining reason once this image gets its own
+# maintained, validated publish pipeline like those two).
+ARG DEBIAN_IMAGE=debian:trixie-slim
 
 FROM ${DEBIAN_IMAGE}
 
@@ -87,5 +92,28 @@ RUN /usr/local/sbin/update-distcc-symlinks
 RUN useradd --create-home --uid 1000 builder && \
     chown -R builder /work
 USER builder
+
+# Real build-time self-test (maintainer decision, 2026-07-28): this image is
+# meant to be pre-built, validated, and pulled by the actual test workflows
+# rather than reassembled from scratch on every CI run (see
+# .github/workflows/e2e-image-build.yml), so it needs the same "fails the
+# image build itself, not a later consumer" bar as docker/verify/Dockerfile's
+# own self-test -- not just an existence/--version check, a real distccd
+# round trip on this single image (both roles it's actually used for in
+# docker-compose). Runs as the same unprivileged `builder` user the real
+# test workflows use, on the loopback interface only (--allow 127.0.0.1),
+# entirely self-contained within this one build step.
+RUN set -eux; \
+    mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
+    echo 'int main(void) { return 0; }' > ok.c; \
+    /usr/local/bin/distccd --daemon --allow 127.0.0.1 --port 3633 --log-file distccd.log; \
+    sleep 1; \
+    DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c; \
+    test -f ok.o \
+      || { echo "ERROR: self-test distributed compile did not produce ok.o"; cat distccd.log; exit 1; }; \
+    grep -q "COMPILE_OK" distccd.log \
+      || { echo "ERROR: distccd's own log does not show a COMPILE_OK entry"; cat distccd.log; exit 1; }; \
+    pkill -u "$(id -u)" distccd || true; \
+    cd / && rm -rf /tmp/e2e-selftest
 
 EXPOSE 3632/tcp

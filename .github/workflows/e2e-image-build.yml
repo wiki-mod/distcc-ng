@@ -1,0 +1,148 @@
+name: E2E test image build+publish
+
+# Builds test/e2e/Dockerfile (the two-container distributed-compile test
+# image shared by c-build.yml's per-push e2e job and master-heartbeat.yml's
+# weekly ccache heartbeat) and proves it real via the image's own embedded
+# self-test RUN step (a real distcc-through-distccd compile, not just an
+# existence/--version check -- see the Dockerfile). Same shape as
+# verify-image-build.yml for docker/verify/Dockerfile, kept as its own file
+# rather than folded into that one (different image, different consumers,
+# different schedule) per AGENTS.md rule 61's own precedent of picking a fit
+# by actual trigger/purpose shape, not just topical similarity.
+#
+# Maintainer decision, 2026-07-28: this image is deliberately NOT built fresh
+# on every test run (the prior approach, `docker compose build` inside
+# run-e2e.sh) -- it is pre-built here, validated by its own self-test, and
+# published so the actual test workflows can just pull a known-good image
+# instead of reassembling it live each time. It is also deliberately NOT
+# pinned to a fixed base-image digest (see test/e2e/Dockerfile's own
+# comment): the schedule trigger below rebuilds it once a day so it always
+# picks up the latest Debian trixie-slim security/backport updates, acting
+# as an early-warning canary for an upstream package update breaking this
+# project's build -- a fixed digest would defeat that purpose. 02:00 UTC is
+# deliberately chosen to not overlap with this repo's other daily/weekly
+# schedules (c-build.yml 03:00, nightly-publish.yml 04:00, codeql.yml Sun
+# 05:00, master-heartbeat.yml Mon 05:00, scorecard.yml Sun 06:00,
+# openssf-baseline-recheck.yml 1st/15th 06:00, osv-scanner.yml Sun 07:00).
+#
+# On a pull_request, only build_and_selftest runs (proves the Dockerfile
+# still builds and self-tests clean) -- publish is skipped so a PR can never
+# push a package, same guard as verify-image-build.yml. On push to
+# current_dev, workflow_dispatch, or the daily schedule, publish also runs,
+# rebuilding the now-proven image and pushing it to GHCR as
+# distcc-ng-e2e:latest (own package, separate from distcc-ng/
+# distcc-ng-nightly/distcc-ng-buildtools).
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - current_dev
+    paths:
+      - 'test/e2e/Dockerfile'
+      - '.github/workflows/e2e-image-build.yml'
+  pull_request:
+    paths:
+      - 'test/e2e/Dockerfile'
+      - '.github/workflows/e2e-image-build.yml'
+  schedule:
+    # Daily, so the image always carries current trixie-slim updates -- see
+    # the header comment above for why this one image is deliberately not
+    # pinned to a fixed digest, and why 02:00 UTC specifically.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  # The Dockerfile's own embedded self-test RUN step (a real distcc ->
+  # distccd compile, checked against the daemon's own COMPILE_OK log line)
+  # already fails this build on any regression -- see the Dockerfile.
+  build_and_selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # schedule always evaluates from the default branch (master); this
+          # image tracks current_dev's own test/e2e/Dockerfile, same
+          # redirect pattern as c-build.yml/nightly-publish.yml's own
+          # schedule-triggered jobs.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      - name: Build test/e2e/Dockerfile
+        run: docker build -f test/e2e/Dockerfile -t distcc-ng-e2e:selftest .
+
+  # --- Publish, only after a successful build+selftest, never from a PR -----
+  # Same reasoning as verify-image-build.yml's publish job: a pull_request
+  # event could carry an attacker-modified Dockerfile, so gating on
+  # !pull_request means only a push to current_dev (already reviewed and
+  # merged), an explicit manual workflow_dispatch, or the daily schedule can
+  # ever reach GHCR.
+  publish:
+    needs: build_and_selftest
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+
+      - name: Log in to GHCR
+        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push distcc-ng-e2e:latest
+        # Rebuilt here rather than re-tagging build_and_selftest's image --
+        # jobs run on separate runners with no shared Docker daemon/image
+        # cache, so this is the only way to get the already-proven Dockerfile
+        # into GHCR. Tagged both :latest (moving, what the test workflows
+        # pull) and the short commit SHA (so a given pull can be pinned to
+        # the exact revision that was proven by this run).
+        env:
+          IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          docker build \
+            --file test/e2e/Dockerfile \
+            --tag "${IMAGE_BASE}:latest" \
+            --tag "${IMAGE_BASE}:${SHORT_SHA}" \
+            .
+          docker push "${IMAGE_BASE}:latest"
+          docker push "${IMAGE_BASE}:${SHORT_SHA}"
+
+  # Files/updates the standing nightly-broken issue on failure, closes it on
+  # success -- but only for the runs this actually matters for (the daily
+  # schedule, or a manual dispatch/current_dev push meant to really publish);
+  # a PR's own build_and_selftest failure already surfaces as a normal failed
+  # PR check, it doesn't need a standing tracking issue too.
+  report:
+    needs: [build_and_selftest, publish]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: current_dev
+      - uses: ./.github/actions/nightly-status
+        with:
+          outcome: ${{ (needs.build_and_selftest.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          scope: e2e test image build+publish (distcc-ng-e2e)
