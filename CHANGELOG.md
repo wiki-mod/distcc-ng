@@ -11,6 +11,27 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,
+  `test/e2e/run-e2e.sh`**: two diagnostic/robustness additions to the weekly
+  ccache-distributed heartbeat, motivated by issue #263 (a real heartbeat
+  failure that took real effort to trace back to a compiler-version problem
+  rather than a distcc-ng bug). (1) A new `ccache_control_build` job builds
+  the same pinned ccache source directly with the same image's plain
+  compiler, entirely independent of distcc/distccd (no daemon, no launcher,
+  no network hop), and writes a classification note to the job summary; it
+  never gates `ccache_heartbeat`'s own result (the `report` job still keys
+  exclusively off `needs.ccache_heartbeat.result`), so a real distcc bug can
+  never be masked by a green control build. (2) `run-e2e.sh` gained an
+  optional `E2E_MAX_ATTEMPTS` retry loop (default `1`, i.e. unchanged
+  behavior for `c-build.yml`'s per-push `distributed_e2e` job) so the weekly
+  heartbeat can ride out a one-off network/container flake; a failure that
+  reproduces on every attempt still exits non-zero. Both the heartbeat build
+  and the new control build read the pinned ccache tag from a single
+  workflow-level `CCACHE_HEARTBEAT_TAG` so they can never silently drift onto
+  different ccache revisions.
+
 ### Fixed
 
 - **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
