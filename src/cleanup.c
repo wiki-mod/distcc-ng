@@ -54,15 +54,6 @@ volatile int n_cleanups = 0;    /* The number of entries used. */
 
 static void dcc_cleanup_tempfiles_inner(int from_signal_handler);
 
-/* Cached result of the DISTCC_SAVE_TEMPS lookup, so the signal-handler path
- * (see below) never needs to call getenv() itself. -1 means "not yet
- * determined"; only ever set from dcc_add_cleanup(), which -- unlike
- * dcc_cleanup_tempfiles_from_signal_handler() -- is never called from a
- * signal handler, and always runs before there is anything in `cleanups`
- * for a later signal-driven cleanup to act on. Volatile for the same reason
- * as `cleanups` above: it can be read from a signal handler. */
-static volatile int dcc_save_temps_cached = -1;
-
 /* Normal-context entry point: safe to call at any time (e.g. hooked into
  * atexit()), since it's free to call malloc()/free() and rs_trace(). */
 void dcc_cleanup_tempfiles(void)
@@ -70,10 +61,16 @@ void dcc_cleanup_tempfiles(void)
     dcc_cleanup_tempfiles_inner(0);
 }
 
-/* Signal-handler entry point: skips free(), tracing, and any direct
- * getenv() call (see dcc_cleanup_tempfiles_inner()'s from_signal_handler
- * handling below and dcc_save_temps_cached above), none of which are on
- * POSIX's async-signal-safe function list. */
+/* Signal-handler entry point: skips free() and tracing (see
+ * dcc_cleanup_tempfiles_inner()'s from_signal_handler handling below),
+ * neither of which are on POSIX's async-signal-safe function list. The
+ * DISTCC_SAVE_TEMPS getenv() lookup below is not on that list either, but
+ * this codebase has no threads anywhere (fork()-based concurrency only --
+ * no pthread_create in this tree), so the race that guarantee actually
+ * protects against (another thread mutating the environment while a
+ * signal handler reads it) cannot occur here; not worth the complexity of
+ * caching the value elsewhere for a race this process structurally can't
+ * hit. */
 void dcc_cleanup_tempfiles_from_signal_handler(void)
 {
     dcc_cleanup_tempfiles_inner(1);
@@ -91,18 +88,13 @@ void dcc_cleanup_tempfiles_from_signal_handler(void)
  * If $DISTCC_SAVE_TEMPS is set to "1", then files are not actually
  * deleted, which can be good for debugging.  However, we still need
  * to remove them from the list, otherwise it will eventually overflow
- * in prefork mode. This applies equally on the signal-handler path --
- * distcc.1/distccd.1 document DISTCC_SAVE_TEMPS unconditionally, with no
- * carve-out for a signal-driven exit -- so this reads
- * dcc_save_temps_cached (set by dcc_add_cleanup(), never computed here)
- * instead of calling dcc_getenv_bool()/getenv() directly, which is not on
- * POSIX's async-signal-safe function list.
+ * in prefork mode.
  */
 static void dcc_cleanup_tempfiles_inner(int from_signal_handler)
 {
     int i;
     int done = 0;
-    int save = dcc_save_temps_cached;
+    int save = dcc_getenv_bool("DISTCC_SAVE_TEMPS", 0);
 
     /* do the unlinks from the last to the first file.
      * This way, directories get deleted after their files. */
@@ -150,13 +142,6 @@ int dcc_add_cleanup(const char *filename)
 {
     char *new_filename;
     int new_n_cleanups = n_cleanups + 1;
-
-    /* Compute dcc_save_temps_cached on the first real cleanup registration
-     * -- this function is never called from a signal handler, so this is
-     * the only place that ever calls dcc_getenv_bool()/getenv() for this
-     * flag; dcc_cleanup_tempfiles_inner() just reads the cached result. */
-    if (dcc_save_temps_cached == -1)
-        dcc_save_temps_cached = dcc_getenv_bool("DISTCC_SAVE_TEMPS", 0);
 
     /* Increase the size of the cleanups array, if needed.
      * We avoid using realloc() here, to ensure that 'cleanups' remains
