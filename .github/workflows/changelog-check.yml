@@ -83,7 +83,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch current labels/milestone live
         # github.event.pull_request.labels/.milestone is a snapshot taken
         # when THIS event fired, and can go stale if metadata changes after
@@ -131,7 +131,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch current PR title live
         # github.event.pull_request.title is a snapshot taken when THIS
         # event fired -- an edited title (without a new commit, which
