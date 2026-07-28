@@ -42,26 +42,32 @@ echo
 # masquerade dir created by update-distcc-symlinks). Tests are off to keep the
 # build to pure library/binary compiles.
 #
-# -DWARNINGS_AS_ERRORS=OFF: ccache's own build auto-enables "dev mode"
-# (CCACHE_DEV_MODE, see its CMakeLists.txt) whenever it's built from a git
-# checkout, which turns its own -Werror on by default. That surfaced a real
-# GCC 12.2.0 (Debian bookworm) false positive in argprocessing.cpp
-# (-Wmaybe-uninitialized on a deeply-inlined tl::expected/std::optional
-# chain at -O3) and, once that one's silenced, a second false positive
-# elsewhere (-Wrestrict with obviously-impossible offsets) -- confirmed via
-# issue #263 to reproduce identically with a plain local compile
-# (test/e2e/control-build.sh), i.e. entirely independent of distcc. This
-# heartbeat exists to validate *distribution*, not to gate on an unrelated
-# third-party project's own dev-mode warning strictness against a specific
-# compiler version's false positives, so ccache's own documented override is
-# used to turn dev mode's -Werror off for this build only -- distcc-ng's own
-# build keeps its full warning set untouched.
+# -Wno-error=maybe-uninitialized -Wno-error=restrict: ccache's own build
+# auto-enables "dev mode" (CCACHE_DEV_MODE, see its CMakeLists.txt) whenever
+# it's built from a git checkout, which turns its own -Werror on by default.
+# That surfaced two real GCC 12.2.0 (Debian bookworm) false positives:
+# -Wmaybe-uninitialized in argprocessing.cpp (a deeply-inlined
+# tl::expected/std::optional chain at -O3), and -Wrestrict in
+# core/statistics.cpp (obviously-impossible offsets) -- confirmed via issue
+# #263 to reproduce identically with a plain local compile
+# (test/e2e/control-build.sh), i.e. entirely independent of distcc.
+#
+# Deliberately these two named -Wno-error flags, not a blanket
+# -DWARNINGS_AS_ERRORS=OFF: this heartbeat's whole point is validating that
+# distccd's remote compile of the *preprocessed* source behaves like a local
+# one, and a real distcc-specific bug (e.g. something a .ii file's
+# preprocessing changes) can manifest as a warning on a class this build
+# doesn't otherwise expect to see -- turning off -Werror wholesale would
+# silently swallow that class of bug instead of catching it. Only the two
+# specific, diagnosed false positives above are silenced; every other
+# warning in ccache's own build (including on the server side, where
+# distccd actually runs this exact command) still fails the build.
 echo "== Configuring ccache (CMake, distributed via distcc) =="
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=distcc \
   -DCMAKE_CXX_COMPILER_LAUNCHER=distcc \
-  -DWARNINGS_AS_ERRORS=OFF \
+  -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=restrict" \
   -DENABLE_TESTING=OFF
 echo
 
