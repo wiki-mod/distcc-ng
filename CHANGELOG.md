@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
+  which included `CHANGELOG.md` -- since almost every PR touches that
+  file (`changelog-check.yml`'s own requirement), `documentation` was
+  firing on nearly every PR regardless of what it actually changed.
+  Excluded `CHANGELOG.md` explicitly; `doc/**` and other real `.md`
+  files (README, etc.) are unaffected.
+
 ### Added
 
 - **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,

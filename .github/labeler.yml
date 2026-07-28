@@ -11,9 +11,17 @@
 
 documentation:
   - changed-files:
+      # CHANGELOG.md is excluded (leading "!" negates a match within this
+      # same list, actions/labeler's documented exclusion syntax): almost
+      # every PR touches it per changelog-check.yml's requirement, which
+      # made "documentation" fire on nearly every PR regardless of what it
+      # actually changed -- it describes what changed, not how to use the
+      # project, so it doesn't belong in the same bucket as doc/** or a
+      # real README/doc .md file.
       - any-glob-to-any-file:
           - "doc/**"
           - "**/*.md"
+          - "!CHANGELOG.md"
 
 ci:
   - changed-files:
