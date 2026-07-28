@@ -185,6 +185,11 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
 	goto out;
     }
 
+    /* Reset before the loop so a stale value left over from an unrelated
+     * earlier syscall in this same process (e.g. EAGAIN from this client's
+     * own non-blocking network I/O) can't be misread below as this read
+     * having failed. */
+    errno = 0;
     while ((bytes_read = getline(&line, &len, cpp_f)) != -1) {
         if (strstr(line, ".incbin \\\"") || strstr(line, ".incbin \"")) {
 	    rs_log_info("Found unsupported .incbin directive, compiling locally.");
@@ -193,18 +198,19 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
 	}
     }
 
-    /* getline() returns -1 both on a genuine read error and on plain EOF,
-     * and does not guarantee errno is left at 0 on the EOF path -- checking
-     * errno here can misreport a stale value left over from an unrelated
-     * earlier syscall (e.g. this same process's own non-blocking network
-     * I/O) as if it were this read failing. ferror() reflects only this
-     * FILE stream's own error state, so it can't be polluted by anything
-     * else in the process, and works the same whether getline() here
-     * resolves to glibc's or this project's own compat implementation
-     * (util.c's #ifndef HAVE_GETLINE fallback). See AGENTS.md rule 72's
-     * live incident for the full history of the errno-based check this
-     * replaces. */
-    if (bytes_read < 0 && ferror(cpp_f))
+    /* getline() returns -1 both on a genuine read error and on plain EOF;
+     * ferror() alone reliably tells the two apart for glibc's own
+     * getline(), but not for this project's compat implementation
+     * (util.c's #ifndef HAVE_GETLINE fallback): its out-of-memory path
+     * returns -1 without ever touching the FILE stream (the failure is in
+     * realloc(), not in a stream read), so plain EOF and an allocation
+     * failure look identical to ferror() there. errno is the fallback
+     * signal for that case -- realloc() sets errno=ENOMEM on failure, and
+     * resetting errno to 0 immediately above (rather than leaving it
+     * unset, as this check used to) means any nonzero value seen here was
+     * set during this specific read, not stale from something unrelated
+     * earlier in the process. */
+    if (bytes_read < 0 && (ferror(cpp_f) || errno != 0))
         rs_log_warning("%s: getline failed: %s (%d), file %s", __func__, strerror(errno), errno, cpp_fname);
 out:
     if (line)
