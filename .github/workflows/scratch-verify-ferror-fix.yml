@@ -1,7 +1,9 @@
 name: SCRATCH verify ferror fix (temporary, removed before merge)
 
 on:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/scratch-verify-ferror-fix.yml"
 
 permissions:
   contents: read
