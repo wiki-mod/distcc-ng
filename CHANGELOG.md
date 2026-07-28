@@ -165,6 +165,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `src/remote.c` file end-to-end (not just grepping for the exact
   `errno`-after-`getline()` shape) is what surfaced the `gettimeofday()`
   pattern as worth checking in the first place.
+- **`AGENTS.md`**: added rule 74 -- a Dependabot (or any automated)
+  dependency-bump PR must be reviewed before merging, not merged on
+  CI-green alone: verify the new pinned SHA against the upstream repo's
+  own tag refs, keep the `# vX.Y.Z` comment accurate, read the actual
+  release notes for the version range crossed, and explicitly decide
+  whether anything breaking/deprecated requires a change to how this repo
+  uses the dependency. Found necessary reviewing PR #342/#343 (10 bundled
+  GitHub Actions bumps): `github/codeql-action`'s bump was a real v3->v4
+  major-version jump, but the diff's own inline comment still read `# v3`
+  -- fixed directly on both PRs' branches as part of this review.
 
 - **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
   or bug-fixing PR should add or update an automated test in
