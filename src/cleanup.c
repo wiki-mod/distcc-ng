@@ -60,7 +60,20 @@ static void dcc_cleanup_tempfiles_inner(int from_signal_handler);
  * dcc_cleanup_tempfiles_from_signal_handler() -- is never called from a
  * signal handler, and always runs before there is anything in `cleanups`
  * for a later signal-driven cleanup to act on. Volatile for the same reason
- * as `cleanups` above: it can be read from a signal handler. */
+ * as `cleanups` above: it can be read from a signal handler.
+ *
+ * This is not just a theoretical POSIX-list technicality: this codebase has
+ * no threads (fork()-based concurrency only), but async-signal-safety also
+ * protects against same-thread reentrancy, and that half is concretely
+ * reachable here. dcc_client_catch_signals() (src/distcc.c) installs the
+ * SIGTERM/SIGINT handler that calls dcc_cleanup_tempfiles_from_signal_handler()
+ * before any fork(); a forked child inherits that handler (POSIX fork(2)),
+ * and dcc_inside_child() (src/exec.c) calls dcc_increment_safeguard()
+ * (src/safeguard.c), which calls putenv(), in that same child right before
+ * exec(). A signal arriving mid-putenv() would re-enter getenv() on a
+ * partially-mutated environ if dcc_cleanup_tempfiles_inner() called it
+ * directly from the signal-handler path -- caching the value here avoids
+ * that regardless of the (separately true) lack of threads. */
 static volatile int dcc_save_temps_cached = -1;
 
 /* Normal-context entry point: safe to call at any time (e.g. hooked into
@@ -72,8 +85,10 @@ void dcc_cleanup_tempfiles(void)
 
 /* Signal-handler entry point: skips free(), tracing, and any direct
  * getenv() call (see dcc_cleanup_tempfiles_inner()'s from_signal_handler
- * handling below and dcc_save_temps_cached above), none of which are on
- * POSIX's async-signal-safe function list. */
+ * handling below and dcc_save_temps_cached above) -- none of those are on
+ * POSIX's async-signal-safe function list, and this codebase has a
+ * concrete (not just theoretical) same-thread reentrancy path where that
+ * matters: see dcc_save_temps_cached's own comment. */
 void dcc_cleanup_tempfiles_from_signal_handler(void)
 {
     dcc_cleanup_tempfiles_inner(1);
