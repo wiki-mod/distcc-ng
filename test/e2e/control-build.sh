@@ -39,9 +39,15 @@ echo
 # Deliberately no CMAKE_<LANG>_COMPILER_LAUNCHER: cmake invokes the plain
 # system compiler directly on this same image, so the launcher is the only
 # variable versus client-heartbeat.sh's distributed build.
+#
+# -Wno-error=maybe-uninitialized -Wno-error=restrict: see the matching flag
+# in client-heartbeat.sh -- this control build must use the exact same
+# flags as the distributed build (launcher aside), or a warning-level
+# mismatch could masquerade as a real distribution difference.
 echo "== Configuring ccache (plain CMake, no distcc launcher) =="
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=restrict" \
   -DENABLE_TESTING=OFF
 echo
 
