@@ -25,10 +25,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   this was never a distcc-ng distribution bug. Root cause: ccache's own
   CMake build auto-enables "dev mode" (and with it, `-Werror`) whenever it's
   built from a git checkout -- exactly how both scripts build it. Both
-  scripts now pass ccache's own documented `-DWARNINGS_AS_ERRORS=OFF`
-  override, since this heartbeat exists to validate distribution, not to
-  gate on an unrelated third-party project's dev-mode warning strictness
-  against a specific compiler version's false positives. Verified with a
+  scripts now pass two specific, named CMake overrides
+  (`-Wno-error=maybe-uninitialized -Wno-error=restrict`) instead of
+  disabling ccache's `-Werror` wholesale, so this heartbeat still catches a
+  real distcc-specific bug that happened to manifest as some other warning
+  class -- only the two diagnosed false positives are silenced. Verified with a
   full real run of the two-container heartbeat harness: 75 remote jobs
   completed successfully.
 

@@ -48,8 +48,8 @@ echo
 # That surfaced two real GCC 12.2.0 (Debian bookworm) false positives:
 # -Wmaybe-uninitialized in argprocessing.cpp (a deeply-inlined
 # tl::expected/std::optional chain at -O3), and -Wrestrict in
-# core/statistics.cpp (obviously-impossible offsets) -- confirmed via issue
-# #263 to reproduce identically with a plain local compile
+# core/statistics.cpp (obviously-impossible offsets) -- confirmed to
+# reproduce identically with a plain local compile
 # (test/e2e/control-build.sh), i.e. entirely independent of distcc.
 #
 # Deliberately these two named -Wno-error flags, not a blanket
