@@ -41,11 +41,27 @@ echo
 # whitelist accepts via its /usr/bin path exception (the cc/c++ names are in the
 # masquerade dir created by update-distcc-symlinks). Tests are off to keep the
 # build to pure library/binary compiles.
+#
+# -DWARNINGS_AS_ERRORS=OFF: ccache's own build auto-enables "dev mode"
+# (CCACHE_DEV_MODE, see its CMakeLists.txt) whenever it's built from a git
+# checkout, which turns its own -Werror on by default. That surfaced a real
+# GCC 12.2.0 (Debian bookworm) false positive in argprocessing.cpp
+# (-Wmaybe-uninitialized on a deeply-inlined tl::expected/std::optional
+# chain at -O3) and, once that one's silenced, a second false positive
+# elsewhere (-Wrestrict with obviously-impossible offsets) -- confirmed via
+# issue #263 to reproduce identically with a plain local compile
+# (test/e2e/control-build.sh), i.e. entirely independent of distcc. This
+# heartbeat exists to validate *distribution*, not to gate on an unrelated
+# third-party project's own dev-mode warning strictness against a specific
+# compiler version's false positives, so ccache's own documented override is
+# used to turn dev mode's -Werror off for this build only -- distcc-ng's own
+# build keeps its full warning set untouched.
 echo "== Configuring ccache (CMake, distributed via distcc) =="
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=distcc \
   -DCMAKE_CXX_COMPILER_LAUNCHER=distcc \
+  -DWARNINGS_AS_ERRORS=OFF \
   -DENABLE_TESTING=OFF
 echo
 

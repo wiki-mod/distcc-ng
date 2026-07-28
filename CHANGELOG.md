@@ -11,6 +11,27 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
+  ccache-distributed heartbeat (#263) failed building `argprocessing.cpp`,
+  and (once that was worked around) `core/statistics.cpp` too. Confirmed via
+  a real reproduction on an independent host (not WSL2) that both failures
+  are real GCC 12.2.0 (Debian bookworm) false positives
+  (`-Wmaybe-uninitialized` on a deeply-inlined `tl::expected`/
+  `std::optional<core::Statistic>` chain, then `-Wrestrict` with
+  obviously-impossible offsets) -- reproducing identically with a plain
+  local compile (`control-build.sh`, entirely independent of distcc), so
+  this was never a distcc-ng distribution bug. Root cause: ccache's own
+  CMake build auto-enables "dev mode" (and with it, `-Werror`) whenever it's
+  built from a git checkout -- exactly how both scripts build it. Both
+  scripts now pass ccache's own documented `-DWARNINGS_AS_ERRORS=OFF`
+  override, since this heartbeat exists to validate distribution, not to
+  gate on an unrelated third-party project's dev-mode warning strictness
+  against a specific compiler version's false positives. Verified with a
+  full real run of the two-container heartbeat harness: 75 remote jobs
+  completed successfully.
+
 ### Added
 
 - **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,
