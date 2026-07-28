@@ -54,11 +54,16 @@ volatile int n_cleanups = 0;    /* The number of entries used. */
 
 static void dcc_cleanup_tempfiles_inner(int from_signal_handler);
 
+/* Normal-context entry point: safe to call at any time (e.g. hooked into
+ * atexit()), since it's free to call malloc()/free() and rs_trace(). */
 void dcc_cleanup_tempfiles(void)
 {
     dcc_cleanup_tempfiles_inner(0);
 }
 
+/* Signal-handler entry point: must stay async-signal-safe, so it skips
+ * free() and tracing (see dcc_cleanup_tempfiles_inner()'s from_signal_handler
+ * handling below). */
 void dcc_cleanup_tempfiles_from_signal_handler(void)
 {
     dcc_cleanup_tempfiles_inner(1);

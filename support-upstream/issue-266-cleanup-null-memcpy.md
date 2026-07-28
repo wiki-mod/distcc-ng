@@ -16,9 +16,12 @@ still `NULL` and `cleanups_size` is still `0`, so this becomes
 source. This never actually dereferences anything and is harmless in
 practice, but it is technically undefined behavior per the C standard:
 libc declares `memcpy()`'s source parameter `nonnull`, and UBSan enforces
-that regardless of the length argument. It fires on essentially every
-single `distcc`/`distccd` invocation, since this is the very first
-cleanup registration in the process.
+that regardless of the length argument. It fires on the first cleanup
+registration in any real compile or daemon session -- simple early-exit
+invocations like `--version`/`--help`/`--show-hosts` (`src/distcc.c`)
+return before ever reaching `dcc_add_cleanup()`'s call sites in
+`src/srvrpc.c`/`src/tempfile.c`, so those specific invocations never
+trigger it.
 
 ## Upstream code (unchanged as of the commit above, upstream)
 
