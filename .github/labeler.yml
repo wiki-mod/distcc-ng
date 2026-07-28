@@ -10,29 +10,33 @@
 # here when either changes.
 
 documentation:
-  # CHANGELOG.md is excluded via a separate `all:` condition, not a
-  # negated entry inside the same any-glob-to-any-file OR-list (that first
-  # attempt was wrong -- Codex review finding on PR #353: any-glob-to-any-file
-  # ORs its entries, so "!CHANGELOG.md" ORed in just adds "any changed file
-  # that isn't literally named CHANGELOG.md" as its own always-true-ish
-  # match for any multi-file PR, while CHANGELOG.md itself still separately
-  # satisfies "**/*.md" -- neither half of that actually subtracts anything).
-  # This is actions/labeler's own documented exclusion pattern (see its
-  # README's "EXCEPT for the docs sub-folder" example): `all:` requires
-  # both the positive match (doc/** or any .md file) AND the negated
-  # all-globs-to-all-files check (every changed file must satisfy
-  # "!CHANGELOG.md", i.e. none of them is CHANGELOG.md) to hold. Almost
-  # every PR touches CHANGELOG.md per changelog-check.yml's requirement,
-  # which made "documentation" fire on nearly every PR regardless of what
-  # it actually changed -- it describes what changed, not how to use the
-  # project, so it doesn't belong in the same bucket as doc/** or a real
-  # README/doc .md file.
-  - all:
+  # CHANGELOG.md must not be *sufficient* on its own to trigger this label
+  # (almost every PR touches it, per changelog-check.yml's requirement --
+  # it describes what changed, not how to use the project, so it doesn't
+  # belong in the same bucket as doc/** or a real README/doc .md file), but
+  # a genuine documentation PR that also updates CHANGELOG.md (routine,
+  # given that requirement) must still get the label. Two earlier attempts
+  # got this wrong: an any-glob-to-any-file OR-list with a negated entry
+  # doesn't subtract anything (ORing conditions, not filtering files), and
+  # an all: + all-globs-to-all-files: "!CHANGELOG.md" condition requires
+  # *every* changed file to not be CHANGELOG.md -- which also suppresses
+  # the label for the routine doc-PR-plus-changelog-entry case, not just
+  # the changelog-only case.
+  #
+  # This uses any: to OR two independent conditions: doc/** on its own, or
+  # all-globs-to-any-file (a single changed file that satisfies *all* the
+  # listed globs at once) against ["**/*.md", "!CHANGELOG.md"] -- i.e. some
+  # one file that both is a .md file and is not CHANGELOG.md. That fires
+  # for any real doc .md file regardless of whether CHANGELOG.md is also
+  # among the changed files, and never fires for CHANGELOG.md alone (it
+  # can't simultaneously satisfy "**/*.md" and "not CHANGELOG.md").
+  - any:
       - changed-files:
-          - any-glob-to-any-file:
-              - "doc/**"
+          - any-glob-to-any-file: "doc/**"
+      - changed-files:
+          - all-globs-to-any-file:
               - "**/*.md"
-          - all-globs-to-all-files: "!CHANGELOG.md"
+              - "!CHANGELOG.md"
 
 ci:
   - changed-files:
