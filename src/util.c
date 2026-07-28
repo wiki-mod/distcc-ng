@@ -89,6 +89,7 @@ void dcc_exit(int exitcode)
 }
 
 
+/* Return true if @p tiger ends with @p tail. */
 int str_endswith(const char *tail, const char *tiger)
 {
     size_t len_tail = strlen(tail);
@@ -101,6 +102,7 @@ int str_endswith(const char *tail, const char *tiger)
 }
 
 
+/* Return true if @p worm starts with @p head. */
 int str_startswith(const char *head, const char *worm)
 {
     return !strncmp(head, worm, strlen(head));
@@ -150,6 +152,8 @@ int dcc_redirect_fd(int fd, const char *fname, int mode)
 
 
 
+/* Return this host's name, cached in a static buffer after the first
+ * successful lookup; "UNKNOWN" if gethostname() fails. */
 char *dcc_gethostname(void)
 {
     static char myname[100] = "\0";
@@ -570,6 +574,8 @@ int dcc_dup_part(const char **psrc, char **pdst, const char *sep)
 
 
 
+/* Unlink @p fname, treating "already gone" (ENOENT) as success rather
+ * than an error. */
 int dcc_remove_if_exists(const char *fname)
 {
     if (unlink(fname) && errno != ENOENT) {
@@ -885,6 +891,9 @@ void dcc_get_disk_io_stats(int *n_reads, int *n_writes) {
 #endif
 
 #ifndef HAVE_STRSEP
+/* Compat strsep(): split *str in place at the first character in @p
+ * delims, returning the token before it and advancing *str past it;
+ * NULL once *str is exhausted. */
 static char* strsep(char** str, const char* delims)
 {
     char* token;
@@ -966,6 +975,12 @@ int dcc_tokenize_string(const char *input, char ***argv_ptr)
 }
 
 #ifndef HAVE_GETLINE
+/* Compat getline() for systems lacking their own: reads one line
+ * (delimited by '\n', or EOF) from @p stream into a growable buffer,
+ * (re)allocating the lineptr and n outputs as needed. Returns the
+ * number of bytes read, or -1 on EOF or allocation failure (see
+ * remote.c's caller for how those two are told apart via
+ * errno/ferror()). */
 ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
     static const int buffer_size_increment = 100;
     char *buffer;
@@ -990,9 +1005,14 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
             size += buffer_size_increment;
             new_buffer = realloc(buffer, size);
             if (new_buffer == NULL) {
-                /* Out of memory. */
+                /* Out of memory. realloc() is documented to set errno to
+                 * ENOMEM on failure, but this compat getline() never touches
+                 * the FILE*, so ferror() can't see this failure; set errno
+                 * explicitly so callers checking it (see remote.c) have a
+                 * reliable signal regardless of realloc()'s own behavior. */
                 *lineptr = buffer;
                 *n = size - buffer_size_increment;
+                errno = ENOMEM;
                 return -1;
             }
             buffer = new_buffer;
@@ -1086,6 +1106,8 @@ union sockaddr_union {
         struct sockaddr_storage storage;
 };
 
+/* Like sd_is_socket_internal(), but also checks the socket's address
+ * family against @p family (0 to skip that check). */
 int not_sd_is_socket(int fd, int family, int type, int listening) {
         int r;
 
@@ -1112,6 +1134,9 @@ int not_sd_is_socket(int fd, int family, int type, int listening) {
         return 1;
 }
 
+/* Build the ".dwo" split-debug filename that goes with @p temp_o (a
+ * ".o" path), by appending "wo" onto it. Caller owns the returned
+ * buffer. */
 char *dcc_make_dwo_fname(const char *temp_o)
 {
     char *out;

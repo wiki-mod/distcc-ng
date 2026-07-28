@@ -98,6 +98,16 @@ static int dcc_remote_connect(struct dcc_hostdef *host,
 }
 
 
+/**
+ * Wait for the background preprocessor to finish, if one was started.
+ *
+ * @param cpp_pid pid of the preprocessor, or 0 if none was started
+ * @param status on return, the preprocessor's wait status
+ * @param input_fname source file name, used only for logging
+ *
+ * @return 0 on success (including "no preprocessor was running"); nonzero
+ * only if collecting the child itself failed.
+ */
 static int dcc_wait_for_cpp(pid_t cpp_pid,
                             int *status,
                             const char *input_fname)
@@ -175,6 +185,11 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
 	goto out;
     }
 
+    /* Reset before the loop so a stale value left over from an unrelated
+     * earlier syscall in this same process (e.g. EAGAIN from this client's
+     * own non-blocking network I/O) can't be misread below as this read
+     * having failed. */
+    errno = 0;
     while ((bytes_read = getline(&line, &len, cpp_f)) != -1) {
         if (strstr(line, ".incbin \\\"") || strstr(line, ".incbin \"")) {
 	    rs_log_info("Found unsupported .incbin directive, compiling locally.");
@@ -183,7 +198,22 @@ dcc_check_unsupported_directives(const char *cpp_fname, const char *input_fname)
 	}
     }
 
-    if (bytes_read < 0 && errno != 0)
+    /* getline() returns -1 both on a genuine read error and on plain EOF;
+     * ferror() alone reliably tells the two apart for glibc's own
+     * getline(), but not for this project's compat implementation
+     * (util.c's #ifndef HAVE_GETLINE fallback): its out-of-memory path
+     * returns -1 without ever touching the FILE stream (the failure is in
+     * realloc(), not in a stream read), so plain EOF and an allocation
+     * failure look identical to ferror() there. errno is the fallback
+     * signal for that case -- util.c's getline() sets errno=ENOMEM
+     * explicitly on that path, and resetting errno to 0 immediately above
+     * (rather than leaving it unset, as this check used to) means any
+     * nonzero value seen here was set during this specific read, not stale
+     * from something unrelated earlier in the process. Verified against
+     * glibc's real getline() on large (multi-MB, multi-refill) files that
+     * errno stays 0 through a clean EOF, so this disjunct does not
+     * reintroduce the false positive it's meant to avoid. */
+    if (bytes_read < 0 && (ferror(cpp_f) || errno != 0))
         rs_log_warning("%s: getline failed: %s (%d), file %s", __func__, strerror(errno), errno, cpp_fname);
 out:
     if (line)
