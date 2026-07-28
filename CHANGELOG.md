@@ -75,6 +75,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Security
 
+- **Bumped 10 pinned GitHub Actions across `.github/workflows/*.yml`**
+  (Dependabot, PR #343): `actions/checkout` v5.0.0/v7.0.0 -> v7.0.1,
+  `actions/cache` v4 -> v6.1.0, `actions/labeler` v6.2.0 -> v7.0.0,
+  `stefanzweifel/git-auto-commit-action` v5.2.0 -> v7.2.0,
+  `release-drafter/release-drafter` (+ its `autolabeler`) v7.5.1 -> v7.6.0,
+  `ossf/scorecard-action` v2.4.3 -> v2.4.4, and `github/codeql-action`
+  (`init`/`analyze`/`upload-sarif`) v3 -> v4.37.3. Reviewed per AGENTS.md
+  rule 74 rather than merged on CI-green alone: each new pinned SHA was
+  resolved against its upstream repo's own tag refs, and each dependency's
+  release notes were checked for anything breaking -- none required an
+  actual workflow change (the only real breaking requirement across all
+  six repos, Node.js 24, is already satisfied by this repo's
+  GitHub-hosted-only runners). The `codeql-action` bump's own inline
+  version comment was left stale at `# v3` by Dependabot despite the SHA
+  genuinely moving to v4.37.3 (confirmed against `codeql-action`'s own
+  `v4` tag) -- corrected as part of this review, in `codeql.yml` and
+  `scorecard.yml`.
+
 - **`.github/workflows/actionlint.yml`** (renamed to reflect its now-broader
   scope): added a new `shellcheck` job linting this repo's own real shell
   scripts (`scripts/*.sh`), using the same pinned `distcc-ng-buildtools`
