@@ -38,6 +38,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 # "ps: not found" warning. cmake/git/ca-certificates and the zstd/hiredis dev
 # libraries let the weekly heartbeat client clone and build ccache's own CMake
 # project distributed through the same daemon.
+#
+# libseccomp-dev is not optional decoration here: without it configure builds
+# distccd with no seccomp sandbox, so every remote compile in this image runs
+# unsandboxed and the daemon logs a warning on each startup saying exactly
+# that. It also meant this image -- the one gating distributed-compile
+# behavior on every push -- never exercised the sandboxed code path a real
+# deployment with libseccomp installed actually takes. docker/verify/ and
+# test/e2e-full/ already install it; this image was the sole holdout.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       autoconf \
@@ -48,6 +56,7 @@ RUN apt-get update && \
       git \
       libhiredis-dev \
       libpopt-dev \
+      libseccomp-dev \
       libzstd-dev \
       pkg-config \
       procps \
