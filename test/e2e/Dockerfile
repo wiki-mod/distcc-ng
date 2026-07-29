@@ -108,23 +108,32 @@ USER builder
 # delay is enough: distccd forking, initializing, and binding its port is
 # itself an async operation the client's first attempt could race (a fixed
 # `sleep 1` before the first compile attempt is exactly the same class of
-# flake as the immediate-grep issue below, just one step earlier -- Codex
-# review finding on this Dockerfile), and separately distcc can return as
-# soon as it receives the compiled output (DOTO), while distccd's own
-# job-summary write (the COMPILE_OK line) happens afterward in its cleanup
-# path, so an immediate log check could flake too.
+# flake as the immediate-grep issue below, just one step earlier), and
+# separately distcc can return as soon as it receives the compiled output
+# (DOTO), while distccd's own job-summary write (the COMPILE_OK line)
+# happens afterward in its cleanup path, so an immediate log check could
+# flake too.
+#
+# The successful attempt's own stderr is checked for emptiness, not just
+# discarded once a compile succeeds: distcc/the compiler exiting 0 does not
+# mean it produced no warning, and silently dropping that output the moment
+# the exit code looks fine would let a real warning through unnoticed --
+# this repository treats a hidden warning signal as a failed check, not a
+# passing one, the same bar as a real compile error.
 RUN set -eux; \
     mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
     echo 'int main(void) { return 0; }' > ok.c; \
     /usr/local/bin/distccd --daemon --allow 127.0.0.1 --port 3633 --log-file distccd.log; \
     compiled=0; \
     for _ in 1 2 3 4 5 6 7 8 9 10; do \
-      DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c 2>/tmp/e2e-selftest-distcc.log \
+      DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c >/tmp/e2e-selftest-distcc.log 2>&1 \
         && { compiled=1; break; }; \
       sleep 0.5; \
     done; \
     [ "${compiled}" = "1" ] \
       || { echo "ERROR: self-test distributed compile never succeeded after waiting for distccd"; cat /tmp/e2e-selftest-distcc.log distccd.log; exit 1; }; \
+    [ -s /tmp/e2e-selftest-distcc.log ] \
+      && { echo "ERROR: self-test distributed compile succeeded but emitted output/warnings, treating as a failed check"; cat /tmp/e2e-selftest-distcc.log; exit 1; }; \
     test -f ok.o \
       || { echo "ERROR: self-test distributed compile did not produce ok.o"; cat distccd.log; exit 1; }; \
     found=0; \

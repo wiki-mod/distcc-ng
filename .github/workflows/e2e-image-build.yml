@@ -13,12 +13,12 @@ name: E2E test image build+publish
 # Maintainer decision, 2026-07-28: this image should not be built fresh on
 # every test run (the current approach, `docker compose build` inside
 # run-e2e.sh) -- instead it's pre-built here, validated by its own
-# self-test, and published, so a follow-up PR can switch the actual test
+# self-test, and published, so a later change can switch the actual test
 # workflows to pull a known-good image instead of reassembling it live each
-# time. That consumer switch is NOT part of this PR (see
+# time. That consumer switch is deliberately out of scope here (see
 # test/e2e/README.md's "not yet done" section for why, and a real design
-# constraint it surfaced) -- this PR only builds and publishes the image
-# itself; nothing pulls it yet.
+# constraint it surfaced) -- this workflow only builds and publishes the
+# image itself; nothing pulls it yet.
 #
 # It is also deliberately NOT pinned to a fixed base-image digest (see
 # test/e2e/Dockerfile's own comment): the schedule trigger below rebuilds it
@@ -36,8 +36,7 @@ name: E2E test image build+publish
 # workflow file copy on the default branch (master). This file lands via
 # current_dev, so the daily rebuild has no effect until the next
 # current_dev->master promotion -- push/pull_request/workflow_dispatch are
-# all exercisable now, the schedule is not (Codex review finding on this
-# PR).
+# all exercisable now, the schedule is not.
 #
 # On a pull_request, only build_and_selftest runs (proves the Dockerfile
 # still builds and self-tests clean) -- publish is skipped so a PR can never
@@ -79,6 +78,16 @@ jobs:
   build_and_selftest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Whether this run is even eligible to publish -- a pull_request never
+    # is, and a workflow_dispatch off a branch other than current_dev isn't
+    # either (see the publish job's own condition below, which this mirrors
+    # exactly so both jobs agree on eligibility). Computed once here and
+    # exposed as a job output so the artifact-upload steps below and the
+    # publish/report jobs don't each re-derive it and risk drifting apart.
+    outputs:
+      built_sha: ${{ steps.resolve.outputs.sha }}
+      build_date: ${{ steps.resolve.outputs.date }}
+      publish_eligible: ${{ steps.resolve.outputs.publish_eligible }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -91,6 +100,28 @@ jobs:
           # redirect pattern as c-build.yml/nightly-publish.yml's own
           # schedule-triggered jobs.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+
+      # Resolved once, right after the checkout that will actually be built
+      # below, and threaded through as a job output rather than
+      # re-resolved independently in publish: publish's own checkout ran a
+      # second, later `git rev-parse` against the same moving branch, which
+      # could observe a newer current_dev commit than the one this job
+      # actually built and self-tested if a push landed in between the two
+      # jobs' checkouts -- publishing a tag that claims to pin a revision
+      # this run never built.
+      - name: Resolve build identity
+        id: resolve
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" != "pull_request" ] && \
+             { [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.ref }}" = "refs/heads/current_dev" ]; }; then
+            echo "publish_eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish_eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build test/e2e/Dockerfile
         run: docker build -f test/e2e/Dockerfile -t distcc-ng-e2e:selftest .
 
@@ -102,10 +133,16 @@ jobs:
       # the self-test above (an upstream apt mirror update landing in
       # between could resolve different package versions). Saving the
       # exact image that was proven and loading it in publish closes that
-      # gap (Sonnet review finding on this PR).
+      # gap. Guarded on publish-eligibility: a pull_request (or an
+      # off-current_dev dispatch) never reaches publish, so saving and
+      # uploading the full image there would just burn transfer time and
+      # artifact-storage quota on a check-run that only needs the self-test
+      # to pass, not the resulting image.
       - name: Save the proven image for publish
+        if: steps.resolve.outputs.publish_eligible == 'true'
         run: docker save distcc-ng-e2e:selftest -o /tmp/distcc-ng-e2e.tar
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.resolve.outputs.publish_eligible == 'true'
         with:
           name: distcc-ng-e2e-image
           path: /tmp/distcc-ng-e2e.tar
@@ -121,26 +158,33 @@ jobs:
   # from GitHub itself, so it's scoped explicitly here too -- otherwise
   # manually dispatching this workflow from an arbitrary branch (e.g. an old
   # feature branch carrying a stale copy of this file) would publish that
-  # branch's Dockerfile to the moving :latest tag (Sonnet review finding on
-  # this PR).
+  # branch's Dockerfile to the moving :latest tag.
   publish:
     needs: build_and_selftest
-    if: >-
-      ${{ github.event_name != 'pull_request' &&
-          (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/current_dev') }}
+    if: needs.build_and_selftest.outputs.publish_eligible == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    # A fixed, unqualified group (not ref-scoped like the workflow-level
+    # concurrency above): the workflow-level group is per-ref, so a
+    # scheduled run (ref refs/heads/master, per GitHub's own schedule
+    # semantics) and a current_dev push (ref refs/heads/current_dev) land in
+    # different groups and can publish concurrently. If the scheduled run
+    # happens to finish after a newer push's publish, it would overwrite
+    # :latest with older content. Queuing (cancel-in-progress: false, same
+    # as nightly-publish.yml's own publisher-wide group) instead of
+    # cancelling means every eligible publish still actually runs, just
+    # never two at once.
+    concurrency:
+      group: e2e-image-build-publish
+      cancel-in-progress: false
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
 
       - name: Log in to GHCR
         run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -155,35 +199,50 @@ jobs:
         # rebuilt here -- see that job's own comment on why: the base
         # image is deliberately unpinned, so a second independent `docker
         # build` on a different runner is not guaranteed to reproduce the
-        # exact content that passed the self-test. Tagged :latest (moving,
-        # what the test workflows will pull once the follow-up lands) and
-        # a SHORT_SHA-DATE tag, not a bare short commit SHA alone: the
-        # daily schedule can rebuild on a day current_dev's HEAD hasn't
-        # moved, and since the base image is unpinned, that rebuild can
-        # still produce different image content -- a bare commit-SHA tag
-        # would then silently point at different content across runs,
-        # breaking the "pin to what this exact run proved" guarantee such
-        # a tag implies (Codex review finding on this PR).
+        # exact content that passed the self-test. No checkout in this job
+        # at all: SHA/date come from build_and_selftest's own outputs
+        # (resolved right after *its* checkout, see that job's "Resolve
+        # build identity" step) rather than a second, independent
+        # `git rev-parse` here, which could observe a newer current_dev
+        # commit than the one actually built if a push landed between the
+        # two jobs' checkouts. Tagged :latest (moving, what the test
+        # workflows will pull once a later change wires that up) and a
+        # SHORT_SHA-DATE-RUN_ID tag: SHA-DATE alone still collides if the
+        # same commit is rebuilt twice on the same UTC day (a manual
+        # dispatch/rerun alongside the daily schedule) -- since the base
+        # image and apt repositories are both deliberately mutable, two
+        # same-day builds of the same SHA are not guaranteed to be
+        # byte-identical, so the run ID (unique per workflow run) makes
+        # every published tag actually unique to the run that produced it.
         env:
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
+          BUILT_SHA: ${{ needs.build_and_selftest.outputs.built_sha }}
+          BUILD_DATE: ${{ needs.build_and_selftest.outputs.build_date }}
         run: |
           set -euo pipefail
           docker load -i /tmp/distcc-ng-e2e.tar
-          SHORT_SHA="$(git rev-parse --short HEAD)"
-          BUILD_DATE="$(date -u +%Y%m%d)"
+          BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
-          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}"
+          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${BUILD_TAG}"
           docker push "${IMAGE_BASE}:latest"
-          docker push "${IMAGE_BASE}:${SHORT_SHA}-${BUILD_DATE}"
+          docker push "${IMAGE_BASE}:${BUILD_TAG}"
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success -- but only for the runs this actually matters for (the daily
   # schedule, or a manual dispatch/current_dev push meant to really publish);
   # a PR's own build_and_selftest failure already surfaces as a normal failed
-  # PR check, it doesn't need a standing tracking issue too.
+  # PR check, it doesn't need a standing tracking issue too. Gated on the
+  # same publish_eligible output publish itself uses (rather than a
+  # separately-written condition that could drift from it): a
+  # workflow_dispatch off a branch other than current_dev deliberately
+  # skips publish, and without this same guard here, that skip would surface
+  # to the outcome expression below as neither success nor a real failure --
+  # a legitimate no-op reported as a broken nightly run.
   report:
     needs: [build_and_selftest, publish]
-    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' }}
+    if: >-
+      ${{ always() && !cancelled() && github.event_name != 'pull_request' &&
+          needs.build_and_selftest.outputs.publish_eligible == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
