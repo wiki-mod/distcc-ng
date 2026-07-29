@@ -8,17 +8,22 @@
 # distributed compile against a local-only one.
 
 #
-# Pinned to the real, live digest for the debian:bookworm-slim tag (verified
-# against Docker Hub's own registry API at pin time, 2026-07-23 -- not
-# guessed or copied from another Dockerfile's pin) for the same reason
-# docker/release/Dockerfile and docker/verify/Dockerfile already pin their
-# own DEBIAN_IMAGE default: OSSF Scorecard's PinnedDependenciesID flags an
-# unpinned tag as a supply-chain risk (the tag can be repointed to different
-# image content without notice). This image intentionally stays on the
-# bookworm-slim lineage (not trixie, unlike the other two Dockerfiles) since
-# it only needs to match distcc-ng's own supported-compiler baseline for the
-# e2e self-compile test, not the release/verification images' own lineage.
-ARG DEBIAN_IMAGE=debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+# Deliberately NOT pinned to a fixed digest, unlike docker/release/Dockerfile
+# and docker/verify/Dockerfile (whose DEBIAN_IMAGE pins exist specifically so
+# OSSF Scorecard's PinnedDependenciesID doesn't flag an unpinned tag as a
+# supply-chain risk). This image's whole purpose (maintainer decision,
+# 2026-07-28) is the opposite: it's rebuilt from scratch once a day
+# (.github/workflows/e2e-image-build.yml's schedule trigger) specifically so
+# it always carries the latest trixie-slim security/backport updates, acting
+# as an early-warning canary for an upstream Debian package update breaking
+# this project's build -- pinning to a fixed digest would defeat that
+# purpose outright. "trixie-slim" (a suite name, not the literal "latest"
+# tag) still bounds it to the current Debian stable generation, matching
+# docker/release/Dockerfile and docker/verify/Dockerfile's own lineage
+# (this image previously tracked the older bookworm-slim lineage on its
+# own, a divergence with no remaining reason once this image gets its own
+# maintained, validated publish pipeline like those two).
+ARG DEBIAN_IMAGE=debian:trixie-slim
 
 FROM ${DEBIAN_IMAGE}
 
@@ -33,6 +38,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 # "ps: not found" warning. cmake/git/ca-certificates and the zstd/hiredis dev
 # libraries let the weekly heartbeat client clone and build ccache's own CMake
 # project distributed through the same daemon.
+#
+# libseccomp-dev is not optional decoration here: without it configure builds
+# distccd with no seccomp sandbox, so every remote compile in this image runs
+# unsandboxed and the daemon logs a warning on each startup saying exactly
+# that. It also meant this image -- the one gating distributed-compile
+# behavior on every push -- never exercised the sandboxed code path a real
+# deployment with libseccomp installed actually takes. docker/verify/ and
+# test/e2e-full/ already install it; this image was the sole holdout.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       autoconf \
@@ -43,6 +56,7 @@ RUN apt-get update && \
       git \
       libhiredis-dev \
       libpopt-dev \
+      libseccomp-dev \
       libzstd-dev \
       pkg-config \
       procps \
@@ -87,5 +101,80 @@ RUN /usr/local/sbin/update-distcc-symlinks
 RUN useradd --create-home --uid 1000 builder && \
     chown -R builder /work
 USER builder
+
+# Real build-time self-test (maintainer decision, 2026-07-28): this image is
+# meant to be pre-built, validated, and pulled by the actual test workflows
+# rather than reassembled from scratch on every CI run (see
+# .github/workflows/e2e-image-build.yml), so it needs the same "fails the
+# image build itself, not a later consumer" bar as docker/verify/Dockerfile's
+# own self-test -- not just an existence/--version check, a real distccd
+# round trip on this single image (both roles it's actually used for in
+# docker-compose). Runs as the same unprivileged `builder` user the real
+# test workflows use, on the loopback interface only (--allow 127.0.0.1),
+# entirely self-contained within this one build step.
+#
+# The compile itself runs exactly once and is never retried. There is no
+# daemon-readiness race to absorb: dcc_standalone_server() calls
+# dcc_socket_listen() before dcc_detach(), and that code's own comment says
+# so explicitly -- "Don't go into the background until we're listening and
+# ready. This is useful for testing -- when the daemon detaches, we know we
+# can go ahead and try to connect" (src/dparent.c). Since distccd is started
+# here without --no-detach, the shell command above only returns once the
+# daemon has detached, which by that design means the socket is already
+# listening. Retrying would also be actively harmful rather than merely
+# redundant: the distributed compile is the very thing this self-test exists
+# to validate, so a loop around it would swallow an intermittent
+# client/server regression, overwrite the failing attempt's captured output
+# with a later attempt's, and let the image publish on a retry.
+#
+# The COMPILE_OK check below does poll, and that is a genuinely different
+# situation -- not an inconsistency: distcc returns as soon as it has
+# received the compiled object, while distccd writes its job summary
+# afterwards in its own cleanup path, so that line is legitimately async
+# with respect to a compile that has already fully succeeded. Polling there
+# waits for a *report* of the result, not for the operation under test to
+# eventually work.
+#
+# The successful attempt's own stderr is checked for emptiness, not just
+# discarded once a compile succeeds: distcc/the compiler exiting 0 does not
+# mean it produced no warning, and silently dropping that output the moment
+# the exit code looks fine would let a real warning through unnoticed --
+# this repository treats a hidden warning signal as a failed check, not a
+# passing one, the same bar as a real compile error.
+#
+# The client's stderr is only half of that signal, though, so the daemon's
+# own log is scanned for warning-or-worse severities too. The two are
+# genuinely independent: distccd can complete a compile successfully -- so
+# the client sees a clean exit and COMPILE_OK appears -- while still having
+# logged an operational problem on its own side (a restricted
+# /proc/self/autogroup making the niceness adjustment fail, a masquerade
+# whitelist complaint), none of which ever reaches the client. Publishing an
+# image whose daemon warns on every startup would be exactly the hidden-signal
+# case the stderr check above exists to prevent, just on the other end of the
+# connection. The pattern matches distcc's own severity prefixes rather than
+# an ad-hoc word list -- see rs_severities[] in src/trace.c, where levels at
+# notice and below deliberately render with no prefix at all, so this catches
+# precisely the levels that indicate something actually went wrong.
+RUN set -eux; \
+    mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
+    echo 'int main(void) { return 0; }' > ok.c; \
+    /usr/local/bin/distccd --daemon --allow 127.0.0.1 --port 3633 --log-file distccd.log; \
+    DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c >/tmp/e2e-selftest-distcc.log 2>&1 \
+      || { echo "ERROR: self-test distributed compile failed"; cat /tmp/e2e-selftest-distcc.log distccd.log; exit 1; }; \
+    [ -s /tmp/e2e-selftest-distcc.log ] \
+      && { echo "ERROR: self-test distributed compile succeeded but emitted output/warnings, treating as a failed check"; cat /tmp/e2e-selftest-distcc.log; exit 1; }; \
+    test -f ok.o \
+      || { echo "ERROR: self-test distributed compile did not produce ok.o"; cat distccd.log; exit 1; }; \
+    found=0; \
+    for _ in 1 2 3 4 5 6 7 8 9 10; do \
+      grep -q "COMPILE_OK" distccd.log && { found=1; break; }; \
+      sleep 0.5; \
+    done; \
+    [ "${found}" = "1" ] \
+      || { echo "ERROR: distccd's own log does not show a COMPILE_OK entry after waiting"; cat distccd.log; exit 1; }; \
+    grep -Eq 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' distccd.log \
+      && { echo "ERROR: distccd's own log contains a warning-or-worse severity line; treating as a failed self-test"; cat distccd.log; exit 1; }; \
+    pkill -u "$(id -u)" distccd || true; \
+    cd / && rm -rf /tmp/e2e-selftest
 
 EXPOSE 3632/tcp
