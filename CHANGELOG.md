@@ -13,6 +13,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
+  derives directly from `github.event_name`/`github.ref` instead of
+  `build_and_selftest`'s `publish_eligible` job output, so a run that fails
+  before that output is ever produced (Harden Runner, checkout, identity
+  resolution) still reaches `report` instead of being silently skipped.
+  `publish` now also compares the built commit's full SHA against
+  `current_dev`'s actual current tip via the GitHub API before moving the
+  `:latest` tag -- the job-level concurrency group only serializes the
+  `publish` step itself and does not order a scheduled run against a later
+  push, so an older, slower run could otherwise finish last and move
+  `:latest` backward onto stale content. The immutable per-run tag is still
+  pushed unconditionally either way.
+
 - **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
   which included `CHANGELOG.md` -- since almost every PR touches that
   file (`changelog-check.yml`'s own requirement), `documentation` was
