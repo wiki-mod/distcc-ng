@@ -86,6 +86,7 @@ jobs:
     # publish/report jobs don't each re-derive it and risk drifting apart.
     outputs:
       built_sha: ${{ steps.resolve.outputs.sha }}
+      built_full_sha: ${{ steps.resolve.outputs.full_sha }}
       build_date: ${{ steps.resolve.outputs.date }}
       publish_eligible: ${{ steps.resolve.outputs.publish_eligible }}
       # The artifact name is a job output rather than something publish
@@ -156,6 +157,7 @@ jobs:
           # shape package-release.yml's own setup job already uses.
           {
             printf 'sha=%s\n' "$(git rev-parse --short HEAD)"
+            printf 'full_sha=%s\n' "$(git rev-parse HEAD)"
             printf 'date=%s\n' "$(date -u +%Y%m%d)"
             printf 'artifact_name=distcc-ng-e2e-image-%s\n' "${RUN_ATTEMPT}"
             printf 'publish_eligible=%s\n' "${publish_eligible}"
@@ -265,10 +267,10 @@ jobs:
         # build identity" step) rather than a second, independent
         # `git rev-parse` here, which could observe a newer current_dev
         # commit than the one actually built if a push landed between the
-        # two jobs' checkouts. Tagged :latest (moving, what the test
-        # workflows will pull once a later change wires that up) and a
-        # SHORT_SHA-DATE-RUN_ID tag: SHA-DATE alone still collides if the
-        # same commit is rebuilt twice on the same UTC day (a manual
+        # two jobs' checkouts. Tagged SHORT_SHA-DATE-RUN_ID-RUN_ATTEMPT here
+        # (the :latest move is a separate, later step -- see its own header
+        # comment for why): SHA-DATE alone still collides if the same
+        # commit is rebuilt twice on the same UTC day (a manual
         # dispatch/rerun alongside the daily schedule) -- since the base
         # image and apt repositories are both deliberately mutable, two
         # same-day builds of the same SHA are not guaranteed to be
@@ -290,35 +292,71 @@ jobs:
           docker load -i /tmp/distcc-ng-e2e.tar
           BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}-${{ github.run_attempt }}"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${BUILD_TAG}"
-          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
-          # Immutable tag first, moving tag second, deliberately in this
-          # order: the two pushes are independent network operations and the
-          # second can fail on its own. Moving :latest first would, on such a
-          # failure, leave consumers with a freshly-promoted :latest whose
-          # promised pinnable tag does not exist -- unpinnable content in the
-          # moving channel, even though the run is correctly reported failed.
-          # This order degrades the other way instead: the immutable tag
-          # exists and is pullable, while :latest still points at the last
-          # fully-successful publish.
+          # Immutable tag pushed unconditionally: it is tied to exactly what
+          # this run built and self-tested, so it is always correct to
+          # publish regardless of what current_dev's tip looks like by now.
           docker push "${IMAGE_BASE}:${BUILD_TAG}"
-          docker push "${IMAGE_BASE}:latest"
+
+      # Guards the :latest move only, separately from the immutable-tag push
+      # above: two independently-triggered runs (a scheduled rebuild and a
+      # current_dev push) can both reach this job, and since they never
+      # actually overlap on the runner, the job-level concurrency group above
+      # does not order them against each other -- only serializes each run's
+      # own critical section. A run built from an older current_dev commit
+      # can therefore still be the last one to execute this step. Comparing
+      # against current_dev's real tip before moving :latest, rather than
+      # trusting "I finished last" as proof of "I am newest", closes that gap
+      # for the one tag whose whole purpose is to always point at the latest
+      # good build; the base image here is also deliberately unpinned, so an
+      # older run's content is genuinely different, not a harmless rebuild of
+      # the same thing. Compared as full SHAs, not the short SHA used for the
+      # tag itself: a short-vs-full string comparison would never match and
+      # would permanently freeze :latest, which is worse than the race being
+      # fixed.
+      - name: Move :latest only if this build is current_dev's current tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
+          BUILT_FULL_SHA: ${{ needs.build_and_selftest.outputs.built_full_sha }}
+        run: |
+          set -euo pipefail
+          CURRENT_TIP="$(gh api repos/wiki-mod/distcc-ng/commits/current_dev --jq .sha)"
+          if [ "${BUILT_FULL_SHA}" = "${CURRENT_TIP}" ]; then
+            docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
+            docker push "${IMAGE_BASE}:latest"
+          else
+            # A deliberate, documented degradation, not a fault -- see this
+            # step's own header comment -- so a notice, not a warning or a
+            # failure (AGENTS.md rule 31 governs unexpected problems, not an
+            # intended skip like this one). The immutable tag pushed above
+            # still exists and is pullable either way.
+            echo "::notice::built commit ${BUILT_FULL_SHA} is not current_dev's current tip (${CURRENT_TIP}); skipping the :latest move so it never points at older content than what is already published there."
+          fi
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success -- but only for the runs this actually matters for (the daily
   # schedule, or a manual dispatch/current_dev push meant to really publish);
   # a PR's own build_and_selftest failure already surfaces as a normal failed
-  # PR check, it doesn't need a standing tracking issue too. Gated on the
-  # same publish_eligible output publish itself uses (rather than a
-  # separately-written condition that could drift from it): a
-  # workflow_dispatch off a branch other than current_dev deliberately
-  # skips publish, and without this same guard here, that skip would surface
-  # to the outcome expression below as neither success nor a real failure --
-  # a legitimate no-op reported as a broken nightly run.
+  # PR check, it doesn't need a standing tracking issue too.
+  #
+  # Eligibility is derived directly from github.event_name/github.ref here,
+  # deliberately NOT from build_and_selftest's publish_eligible output, even
+  # though the two conditions look identical to publish's own gate above.
+  # They must stay two separate expressions: publish's gate has to be a
+  # build-verified property (only true once the build actually reached the
+  # point of proving what it is about to push), so deriving it from a job
+  # output is correct there. report's gate has to survive the build having
+  # failed, including having failed before it could produce any output at
+  # all (a Harden Runner outage, a checkout failure, a failed identity
+  # resolution) -- depending on a job output would make exactly that failure
+  # mode invisible: the run that most needs reporting would be the one
+  # silently skipped. If report and publish are ever unified again to remove
+  # this apparent duplication, that silent-skip case comes back.
   report:
     needs: [build_and_selftest, publish]
     if: >-
       ${{ always() && !cancelled() && github.event_name != 'pull_request' &&
-          needs.build_and_selftest.outputs.publish_eligible == 'true' }}
+          (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/current_dev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
