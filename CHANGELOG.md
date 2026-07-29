@@ -106,6 +106,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   workflow-level `CCACHE_HEARTBEAT_TAG` so they can never silently drift onto
   different ccache revisions.
 
+- **`AGENTS.md`**: added rule 75 -- investigate to full depth on the first
+  pass, not only after the maintainer pushes back a second time. A status
+  or effort question must be answered by reading the relevant PR/issue body
+  in full, checking for any "follow-up"/"out of scope" section in that PR's
+  own text, and cross-referencing information already surfaced earlier in
+  the same session, rather than treating each question as if starting from
+  zero context.
+
 ### Fixed
 
 - **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
