@@ -13,6 +13,36 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
+  derives directly from `github.event_name`/`github.ref` instead of
+  `build_and_selftest`'s `publish_eligible` job output, so a run that fails
+  before that output is ever produced (Harden Runner, checkout, identity
+  resolution) still reaches `report` instead of being silently skipped.
+  `publish` now also checks build recency before moving the `:latest` tag:
+  it reads the currently-published `:latest` version's own paired immutable
+  `SHA-DATE-RUN_ID-RUN_ATTEMPT` tag(s) from the GHCR package API, and
+  compares the *built commit* against that published commit via real commit
+  ancestry on `current_dev` (not `github.run_id` ordering alone -- a
+  scheduled run's checkout resolves to `current_dev`'s tip at execution
+  time, not at trigger time, so a run created earlier can still end up
+  building a genuinely newer commit than a later-triggered run finished
+  first). `(run_id, run_attempt)` is used only to break a tie between two
+  builds of the identical commit, since the base image and apt sources are
+  both deliberately mutable and two builds of the same commit are not
+  guaranteed byte-identical. A genuine GHCR lookup failure (anything other
+  than a real 404 for a never-yet-published package) fails the step
+  outright rather than defaulting to "no prior publish". The immutable
+  per-run tag is still pushed unconditionally either way. The published
+  tag's SHA is now resolved and validated as its own statement before any
+  comparison runs, instead of directly inside an `elif` condition -- inside
+  an `if`/`elif` test, a failing command is exempt from `set -e`, so an
+  unresolvable published SHA (e.g. an ambiguous short prefix once history
+  grows) previously fell through silently as "not newer" and left `:latest`
+  stale instead of failing loudly; the same fix applies to the
+  `git merge-base --is-ancestor` call, whose exit status is now checked
+  explicitly so a real error is distinguished from a genuine "not an
+  ancestor" result.
+
 - **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
   which included `CHANGELOG.md` -- since almost every PR touches that
   file (`changelog-check.yml`'s own requirement), `documentation` was

@@ -86,6 +86,7 @@ jobs:
     # publish/report jobs don't each re-derive it and risk drifting apart.
     outputs:
       built_sha: ${{ steps.resolve.outputs.sha }}
+      built_full_sha: ${{ steps.resolve.outputs.full_sha }}
       build_date: ${{ steps.resolve.outputs.date }}
       publish_eligible: ${{ steps.resolve.outputs.publish_eligible }}
       # The artifact name is a job output rather than something publish
@@ -156,6 +157,7 @@ jobs:
           # shape package-release.yml's own setup job already uses.
           {
             printf 'sha=%s\n' "$(git rev-parse --short HEAD)"
+            printf 'full_sha=%s\n' "$(git rev-parse HEAD)"
             printf 'date=%s\n' "$(date -u +%Y%m%d)"
             printf 'artifact_name=distcc-ng-e2e-image-%s\n' "${RUN_ATTEMPT}"
             printf 'publish_eligible=%s\n' "${publish_eligible}"
@@ -238,6 +240,22 @@ jobs:
         with:
           egress-policy: audit
 
+      # Needed only for the ancestry check in the final "Move :latest" step
+      # below (git merge-base --is-ancestor), not for the Docker build itself
+      # -- the image is loaded from build_and_selftest's artifact, never
+      # rebuilt here. Full history (fetch-depth: 0) so both the published
+      # commit and the built commit are reachable regardless of how far
+      # apart they are on current_dev. persist-credentials: false for the
+      # same reason build_and_selftest's own checkout sets it -- nothing
+      # here builds a Docker image from this checkout, but there is no
+      # reason to leave an authenticated credential lying around in the
+      # runner's working copy either.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: current_dev
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Log in to GHCR
         run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
@@ -265,10 +283,10 @@ jobs:
         # build identity" step) rather than a second, independent
         # `git rev-parse` here, which could observe a newer current_dev
         # commit than the one actually built if a push landed between the
-        # two jobs' checkouts. Tagged :latest (moving, what the test
-        # workflows will pull once a later change wires that up) and a
-        # SHORT_SHA-DATE-RUN_ID tag: SHA-DATE alone still collides if the
-        # same commit is rebuilt twice on the same UTC day (a manual
+        # two jobs' checkouts. Tagged SHORT_SHA-DATE-RUN_ID-RUN_ATTEMPT here
+        # (the :latest move is a separate, later step -- see its own header
+        # comment for why): SHA-DATE alone still collides if the same
+        # commit is rebuilt twice on the same UTC day (a manual
         # dispatch/rerun alongside the daily schedule) -- since the base
         # image and apt repositories are both deliberately mutable, two
         # same-day builds of the same SHA are not guaranteed to be
@@ -290,35 +308,203 @@ jobs:
           docker load -i /tmp/distcc-ng-e2e.tar
           BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}-${{ github.run_attempt }}"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${BUILD_TAG}"
-          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
-          # Immutable tag first, moving tag second, deliberately in this
-          # order: the two pushes are independent network operations and the
-          # second can fail on its own. Moving :latest first would, on such a
-          # failure, leave consumers with a freshly-promoted :latest whose
-          # promised pinnable tag does not exist -- unpinnable content in the
-          # moving channel, even though the run is correctly reported failed.
-          # This order degrades the other way instead: the immutable tag
-          # exists and is pullable, while :latest still points at the last
-          # fully-successful publish.
+          # Immutable tag pushed unconditionally: it is tied to exactly what
+          # this run built and self-tested, so it is always correct to
+          # publish regardless of what current_dev's tip looks like by now.
           docker push "${IMAGE_BASE}:${BUILD_TAG}"
-          docker push "${IMAGE_BASE}:latest"
+
+      # Guards the :latest move only, separately from the immutable-tag push
+      # above: two independently-triggered runs (a scheduled rebuild and a
+      # current_dev push) can both reach this job, and since they never
+      # actually overlap on the runner, the job-level concurrency group above
+      # does not order them against each other -- only serializes each run's
+      # own critical section. A run built from an older current_dev commit
+      # can therefore still be the last one to execute this step.
+      #
+      # Comparing only the built commit against current_dev's tip (an
+      # earlier version of this check) is not sufficient on its own: two
+      # runs can legitimately build the *same* commit (a scheduled rebuild
+      # and a manual current_dev run landing on the same day, or a
+      # workflow_dispatch re-run) without their workflow-level concurrency
+      # groups ever serializing them against each other. Both would then
+      # pass a same-commit check, but since the base image and apt package
+      # sources are both deliberately mutable, two builds of the identical
+      # commit are not guaranteed to be byte-identical -- whichever one
+      # merely finishes last would win, which is exactly the same "last to
+      # finish beats last to start" problem this step exists to prevent, one
+      # level down.
+      #
+      # run_id/run_attempt ordering alone (an earlier version of this check)
+      # is NOT a safe stand-in for commit recency, specifically because of
+      # this workflow's own schedule handling: build_and_selftest's checkout
+      # resolves a schedule-triggered run's ref to current_dev's tip AT
+      # EXECUTION TIME (see that job's own checkout step), not at the time
+      # the run was created/queued. github.run_id only reflects creation
+      # order. So a scheduled run created (and assigned its run_id) before a
+      # later manual current_dev run can still end up building a genuinely
+      # NEWER commit than that manual run, if the scheduled run's own
+      # checkout happens to execute after the manual run has already
+      # pushed -- run_id ordering alone would then wrongly reject the
+      # scheduled run's strictly-newer content just because its run_id is
+      # lower.
+      #
+      # The actual fix: compare the BUILT REVISION first (via real commit
+      # ancestry on current_dev, using the checkout above), and fall back to
+      # (run_id, run_attempt) only to break a tie between two builds of the
+      # *identical* commit -- the one case run recency is actually the
+      # correct signal, since the base image and apt sources are both
+      # deliberately mutable and two builds of the same commit are not
+      # guaranteed to be byte-identical.
+      - name: Move :latest only if this build is not older than what is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
+          BUILT_FULL_SHA: ${{ needs.build_and_selftest.outputs.built_full_sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -uo pipefail
+
+          # Find the version currently tagged :latest (if any) and read its
+          # sibling immutable tag's own (sha, run_id, run_attempt) -- the
+          # tag is exactly four dash-separated fields (a git SHA and a
+          # YYYYMMDD date never contain a hyphen, so this split is
+          # unambiguous). Only a positively-identified absent package (a
+          # real HTTP 404, i.e. the package has never been published) is
+          # treated as "nothing to lose to" (empty PUBLISHED_SHA, so the
+          # very first publish proceeds) -- any other lookup failure (auth,
+          # a transient 5xx, a malformed response) fails the step outright
+          # instead of silently defaulting to it, which would let a stale
+          # queued run win the comparison while the workflow still reports
+          # success.
+          PUBLISHED_SHA=""
+          PUBLISHED_RUN_ID=0
+          PUBLISHED_RUN_ATTEMPT=0
+          API_OUTPUT="$(gh api "orgs/${{ github.repository_owner }}/packages/container/distcc-ng-e2e/versions" \
+            --paginate \
+            --jq '.[] | select(.metadata.container.tags != null) | select(.metadata.container.tags | index("latest")) | .metadata.container.tags[]' \
+            2>&1)"
+          API_STATUS=$?
+          if [ "${API_STATUS}" -ne 0 ]; then
+            if printf '%s' "${API_OUTPUT}" | grep -qi 'HTTP 404'; then
+              TAGS=""
+            else
+              echo "::error::Could not query GHCR package versions for distcc-ng-e2e (not a 404 -- treating as a real failure rather than defaulting to 'no prior publish'): ${API_OUTPUT}"
+              exit 1
+            fi
+          else
+            TAGS="${API_OUTPUT}"
+          fi
+          set -e
+
+          # Compute the MAXIMUM (run_id, run_attempt) across every matching
+          # sibling tag, not whichever one the API happens to return last --
+          # multiple immutable tags can carry "latest" if identical content
+          # was ever pushed under more than one per-run tag, and trusting
+          # API return order rather than the actual maximum could compare
+          # against a stale sibling and move :latest backward. Its paired
+          # SHA travels along with it, since that's the actual identity
+          # being compared below, not the run_id/run_attempt themselves.
+          while IFS= read -r t; do
+            [ -n "${t}" ] || continue
+            FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $1, $3, $4}')"
+            [ -n "${FIELDS}" ] || continue
+            CAND_SHA="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
+            CAND_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            CAND_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f3)"
+            if [ "${CAND_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+               { [ "${CAND_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CAND_RUN_ATTEMPT}" -gt "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+              PUBLISHED_SHA="${CAND_SHA}"
+              PUBLISHED_RUN_ID="${CAND_RUN_ID}"
+              PUBLISHED_RUN_ATTEMPT="${CAND_RUN_ATTEMPT}"
+            fi
+          done <<< "${TAGS}"
+
+          SHOULD_MOVE=false
+          if [ -z "${PUBLISHED_SHA}" ]; then
+            # Nothing published yet -- always proceed.
+            SHOULD_MOVE=true
+          else
+            # Resolve and validate the published tag's SHA as its own
+            # statement, outside any if/elif condition -- a command's exit
+            # status is exempt from `set -e` when the command is itself an
+            # if/elif/while/until test, so a failing `git rev-parse` inside
+            # one of those (e.g. the short SHA has become an ambiguous or
+            # unresolvable prefix as history grew) would otherwise be
+            # silently treated as "false" rather than as the unresolvable
+            # state it actually is, falling through to the notice below and
+            # reporting success while leaving :latest stale indefinitely.
+            if ! PUBLISHED_FULL_SHA="$(git rev-parse "${PUBLISHED_SHA}")"; then
+              echo "::error::Published tag's SHA (${PUBLISHED_SHA}) could not be resolved against current_dev's history fetched above -- refusing to treat an unresolvable published commit as \"not newer\" and silently leave :latest stale."
+              exit 1
+            fi
+
+            if [ "${PUBLISHED_FULL_SHA}" = "${BUILT_FULL_SHA}" ]; then
+              # Same commit as what's published: fall back to run recency,
+              # since the mutable base image means the two builds' bytes
+              # might still differ.
+              if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+                 { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+                SHOULD_MOVE=true
+              fi
+            else
+              # Likewise, run merge-base as its own statement rather than
+              # directly as an elif condition, so a real error (an invalid
+              # object, not just "not an ancestor") is distinguished from a
+              # genuine "not an ancestor" result instead of both reading as
+              # the same silent "false".
+              set +e
+              git merge-base --is-ancestor "${PUBLISHED_FULL_SHA}" "${BUILT_FULL_SHA}"
+              ANCESTOR_STATUS=$?
+              set -e
+              if [ "${ANCESTOR_STATUS}" -eq 0 ]; then
+                # The build in hand strictly descends from what's published
+                # on current_dev -- genuinely newer content, regardless of
+                # which run has the higher run_id.
+                SHOULD_MOVE=true
+              elif [ "${ANCESTOR_STATUS}" -gt 1 ]; then
+                echo "::error::git merge-base --is-ancestor failed validating ${PUBLISHED_FULL_SHA} against ${BUILT_FULL_SHA} (exit ${ANCESTOR_STATUS}), not a plain \"not an ancestor\" result -- refusing to treat this as \"not newer\" and silently leave :latest stale."
+                exit 1
+              fi
+            fi
+          fi
+
+          if [ "${SHOULD_MOVE}" = "true" ]; then
+            docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
+            docker push "${IMAGE_BASE}:latest"
+          else
+            # A deliberate, documented degradation, not a fault -- see this
+            # step's own header comment -- so a notice, not a warning or a
+            # failure (AGENTS.md rule 31 governs unexpected problems, not an
+            # intended skip like this one). The immutable tag pushed above
+            # still exists and is pullable either way.
+            echo "::notice::this run's built commit (${BUILT_FULL_SHA}) is not newer than what :latest already points at (${PUBLISHED_SHA}, run ${PUBLISHED_RUN_ID} attempt ${PUBLISHED_RUN_ATTEMPT}); skipping the :latest move so it never regresses to an older or stale build."
+          fi
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success -- but only for the runs this actually matters for (the daily
   # schedule, or a manual dispatch/current_dev push meant to really publish);
   # a PR's own build_and_selftest failure already surfaces as a normal failed
-  # PR check, it doesn't need a standing tracking issue too. Gated on the
-  # same publish_eligible output publish itself uses (rather than a
-  # separately-written condition that could drift from it): a
-  # workflow_dispatch off a branch other than current_dev deliberately
-  # skips publish, and without this same guard here, that skip would surface
-  # to the outcome expression below as neither success nor a real failure --
-  # a legitimate no-op reported as a broken nightly run.
+  # PR check, it doesn't need a standing tracking issue too.
+  #
+  # Eligibility is derived directly from github.event_name/github.ref here,
+  # deliberately NOT from build_and_selftest's publish_eligible output, even
+  # though the two conditions look identical to publish's own gate above.
+  # They must stay two separate expressions: publish's gate has to be a
+  # build-verified property (only true once the build actually reached the
+  # point of proving what it is about to push), so deriving it from a job
+  # output is correct there. report's gate has to survive the build having
+  # failed, including having failed before it could produce any output at
+  # all (a Harden Runner outage, a checkout failure, a failed identity
+  # resolution) -- depending on a job output would make exactly that failure
+  # mode invisible: the run that most needs reporting would be the one
+  # silently skipped. If report and publish are ever unified again to remove
+  # this apparent duplication, that silent-skip case comes back.
   report:
     needs: [build_and_selftest, publish]
     if: >-
       ${{ always() && !cancelled() && github.event_name != 'pull_request' &&
-          needs.build_and_selftest.outputs.publish_eligible == 'true' }}
+          (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/current_dev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
