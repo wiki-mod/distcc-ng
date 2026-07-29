@@ -339,27 +339,54 @@ jobs:
           CURRENT_RUN_ID: ${{ github.run_id }}
           CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           # Find the version currently tagged :latest (if any) and read its
           # sibling immutable tag's own (run_id, run_attempt) -- exactly
           # four dash-separated fields (a git SHA and a YYYYMMDD date never
-          # contain a hyphen, so this split is unambiguous). No existing
-          # :latest (a brand-new package, or the lookup itself failing) is
-          # treated as "nothing to lose to" -- default 0/0, so the first
-          # ever publish always proceeds.
+          # contain a hyphen, so this split is unambiguous). Only a
+          # positively-identified absent package (a real HTTP 404, i.e. the
+          # package has never been published) is treated as "nothing to
+          # lose to" (default 0/0, so the very first publish proceeds) --
+          # any other lookup failure (auth, a transient 5xx, a malformed
+          # response) fails the step outright instead of silently defaulting
+          # to 0/0, which would let a stale queued run win the comparison
+          # while the workflow still reports success.
           PUBLISHED_RUN_ID=0
           PUBLISHED_RUN_ATTEMPT=0
-          TAGS="$(gh api "orgs/${{ github.repository_owner }}/packages/container/distcc-ng-e2e/versions" \
+          API_OUTPUT="$(gh api "orgs/${{ github.repository_owner }}/packages/container/distcc-ng-e2e/versions" \
             --paginate \
             --jq '.[] | select(.metadata.container.tags != null) | select(.metadata.container.tags | index("latest")) | .metadata.container.tags[]' \
-            2>/dev/null || true)"
+            2>&1)"
+          API_STATUS=$?
+          if [ "${API_STATUS}" -ne 0 ]; then
+            if printf '%s' "${API_OUTPUT}" | grep -qi 'HTTP 404'; then
+              TAGS=""
+            else
+              echo "::error::Could not query GHCR package versions for distcc-ng-e2e (not a 404 -- treating as a real failure rather than defaulting to 'no prior publish'): ${API_OUTPUT}"
+              exit 1
+            fi
+          else
+            TAGS="${API_OUTPUT}"
+          fi
+          set -e
+
+          # Compute the MAXIMUM (run_id, run_attempt) across every matching
+          # sibling tag, not whichever one the API happens to return last --
+          # multiple immutable tags can carry "latest" if identical content
+          # was ever pushed under more than one per-run tag, and trusting
+          # API return order rather than the actual maximum could compare
+          # against a stale sibling and move :latest backward.
           while IFS= read -r t; do
             [ -n "${t}" ] || continue
             FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $3, $4}')"
-            if [ -n "${FIELDS}" ]; then
-              PUBLISHED_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
-              PUBLISHED_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            [ -n "${FIELDS}" ] || continue
+            CAND_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
+            CAND_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            if [ "${CAND_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+               { [ "${CAND_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CAND_RUN_ATTEMPT}" -gt "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+              PUBLISHED_RUN_ID="${CAND_RUN_ID}"
+              PUBLISHED_RUN_ATTEMPT="${CAND_RUN_ATTEMPT}"
             fi
           done <<< "${TAGS}"
 
