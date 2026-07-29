@@ -124,6 +124,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
   empirical reproduction wherever one is feasible, before being treated as
   confirmed. A `security`-labeled issue is held to this bar strictly.
 
+### Documentation
+
+- **`CLAUDE.md`**: added a "Key Design Decisions" bullet documenting the
+  protocol-version numbering policy from issue #304 -- versions 0-3999
+  reserved exclusively for whatever upstream `distcc/distcc` itself ever
+  defines, every fork-specific protocol extension numbered from 4000+
+  instead, applying to zstd's existing `DCC_VER_4000`/`DCC_VER_5000` and to
+  every future fork protocol extension including the planned native TLS
+  transport (#248). This was the last of #304's six required follow-up
+  actions; the other five (the `DCC_VER_4`/`DCC_VER_5` renumbering itself,
+  the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
+  `man/distcc.1` zstd documentation) were already done in earlier PRs.
+
 ### Fixed
 
 - **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
