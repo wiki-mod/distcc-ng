@@ -18,21 +18,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `build_and_selftest`'s `publish_eligible` job output, so a run that fails
   before that output is ever produced (Harden Runner, checkout, identity
   resolution) still reaches `report` instead of being silently skipped.
-  `publish` now also checks run recency before moving the `:latest` tag: it
-  reads the currently-published `:latest` version's own paired immutable
-  `SHA-DATE-RUN_ID-RUN_ATTEMPT` tag(s) from the GHCR package API, takes the
-  maximum `(run_id, run_attempt)` among them, and only moves `:latest` if
-  this run's own `(run_id, run_attempt)` is greater-or-equal -- the
-  job-level concurrency group only serializes the `publish` step itself and
-  does not order a scheduled run against a later push, so an older, slower
-  run could otherwise finish last and move `:latest` backward onto stale
-  content, including two runs that happen to build the identical commit
-  (the base image and apt sources are both deliberately mutable, so
-  same-commit builds aren't guaranteed byte-identical either). A genuine
-  GHCR lookup failure (anything other than a real 404 for a
-  never-yet-published package) fails the step outright rather than
-  defaulting to "no prior publish". The immutable per-run tag is still
-  pushed unconditionally either way.
+  `publish` now also checks build recency before moving the `:latest` tag:
+  it reads the currently-published `:latest` version's own paired immutable
+  `SHA-DATE-RUN_ID-RUN_ATTEMPT` tag(s) from the GHCR package API, and
+  compares the *built commit* against that published commit via real commit
+  ancestry on `current_dev` (not `github.run_id` ordering alone -- a
+  scheduled run's checkout resolves to `current_dev`'s tip at execution
+  time, not at trigger time, so a run created earlier can still end up
+  building a genuinely newer commit than a later-triggered run finished
+  first). `(run_id, run_attempt)` is used only to break a tie between two
+  builds of the identical commit, since the base image and apt sources are
+  both deliberately mutable and two builds of the same commit are not
+  guaranteed byte-identical. A genuine GHCR lookup failure (anything other
+  than a real 404 for a never-yet-published package) fails the step
+  outright rather than defaulting to "no prior publish". The immutable
+  per-run tag is still pushed unconditionally either way.
 
 - **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
   which included `CHANGELOG.md` -- since almost every PR touches that

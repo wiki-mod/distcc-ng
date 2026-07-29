@@ -240,6 +240,22 @@ jobs:
         with:
           egress-policy: audit
 
+      # Needed only for the ancestry check in the final "Move :latest" step
+      # below (git merge-base --is-ancestor), not for the Docker build itself
+      # -- the image is loaded from build_and_selftest's artifact, never
+      # rebuilt here. Full history (fetch-depth: 0) so both the published
+      # commit and the built commit are reachable regardless of how far
+      # apart they are on current_dev. persist-credentials: false for the
+      # same reason build_and_selftest's own checkout sets it -- nothing
+      # here builds a Docker image from this checkout, but there is no
+      # reason to leave an authenticated credential lying around in the
+      # runner's working copy either.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: current_dev
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Log in to GHCR
         run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
@@ -318,40 +334,50 @@ jobs:
       # finish beats last to start" problem this step exists to prevent, one
       # level down.
       #
-      # The actual fix: order by *trigger recency*, not commit identity.
-      # github.run_id increases monotonically with when a run was created
-      # (never with when it finishes), and github.run_attempt only
-      # increases via an explicit re-run of that same run_id. So comparing
-      # (run_id, run_attempt) as a pair is a total order on "which run was
-      # triggered most recently" that already implies correct commit
-      # ordering too (a run building an older commit cannot have a higher
-      # run_id than a run building a commit that didn't exist yet when the
-      # older run started). This is queried from the currently-published
-      # :latest tag's own recorded (run_id, run_attempt) -- encoded in its
-      # paired immutable SHA-DATE-RUN_ID-RUN_ATTEMPT tag on the same image
-      # version -- rather than re-deriving it some other way, so the check
-      # is always relative to what is actually live right now, not a
-      # separately-fetched, possibly-stale fact like current_dev's tip.
-      - name: Move :latest only if this run was triggered most recently
+      # run_id/run_attempt ordering alone (an earlier version of this check)
+      # is NOT a safe stand-in for commit recency, specifically because of
+      # this workflow's own schedule handling: build_and_selftest's checkout
+      # resolves a schedule-triggered run's ref to current_dev's tip AT
+      # EXECUTION TIME (see that job's own checkout step), not at the time
+      # the run was created/queued. github.run_id only reflects creation
+      # order. So a scheduled run created (and assigned its run_id) before a
+      # later manual current_dev run can still end up building a genuinely
+      # NEWER commit than that manual run, if the scheduled run's own
+      # checkout happens to execute after the manual run has already
+      # pushed -- run_id ordering alone would then wrongly reject the
+      # scheduled run's strictly-newer content just because its run_id is
+      # lower.
+      #
+      # The actual fix: compare the BUILT REVISION first (via real commit
+      # ancestry on current_dev, using the checkout above), and fall back to
+      # (run_id, run_attempt) only to break a tie between two builds of the
+      # *identical* commit -- the one case run recency is actually the
+      # correct signal, since the base image and apt sources are both
+      # deliberately mutable and two builds of the same commit are not
+      # guaranteed to be byte-identical.
+      - name: Move :latest only if this build is not older than what is published
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
+          BUILT_FULL_SHA: ${{ needs.build_and_selftest.outputs.built_full_sha }}
           CURRENT_RUN_ID: ${{ github.run_id }}
           CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -uo pipefail
 
           # Find the version currently tagged :latest (if any) and read its
-          # sibling immutable tag's own (run_id, run_attempt) -- exactly
-          # four dash-separated fields (a git SHA and a YYYYMMDD date never
-          # contain a hyphen, so this split is unambiguous). Only a
-          # positively-identified absent package (a real HTTP 404, i.e. the
-          # package has never been published) is treated as "nothing to
-          # lose to" (default 0/0, so the very first publish proceeds) --
-          # any other lookup failure (auth, a transient 5xx, a malformed
-          # response) fails the step outright instead of silently defaulting
-          # to 0/0, which would let a stale queued run win the comparison
-          # while the workflow still reports success.
+          # sibling immutable tag's own (sha, run_id, run_attempt) -- the
+          # tag is exactly four dash-separated fields (a git SHA and a
+          # YYYYMMDD date never contain a hyphen, so this split is
+          # unambiguous). Only a positively-identified absent package (a
+          # real HTTP 404, i.e. the package has never been published) is
+          # treated as "nothing to lose to" (empty PUBLISHED_SHA, so the
+          # very first publish proceeds) -- any other lookup failure (auth,
+          # a transient 5xx, a malformed response) fails the step outright
+          # instead of silently defaulting to it, which would let a stale
+          # queued run win the comparison while the workflow still reports
+          # success.
+          PUBLISHED_SHA=""
           PUBLISHED_RUN_ID=0
           PUBLISHED_RUN_ATTEMPT=0
           API_OUTPUT="$(gh api "orgs/${{ github.repository_owner }}/packages/container/distcc-ng-e2e/versions" \
@@ -376,22 +402,44 @@ jobs:
           # multiple immutable tags can carry "latest" if identical content
           # was ever pushed under more than one per-run tag, and trusting
           # API return order rather than the actual maximum could compare
-          # against a stale sibling and move :latest backward.
+          # against a stale sibling and move :latest backward. Its paired
+          # SHA travels along with it, since that's the actual identity
+          # being compared below, not the run_id/run_attempt themselves.
           while IFS= read -r t; do
             [ -n "${t}" ] || continue
-            FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $3, $4}')"
+            FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $1, $3, $4}')"
             [ -n "${FIELDS}" ] || continue
-            CAND_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
-            CAND_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            CAND_SHA="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
+            CAND_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            CAND_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f3)"
             if [ "${CAND_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
                { [ "${CAND_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CAND_RUN_ATTEMPT}" -gt "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+              PUBLISHED_SHA="${CAND_SHA}"
               PUBLISHED_RUN_ID="${CAND_RUN_ID}"
               PUBLISHED_RUN_ATTEMPT="${CAND_RUN_ATTEMPT}"
             fi
           done <<< "${TAGS}"
 
-          if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
-             { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+          SHOULD_MOVE=false
+          if [ -z "${PUBLISHED_SHA}" ]; then
+            # Nothing published yet -- always proceed.
+            SHOULD_MOVE=true
+          elif [ "$(git rev-parse "${PUBLISHED_SHA}")" = "${BUILT_FULL_SHA}" ]; then
+            # Same commit as what's published: fall back to run recency,
+            # since the mutable base image means the two builds' bytes
+            # might still differ.
+            if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+               { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+              SHOULD_MOVE=true
+            fi
+          elif git merge-base --is-ancestor "${PUBLISHED_SHA}" "${BUILT_FULL_SHA}"; then
+            # The build in hand strictly descends from what's published on
+            # current_dev -- genuinely newer content, regardless of which
+            # run has the higher run_id.
+            SHOULD_MOVE=true
+          fi
+
+          if [ "${SHOULD_MOVE}" = "true" ]; then
             docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
             docker push "${IMAGE_BASE}:latest"
           else
@@ -400,7 +448,7 @@ jobs:
             # failure (AGENTS.md rule 31 governs unexpected problems, not an
             # intended skip like this one). The immutable tag pushed above
             # still exists and is pullable either way.
-            echo "::notice::run ${CURRENT_RUN_ID} attempt ${CURRENT_RUN_ATTEMPT} was triggered before the currently-published :latest (run ${PUBLISHED_RUN_ID} attempt ${PUBLISHED_RUN_ATTEMPT}); skipping the :latest move so it never regresses to an older build."
+            echo "::notice::this run's built commit (${BUILT_FULL_SHA}) is not newer than what :latest already points at (${PUBLISHED_SHA}, run ${PUBLISHED_RUN_ID} attempt ${PUBLISHED_RUN_ATTEMPT}); skipping the :latest move so it never regresses to an older or stale build."
           fi
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
