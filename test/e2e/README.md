@@ -69,10 +69,25 @@ next `current_dev`->`master` promotion, same structural limitation as
 docker pull ghcr.io/wiki-mod/distcc-ng-e2e:latest
 ```
 
-Also tagged as `ghcr.io/wiki-mod/distcc-ng-e2e:<short-sha>-<build-date>`
-for pinning to a specific build -- the date is part of the tag (not just
-the commit SHA) because the daily schedule can rebuild on a day
+Also tagged as
+`ghcr.io/wiki-mod/distcc-ng-e2e:<short-sha>-<build-date>-<run-id>`
+for pinning to a specific build, where `<run-id>` is the GitHub Actions
+`run_id` of the workflow run that produced it. The date is part of the tag
+(not just the commit SHA) because the daily schedule can rebuild on a day
 `current_dev`'s HEAD hasn't moved, and since the base image is
 deliberately unpinned, that rebuild can still produce different image
 content; a bare commit-SHA tag would then silently point at different
-content across runs.
+content across runs. The run ID is there for the same reason one step
+further in: the same commit can also be rebuilt twice on the same UTC day
+(a manual dispatch or a rerun landing alongside the daily schedule), which
+SHA-and-date alone would collide on despite the two builds not being
+guaranteed byte-identical.
+
+The exact tag a given run published is visible in that run's own
+`Load and push the already-proven image` step log. To list what is
+actually available in the registry rather than constructing a tag by hand:
+
+```bash
+gh api /orgs/wiki-mod/packages/container/distcc-ng-e2e/versions \
+  --jq '.[].metadata.container.tags'
+```

@@ -100,6 +100,25 @@ jobs:
           # redirect pattern as c-build.yml/nightly-publish.yml's own
           # schedule-triggered jobs.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+          # This checkout becomes a Docker build context, and
+          # test/e2e/Dockerfile is single-stage: its `COPY . /work` lands the
+          # whole working tree -- .git included, since this repository has no
+          # .dockerignore -- directly in the image layer that is then saved,
+          # uploaded as a workflow artifact, and pushed to GHCR. Left at its
+          # default (true), actions/checkout writes an authenticated
+          # extraheader into .git/config, so that credential would be baked
+          # into a publicly-pullable layer and a publicly-downloadable
+          # artifact; the action's own post-job credential cleanup only
+          # rewrites the runner's checkout, never an image layer already
+          # built from it. Nothing in this job needs the credential (the
+          # build is entirely local, and publish authenticates to GHCR
+          # separately via docker login), so the safe default here is to
+          # never persist it in the first place rather than to exclude .git
+          # from the context afterwards -- a repo-root .dockerignore would
+          # silently change the build context of every other Dockerfile here
+          # too (docker/release, docker/verify, test/e2e-full,
+          # .clusterfuzzlite).
+          persist-credentials: false
 
       # Resolved once, right after the checkout that will actually be built
       # below, and threaded through as a job output rather than
