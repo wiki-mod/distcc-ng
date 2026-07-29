@@ -231,8 +231,15 @@ jobs:
         # dispatch/rerun alongside the daily schedule) -- since the base
         # image and apt repositories are both deliberately mutable, two
         # same-day builds of the same SHA are not guaranteed to be
-        # byte-identical, so the run ID (unique per workflow run) makes
-        # every published tag actually unique to the run that produced it.
+        # byte-identical. run_attempt is part of the tag alongside run_id
+        # for the same reason, and is not redundant with it: rerunning a
+        # workflow run keeps the same run_id and only increments
+        # run_attempt, so run_id alone would let a rerun overwrite the
+        # supposedly immutable tag of the attempt before it -- with
+        # genuinely different content, given the mutable base image. Same
+        # reasoning package-release.yml already applies to its own
+        # per-run digest artifacts, which are likewise scoped by
+        # run_attempt rather than run_id alone.
         env:
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
           BUILT_SHA: ${{ needs.build_and_selftest.outputs.built_sha }}
@@ -240,7 +247,7 @@ jobs:
         run: |
           set -euo pipefail
           docker load -i /tmp/distcc-ng-e2e.tar
-          BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}"
+          BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}-${{ github.run_attempt }}"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${BUILD_TAG}"
           docker push "${IMAGE_BASE}:latest"

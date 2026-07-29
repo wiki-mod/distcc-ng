@@ -120,6 +120,20 @@ USER builder
 # the exit code looks fine would let a real warning through unnoticed --
 # this repository treats a hidden warning signal as a failed check, not a
 # passing one, the same bar as a real compile error.
+#
+# The client's stderr is only half of that signal, though, so the daemon's
+# own log is scanned for warning-or-worse severities too. The two are
+# genuinely independent: distccd can complete a compile successfully -- so
+# the client sees a clean exit and COMPILE_OK appears -- while still having
+# logged an operational problem on its own side (a restricted
+# /proc/self/autogroup making the niceness adjustment fail, a masquerade
+# whitelist complaint), none of which ever reaches the client. Publishing an
+# image whose daemon warns on every startup would be exactly the hidden-signal
+# case the stderr check above exists to prevent, just on the other end of the
+# connection. The pattern matches distcc's own severity prefixes rather than
+# an ad-hoc word list -- see rs_severities[] in src/trace.c, where levels at
+# notice and below deliberately render with no prefix at all, so this catches
+# precisely the levels that indicate something actually went wrong.
 RUN set -eux; \
     mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
     echo 'int main(void) { return 0; }' > ok.c; \
@@ -143,6 +157,8 @@ RUN set -eux; \
     done; \
     [ "${found}" = "1" ] \
       || { echo "ERROR: distccd's own log does not show a COMPILE_OK entry after waiting"; cat distccd.log; exit 1; }; \
+    grep -Eq 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' distccd.log \
+      && { echo "ERROR: distccd's own log contains a warning-or-worse severity line; treating as a failed self-test"; cat distccd.log; exit 1; }; \
     pkill -u "$(id -u)" distccd || true; \
     cd / && rm -rf /tmp/e2e-selftest
 
