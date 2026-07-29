@@ -88,6 +88,16 @@ jobs:
       built_sha: ${{ steps.resolve.outputs.sha }}
       build_date: ${{ steps.resolve.outputs.date }}
       publish_eligible: ${{ steps.resolve.outputs.publish_eligible }}
+      # The artifact name is a job output rather than something publish
+      # recomputes: "Re-run failed jobs" starts a NEW attempt without
+      # re-running a prerequisite that already succeeded, so a publish-only
+      # rerun sees an incremented github.run_attempt while the retained
+      # artifact still carries the attempt that actually produced it. A
+      # consumer deriving the name from its own attempt number would then
+      # request an artifact that does not exist and could never recover,
+      # whereas a job output is preserved from the producing attempt and
+      # keeps pointing at the real bytes.
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -130,10 +140,13 @@ jobs:
       # this run never built.
       - name: Resolve build identity
         id: resolve
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=distcc-ng-e2e-image-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" != "pull_request" ] && \
              { [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.ref }}" = "refs/heads/current_dev" ]; }; then
             echo "publish_eligible=true" >> "$GITHUB_OUTPUT"
@@ -171,9 +184,12 @@ jobs:
           # was never the one this attempt self-tested, which is precisely
           # what saving-instead-of-rebuilding exists to prevent. Same
           # scoping package-release.yml already applies to its own per-run
-          # digest artifacts, and it must stay in lockstep with the
-          # download name in publish below.
-          name: distcc-ng-e2e-image-${{ github.run_attempt }}
+          # digest artifacts. Taken from the resolve step's output (not
+          # recomputed from the context here) so this job and the publish
+          # job read the exact same string from one place -- see the
+          # artifact_name job output above for why publish must consume the
+          # producing attempt's value rather than its own.
+          name: ${{ steps.resolve.outputs.artifact_name }}
           path: /tmp/distcc-ng-e2e.tar
           retention-days: 1
 
@@ -220,10 +236,15 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          # Must stay identical to the upload name in build_and_selftest,
-          # run_attempt suffix included -- see that step's comment for why
-          # an unsuffixed name can resolve a previous attempt's artifact.
-          name: distcc-ng-e2e-image-${{ github.run_attempt }}
+          # Deliberately the producing job's own output, NOT
+          # github.run_attempt re-evaluated here: "Re-run failed jobs" starts
+          # a new attempt without re-running build_and_selftest when it
+          # already succeeded, so this job's own attempt number can be ahead
+          # of the one that actually uploaded the tar. Recomputing it here
+          # would request a name nothing ever produced and make a
+          # publish-only rerun permanently unrecoverable; the job output is
+          # carried over from the producing attempt and still resolves.
+          name: ${{ needs.build_and_selftest.outputs.artifact_name }}
           path: /tmp
 
       - name: Load and push the already-proven image
