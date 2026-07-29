@@ -424,19 +424,49 @@ jobs:
           if [ -z "${PUBLISHED_SHA}" ]; then
             # Nothing published yet -- always proceed.
             SHOULD_MOVE=true
-          elif [ "$(git rev-parse "${PUBLISHED_SHA}")" = "${BUILT_FULL_SHA}" ]; then
-            # Same commit as what's published: fall back to run recency,
-            # since the mutable base image means the two builds' bytes
-            # might still differ.
-            if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
-               { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
-              SHOULD_MOVE=true
+          else
+            # Resolve and validate the published tag's SHA as its own
+            # statement, outside any if/elif condition -- a command's exit
+            # status is exempt from `set -e` when the command is itself an
+            # if/elif/while/until test, so a failing `git rev-parse` inside
+            # one of those (e.g. the short SHA has become an ambiguous or
+            # unresolvable prefix as history grew) would otherwise be
+            # silently treated as "false" rather than as the unresolvable
+            # state it actually is, falling through to the notice below and
+            # reporting success while leaving :latest stale indefinitely.
+            if ! PUBLISHED_FULL_SHA="$(git rev-parse "${PUBLISHED_SHA}")"; then
+              echo "::error::Published tag's SHA (${PUBLISHED_SHA}) could not be resolved against current_dev's history fetched above -- refusing to treat an unresolvable published commit as \"not newer\" and silently leave :latest stale."
+              exit 1
             fi
-          elif git merge-base --is-ancestor "${PUBLISHED_SHA}" "${BUILT_FULL_SHA}"; then
-            # The build in hand strictly descends from what's published on
-            # current_dev -- genuinely newer content, regardless of which
-            # run has the higher run_id.
-            SHOULD_MOVE=true
+
+            if [ "${PUBLISHED_FULL_SHA}" = "${BUILT_FULL_SHA}" ]; then
+              # Same commit as what's published: fall back to run recency,
+              # since the mutable base image means the two builds' bytes
+              # might still differ.
+              if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+                 { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
+                SHOULD_MOVE=true
+              fi
+            else
+              # Likewise, run merge-base as its own statement rather than
+              # directly as an elif condition, so a real error (an invalid
+              # object, not just "not an ancestor") is distinguished from a
+              # genuine "not an ancestor" result instead of both reading as
+              # the same silent "false".
+              set +e
+              git merge-base --is-ancestor "${PUBLISHED_FULL_SHA}" "${BUILT_FULL_SHA}"
+              ANCESTOR_STATUS=$?
+              set -e
+              if [ "${ANCESTOR_STATUS}" -eq 0 ]; then
+                # The build in hand strictly descends from what's published
+                # on current_dev -- genuinely newer content, regardless of
+                # which run has the higher run_id.
+                SHOULD_MOVE=true
+              elif [ "${ANCESTOR_STATUS}" -gt 1 ]; then
+                echo "::error::git merge-base --is-ancestor failed validating ${PUBLISHED_FULL_SHA} against ${BUILT_FULL_SHA} (exit ${ANCESTOR_STATUS}), not a plain \"not an ancestor\" result -- refusing to treat this as \"not newer\" and silently leave :latest stale."
+                exit 1
+              fi
+            fi
           fi
 
           if [ "${SHOULD_MOVE}" = "true" ]; then

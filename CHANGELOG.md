@@ -32,7 +32,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   guaranteed byte-identical. A genuine GHCR lookup failure (anything other
   than a real 404 for a never-yet-published package) fails the step
   outright rather than defaulting to "no prior publish". The immutable
-  per-run tag is still pushed unconditionally either way.
+  per-run tag is still pushed unconditionally either way. The published
+  tag's SHA is now resolved and validated as its own statement before any
+  comparison runs, instead of directly inside an `elif` condition -- inside
+  an `if`/`elif` test, a failing command is exempt from `set -e`, so an
+  unresolvable published SHA (e.g. an ambiguous short prefix once history
+  grows) previously fell through silently as "not newer" and left `:latest`
+  stale instead of failing loudly; the same fix applies to the
+  `git merge-base --is-ancestor` call, whose exit status is now checked
+  explicitly so a real error is distinguished from a genuine "not an
+  ancestor" result.
 
 - **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
   which included `CHANGELOG.md` -- since almost every PR touches that
