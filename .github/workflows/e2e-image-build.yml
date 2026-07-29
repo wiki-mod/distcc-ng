@@ -303,25 +303,68 @@ jobs:
       # actually overlap on the runner, the job-level concurrency group above
       # does not order them against each other -- only serializes each run's
       # own critical section. A run built from an older current_dev commit
-      # can therefore still be the last one to execute this step. Comparing
-      # against current_dev's real tip before moving :latest, rather than
-      # trusting "I finished last" as proof of "I am newest", closes that gap
-      # for the one tag whose whole purpose is to always point at the latest
-      # good build; the base image here is also deliberately unpinned, so an
-      # older run's content is genuinely different, not a harmless rebuild of
-      # the same thing. Compared as full SHAs, not the short SHA used for the
-      # tag itself: a short-vs-full string comparison would never match and
-      # would permanently freeze :latest, which is worse than the race being
-      # fixed.
-      - name: Move :latest only if this build is current_dev's current tip
+      # can therefore still be the last one to execute this step.
+      #
+      # Comparing only the built commit against current_dev's tip (an
+      # earlier version of this check) is not sufficient on its own: two
+      # runs can legitimately build the *same* commit (a scheduled rebuild
+      # and a manual current_dev run landing on the same day, or a
+      # workflow_dispatch re-run) without their workflow-level concurrency
+      # groups ever serializing them against each other. Both would then
+      # pass a same-commit check, but since the base image and apt package
+      # sources are both deliberately mutable, two builds of the identical
+      # commit are not guaranteed to be byte-identical -- whichever one
+      # merely finishes last would win, which is exactly the same "last to
+      # finish beats last to start" problem this step exists to prevent, one
+      # level down.
+      #
+      # The actual fix: order by *trigger recency*, not commit identity.
+      # github.run_id increases monotonically with when a run was created
+      # (never with when it finishes), and github.run_attempt only
+      # increases via an explicit re-run of that same run_id. So comparing
+      # (run_id, run_attempt) as a pair is a total order on "which run was
+      # triggered most recently" that already implies correct commit
+      # ordering too (a run building an older commit cannot have a higher
+      # run_id than a run building a commit that didn't exist yet when the
+      # older run started). This is queried from the currently-published
+      # :latest tag's own recorded (run_id, run_attempt) -- encoded in its
+      # paired immutable SHA-DATE-RUN_ID-RUN_ATTEMPT tag on the same image
+      # version -- rather than re-deriving it some other way, so the check
+      # is always relative to what is actually live right now, not a
+      # separately-fetched, possibly-stale fact like current_dev's tip.
+      - name: Move :latest only if this run was triggered most recently
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng-e2e
-          BUILT_FULL_SHA: ${{ needs.build_and_selftest.outputs.built_full_sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          CURRENT_TIP="$(gh api repos/wiki-mod/distcc-ng/commits/current_dev --jq .sha)"
-          if [ "${BUILT_FULL_SHA}" = "${CURRENT_TIP}" ]; then
+
+          # Find the version currently tagged :latest (if any) and read its
+          # sibling immutable tag's own (run_id, run_attempt) -- exactly
+          # four dash-separated fields (a git SHA and a YYYYMMDD date never
+          # contain a hyphen, so this split is unambiguous). No existing
+          # :latest (a brand-new package, or the lookup itself failing) is
+          # treated as "nothing to lose to" -- default 0/0, so the first
+          # ever publish always proceeds.
+          PUBLISHED_RUN_ID=0
+          PUBLISHED_RUN_ATTEMPT=0
+          TAGS="$(gh api "orgs/${{ github.repository_owner }}/packages/container/distcc-ng-e2e/versions" \
+            --paginate \
+            --jq '.[] | select(.metadata.container.tags != null) | select(.metadata.container.tags | index("latest")) | .metadata.container.tags[]' \
+            2>/dev/null || true)"
+          while IFS= read -r t; do
+            [ -n "${t}" ] || continue
+            FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $3, $4}')"
+            if [ -n "${FIELDS}" ]; then
+              PUBLISHED_RUN_ID="$(printf '%s' "${FIELDS}" | cut -d' ' -f1)"
+              PUBLISHED_RUN_ATTEMPT="$(printf '%s' "${FIELDS}" | cut -d' ' -f2)"
+            fi
+          done <<< "${TAGS}"
+
+          if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
+             { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
             docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
             docker push "${IMAGE_BASE}:latest"
           else
@@ -330,7 +373,7 @@ jobs:
             # failure (AGENTS.md rule 31 governs unexpected problems, not an
             # intended skip like this one). The immutable tag pushed above
             # still exists and is pullable either way.
-            echo "::notice::built commit ${BUILT_FULL_SHA} is not current_dev's current tip (${CURRENT_TIP}); skipping the :latest move so it never points at older content than what is already published there."
+            echo "::notice::run ${CURRENT_RUN_ID} attempt ${CURRENT_RUN_ATTEMPT} was triggered before the currently-published :latest (run ${PUBLISHED_RUN_ID} attempt ${PUBLISHED_RUN_ATTEMPT}); skipping the :latest move so it never regresses to an older build."
           fi
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
