@@ -239,6 +239,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`AGENTS.md`**: rule 24 amended -- a deferral (leaving a review-thread
+  finding unresolved with only an explanation, rather than fixed) is not
+  itself a decision. The explanation must be put to the maintainer as an
+  explicit approval question, even when only reporting status, and must
+  keep being surfaced as an outstanding decision until an explicit answer
+  is given -- not presented as already approved, and not left for the
+  maintainer to discover unprompted. Found necessary on PR #354: a
+  delegated agent posted a sound deferral explanation on two review
+  threads and correctly left them unresolved per the rule's letter, but
+  never put the deferral itself to the maintainer as a question -- it was
+  only reported afterward as an already-settled fact.
 - **`AGENTS.md`**: rule 3 rewritten to cover PRs as well as issues (labels,
   Milestone, Project-board — previously issue-only) and to reference the
   new CI enforcement above. Added rule 70 -- a `release/X.Y.Z-NG` branch
