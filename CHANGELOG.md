@@ -117,6 +117,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   normative only; that kind of narrative belongs in a PR/commit description
   or this project's own memory system, not in the governance file itself.
 
+- **`AGENTS.md`**: extended rule 62 -- a claim that a bug or vulnerability
+  exists in code, especially external/upstream code not under this repo's
+  control, now additionally requires tracing the complete relevant call
+  path (not just the single line or function that looks wrong) and a real
+  empirical reproduction wherever one is feasible, before being treated as
+  confirmed. A `security`-labeled issue is held to this bar strictly.
+
 ### Fixed
 
 - **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
