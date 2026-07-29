@@ -113,15 +113,27 @@ USER builder
 # test workflows use, on the loopback interface only (--allow 127.0.0.1),
 # entirely self-contained within this one build step.
 #
-# Both checks below poll with a bounded wait rather than assuming a fixed
-# delay is enough: distccd forking, initializing, and binding its port is
-# itself an async operation the client's first attempt could race (a fixed
-# `sleep 1` before the first compile attempt is exactly the same class of
-# flake as the immediate-grep issue below, just one step earlier), and
-# separately distcc can return as soon as it receives the compiled output
-# (DOTO), while distccd's own job-summary write (the COMPILE_OK line)
-# happens afterward in its cleanup path, so an immediate log check could
-# flake too.
+# The compile itself runs exactly once and is never retried. There is no
+# daemon-readiness race to absorb: dcc_standalone_server() calls
+# dcc_socket_listen() before dcc_detach(), and that code's own comment says
+# so explicitly -- "Don't go into the background until we're listening and
+# ready. This is useful for testing -- when the daemon detaches, we know we
+# can go ahead and try to connect" (src/dparent.c). Since distccd is started
+# here without --no-detach, the shell command above only returns once the
+# daemon has detached, which by that design means the socket is already
+# listening. Retrying would also be actively harmful rather than merely
+# redundant: the distributed compile is the very thing this self-test exists
+# to validate, so a loop around it would swallow an intermittent
+# client/server regression, overwrite the failing attempt's captured output
+# with a later attempt's, and let the image publish on a retry.
+#
+# The COMPILE_OK check below does poll, and that is a genuinely different
+# situation -- not an inconsistency: distcc returns as soon as it has
+# received the compiled object, while distccd writes its job summary
+# afterwards in its own cleanup path, so that line is legitimately async
+# with respect to a compile that has already fully succeeded. Polling there
+# waits for a *report* of the result, not for the operation under test to
+# eventually work.
 #
 # The successful attempt's own stderr is checked for emptiness, not just
 # discarded once a compile succeeds: distcc/the compiler exiting 0 does not
@@ -147,14 +159,8 @@ RUN set -eux; \
     mkdir -p /tmp/e2e-selftest && cd /tmp/e2e-selftest; \
     echo 'int main(void) { return 0; }' > ok.c; \
     /usr/local/bin/distccd --daemon --allow 127.0.0.1 --port 3633 --log-file distccd.log; \
-    compiled=0; \
-    for _ in 1 2 3 4 5 6 7 8 9 10; do \
-      DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c >/tmp/e2e-selftest-distcc.log 2>&1 \
-        && { compiled=1; break; }; \
-      sleep 0.5; \
-    done; \
-    [ "${compiled}" = "1" ] \
-      || { echo "ERROR: self-test distributed compile never succeeded after waiting for distccd"; cat /tmp/e2e-selftest-distcc.log distccd.log; exit 1; }; \
+    DISTCC_HOSTS="127.0.0.1:3633" DISTCC_FALLBACK=0 /usr/local/bin/distcc gcc -o ok.o -c ok.c >/tmp/e2e-selftest-distcc.log 2>&1 \
+      || { echo "ERROR: self-test distributed compile failed"; cat /tmp/e2e-selftest-distcc.log distccd.log; exit 1; }; \
     [ -s /tmp/e2e-selftest-distcc.log ] \
       && { echo "ERROR: self-test distributed compile succeeded but emitted output/warnings, treating as a failed check"; cat /tmp/e2e-selftest-distcc.log; exit 1; }; \
     test -f ok.o \

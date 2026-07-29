@@ -163,7 +163,17 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: steps.resolve.outputs.publish_eligible == 'true'
         with:
-          name: distcc-ng-e2e-image
+          # Scoped by run_attempt, not just the run: v4 artifacts can be
+          # resolved across earlier attempts of the same workflow run unless
+          # the name says otherwise, so on a rerun an unsuffixed name could
+          # hand publish the *previous* attempt's tar while it tags those
+          # bytes with this attempt's built_sha -- publishing an image that
+          # was never the one this attempt self-tested, which is precisely
+          # what saving-instead-of-rebuilding exists to prevent. Same
+          # scoping package-release.yml already applies to its own per-run
+          # digest artifacts, and it must stay in lockstep with the
+          # download name in publish below.
+          name: distcc-ng-e2e-image-${{ github.run_attempt }}
           path: /tmp/distcc-ng-e2e.tar
           retention-days: 1
 
@@ -210,7 +220,10 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: distcc-ng-e2e-image
+          # Must stay identical to the upload name in build_and_selftest,
+          # run_attempt suffix included -- see that step's comment for why
+          # an unsuffixed name can resolve a previous attempt's artifact.
+          name: distcc-ng-e2e-image-${{ github.run_attempt }}
           path: /tmp
 
       - name: Load and push the already-proven image
@@ -248,10 +261,19 @@ jobs:
           set -euo pipefail
           docker load -i /tmp/distcc-ng-e2e.tar
           BUILD_TAG="${BUILT_SHA}-${BUILD_DATE}-${{ github.run_id }}-${{ github.run_attempt }}"
-          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
           docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:${BUILD_TAG}"
-          docker push "${IMAGE_BASE}:latest"
+          docker tag distcc-ng-e2e:selftest "${IMAGE_BASE}:latest"
+          # Immutable tag first, moving tag second, deliberately in this
+          # order: the two pushes are independent network operations and the
+          # second can fail on its own. Moving :latest first would, on such a
+          # failure, leave consumers with a freshly-promoted :latest whose
+          # promised pinnable tag does not exist -- unpinnable content in the
+          # moving channel, even though the run is correctly reported failed.
+          # This order degrades the other way instead: the immutable tag
+          # exists and is pullable, while :latest still points at the last
+          # fully-successful publish.
           docker push "${IMAGE_BASE}:${BUILD_TAG}"
+          docker push "${IMAGE_BASE}:latest"
 
   # Files/updates the standing nightly-broken issue on failure, closes it on
   # success -- but only for the runs this actually matters for (the daily
