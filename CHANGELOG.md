@@ -33,6 +33,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
+  landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
+  composite actions, the GHCR image namespace, path-filter overlaps, dangling
+  outputs), a schedule-collision table, and a branch-dormancy note, produced
+  from a full read-through of every workflow/action/config file rather than a
+  pattern-based scan (#356). Surfaced two real, previously-undocumented issues
+  along the way, tracked separately rather than fixed here: a cron collision
+  between `openssf-baseline-recheck.yml` and `scorecard.yml` (both 06:00 UTC
+  whenever the 1st/15th falls on a Sunday), and a stale `release.yml` exclusion
+  in `actionlint.yml`'s lint-target list that currently matches no real file.
+
 - **`.github/workflows/e2e-image-build.yml`, `test/e2e/Dockerfile`,
   `test/e2e/README.md`**: the two-container distributed-compile e2e test
   image (used by `c-build.yml`'s per-push gate and `master-heartbeat.yml`'s
