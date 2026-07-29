@@ -112,7 +112,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   in full, checking for any "follow-up"/"out of scope" section in that PR's
   own text, and cross-referencing information already surfaced earlier in
   the same session, rather than treating each question as if starting from
-  zero context.
+  zero context. Also trimmed the "Live incident"/personal-commentary
+  parentheticals out of rules 66, 70, 72, 73, and 74 -- rule text is
+  normative only; that kind of narrative belongs in a PR/commit description
+  or this project's own memory system, not in the governance file itself.
 
 ### Fixed
 
