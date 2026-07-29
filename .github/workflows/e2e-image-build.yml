@@ -144,15 +144,22 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=distcc-ng-e2e-image-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" != "pull_request" ] && \
              { [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.ref }}" = "refs/heads/current_dev" ]; }; then
-            echo "publish_eligible=true" >> "$GITHUB_OUTPUT"
+            publish_eligible=true
           else
-            echo "publish_eligible=false" >> "$GITHUB_OUTPUT"
+            publish_eligible=false
           fi
+          # One grouped redirect rather than an echo-per-line into
+          # $GITHUB_OUTPUT: shellcheck's SC2129 flags the repeated-redirect
+          # form, and this matches the `{ printf ...; } >> "${GITHUB_OUTPUT}"`
+          # shape package-release.yml's own setup job already uses.
+          {
+            printf 'sha=%s\n' "$(git rev-parse --short HEAD)"
+            printf 'date=%s\n' "$(date -u +%Y%m%d)"
+            printf 'artifact_name=distcc-ng-e2e-image-%s\n' "${RUN_ATTEMPT}"
+            printf 'publish_eligible=%s\n' "${publish_eligible}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Build test/e2e/Dockerfile
         run: docker build -f test/e2e/Dockerfile -t distcc-ng-e2e:selftest .
