@@ -63,11 +63,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **`src/util.c`**: documented `argv_contains()` as unused dead code, planned
-  for removal in a follow-up change -- confirmed via an unrestricted
-  recursive grep across the entire tracked tree that no real caller exists
-  anywhere, and none has since the function was first added in this
-  project's original 2008 import.
+- **`src/util.c`**: documented `argv_contains()` as unused dead code. A
+  current-tree recursive grep (`grep -Ri "argv_contains"`) only confirms no
+  caller exists *today*; the stronger claim that none has existed since the
+  function's original 2008 import was verified with `git log --oneline -S
+  "argv_contains(" --` restricted to this branch's own ancestry (not `--all`,
+  which also pulls in unrelated remote-tracking history) -- every match is
+  either the 2008 initial import or a later pure file-move commit, never a
+  commit that adds a call site. Also brought `dcc_exit()`/`str_endswith()`/
+  `str_startswith()`'s comments up to this fork's convention while the file
+  was already open for this change.
 
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
