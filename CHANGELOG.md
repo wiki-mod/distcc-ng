@@ -13,6 +13,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
+  still called `lcov --list` with the deprecated `lcov_branch_coverage` RC
+  name, missed when the job's other three `lcov` invocations were already
+  switched to `branch_coverage` -- every relevant coverage run was emitting
+  a deprecation warning here.
+- **`docker/verify/Dockerfile`**: the `actionlint-builder` stage's `RUN set
+  -euo pipefail; ...` had no `SHELL` override, so it executed via Docker's
+  default `/bin/sh` -- dash on this Debian-based `golang:latest` image,
+  which rejects the bash-only `-o pipefail` and failed the entire stage.
+  There is no pipe in that command, so switched to `set -eu` (POSIX,
+  dash-compatible) instead of adding a `SHELL` directive. This meant the
+  `distcc-ng-buildtools` image could not be rebuilt from scratch at all.
+- **`.github/workflows/verify-image-build.yml`**: its own `make check`
+  invocation used the same `su`/`bash` PID-1 pattern documented in
+  `doc/verification-checklist.md` (PR #375) without `--init` -- `distccd
+  --daemon`'s `dcc_detach()` reparents each killed daemon to PID 1, `su`
+  never reaps it, and `test/testdistcc.py`'s own teardown poll
+  (`os.kill(pid, 0)` after `SIGTERM`, since it can't `wait()` a detached
+  daemon) can then spin forever with nothing to reap the zombie -- a real,
+  silent hang in this recurring CI job, not just an ad-hoc local run.
+  Added `--init` so a real init (`tini`) reaps those zombies.
+
 - **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
   derives directly from `github.event_name`/`github.ref` instead of
   `build_and_selftest`'s `publish_eligible` job output, so a run that fails
