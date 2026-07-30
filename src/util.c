@@ -63,6 +63,10 @@
              *        -- Isaiah 13:12 */
 
 
+/* Log this process's own and its children's resource usage before
+ * exiting with @p exitcode; a failed getrusage() logs a warning and
+ * exits anyway rather than aborting, since the exit itself must not
+ * be blocked by a diagnostics-only failure. */
 void dcc_exit(int exitcode)
 {
     struct rusage self_ru, children_ru;
@@ -89,7 +93,11 @@ void dcc_exit(int exitcode)
 }
 
 
-/* Return true if @p tiger ends with @p tail. */
+/* Return true if @p tiger ends with @p tail. Neither argument is
+ * NULL-checked: every call site in this codebase already passes a
+ * literal or an already-validated string, so a NULL here would be a
+ * caller bug surfacing as a crash in strlen(), not a case this
+ * function needs to handle gracefully. */
 int str_endswith(const char *tail, const char *tiger)
 {
     size_t len_tail = strlen(tail);
@@ -102,7 +110,9 @@ int str_endswith(const char *tail, const char *tiger)
 }
 
 
-/* Return true if @p worm starts with @p head. */
+/* Return true if @p worm starts with @p head. Same non-NULL assumption
+ * as str_endswith() above -- no call site in this codebase can pass
+ * NULL, so this is intentionally left unguarded. */
 int str_startswith(const char *head, const char *worm)
 {
     return !strncmp(head, worm, strlen(head));
@@ -112,6 +122,11 @@ int str_startswith(const char *head, const char *worm)
 
 /**
  * Skim through NULL-terminated @p argv, looking for @p s.
+ *
+ * Unused dead code: no caller exists anywhere in this project's real
+ * history -- `git log -S "argv_contains(" --` against this branch's own
+ * ancestry shows only the definition's original 2008 import and its
+ * later file-move commits, never a commit adding a call site.
  **/
 int argv_contains(char **argv, const char *s)
 {
