@@ -372,16 +372,19 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       "..."'` (the pattern the two entries above already use to drop from
       root to the image's non-root user) makes `su` that PID 1 in place of
       a real init — and `su`, like `bash`, never reaps a reparented
-      zombie. `test/testdistcc.py` starts and kills many short-lived
-      daemonized `distccd` instances per test case; each one killed at
-      test teardown becomes exactly such an unreapable zombie. The test
-      harness does not hang directly because of this — but
-      `wait()`/`waitpid()` calls elsewhere in the same test run can block
-      indefinitely against the accumulating zombie table, producing a
-      real, silent hang with the stuck process burning near-zero CPU
-      (`ps aux`'s `TIME` column stays at seconds while wall-clock elapses
-      in hours) and no error output at all — indistinguishable at a
-      glance from "still running a slow test." Diagnostic signal: `ps
+      zombie. The actual hang is in `test/testdistcc.py`'s own
+      `WithDaemon_Case.killDaemon()`: since the harness can't `wait()` a
+      detached daemon (its own comment says so), it sends `SIGTERM` and
+      then polls with `os.kill(pid, 0)` in a `while 1` loop until that
+      call raises `OSError` (`ESRCH`) -- but a zombie still has a live PID
+      table entry, so `kill(pid, 0)` keeps succeeding against it
+      indefinitely, and the loop only exits once something actually reaps
+      the zombie. With no real init to do that, the loop spins forever at
+      0.2s intervals: a real, silent hang with the stuck process burning
+      near-zero CPU (`ps aux`'s `TIME` column stays at seconds while
+      wall-clock elapses in hours) and no error output at all —
+      indistinguishable at a glance from "still running a slow test."
+      Diagnostic signal: `ps
       auxf` inside the container shows multiple `[distccd] <defunct>`
       entries whose parent is PID 1 (or the `su`/`bash` wrapper), not a
       live test process. Fix: add `--init` to the `docker run` invocation
