@@ -65,7 +65,11 @@ ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28
 # build-tools image.
 FROM golang:latest AS actionlint-builder
 ARG ACTIONLINT_VERSION=1.7.12
-RUN set -euo pipefail; \
+# This stage has no SHELL override, so RUN executes via Docker's default
+# /bin/sh -- dash on this Debian-based golang image, which rejects the
+# bash-only `-o pipefail`. No pipe exists in this command anyway, so `-eu`
+# alone (POSIX sh, dash-compatible) gives the same fail-fast guarantee.
+RUN set -eu; \
     GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
     /out/actionlint --version
 

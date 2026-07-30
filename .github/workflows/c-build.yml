@@ -580,7 +580,7 @@ jobs:
             echo
             echo "### C (lcov)"
             echo '```'
-            lcov --list coverage.info --rc lcov_branch_coverage=1
+            lcov --list coverage.info --rc branch_coverage=1
             echo '```'
             echo
             echo "### Python (include_server)"
