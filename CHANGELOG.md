@@ -69,9 +69,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   NULL argument was already undefined behavior), so this converts an
   undiagnosable crash into a clear, attributable assertion failure rather than
   changing behavior for any correct caller. Motivated by the OpenSSF Best
-  Practices Badge `dynamic_analysis_enable_assertions` criterion (the codebase
-  previously had zero `assert()` calls). Verified with a real `make check` run
-  (all cases OK/expected-NOTRUN, no new failures).
+  Practices Badge `dynamic_analysis_enable_assertions` criterion; the codebase
+  already used `assert()` elsewhere (e.g. `src/compile.c:135`, `src/arg.c:869`,
+  `src/fix_debug_info.c:245`), so this adds coverage to these three specific
+  string/argv helpers rather than introducing the technique from scratch.
+  Verified with a real `make check` run (all cases OK/expected-NOTRUN, no new
+  failures).
 
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
