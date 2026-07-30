@@ -21,14 +21,20 @@
 # dependency; sha256 verified against the actual downloaded tarball, not
 # copied from an unverified third-party listing).
 #
-# Not pinned to a digest like this repo's other Dockerfiles
-# (docker/release/Dockerfile, docker/verify/Dockerfile) -- OSS-Fuzz
-# actively maintains this image as its own build environment (clang,
-# libFuzzer, sanitizer runtimes), and pinning it to a point-in-time
-# digest would mean missing exactly the clang/sanitizer updates this
-# image exists to track. This is ClusterFuzzLite's own documented
-# convention, not a deviation invented here.
-FROM gcr.io/oss-fuzz-base/base-builder:v1
+# Was left unpinned unlike this repo's other Dockerfiles
+# (docker/release/Dockerfile, docker/verify/Dockerfile), matching
+# ClusterFuzzLite's own documented convention: OSS-Fuzz actively maintains
+# this image as its own build environment (clang, libFuzzer, sanitizer
+# runtimes), and pinning it to a point-in-time digest would mean missing
+# exactly the clang/sanitizer updates this image exists to track.
+#
+# Superseded (maintainer decision, 2026-07-30, issue #267): now pinned to a
+# fixed digest to close Scorecard's PinnedDependenciesID finding. This
+# weakens the "always track OSS-Fuzz's latest clang/sanitizer build" intent
+# to "refreshed whenever Dependabot's weekly docker-ecosystem scan
+# (.github/dependabot.yml, now covering this directory too) bumps the
+# pinned digest" -- accepted tradeoff, not an oversight.
+FROM gcr.io/oss-fuzz-base/base-builder@sha256:8b4a73d83374b298a0a771eeec9a1d44ceff3416a678b7d7946303389d022aca
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       automake \

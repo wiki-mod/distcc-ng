@@ -40,9 +40,9 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Docker base images (both Dockerfiles already pin a base image digest;
-  # Dependabot keeps that pinned digest current instead of leaving it to
-  # rot at whatever digest it was set to on the day it was written).
+  # Docker base images (every Dockerfile below already pins a base image
+  # digest; Dependabot keeps that pinned digest current instead of leaving
+  # it to rot at whatever digest it was set to on the day it was written).
   - package-ecosystem: docker
     directory: /docker/release
     target-branch: master
@@ -61,6 +61,36 @@ updates:
       interval: weekly
   - package-ecosystem: docker
     directory: /docker/verify
+    target-branch: current_dev
+    schedule:
+      interval: weekly
+
+  # test/e2e/Dockerfile and .clusterfuzzlite/Dockerfile were pinned to a
+  # digest (issue #267, Scorecard PinnedDependenciesID) on 2026-07-30 --
+  # both previously relied on a floating tag specifically to always track
+  # upstream's latest build (Debian security/backport updates and OSS-Fuzz's
+  # clang/sanitizer toolchain, respectively). Pinning without this coverage
+  # would freeze them forever at whatever digest they were pinned to; this
+  # keeps them refreshed weekly instead, the same tradeoff already accepted
+  # for docker/release and docker/verify above.
+  - package-ecosystem: docker
+    directory: /test/e2e
+    target-branch: master
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /test/e2e
+    target-branch: current_dev
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    target-branch: master
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
     target-branch: current_dev
     schedule:
       interval: weekly

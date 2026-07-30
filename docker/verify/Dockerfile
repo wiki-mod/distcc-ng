@@ -58,12 +58,16 @@ ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28
 # security release, so its official static release binary can (and, per
 # wiki-mod/lancache-ng's own Trivy-scanning of this exact same version, has)
 # carry known stdlib CVEs from whatever Go toolchain happened to be current
-# when that release was cut. Building from source with whatever Go
-# toolchain `golang:latest` resolves to at build time is the only way to
-# get a current, patched stdlib into it -- same approach and same pinned
-# version (v1.7.12, the latest release at pin time) as lancache-ng's own
-# build-tools image.
-FROM golang:latest AS actionlint-builder
+# when that release was cut. Building from source with a Go toolchain is
+# the only way to get a current, patched stdlib into it -- same approach
+# and same pinned version (v1.7.12, the latest release at pin time) as
+# lancache-ng's own build-tools image. `golang:latest` itself is pinned to
+# a digest (maintainer decision, issue #267, Scorecard PinnedDependenciesID)
+# rather than left as a floating tag; this repo's Dependabot config tracks
+# docker/verify's base images (.github/dependabot.yml) so the pinned
+# digest still gets refreshed weekly instead of freezing at whatever Go
+# release happened to be current on the day this was pinned.
+FROM golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS actionlint-builder
 ARG ACTIONLINT_VERSION=1.7.12
 # This stage has no SHELL override, so RUN executes via Docker's default
 # /bin/sh -- dash on this Debian-based golang image, which rejects the
