@@ -65,12 +65,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 - **`.github/workflows/c-build.yml`**: new `coverage` job builds the real test
   suite with gcov instrumentation (`--coverage -O0`), captures statement/branch
-  coverage via `lcov` (excluding vendored `popt/`/`lzo/` and the `test/` harness
-  itself), and uploads the report to Codecov (tokenless upload, public repo).
-  Motivated by the OpenSSF Best Practices Badge `test_most` criterion, whose
-  documented evidence path is exactly a Coveralls/Codecov badge. Separate job
-  from `make_check`, since gcov instrumentation changes what's being measured
-  and this job's coverage report is not itself a pass/fail gate.
+  C coverage via `lcov` (excluding vendored `popt/`/`lzo/` and the `test/`
+  harness itself), separately captures Python coverage for `include_server/*.py`
+  (a real, substantial production component, not a peripheral tool -- excluding
+  it would understate what "most of the code" actually covers) via
+  `python3-coverage` scoped to the `make check` test-invocation step only (not
+  `configure`/`make`, since `$(PYTHON)` also drives the C-extension's own
+  `build_ext` step and configure's Python-version probe, both of which broke
+  when a coverage-wrapped `$(PYTHON)` was tried there), and uploads both
+  reports to Codecov (tokenless upload, public repo). Motivated by the OpenSSF
+  Best Practices Badge `test_most` criterion, whose documented evidence path
+  is exactly a Coveralls/Codecov badge. Separate job from `make_check`, since
+  gcov instrumentation changes what's being measured and this job's coverage
+  report is not itself a pass/fail gate. Fails loudly (`fail_ci_if_error:
+  true`) if the Codecov upload itself fails, rather than reporting green with
+  no actual evidence published; redirects to `current_dev` on the nightly
+  schedule run, matching `make_check`/`distributed_e2e`'s own redirect.
 
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
