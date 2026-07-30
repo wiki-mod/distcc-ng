@@ -397,6 +397,74 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Statement-coverage measurement for the real test suite (OpenSSF Best
+  # Practices Badge "test_most" criterion -- coverage evidence pulled from a
+  # Coveralls/Codecov badge is the documented autofill path for that
+  # criterion, since actually running a full-suite coverage build in the
+  # badge-checking tool itself is far too slow for that tool's own time
+  # budget). Separate job, not folded into make_check: gcov instrumentation
+  # (--coverage) changes what's being measured (unoptimized, extra
+  # profiling counters) and this job's only output is the coverage report,
+  # not a build/test result anyone should treat as a pass/fail gate on its
+  # own -- make_check's own real (uninstrumented) build is still the
+  # actual required check.
+  coverage:
+    name: Test coverage (gcov/lcov -> Codecov)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Read-only checkout + a report upload to Codecov (which authenticates
+    # via its own tokenless-upload mechanism for public repos, not a
+    # GITHUB_TOKEN scope) -- nothing here needs any write permission.
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev lcov
+      - run: ./autogen.sh
+      # --coverage is gcc/clang shorthand for -fprofile-arcs -ftest-coverage
+      # at compile time plus linking against libgcov; -O0 keeps the
+      # instrumentation's line/branch attribution accurate (optimization can
+      # merge or reorder blocks in ways that make gcov's per-line counts
+      # misleading).
+      - run: ./configure CFLAGS="--coverage -O0" LDFLAGS="--coverage" PYTHON="$(which python3)"
+      - run: make
+      - run: make check
+      - name: Capture coverage data with lcov
+        run: |
+          set -euo pipefail
+          lcov --capture --directory . --output-file coverage_raw.info \
+            --rc lcov_branch_coverage=1 --ignore-errors mismatch,negative
+          # Exclude vendored third-party sources (popt/, lzo/) and the test
+          # harness itself (test/) -- this criterion is about coverage of
+          # this project's own code, not of code it merely bundles or of the
+          # test scripts that do the covering.
+          lcov --remove coverage_raw.info \
+            '*/popt/*' '*/lzo/*' '*/test/*' '/usr/*' \
+            --output-file coverage.info \
+            --rc lcov_branch_coverage=1 --ignore-errors unused
+          lcov --list coverage.info --rc lcov_branch_coverage=1
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: ./coverage.info
+          fail_ci_if_error: false
+          # Public repo: Codecov's tokenless upload works without a
+          # configured CODECOV_TOKEN secret. If uploads start failing
+          # (Codecov's tokenless rate limits are stricter than a
+          # token-authenticated upload's), add a real token as a repo
+          # secret and pass it here rather than silently losing coverage
+          # data -- fail_ci_if_error stays false so a Codecov-side outage
+          # never blocks this job or, transitively, anything depending on
+          # it.
+
   # Real distributed-compile validation: distcc-ng's own source tree is built
   # across two containers (a distccd server + a distcc client) over a bridge
   # network, in both plain and pump mode, and a distributed compile is checked

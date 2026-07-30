@@ -63,6 +63,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/c-build.yml`**: new `coverage` job builds the real test
+  suite with gcov instrumentation (`--coverage -O0`), captures statement/branch
+  coverage via `lcov` (excluding vendored `popt/`/`lzo/` and the `test/` harness
+  itself), and uploads the report to Codecov (tokenless upload, public repo).
+  Motivated by the OpenSSF Best Practices Badge `test_most` criterion, whose
+  documented evidence path is exactly a Coveralls/Codecov badge. Separate job
+  from `make_check`, since gcov instrumentation changes what's being measured
+  and this job's coverage report is not itself a pass/fail gate.
+
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
   composite actions, the GHCR image namespace, path-filter overlaps, dangling
