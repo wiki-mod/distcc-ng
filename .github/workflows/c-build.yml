@@ -489,6 +489,14 @@ jobs:
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
         with:
           files: ./coverage.info,./coverage-python.xml
+          # Codecov's tokenless upload (originally assumed here) now rejects
+          # this repo with "Token required - not valid tokenless upload"
+          # (confirmed live on PR #370's own CI run) -- tokenless only works
+          # for repos it recognizes as already activated on codecov.io.
+          # CODECOV_TOKEN must exist as a repo secret (Settings -> Secrets and
+          # variables -> Actions), copied from this repo's codecov.io project
+          # settings after activating it there.
+          token: ${{ secrets.CODECOV_TOKEN }}
           # A failed upload means this job's entire purpose (publishing
           # evidence for the OpenSSF test_most criterion) silently didn't
           # happen while still reporting green -- fail loudly instead.

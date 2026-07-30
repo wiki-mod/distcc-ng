@@ -73,7 +73,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `configure`/`make`, since `$(PYTHON)` also drives the C-extension's own
   `build_ext` step and configure's Python-version probe, both of which broke
   when a coverage-wrapped `$(PYTHON)` was tried there), and uploads both
-  reports to Codecov (tokenless upload, public repo). Motivated by the OpenSSF
+  reports to Codecov. Tokenless upload was assumed viable for a public repo,
+  but real CI confirmed Codecov rejects it (`"Token required - not valid
+  tokenless upload"`) -- this repo isn't (yet) recognized as activated on
+  codecov.io, so the upload step now takes `token: ${{ secrets.CODECOV_TOKEN
+  }}`; a maintainer still needs to activate the repo on codecov.io and add
+  the resulting token as a `CODECOV_TOKEN` repo secret before this job goes
+  green. Motivated by the OpenSSF
   Best Practices Badge `test_most` criterion, whose documented evidence path
   is exactly a Coveralls/Codecov badge. Separate job from `make_check`, since
   gcov instrumentation changes what's being measured and this job's coverage
