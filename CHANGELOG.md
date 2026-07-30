@@ -11,6 +11,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Security
+
+- **Bumped `actions/upload-artifact`** (`.github/workflows/c-build.yml`'s
+  coverage job) from v4.6.2 to v7.0.1 (Dependabot). Reviewed rather than
+  merged on CI-green alone: the new pinned digest
+  (`043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`) is the same one already in
+  use for `package-release.yml`'s and `scorecard.yml`'s own
+  `upload-artifact` steps, so this only brings the coverage job's pin in
+  line with the rest of the repo rather than introducing an unreviewed
+  version. No `with:` usage change needed -- v5/v6/v7's additions
+  (Node.js 24 runtime, direct single-file uploads) are additive and
+  don't affect this step's existing directory-archive usage; Node.js 24
+  is already satisfied by this repo's GitHub-hosted-only runners.
+
 ## [3.6.4-NG] - 2026-07-30
 
 ### Fixed
