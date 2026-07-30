@@ -23,6 +23,7 @@
 
 #include <config.h>
 
+#include <assert.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,6 +64,10 @@
              *        -- Isaiah 13:12 */
 
 
+/* Log this process's own and its children's resource usage before
+ * exiting with @p exitcode; a failed getrusage() logs a warning and
+ * exits anyway rather than aborting, since the exit itself must not
+ * be blocked by a diagnostics-only failure. */
 void dcc_exit(int exitcode)
 {
     struct rusage self_ru, children_ru;
@@ -89,10 +94,19 @@ void dcc_exit(int exitcode)
 }
 
 
+/* Return true if @p tiger ends with @p tail. Both arguments are asserted
+ * non-NULL: every caller in this codebase passes a literal or an
+ * already-validated string, so a NULL here signals a caller bug, not a
+ * runtime condition to handle gracefully. */
 int str_endswith(const char *tail, const char *tiger)
 {
-    size_t len_tail = strlen(tail);
-    size_t len_tiger = strlen(tiger);
+    size_t len_tail, len_tiger;
+
+    assert(tail != NULL);
+    assert(tiger != NULL);
+
+    len_tail = strlen(tail);
+    len_tiger = strlen(tiger);
 
     if (len_tail > len_tiger)
         return 0;
@@ -101,8 +115,15 @@ int str_endswith(const char *tail, const char *tiger)
 }
 
 
+/* Return true if @p worm starts with @p head. Both arguments are asserted
+ * non-NULL for the same reason as str_endswith() above: every real call
+ * site already guarantees non-NULL strings, so a NULL here is a caller
+ * bug to catch immediately rather than a case to handle. */
 int str_startswith(const char *head, const char *worm)
 {
+    assert(head != NULL);
+    assert(worm != NULL);
+
     return !strncmp(head, worm, strlen(head));
 }
 
@@ -110,9 +131,21 @@ int str_startswith(const char *head, const char *worm)
 
 /**
  * Skim through NULL-terminated @p argv, looking for @p s.
+ *
+ * Unused dead code: no caller exists anywhere in this project's real
+ * history -- `git log -S "argv_contains(" --` against this branch's own
+ * ancestry shows only the definition's original 2008 import and its
+ * later file-move commits, never a commit adding a call site. @p argv
+ * and @p s are still asserted non-NULL rather than handled as an
+ * empty-result case: an actual NULL here would mean the argv array
+ * itself was never built, which is a caller bug worth catching
+ * immediately instead of silently returning "not found".
  **/
 int argv_contains(char **argv, const char *s)
 {
+    assert(argv != NULL);
+    assert(s != NULL);
+
     while (*argv) {
         if (!strcmp(*argv, s))
             return 1;
@@ -150,6 +183,8 @@ int dcc_redirect_fd(int fd, const char *fname, int mode)
 
 
 
+/* Return this host's name, cached in a static buffer after the first
+ * successful lookup; "UNKNOWN" if gethostname() fails. */
 char *dcc_gethostname(void)
 {
     static char myname[100] = "\0";
@@ -570,6 +605,8 @@ int dcc_dup_part(const char **psrc, char **pdst, const char *sep)
 
 
 
+/* Unlink @p fname, treating "already gone" (ENOENT) as success rather
+ * than an error. */
 int dcc_remove_if_exists(const char *fname)
 {
     if (unlink(fname) && errno != ENOENT) {
@@ -885,6 +922,9 @@ void dcc_get_disk_io_stats(int *n_reads, int *n_writes) {
 #endif
 
 #ifndef HAVE_STRSEP
+/* Compat strsep(): split *str in place at the first character in @p
+ * delims, returning the token before it and advancing *str past it;
+ * NULL once *str is exhausted. */
 static char* strsep(char** str, const char* delims)
 {
     char* token;
@@ -966,6 +1006,12 @@ int dcc_tokenize_string(const char *input, char ***argv_ptr)
 }
 
 #ifndef HAVE_GETLINE
+/* Compat getline() for systems lacking their own: reads one line
+ * (delimited by '\n', or EOF) from @p stream into a growable buffer,
+ * (re)allocating the lineptr and n outputs as needed. Returns the
+ * number of bytes read, or -1 on EOF or allocation failure (see
+ * remote.c's caller for how those two are told apart via
+ * errno/ferror()). */
 ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
     static const int buffer_size_increment = 100;
     char *buffer;
@@ -990,9 +1036,14 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
             size += buffer_size_increment;
             new_buffer = realloc(buffer, size);
             if (new_buffer == NULL) {
-                /* Out of memory. */
+                /* Out of memory. realloc() is documented to set errno to
+                 * ENOMEM on failure, but this compat getline() never touches
+                 * the FILE*, so ferror() can't see this failure; set errno
+                 * explicitly so callers checking it (see remote.c) have a
+                 * reliable signal regardless of realloc()'s own behavior. */
                 *lineptr = buffer;
                 *n = size - buffer_size_increment;
+                errno = ENOMEM;
                 return -1;
             }
             buffer = new_buffer;
@@ -1086,6 +1137,8 @@ union sockaddr_union {
         struct sockaddr_storage storage;
 };
 
+/* Like sd_is_socket_internal(), but also checks the socket's address
+ * family against @p family (0 to skip that check). */
 int not_sd_is_socket(int fd, int family, int type, int listening) {
         int r;
 
@@ -1112,6 +1165,9 @@ int not_sd_is_socket(int fd, int family, int type, int listening) {
         return 1;
 }
 
+/* Build the ".dwo" split-debug filename that goes with @p temp_o (a
+ * ".o" path), by appending "wo" onto it. Caller owns the returned
+ * buffer. */
 char *dcc_make_dwo_fname(const char *temp_o)
 {
     char *out;

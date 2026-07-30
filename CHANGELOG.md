@@ -11,7 +11,236 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.3-NG] - 2026-07-30
+
 ### Fixed
+
+- **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
+  derives directly from `github.event_name`/`github.ref` instead of
+  `build_and_selftest`'s `publish_eligible` job output, so a run that fails
+  before that output is ever produced (Harden Runner, checkout, identity
+  resolution) still reaches `report` instead of being silently skipped.
+  `publish` now also checks build recency before moving the `:latest` tag:
+  it reads the currently-published `:latest` version's own paired immutable
+  `SHA-DATE-RUN_ID-RUN_ATTEMPT` tag(s) from the GHCR package API, and
+  compares the *built commit* against that published commit via real commit
+  ancestry on `current_dev` (not `github.run_id` ordering alone -- a
+  scheduled run's checkout resolves to `current_dev`'s tip at execution
+  time, not at trigger time, so a run created earlier can still end up
+  building a genuinely newer commit than a later-triggered run finished
+  first). `(run_id, run_attempt)` is used only to break a tie between two
+  builds of the identical commit, since the base image and apt sources are
+  both deliberately mutable and two builds of the same commit are not
+  guaranteed byte-identical. A genuine GHCR lookup failure (anything other
+  than a real 404 for a never-yet-published package) fails the step
+  outright rather than defaulting to "no prior publish". The immutable
+  per-run tag is still pushed unconditionally either way. The published
+  tag's SHA is now resolved and validated as its own statement before any
+  comparison runs, instead of directly inside an `elif` condition -- inside
+  an `if`/`elif` test, a failing command is exempt from `set -e`, so an
+  unresolvable published SHA (e.g. an ambiguous short prefix once history
+  grows) previously fell through silently as "not newer" and left `:latest`
+  stale instead of failing loudly; the same fix applies to the
+  `git merge-base --is-ancestor` call, whose exit status is now checked
+  explicitly so a real error is distinguished from a genuine "not an
+  ancestor" result.
+
+- **`.github/labeler.yml`**: the `documentation` label matched `**/*.md`,
+  which included `CHANGELOG.md` -- since almost every PR touches that
+  file (`changelog-check.yml`'s own requirement), `documentation` was
+  firing on nearly every PR regardless of what it actually changed.
+  Excluded `CHANGELOG.md` explicitly (without suppressing the label for a
+  genuine documentation PR that also updates its `CHANGELOG.md` entry, the
+  routine case); `doc/**` and other real `.md` files (README, etc.) are
+  unaffected.
+
+- **`src/cleanup.c`**: `dcc_add_cleanup()`'s first call passed a `NULL`
+  source pointer to `memcpy()` at a zero length -- technically undefined
+  behavior (libc declares `memcpy()`'s source parameter `nonnull`), flagged
+  by UBSan on the first cleanup registration in any real compile or daemon
+  session (not simple early-exit invocations like `--version`/`--help`,
+  which never reach this code path) (#266). Harmless in
+  practice (a zero-length copy never dereferences anything), but now
+  skipped outright when `cleanups_size == 0` rather than relying on that.
+
+### Added
+
+- **`src/util.c`**: added real `assert()` invariant checks to `str_endswith()`,
+  `str_startswith()`, and `argv_contains()` -- each already implicitly assumed
+  its pointer arguments were non-NULL (an unguarded `strlen()`/`strcmp()` on a
+  NULL argument was already undefined behavior), so this converts an
+  undiagnosable crash into a clear, attributable assertion failure rather than
+  changing behavior for any correct caller. Motivated by the OpenSSF Best
+  Practices Badge `dynamic_analysis_enable_assertions` criterion; the codebase
+  already used `assert()` elsewhere (e.g. `src/compile.c:135`, `src/arg.c:869`,
+  `src/fix_debug_info.c:245`), so this adds coverage to these three specific
+  string/argv helpers rather than introducing the technique from scratch.
+  Verified with a real `make check` run (all cases OK/expected-NOTRUN, no new
+  failures).
+
+- **`.github/workflows/c-build.yml`**: new `coverage` job builds the real test
+  suite with gcov instrumentation (`--coverage -O0`), captures statement/branch
+  C coverage via `lcov` (excluding vendored `lzo/` and the `check_PROGRAMS`
+  C test drivers, `src/h_*.c`), separately captures Python coverage for
+  `include_server/*.py` (a real, substantial production component, not a
+  peripheral tool -- excluding it would understate what "most of the code"
+  actually covers) via a coverage-recording `PYTHON` wrapper script generated
+  at job runtime (a real single-token executable, since Makefile.in passes
+  `$(PYTHON)` as one token to code that forwards it straight to `subprocess`
+  as an executable name -- a multiword override fails outright), and publishes
+  both reports without any third-party service: a table in the job summary
+  (`$GITHUB_STEP_SUMMARY`) plus the full `coverage.info`/`coverage-python.xml`
+  as a `coverage-reports` build artifact. GitHub's own native "Code Quality"
+  coverage feature was checked and ruled out -- it requires GitHub
+  Enterprise Cloud/Team, not available on this org's Free plan (confirmed
+  via `gh api orgs/<org>`). Codecov was tried first (tokenless upload for a
+  public repo) but rejected outright by Codecov itself
+  (`"Token required - not valid tokenless upload"`) and, independent of
+  that, is not something to route third-party coverage data through
+  without deliberate opt-in -- reverted in favor of the GitHub-native
+  approach above. Also reruns `AutogroupNicenessPrivilegeDrop_Case` under
+  `sudo` before lcov captures (mirroring `make_check`'s own pattern for that
+  root-only case), and installs `libseccomp-dev`/`--with-seccomp` so the real
+  `HAVE_SECCOMP` sandbox path is included. Three separate `lcov --remove`
+  patterns (`popt/`, `test/`, `/usr/*`) turned out to be dead on arrival --
+  none ever matched anything this job's own build produces -- caught via
+  real CI runs and removed rather than suppressed with `--ignore-errors
+  unused` (AGENTS.md rule 76, added because of this). Motivated by the
+  OpenSSF Best Practices Badge `test_most` criterion; without an
+  auto-detected Coveralls/Codecov badge, that criterion is met with a manual
+  justification linking to a real CI run instead. Separate job from
+  `make_check`, since gcov instrumentation changes what's being measured and
+  this job's coverage report is not itself a pass/fail gate; redirects to
+  `current_dev` on the nightly schedule run, matching
+  `make_check`/`distributed_e2e`'s own redirect.
+
+- **`src/util.c`**: documented `argv_contains()` as unused dead code. A
+  current-tree recursive grep (`grep -Ri "argv_contains"`) only confirms no
+  caller exists *today*; the stronger claim that none has existed since the
+  function's original 2008 import was verified with `git log --oneline -S
+  "argv_contains(" --` restricted to this branch's own ancestry (not `--all`,
+  which also pulls in unrelated remote-tracking history) -- every match is
+  either the 2008 initial import or a later pure file-move commit, never a
+  commit that adds a call site. Also brought `dcc_exit()`/`str_endswith()`/
+  `str_startswith()`'s comments up to this fork's convention while the file
+  was already open for this change.
+
+- **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
+  landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
+  composite actions, the GHCR image namespace, path-filter overlaps, dangling
+  outputs), a schedule-collision table, and a branch-dormancy note, produced
+  from a full read-through of every workflow/action/config file rather than a
+  pattern-based scan (#356). Surfaced two real, previously-undocumented issues
+  along the way, tracked separately rather than fixed here: a cron collision
+  between `openssf-baseline-recheck.yml` and `scorecard.yml` (both 06:00 UTC
+  whenever the 1st/15th falls on a Sunday), and a stale `release.yml` exclusion
+  in `actionlint.yml`'s lint-target list that currently matches no real file.
+
+- **`.github/workflows/e2e-image-build.yml`, `test/e2e/Dockerfile`,
+  `test/e2e/README.md`**: the two-container distributed-compile e2e test
+  image (used by `c-build.yml`'s per-push gate and `master-heartbeat.yml`'s
+  weekly ccache heartbeat) is now built, validated via a real embedded
+  self-test (a distcc-through-distccd compile checked against the daemon's
+  own log), and published to GHCR as `distcc-ng-e2e:latest` -- the actual
+  test workflows don't pull it yet (a deliberately separate follow-up, see
+  `test/e2e/README.md`). Rebuilt daily (deliberately unpinned base image,
+  unlike this fork's other two images) so it always carries the latest
+  Debian trixie-slim security/backport updates, acting as an early-warning
+  canary for an upstream package update
+  breaking this project's build.
+
+- **`.github/workflows/master-heartbeat.yml`, `test/e2e/control-build.sh`,
+  `test/e2e/run-e2e.sh`**: two diagnostic/robustness additions to the weekly
+  ccache-distributed heartbeat, motivated by issue #263 (a real heartbeat
+  failure that took real effort to trace back to a compiler-version problem
+  rather than a distcc-ng bug). (1) A new `ccache_control_build` job builds
+  the same pinned ccache source directly with the same image's plain
+  compiler, entirely independent of distcc/distccd (no daemon, no launcher,
+  no network hop), and writes a classification note to the job summary; it
+  never gates `ccache_heartbeat`'s own result (the `report` job still keys
+  exclusively off `needs.ccache_heartbeat.result`), so a real distcc bug can
+  never be masked by a green control build. (2) `run-e2e.sh` gained an
+  optional `E2E_MAX_ATTEMPTS` retry loop (default `1`, i.e. unchanged
+  behavior for `c-build.yml`'s per-push `distributed_e2e` job) so the weekly
+  heartbeat can ride out a one-off network/container flake; a failure that
+  reproduces on every attempt still exits non-zero. Both the heartbeat build
+  and the new control build read the pinned ccache tag from a single
+  workflow-level `CCACHE_HEARTBEAT_TAG` so they can never silently drift onto
+  different ccache revisions.
+
+- **`AGENTS.md`**: added rule 75 -- investigate to full depth on the first
+  pass, not only after the maintainer pushes back a second time. A status
+  or effort question must be answered by reading the relevant PR/issue body
+  in full, checking for any "follow-up"/"out of scope" section in that PR's
+  own text, and cross-referencing information already surfaced earlier in
+  the same session, rather than treating each question as if starting from
+  zero context. Also trimmed the "Live incident"/personal-commentary
+  parentheticals out of rules 66, 70, 72, 73, and 74 -- rule text is
+  normative only; that kind of narrative belongs in a PR/commit description
+  or this project's own memory system, not in the governance file itself.
+
+- **`AGENTS.md`**: added rule 76 -- do not add defensive/precautionary code
+  (an exclusion pattern, a fallback branch, a compatibility shim, an extra
+  flag) by copying it from a similar existing case without confirming it
+  actually applies to the specific configuration being written; an
+  inapplicable pattern must be left out, not kept "just in case" and then
+  paired with a suppression flag once a tool complains about it (which
+  would also violate rule 66).
+
+- **`AGENTS.md`**: extended rule 62 -- a claim that a bug or vulnerability
+  exists in code, especially external/upstream code not under this repo's
+  control, now additionally requires tracing the complete relevant call
+  path (not just the single line or function that looks wrong) and a real
+  empirical reproduction wherever one is feasible, before being treated as
+  confirmed. A `security`-labeled issue is held to this bar strictly.
+
+### Fixed
+
+- **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
+  ccache-distributed heartbeat (#263) failed building `argprocessing.cpp`,
+  and (once that was worked around) `core/statistics.cpp` too. Confirmed via
+  a real reproduction on an independent host (not WSL2) that both failures
+  are real GCC 12.2.0 (Debian bookworm) false positives
+  (`-Wmaybe-uninitialized` on a deeply-inlined `tl::expected`/
+  `std::optional<core::Statistic>` chain, then `-Wrestrict` with
+  obviously-impossible offsets) -- reproducing identically with a plain
+  local compile (`control-build.sh`, entirely independent of distcc), so
+  this was never a distcc-ng distribution bug. Root cause: ccache's own
+  CMake build auto-enables "dev mode" (and with it, `-Werror`) whenever it's
+  built from a git checkout -- exactly how both scripts build it. Both
+  scripts now pass two specific, named CMake overrides
+  (`-Wno-error=maybe-uninitialized -Wno-error=restrict`) instead of
+  disabling ccache's `-Werror` wholesale, so this heartbeat still catches a
+  real distcc-specific bug that happened to manifest as some other warning
+  class -- only the two diagnosed false positives are silenced. Verified with a
+  full real run of the two-container heartbeat harness: 75 remote jobs
+  completed successfully.
+
+- **`src/remote.c`, `src/util.c`**: `dcc_check_unsupported_directives()`
+  misreported a misleading `getline failed: Resource temporarily
+  unavailable` warning on plain end-of-file, not just on a genuine read
+  error. `getline()` returns -1 for both cases and does not guarantee
+  `errno` is reset to 0 on the EOF path, so a stale `errno` left over from
+  an unrelated earlier syscall in the same process (e.g. this same
+  client's own non-blocking network I/O) could be misattributed to this
+  read. Root-caused live via issue #263's `ccache_heartbeat` failure and
+  confirmed against the original upstream review (distcc/distcc#461): a v1
+  `errno = 0;` reset was removed in review for stylistic reasons only, no
+  technical justification (see AGENTS.md rule 72). `ferror(cpp_f)` alone
+  is not sufficient: this project's `util.c` compat `getline()` (used when
+  the system lacks its own, `#ifndef HAVE_GETLINE`) can fail via
+  `realloc()` without ever touching the `FILE` stream, so plain EOF and an
+  allocation failure look identical to `ferror()` there. Fixed by (1)
+  resetting `errno = 0` immediately before the loop so any nonzero value
+  seen afterwards is known to be fresh, then checking `ferror(cpp_f) ||
+  errno != 0`, and (2) having `util.c`'s compat `getline()` set
+  `errno = ENOMEM` explicitly on its allocation-failure path instead of
+  relying only on `realloc()`'s own side effect. Verified against glibc's
+  real `getline()` that `errno` stays 0 across a clean EOF on large
+  (multi-MB, multi-refill) files, so the added `errno` check does not
+  reintroduce a false positive. Purely a misleading-log-message fix --
+  `ret` (whether to recompile locally) was unaffected either way, so this
+  never masked or caused a real failure.
 
 - **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
   doc-only PR (e.g. README.md) could never merge into `master`, because
@@ -26,34 +255,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
   on and skip (not: never start) when nothing outside `**/*.md`/`doc/**`
   changed; `workflow_dispatch`/`schedule` always force a full run.
   `actionlint.yml` simply dropped its path filter entirely -- both its jobs
-  are cheap enough to just always run. Ported directly to `master` ahead of
-  the next `current_dev` promotion, since this exact bug blocked PR #336
-  (a `master`-targeted README fix) from merging; `master`'s `actionlint.yml`
-  still runs its older `curl | bash` lint step here (the docker-image-based
-  modernization from #332/#333/#335 hasn't been promoted yet) -- only the
-  path filter was removed, nothing else on this file was touched.
-
-### Security
-
-- **Bumped 10 pinned GitHub Actions across `.github/workflows/*.yml`**
-  (Dependabot): `actions/checkout` v5.0.0/v7.0.0 -> v7.0.1, `actions/cache`
-  v4 -> v6.1.0, `actions/labeler` v6.2.0 -> v7.0.0,
-  `stefanzweifel/git-auto-commit-action` v5.2.0 -> v7.2.0,
-  `release-drafter/release-drafter` (+ its `autolabeler`) v7.5.1 -> v7.6.0,
-  `ossf/scorecard-action` v2.4.3 -> v2.4.4, and `github/codeql-action`
-  (`init`/`analyze`/`upload-sarif`) v3 -> v4.37.3. Reviewed per AGENTS.md
-  rule 74 rather than merged on CI-green alone: each new pinned SHA was
-  resolved against its upstream repo's own tag refs, and each dependency's
-  release notes were checked for anything breaking -- none required an
-  actual workflow change (the only real breaking requirement across all
-  six repos, Node.js 24, is already satisfied by this repo's
-  GitHub-hosted-only runners). The `codeql-action` bump's own inline
-  version comment was left stale at `# v3` by Dependabot despite the SHA
-  genuinely moving to v4.37.3 (confirmed against `codeql-action`'s own
-  `v4` tag) -- corrected as part of this review, in `codeql.yml` and
-  `scorecard.yml`.
-
-## [3.6.2-NG] - 2026-07-23
+  are cheap enough to just always run.
 
 - **`.github/workflows/c-build.yml`**: the `make_check` fix above (job-level
   `if:`) turned out to be incomplete -- confirmed live on PR #336 again,
@@ -69,7 +271,82 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (`popt_fallback_build`, `popt_vendor_check`, `distributed_e2e`) are not
   matrixed and were unaffected.
 
+### Changed
+
+- **`.github/workflows/codeql.yml`**: `Analyze (c-cpp)`, `Analyze (python)`,
+  and `Analyze (actions)` are also required status checks, but unlike
+  `c-build.yml`/`action-lint`, this workflow never had a path filter --
+  every PR ran a full C build plus all three CodeQL language scans, even
+  a README-only change. Not merge-blocking (no filter means the checks
+  always existed), just wasteful. Added a `changes` job computing one
+  relevant/not-relevant flag per language (c-cpp: `src/`, `lzo/`, `popt/`,
+  `include_server/c_extensions/`, `test/fuzz/`, `m4/`, `configure.ac`,
+  `Makefile.in`, `autogen.sh`, or any `.c`/`.h`/`.cc`/`.cpp`; python:
+  `include_server/`, `test/`, or any `.py`; actions:
+  `.github/workflows/`, `.github/actions/`). Each matrix leg reads its own
+  language's flag via a per-step `gate` step (same job-level-`if`-collapses-
+  the-matrix pitfall as `make_check`, refs the `Fixed` entry above --
+  avoided the same way, by gating steps instead of the job).
+  `workflow_dispatch`/`schedule` always force a full scan.
+
 ### Added
+
+- **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
+  `.github/workflows/clusterfuzzlite-pr.yml`): fuzzes `src/rpc.c`'s
+  `dcc_r_argv()` (the untrusted-peer argument-list parser) via libFuzzer
+  on every PR touching `src/**`. Closes Scorecard's `FuzzingID` finding
+  (refs #267). OSS-Fuzz itself was evaluated and rejected -- it requires
+  "a significant user base and/or [being] critical to the global IT
+  infrastructure" to be accepted, which a young fork does not realistically
+  meet; ClusterFuzzLite has no such gate. Scoped to PR-triggered fuzzing
+  only for now -- scheduled/batch continuous fuzzing needs a separate
+  corpus-storage repository, a bigger follow-on decision not bundled here.
+
+### Security
+
+- **Bumped 10 pinned GitHub Actions across `.github/workflows/*.yml`**
+  (Dependabot, PR #343): `actions/checkout` v5.0.0/v7.0.0 -> v7.0.1,
+  `actions/cache` v4 -> v6.1.0, `actions/labeler` v6.2.0 -> v7.0.0,
+  `stefanzweifel/git-auto-commit-action` v5.2.0 -> v7.2.0,
+  `release-drafter/release-drafter` (+ its `autolabeler`) v7.5.1 -> v7.6.0,
+  `ossf/scorecard-action` v2.4.3 -> v2.4.4, and `github/codeql-action`
+  (`init`/`analyze`/`upload-sarif`) v3 -> v4.37.3. Reviewed per AGENTS.md
+  rule 74 rather than merged on CI-green alone: each new pinned SHA was
+  resolved against its upstream repo's own tag refs, and each dependency's
+  release notes were checked for anything breaking -- none required an
+  actual workflow change (the only real breaking requirement across all
+  six repos, Node.js 24, is already satisfied by this repo's
+  GitHub-hosted-only runners). The `codeql-action` bump's own inline
+  version comment was left stale at `# v3` by Dependabot despite the SHA
+  genuinely moving to v4.37.3 (confirmed against `codeql-action`'s own
+  `v4` tag) -- corrected as part of this review, in `codeql.yml` and
+  `scorecard.yml`.
+
+- **`.github/workflows/actionlint.yml`** (renamed to reflect its now-broader
+  scope): added a new `shellcheck` job linting this repo's own real shell
+  scripts (`scripts/*.sh`), using the same pinned `distcc-ng-buildtools`
+  image and plain `docker run` invocation as the existing `action-lint`
+  job. `shellcheck` was installed into that image by #332 but never
+  actually wired into a CI job -- this was the last remaining gap
+  identified in the best-practices-driven CI audit (refs #267).
+
+- **`.github/workflows/actionlint.yml`**: replaced the `curl <script> |
+  bash` actionlint install with the pinned `distcc-ng-buildtools` image
+  (#332), resolving Scorecard's `PinnedDependenciesID` finding
+  ("downloadThenRun not pinned by hash", refs #222/#267). Also removed an
+  unused `pull-requests: write` permission -- the job never comments on or
+  labels a PR, same class of over-grant as #324's `osv-scanner.yml` fix.
+
+- **`docker/verify/Dockerfile`**: added `actionlint` (built from source and
+  version-pinned, v1.7.12 -- avoids stale Go-stdlib CVEs in the official
+  static release binary, same rationale/version as `wiki-mod/lancache-ng`'s
+  own build-tools image), plus `shellcheck` and `jq`, each with a real
+  build-time self-test (a deliberately broken script/workflow/JSON doc).
+  Groundwork for closing Scorecard's `PinnedDependenciesID` finding
+  (refs #222/#267) in `.github/workflows/actionlint.yml` -- done as a
+  separate, follow-on change once this image's new `:latest` is actually
+  published (publish only happens on push to `current_dev`, not on this
+  PR itself).
 
 - **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
   own AG-GH-018/`check-pr-title-convention.sh`. New `pr_title_convention`
@@ -104,6 +381,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`AGENTS.md`**: rule 24 amended -- a deferral (leaving a review-thread
+  finding unresolved with only an explanation, rather than fixed) is not
+  itself a decision. The explanation must be put to the maintainer as an
+  explicit approval question, even when only reporting status, and must
+  keep being surfaced as an outstanding decision until an explicit answer
+  is given -- not presented as already approved, and not left for the
+  maintainer to discover unprompted. Found necessary on PR #354: a
+  delegated agent posted a sound deferral explanation on two review
+  threads and correctly left them unresolved per the rule's letter, but
+  never put the deferral itself to the maintainer as a question -- it was
+  only reported afterward as an already-settled fact.
 - **`AGENTS.md`**: rule 3 rewritten to cover PRs as well as issues (labels,
   Milestone, Project-board — previously issue-only) and to reference the
   new CI enforcement above. Added rule 70 -- a `release/X.Y.Z-NG` branch
@@ -116,6 +404,35 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`.github/pull_request_template.md`**: relaxed the "Linked Issues"
   section to explicitly say a standalone PR doesn't need an issue,
   matching rule 4's clarification.
+- **`AGENTS.md`**: added rule 72 -- before proposing a fix for something
+  that looks like a bug in existing code, verify it isn't a deliberate,
+  consistent design choice (check the pattern's history/upstream PR
+  review discussion, and whether it repeats consistently elsewhere in the
+  codebase) before concluding it's a defect. Found necessary while
+  investigating issue #263's `ccache_heartbeat` failure: an `errno`-after-
+  `getline()` check in `src/remote.c` turned out to be a real bug (its
+  original `errno = 0;` reset was removed in distcc/distcc#461's review
+  for stylistic reasons only, no technical justification), but a second
+  suspected issue in the same file (`gettimeofday()`'s warn-and-continue
+  handling) turned out to be a deliberate, project-wide convention used
+  identically in every other `gettimeofday()` call across the codebase.
+- **`AGENTS.md`**: added rule 73 -- when treating a found bug as an error
+  class to sweep for elsewhere, the minimum scope for that sweep is the
+  whole file the bug was found in, not just a `grep` for the identical
+  pattern or line shape. Companion to rule 72: reading the whole
+  `src/remote.c` file end-to-end (not just grepping for the exact
+  `errno`-after-`getline()` shape) is what surfaced the `gettimeofday()`
+  pattern as worth checking in the first place.
+- **`AGENTS.md`**: added rule 74 -- a Dependabot (or any automated)
+  dependency-bump PR must be reviewed before merging, not merged on
+  CI-green alone: verify the new pinned SHA against the upstream repo's
+  own tag refs, keep the `# vX.Y.Z` comment accurate, read the actual
+  release notes for the version range crossed, and explicitly decide
+  whether anything breaking/deprecated requires a change to how this repo
+  uses the dependency. Found necessary reviewing PR #342/#343 (10 bundled
+  GitHub Actions bumps): `github/codeql-action`'s bump was a real v3->v4
+  major-version jump, but the diff's own inline comment still read `# v3`
+  -- fixed directly on both PRs' branches as part of this review.
 
 - **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
   or bug-fixing PR should add or update an automated test in
@@ -124,6 +441,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `OSPS-QA-06.03` (refs #267) — a real gap found while re-verifying Baseline
   Level 3 status against current `master` state rather than trusting an
   earlier recollection.
+
+- **`CLAUDE.md`**: added a "Key Design Decisions" bullet documenting the
+  protocol-version numbering policy from issue #304 -- versions 0-3999
+  reserved exclusively for whatever upstream `distcc/distcc` itself ever
+  defines, every fork-specific protocol extension numbered from 4000+
+  instead, applying to zstd's existing `DCC_VER_4000`/`DCC_VER_5000` and to
+  every future fork protocol extension including the planned native TLS
+  transport (#248). This was the last of #304's six required follow-up
+  actions; the other five (the `DCC_VER_4`/`DCC_VER_5` renumbering itself,
+  the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
+  `man/distcc.1` zstd documentation) were already done in earlier PRs.
 
 ### Security
 

@@ -50,6 +50,25 @@
 # 13.5 pin) so this image doesn't sit on a stale trixie patch level.
 ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
 
+# actionlint is a Go binary, and Go statically embeds its entire standard
+# library into every compiled binary -- unlike a dynamically-linked C tool,
+# there is no way to get stdlib security fixes into an already-built Go
+# binary short of recompiling it. rhysd/actionlint only cuts a new release
+# when the tool itself has a feature/fix to ship, not on every Go stdlib
+# security release, so its official static release binary can (and, per
+# wiki-mod/lancache-ng's own Trivy-scanning of this exact same version, has)
+# carry known stdlib CVEs from whatever Go toolchain happened to be current
+# when that release was cut. Building from source with whatever Go
+# toolchain `golang:latest` resolves to at build time is the only way to
+# get a current, patched stdlib into it -- same approach and same pinned
+# version (v1.7.12, the latest release at pin time) as lancache-ng's own
+# build-tools image.
+FROM golang:latest AS actionlint-builder
+ARG ACTIONLINT_VERSION=1.7.12
+RUN set -euo pipefail; \
+    GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
+    /out/actionlint --version
+
 FROM ${DEBIAN_IMAGE}
 
 ARG VCS_REF=unknown
@@ -171,8 +190,22 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # a misbehaving --allow netrange, or a Redis remote-storage hostname
       # for ccache) needs real name-resolution tools, not just IP-level
       # socket inspection.
-      dnsutils && \
+      dnsutils \
+      # shellcheck/jq (CI-lint tools, follow-up ask this session, same
+      # class as issue #267's actionlint gap): shellcheck is Haskell, not
+      # Go, so it doesn't have actionlint's stale-stdlib problem above --
+      # Debian's packaged version is fine here. jq has no compiled runtime
+      # embedding concern either (plain C).
+      shellcheck \
+      jq && \
     rm -rf /var/lib/apt/lists/*
+
+# actionlint built from source in the actionlint-builder stage above (see
+# its comment for why) -- not apt-installed, and not fetched via
+# curl|bash at CI runtime (the pattern this addition replaces; see
+# .github/workflows/actionlint.yml and issue #267/Scorecard's
+# PinnedDependenciesID finding).
+COPY --from=actionlint-builder /out/actionlint /usr/local/bin/actionlint
 
 # bash (not the default dash /bin/sh) for the self-test below: it uses
 # pipefail so a tool crashing mid-pipeline fails the build instead of being
@@ -294,6 +327,26 @@ RUN set -eux; \
       || { echo "ERROR: dig did not resolve deb.debian.org to an IPv4 address"; dig deb.debian.org; exit 1; }; \
     nslookup deb.debian.org | grep -qi "Address" \
       || { echo "ERROR: nslookup did not resolve deb.debian.org"; nslookup deb.debian.org; exit 1; }; \
+    # --- jq: must actually parse and query real JSON, not just print a
+    #     --version banner ---
+    echo '{"tool":"jq","ok":true}' | jq -e '.ok == true' >/dev/null \
+      || { echo "ERROR: jq did not correctly query the test JSON document"; exit 1; }; \
+    # --- shellcheck: must actually flag a real, deliberately-broken shell
+    #     script (an unquoted variable expansion, SC2086) ---
+    printf '%s\n' '#!/bin/sh' 'x="a b"' 'echo $x' > shellcheck_bug.sh; \
+    shellcheck shellcheck_bug.sh > shellcheck.log 2>&1 && \
+      { echo "ERROR: shellcheck did not flag the deliberately broken script"; cat shellcheck.log; exit 1; } \
+      || grep -q "SC2086" shellcheck.log \
+      || { echo "ERROR: shellcheck did not report the expected SC2086 finding"; cat shellcheck.log; exit 1; }; \
+    # --- actionlint: must actually flag a real, deliberately-broken
+    #     workflow file (a job with no runs-on:) ---
+    mkdir -p actionlint_test/.github/workflows; \
+    printf '%s\n' 'on: push' 'jobs:' '  test:' '    steps:' '      - run: echo hi' \
+      > actionlint_test/.github/workflows/broken.yml; \
+    ( cd actionlint_test && actionlint .github/workflows/broken.yml > ../actionlint.log 2>&1 ) && \
+      { echo "ERROR: actionlint did not flag the deliberately broken workflow"; cat actionlint.log; exit 1; } \
+      || grep -qi "runs-on" actionlint.log \
+      || { echo "ERROR: actionlint did not report the expected missing runs-on finding"; cat actionlint.log; exit 1; }; \
     cd / && rm -rf /tmp/verify-selftest
 
 # Non-root by default (matches docker/release/Dockerfile's convention);
