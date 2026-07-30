@@ -112,6 +112,12 @@ int str_startswith(const char *head, const char *worm)
 
 /**
  * Skim through NULL-terminated @p argv, looking for @p s.
+ *
+ * Unused dead code, planned for removal: no caller exists anywhere in this
+ * codebase (verified by an unrestricted recursive grep across the entire
+ * tracked tree), and none has since this function was first added in the
+ * project's original 2008 import. Not removed here to keep this change a
+ * pure comment addition; a follow-up change deletes it outright.
  **/
 int argv_contains(char **argv, const char *s)
 {

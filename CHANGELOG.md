@@ -63,6 +63,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`src/util.c`**: documented `argv_contains()` as unused dead code, planned
+  for removal in a follow-up change -- confirmed via an unrestricted
+  recursive grep across the entire tracked tree that no real caller exists
+  anywhere, and none has since the function was first added in this
+  project's original 2008 import.
+
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
   composite actions, the GHCR image namespace, path-filter overlaps, dangling
