@@ -23,6 +23,7 @@
 
 #include <config.h>
 
+#include <assert.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,15 +94,19 @@ void dcc_exit(int exitcode)
 }
 
 
-/* Return true if @p tiger ends with @p tail. Neither argument is
- * NULL-checked: every call site in this codebase already passes a
- * literal or an already-validated string, so a NULL here would be a
- * caller bug surfacing as a crash in strlen(), not a case this
- * function needs to handle gracefully. */
+/* Return true if @p tiger ends with @p tail. Both arguments are asserted
+ * non-NULL: every caller in this codebase passes a literal or an
+ * already-validated string, so a NULL here signals a caller bug, not a
+ * runtime condition to handle gracefully. */
 int str_endswith(const char *tail, const char *tiger)
 {
-    size_t len_tail = strlen(tail);
-    size_t len_tiger = strlen(tiger);
+    size_t len_tail, len_tiger;
+
+    assert(tail != NULL);
+    assert(tiger != NULL);
+
+    len_tail = strlen(tail);
+    len_tiger = strlen(tiger);
 
     if (len_tail > len_tiger)
         return 0;
@@ -110,11 +115,15 @@ int str_endswith(const char *tail, const char *tiger)
 }
 
 
-/* Return true if @p worm starts with @p head. Same non-NULL assumption
- * as str_endswith() above -- no call site in this codebase can pass
- * NULL, so this is intentionally left unguarded. */
+/* Return true if @p worm starts with @p head. Both arguments are asserted
+ * non-NULL for the same reason as str_endswith() above: every real call
+ * site already guarantees non-NULL strings, so a NULL here is a caller
+ * bug to catch immediately rather than a case to handle. */
 int str_startswith(const char *head, const char *worm)
 {
+    assert(head != NULL);
+    assert(worm != NULL);
+
     return !strncmp(head, worm, strlen(head));
 }
 
@@ -126,10 +135,17 @@ int str_startswith(const char *head, const char *worm)
  * Unused dead code: no caller exists anywhere in this project's real
  * history -- `git log -S "argv_contains(" --` against this branch's own
  * ancestry shows only the definition's original 2008 import and its
- * later file-move commits, never a commit adding a call site.
+ * later file-move commits, never a commit adding a call site. @p argv
+ * and @p s are still asserted non-NULL rather than handled as an
+ * empty-result case: an actual NULL here would mean the argv array
+ * itself was never built, which is a caller bug worth catching
+ * immediately instead of silently returning "not found".
  **/
 int argv_contains(char **argv, const char *s)
 {
+    assert(argv != NULL);
+    assert(s != NULL);
+
     while (*argv) {
         if (!strcmp(*argv, s))
             return 1;

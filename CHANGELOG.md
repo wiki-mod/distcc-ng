@@ -63,6 +63,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`src/util.c`**: added real `assert()` invariant checks to `str_endswith()`,
+  `str_startswith()`, and `argv_contains()` -- each already implicitly assumed
+  its pointer arguments were non-NULL (an unguarded `strlen()`/`strcmp()` on a
+  NULL argument was already undefined behavior), so this converts an
+  undiagnosable crash into a clear, attributable assertion failure rather than
+  changing behavior for any correct caller. Motivated by the OpenSSF Best
+  Practices Badge `dynamic_analysis_enable_assertions` criterion; the codebase
+  already used `assert()` elsewhere (e.g. `src/compile.c:135`, `src/arg.c:869`,
+  `src/fix_debug_info.c:245`), so this adds coverage to these three specific
+  string/argv helpers rather than introducing the technique from scratch.
+  Verified with a real `make check` run (all cases OK/expected-NOTRUN, no new
+  failures).
+
 - **`.github/workflows/c-build.yml`**: new `coverage` job builds the real test
   suite with gcov instrumentation (`--coverage -O0`), captures statement/branch
   C coverage via `lcov` (excluding vendored `lzo/` and the `check_PROGRAMS`
