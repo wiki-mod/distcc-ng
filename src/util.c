@@ -23,6 +23,7 @@
 
 #include <config.h>
 
+#include <assert.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,8 +93,13 @@ void dcc_exit(int exitcode)
 /* Return true if @p tiger ends with @p tail. */
 int str_endswith(const char *tail, const char *tiger)
 {
-    size_t len_tail = strlen(tail);
-    size_t len_tiger = strlen(tiger);
+    size_t len_tail, len_tiger;
+
+    assert(tail != NULL);
+    assert(tiger != NULL);
+
+    len_tail = strlen(tail);
+    len_tiger = strlen(tiger);
 
     if (len_tail > len_tiger)
         return 0;
@@ -105,6 +111,9 @@ int str_endswith(const char *tail, const char *tiger)
 /* Return true if @p worm starts with @p head. */
 int str_startswith(const char *head, const char *worm)
 {
+    assert(head != NULL);
+    assert(worm != NULL);
+
     return !strncmp(head, worm, strlen(head));
 }
 
@@ -115,6 +124,9 @@ int str_startswith(const char *head, const char *worm)
  **/
 int argv_contains(char **argv, const char *s)
 {
+    assert(argv != NULL);
+    assert(s != NULL);
+
     while (*argv) {
         if (!strcmp(*argv, s))
             return 1;

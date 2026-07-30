@@ -63,6 +63,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`src/util.c`**: added real `assert()` invariant checks to `str_endswith()`,
+  `str_startswith()`, and `argv_contains()` -- each already implicitly assumed
+  its pointer arguments were non-NULL (an unguarded `strlen()`/`strcmp()` on a
+  NULL argument was already undefined behavior), so this converts an
+  undiagnosable crash into a clear, attributable assertion failure rather than
+  changing behavior for any correct caller. Motivated by the OpenSSF Best
+  Practices Badge `dynamic_analysis_enable_assertions` criterion (the codebase
+  previously had zero `assert()` calls). Verified with a real `make check` run
+  (all cases OK/expected-NOTRUN, no new failures).
+
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared
   composite actions, the GHCR image namespace, path-filter overlaps, dangling
