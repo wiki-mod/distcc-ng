@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.3-NG] - 2026-07-30
+
 ### Fixed
 
 - **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
