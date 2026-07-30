@@ -397,6 +397,210 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Statement-coverage measurement for the real test suite (OpenSSF Best
+  # Practices Badge "test_most" criterion). No third-party coverage service
+  # (Codecov et al.) -- GitHub's own native "Code Quality" coverage feature
+  # exists but is Enterprise Cloud/Team only, not available on this org's
+  # Free plan (confirmed live via `gh api orgs/<org>` before writing this),
+  # so the report is instead published entirely within GitHub Actions
+  # itself: a table in the job summary plus the full lcov/coverage-python
+  # report as a build artifact. The OSSF badge's test_most criterion is
+  # met here with a manual justification linking to a CI run rather than
+  # an auto-detected Coveralls/Codecov badge. Separate job, not folded
+  # into make_check: gcov instrumentation (--coverage) changes what's
+  # being measured (unoptimized, extra profiling counters) and this job's
+  # only output is the coverage report, not a build/test result anyone
+  # should treat as a pass/fail gate on its own -- make_check's own real
+  # (uninstrumented) build is still the actual required check.
+  coverage:
+    name: Test coverage (gcov/lcov, job summary + artifact)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Read-only checkout; the job summary write goes through the
+    # $GITHUB_STEP_SUMMARY file (no permission needed) and the artifact
+    # upload uses actions/upload-artifact's own default token scope --
+    # nothing here needs any elevated permission.
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Same schedule redirect as make_check/distributed_e2e above: the
+          # nightly run evaluates from master but must measure current_dev,
+          # since that is where real development happens.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          # libseccomp-dev is needed so configure's optional seccomp check
+          # actually finds it and defines HAVE_SECCOMP -- otherwise
+          # src/sandbox-seccomp.c compiles only its no-op fallback and the
+          # real sandboxing implementation contributes nothing to coverage.
+          apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage
+      - run: ./autogen.sh
+      # --coverage is gcc/clang shorthand for -fprofile-arcs -ftest-coverage
+      # at compile time plus linking against libgcov; -O0 keeps the
+      # instrumentation's line/branch attribution accurate (optimization can
+      # merge or reorder blocks in ways that make gcov's per-line counts
+      # misleading). PYTHON here stays a plain interpreter deliberately --
+      # $(PYTHON) is also used at build time (include_server/setup.py's
+      # build_ext step, plus configure's own Python-version probe), and
+      # wrapping either of those in a coverage-instrumented invocation
+      # breaks them outright (confirmed live: configure's version probe
+      # fails to parse `coverage run`'s own output as a version string).
+      # --with-seccomp turns a silently-degraded build (no libseccomp-dev
+      # found -> quiet fallback to the no-op sandbox) into a hard configure
+      # failure instead, so a future apt-list regression is caught here
+      # rather than quietly shrinking what this job actually measures.
+      - run: ./configure PYTHON="$(command -v python3)" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp
+      - run: make
+      # Makefile.in passes $(PYTHON) as a single token everywhere (e.g.
+      # test/pump_include_server_path_test.py receives it as sys.argv[2]
+      # and passes it straight to subprocess.check_output() as an
+      # executable name) -- a multiword override such as
+      # "python3-coverage run --append --source=..." is never re-split by
+      # that code path and fails with "no such file or directory" for a
+      # program literally named with spaces (confirmed live). A real,
+      # single-token executable wrapper is required instead.
+      - name: Create a coverage-recording PYTHON wrapper
+        run: |
+          set -euo pipefail
+          cat > "$GITHUB_WORKSPACE/coverage-python-wrapper" <<EOF
+          #!/bin/sh
+          # 'coverage run' doesn't understand -c the way plain python does
+          # (used by pump_include_server_path_test.py's own subprocess
+          # version probe) -- pass those straight through to a real
+          # interpreter, uninstrumented; that one-line probe isn't part of
+          # include_server's own code anyway.
+          if [ "\$1" = "-c" ]; then
+            exec "$(command -v python3)" "\$@"
+          fi
+          # --source is an absolute path so this wrapper behaves the same
+          # regardless of caller cwd -- Makefile.in's include-server test
+          # loop cd's into include_server/ before invoking \$(PYTHON), and
+          # a relative "--source=include_server" there would resolve
+          # against the already-cd'd cwd and match nothing (confirmed
+          # live: reported near-zero Python coverage before this fix).
+          exec python3-coverage run --append --source="$GITHUB_WORKSPACE/include_server" "\$@"
+          EOF
+          chmod +x "$GITHUB_WORKSPACE/coverage-python-wrapper"
+      # PYTHON is overridden here, at test-invocation time only, to run
+      # every $(PYTHON)-invoked test (Makefile.in's check targets) through
+      # the coverage-recording wrapper above -- otherwise
+      # include_server/*.py (a real, substantial production component,
+      # not a peripheral tool) would be silently absent from the coverage
+      # denominator, understating what "most of the code" actually
+      # covers. This override is scoped to the `make check` invocation
+      # alone (not configure/make above), since the extension is already
+      # built by then and re-running its build_ext step is not part of
+      # what `make check` does. --append (inside the wrapper) accumulates
+      # across the many separate test_*.py invocations make check runs
+      # one process at a time; python3-coverage (Debian's apt package,
+      # not pip's coverage.py, since this runner has no pip by default)
+      # is the actual binary name that package installs.
+      - run: make check PYTHON="$GITHUB_WORKSPACE/coverage-python-wrapper"
+      # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py) needs real
+      # root to exercise dcc_discard_root()'s privilege drop; the plain
+      # `make check` above always runs unprivileged, so that case is
+      # silently NOTRUN there and its coverage-instrumented lines would
+      # never be recorded before lcov captures below. Mirrors make_check's
+      # own sudo single-test rerun above, against the same already-built
+      # (coverage-instrumented) binaries -- fails outright on NOTRUN or
+      # any non-OK result instead of trusting a green exit code alone.
+      - name: Run the root-only case against the instrumented binaries
+        run: |
+          set -o pipefail
+          sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee autogroup-test.log
+          if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" autogroup-test.log; then
+            echo "::error::AutogroupNicenessPrivilegeDrop_Case was skipped (NOTRUN) -- this runner is missing real root/autogroup coverage that this coverage job exists to measure."
+            exit 1
+          fi
+          grep -q "AutogroupNicenessPrivilegeDrop_Case OK" autogroup-test.log \
+            || { echo "::error::AutogroupNicenessPrivilegeDrop_Case did not report OK or NOTRUN -- unexpected output, treating as a failure."; exit 1; }
+      - name: Capture C coverage data with lcov
+        run: |
+          set -euo pipefail
+          # branch_coverage=1 replaces the deprecated lcov_branch_coverage
+          # RC name; geninfo_unexecuted_blocks=1 resolves lcov's own
+          # "unexecuted block on non-branch line with non-zero hit count"
+          # warning by zeroing that count instead of flagging it (lcov's
+          # own suggested fix). No --ignore-errors: capture on this
+          # project's real coverage data needs neither "mismatch" nor
+          # "negative" suppression (confirmed live -- capture succeeds
+          # clean without them), and blanket-ignoring either would let a
+          # genuinely corrupt report upload silently.
+          lcov --capture --directory . --output-file coverage_raw.info \
+            --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
+          # Exclude vendored third-party sources (lzo/) and the
+          # check_PROGRAMS C test drivers (src/h_*.c, built and run by
+          # `make check` but never part of distcc-ng's own shipped code)
+          # -- this criterion is about coverage of this project's own
+          # code, not of code it merely bundles or of the test scaffolding
+          # that does the covering. No popt/, test/, or /usr/* pattern
+          # here: this job's apt list installs libpopt-dev, so configure
+          # always picks up the system library (see configure.ac's popt
+          # auto-detect) and the vendored popt/ tree is never built in
+          # this job; test/ holds only Python test scripts plus
+          # test/fuzz/fuzz_rpc_argv.c, which isn't part of this build at
+          # all (ClusterFuzzLite's own workflow compiles it separately);
+          # and every .gcda this job ever produces corresponds to one of
+          # this project's own compiled .c files (src/, lzo/, the
+          # include_server C extension), never to anything under /usr.
+          # None of the three ever produces a .gcda under its own path,
+          # so each would match nothing -- lcov flags an unmatched
+          # pattern as an error (confirmed live, three times on this
+          # same line) rather than silently accepting it, per AGENTS.md
+          # rule 76.
+          lcov --remove coverage_raw.info \
+            '*/lzo/*' '*/src/h_*.c' \
+            --output-file coverage.info \
+            --rc branch_coverage=1
+          lcov --list coverage.info --rc branch_coverage=1
+      - name: Generate Python (include-server) coverage report
+        run: |
+          set -euo pipefail
+          cd include_server
+          # --append (inside the wrapper above) accumulates every
+          # test_*.py invocation into one single .coverage data file
+          # directly -- unlike --parallel-mode's per-process
+          # .coverage.<host>.<pid> files, there is nothing here for
+          # `coverage combine` to merge.
+          python3-coverage xml -o ../coverage-python.xml
+          python3-coverage report
+      - name: Publish coverage summary to the job summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Coverage report"
+            echo
+            echo "### C (lcov)"
+            echo '```'
+            lcov --list coverage.info --rc lcov_branch_coverage=1
+            echo '```'
+            echo
+            echo "### Python (include_server)"
+            echo '```'
+            (cd include_server && python3-coverage report)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # No third-party coverage service: the C (coverage.info) and Python
+      # (coverage-python.xml) reports are kept as a downloadable build
+      # artifact instead, alongside the job summary table above -- both are
+      # native GitHub Actions features, no external account or secret.
+      - name: Upload coverage reports as a build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-reports
+          path: |
+            coverage.info
+            coverage-python.xml
+          retention-days: 90
+
   # Real distributed-compile validation: distcc-ng's own source tree is built
   # across two containers (a distccd server + a distcc client) over a bridge
   # network, in both plain and pump mode, and a distributed compile is checked

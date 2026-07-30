@@ -132,7 +132,11 @@ int str_startswith(const char *head, const char *worm)
 /**
  * Skim through NULL-terminated @p argv, looking for @p s.
  *
- * @p argv and @p s are asserted non-NULL rather than handled as an
+ * Unused dead code: no caller exists anywhere in this project's real
+ * history -- `git log -S "argv_contains(" --` against this branch's own
+ * ancestry shows only the definition's original 2008 import and its
+ * later file-move commits, never a commit adding a call site. @p argv
+ * and @p s are still asserted non-NULL rather than handled as an
  * empty-result case: an actual NULL here would mean the argv array
  * itself was never built, which is a caller bug worth catching
  * immediately instead of silently returning "not found".
