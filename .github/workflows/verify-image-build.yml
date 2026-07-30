@@ -165,8 +165,18 @@ jobs:
         #    non-zero, the Makefile's `&&`-chained follow-on
         #    (`test/pump_include_server_path_test.py`) never even ran,
         #    which is why its output never appeared in this step's log.
+        # --init runs a real init (tini) as this container's PID 1 instead
+        # of the su/bash wrapper below -- `make check` daemonizes and kills
+        # many short-lived distccd instances (dcc_detach()'s standard
+        # fork()+_exit(0)+setsid() pattern reparents each one to PID 1),
+        # and testdistcc.py's own teardown polls os.kill(pid, 0) waiting
+        # for each to actually disappear rather than wait()ing it (it
+        # can't -- the daemon detached). Without a real init to reap those
+        # reparented zombies, that poll spins forever: a real, silent hang
+        # in this exact recurring CI job, not just an ad-hoc local run. See
+        # doc/verification-checklist.md Section 9's matching entry.
         run: |
-          docker run --rm --user root --cap-add=SYS_PTRACE \
+          docker run --rm --user root --init --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
             -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \

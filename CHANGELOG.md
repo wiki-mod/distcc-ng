@@ -11,6 +11,32 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.4-NG] - 2026-07-30
+
+### Fixed
+
+- **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
+  still called `lcov --list` with the deprecated `lcov_branch_coverage` RC
+  name, missed when the job's other three `lcov` invocations were already
+  switched to `branch_coverage` -- every relevant coverage run was emitting
+  a deprecation warning here.
+- **`docker/verify/Dockerfile`**: the `actionlint-builder` stage's `RUN set
+  -euo pipefail; ...` had no `SHELL` override, so it executed via Docker's
+  default `/bin/sh` -- dash on this Debian-based `golang:latest` image,
+  which rejects the bash-only `-o pipefail` and failed the entire stage.
+  There is no pipe in that command, so switched to `set -eu` (POSIX,
+  dash-compatible) instead of adding a `SHELL` directive. This meant the
+  `distcc-ng-buildtools` image could not be rebuilt from scratch at all.
+- **`.github/workflows/verify-image-build.yml`**: its own `make check`
+  invocation used the same `su`/`bash` PID-1 pattern documented in
+  `doc/verification-checklist.md` (PR #375) without `--init` -- `distccd
+  --daemon`'s `dcc_detach()` reparents each killed daemon to PID 1, `su`
+  never reaps it, and `test/testdistcc.py`'s own teardown poll
+  (`os.kill(pid, 0)` after `SIGTERM`, since it can't `wait()` a detached
+  daemon) can then spin forever with nothing to reap the zombie -- a real,
+  silent hang in this recurring CI job, not just an ad-hoc local run.
+  Added `--init` so a real init (`tini`) reaps those zombies.
+
 ## [3.6.3-NG] - 2026-07-30
 
 ### Fixed
@@ -64,6 +90,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
   skipped outright when `cleanups_size == 0` rather than relying on that.
 
 ### Added
+
+- **`doc/verification-checklist.md`**: new Section 9 entry documenting a
+  container-based `make check` hang caused by zombie accumulation, not a
+  distcc-ng code bug -- `distccd --daemon`'s `dcc_detach()`
+  (`src/dparent.c`) correctly daemonizes via `fork()` + immediate parent
+  `_exit(0)` + `setsid()` (the standard, intentional Unix daemon pattern,
+  borrowed from rsync), which reparents it to whatever process is PID 1.
+  A `su`-based non-root drop (the pattern this same section's other two
+  entries use) makes `su` that PID 1, and `su` never reaps a reparented
+  zombie -- `test/testdistcc.py`'s `WithDaemon_Case.killDaemon()` can't
+  `wait()` a detached daemon, so it sends `SIGTERM` and polls
+  `os.kill(pid, 0)` in a loop until that raises `ESRCH`; a zombie still
+  has a live PID entry, so the poll keeps succeeding and the loop spins
+  forever with nothing to reap it: a real, silent hang (near-zero CPU, no
+  error output) indistinguishable from a slow test. Fix is `--init` on
+  the `docker run` invocation (real `tini`
+  as PID 1); confirmed live cutting the 3.6.3-NG release (killed the
+  hung run, reproduced the zombie tree via `ps auxf`, re-ran clean).
+  Section 8 also gained a matching cleanup check for `<defunct>`
+  entries.
 
 - **`src/util.c`**: added real `assert()` invariant checks to `str_endswith()`,
   `str_startswith()`, and `argv_contains()` -- each already implicitly assumed
