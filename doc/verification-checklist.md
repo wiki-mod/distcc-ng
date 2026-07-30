@@ -270,10 +270,13 @@ flag value.
       pre-existing/unrelated entries explicitly identified as such).
 - [ ] No leftover daemon/compiler processes (`ps aux | grep -i distcc`
       etc. clean).
-- [ ] For any container-based run: no `<defunct>`/zombie processes left in
-      `ps auxf`/`docker top` — their presence (even if the run itself
-      completed) means a real init process was missing and a hang was only
-      narrowly avoided; see Section 9's `--init`/zombie-accumulation entry.
+- [ ] For any container-based run: no persistent `[distccd] <defunct>`
+      zombie owned by PID 1 in `ps auxf`/`docker top` — a zombie by itself
+      is not the signal (a live parent that simply hasn't called
+      `waitpid()` yet is completely normal and briefly produces one too);
+      specifically a *reparented* `distccd` zombie whose parent is PID 1
+      means a real init process was missing and a hang was only narrowly
+      avoided. See Section 9's `--init`/zombie-accumulation entry.
 - [ ] No dangling images/networks left from a one-off test build, unless
       deliberately kept for reuse (say so explicitly rather than leaving
       it ambiguous whether cleanup was forgotten or intentional).
