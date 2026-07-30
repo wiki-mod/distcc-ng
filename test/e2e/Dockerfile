@@ -8,22 +8,24 @@
 # distributed compile against a local-only one.
 
 #
-# Deliberately NOT pinned to a fixed digest, unlike docker/release/Dockerfile
-# and docker/verify/Dockerfile (whose DEBIAN_IMAGE pins exist specifically so
-# OSSF Scorecard's PinnedDependenciesID doesn't flag an unpinned tag as a
-# supply-chain risk). This image's whole purpose (maintainer decision,
-# 2026-07-28) is the opposite: it's rebuilt from scratch once a day
-# (.github/workflows/e2e-image-build.yml's schedule trigger) specifically so
-# it always carries the latest trixie-slim security/backport updates, acting
-# as an early-warning canary for an upstream Debian package update breaking
-# this project's build -- pinning to a fixed digest would defeat that
-# purpose outright. "trixie-slim" (a suite name, not the literal "latest"
-# tag) still bounds it to the current Debian stable generation, matching
-# docker/release/Dockerfile and docker/verify/Dockerfile's own lineage
-# (this image previously tracked the older bookworm-slim lineage on its
-# own, a divergence with no remaining reason once this image gets its own
-# maintained, validated publish pipeline like those two).
-ARG DEBIAN_IMAGE=debian:trixie-slim
+# Was deliberately left unpinned (maintainer decision, 2026-07-28): this
+# image is rebuilt from scratch once a day
+# (.github/workflows/e2e-image-build.yml's schedule trigger), and tracking
+# the floating "trixie-slim" tag meant every rebuild picked up that day's
+# latest Debian security/backport updates -- an early-warning canary for an
+# upstream Debian package update breaking this project's build.
+#
+# Superseded (maintainer decision, 2026-07-30, issue #267): now pinned to a
+# fixed digest like docker/release/Dockerfile and docker/verify/Dockerfile,
+# to close Scorecard's PinnedDependenciesID finding. This measurably weakens
+# the canary's granularity -- the daily rebuild now produces a byte-identical
+# image until Dependabot's weekly docker-ecosystem scan (.github/dependabot.yml,
+# now covering this directory too) bumps the pinned digest, so an upstream
+# break is caught within a week rather than within a day. "trixie-slim" (a
+# suite name, not the literal "latest" tag) still bounds the tracked lineage
+# to the current Debian stable generation, matching docker/release/Dockerfile
+# and docker/verify/Dockerfile's own lineage.
+ARG DEBIAN_IMAGE=debian@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
 FROM ${DEBIAN_IMAGE}
 
