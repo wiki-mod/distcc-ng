@@ -72,21 +72,25 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `python3-coverage` scoped to the `make check` test-invocation step only (not
   `configure`/`make`, since `$(PYTHON)` also drives the C-extension's own
   `build_ext` step and configure's Python-version probe, both of which broke
-  when a coverage-wrapped `$(PYTHON)` was tried there), and uploads both
-  reports to Codecov. Tokenless upload was assumed viable for a public repo,
-  but real CI confirmed Codecov rejects it (`"Token required - not valid
-  tokenless upload"`) -- this repo isn't (yet) recognized as activated on
-  codecov.io, so the upload step now takes `token: ${{ secrets.CODECOV_TOKEN
-  }}`; a maintainer still needs to activate the repo on codecov.io and add
-  the resulting token as a `CODECOV_TOKEN` repo secret before this job goes
-  green. Motivated by the OpenSSF
-  Best Practices Badge `test_most` criterion, whose documented evidence path
-  is exactly a Coveralls/Codecov badge. Separate job from `make_check`, since
-  gcov instrumentation changes what's being measured and this job's coverage
-  report is not itself a pass/fail gate. Fails loudly (`fail_ci_if_error:
-  true`) if the Codecov upload itself fails, rather than reporting green with
-  no actual evidence published; redirects to `current_dev` on the nightly
-  schedule run, matching `make_check`/`distributed_e2e`'s own redirect.
+  when a coverage-wrapped `$(PYTHON)` was tried there), and publishes both
+  reports without any third-party service: a table in the job summary
+  (`$GITHUB_STEP_SUMMARY`) plus the full `coverage.info`/`coverage-python.xml`
+  as a `coverage-reports` build artifact. GitHub's own native "Code Quality"
+  coverage feature was checked and ruled out -- it requires GitHub
+  Enterprise Cloud/Team, not available on this org's Free plan (confirmed
+  via `gh api orgs/<org>`). Codecov was tried first (tokenless upload for a
+  public repo) but rejected outright by Codecov itself
+  (`"Token required - not valid tokenless upload"`) and, independent of
+  that, is not something to route third-party coverage data through
+  without deliberate opt-in -- reverted in favor of the GitHub-native
+  approach above. Motivated by the OpenSSF Best Practices Badge
+  `test_most` criterion; without an auto-detected Coveralls/Codecov
+  badge, that criterion is met with a manual justification linking to a
+  real CI run instead. Separate job from `make_check`, since gcov
+  instrumentation changes what's being measured and this job's coverage
+  report is not itself a pass/fail gate; redirects to `current_dev` on
+  the nightly schedule run, matching `make_check`/`distributed_e2e`'s
+  own redirect.
 
 - **`doc/ci-workflows.md`**: a maintained map of the full `.github/workflows/*.yml`
   landscape -- per-file triggers/jobs/outputs, a cross-reference matrix (shared

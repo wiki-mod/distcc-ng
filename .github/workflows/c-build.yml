@@ -398,25 +398,30 @@ jobs:
           done
 
   # Statement-coverage measurement for the real test suite (OpenSSF Best
-  # Practices Badge "test_most" criterion -- coverage evidence pulled from a
-  # Coveralls/Codecov badge is the documented autofill path for that
-  # criterion, since actually running a full-suite coverage build in the
-  # badge-checking tool itself is far too slow for that tool's own time
-  # budget). Separate job, not folded into make_check: gcov instrumentation
-  # (--coverage) changes what's being measured (unoptimized, extra
-  # profiling counters) and this job's only output is the coverage report,
-  # not a build/test result anyone should treat as a pass/fail gate on its
-  # own -- make_check's own real (uninstrumented) build is still the
-  # actual required check.
+  # Practices Badge "test_most" criterion). No third-party coverage service
+  # (Codecov et al.) -- GitHub's own native "Code Quality" coverage feature
+  # exists but is Enterprise Cloud/Team only, not available on this org's
+  # Free plan (confirmed live via `gh api orgs/<org>` before writing this),
+  # so the report is instead published entirely within GitHub Actions
+  # itself: a table in the job summary plus the full lcov/coverage-python
+  # report as a build artifact. The OSSF badge's test_most criterion is
+  # met here with a manual justification linking to a CI run rather than
+  # an auto-detected Coveralls/Codecov badge. Separate job, not folded
+  # into make_check: gcov instrumentation (--coverage) changes what's
+  # being measured (unoptimized, extra profiling counters) and this job's
+  # only output is the coverage report, not a build/test result anyone
+  # should treat as a pass/fail gate on its own -- make_check's own real
+  # (uninstrumented) build is still the actual required check.
   coverage:
-    name: Test coverage (gcov/lcov -> Codecov)
+    name: Test coverage (gcov/lcov, job summary + artifact)
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Read-only checkout + a report upload to Codecov (which authenticates
-    # via its own tokenless-upload mechanism for public repos, not a
-    # GITHUB_TOKEN scope) -- nothing here needs any write permission.
+    # Read-only checkout; the job summary write goes through the
+    # $GITHUB_STEP_SUMMARY file (no permission needed) and the artifact
+    # upload uses actions/upload-artifact's own default token scope --
+    # nothing here needs any elevated permission.
     permissions:
       contents: read
     steps:
@@ -485,22 +490,34 @@ jobs:
           # there is nothing here for `coverage combine` to merge.
           python3-coverage xml -o ../coverage-python.xml
           python3-coverage report
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+      - name: Publish coverage summary to the job summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Coverage report"
+            echo
+            echo "### C (lcov)"
+            echo '```'
+            lcov --list coverage.info --rc lcov_branch_coverage=1
+            echo '```'
+            echo
+            echo "### Python (include_server)"
+            echo '```'
+            (cd include_server && python3-coverage report)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # No third-party coverage service: the C (coverage.info) and Python
+      # (coverage-python.xml) reports are kept as a downloadable build
+      # artifact instead, alongside the job summary table above -- both are
+      # native GitHub Actions features, no external account or secret.
+      - name: Upload coverage reports as a build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          files: ./coverage.info,./coverage-python.xml
-          # Codecov's tokenless upload (originally assumed here) now rejects
-          # this repo with "Token required - not valid tokenless upload"
-          # (confirmed live on PR #370's own CI run) -- tokenless only works
-          # for repos it recognizes as already activated on codecov.io.
-          # CODECOV_TOKEN must exist as a repo secret (Settings -> Secrets and
-          # variables -> Actions), copied from this repo's codecov.io project
-          # settings after activating it there.
-          token: ${{ secrets.CODECOV_TOKEN }}
-          # A failed upload means this job's entire purpose (publishing
-          # evidence for the OpenSSF test_most criterion) silently didn't
-          # happen while still reporting green -- fail loudly instead.
-          fail_ci_if_error: true
+          name: coverage-reports
+          path: |
+            coverage.info
+            coverage-python.xml
+          retention-days: 90
 
   # Real distributed-compile validation: distcc-ng's own source tree is built
   # across two containers (a distccd server + a distcc client) over a bridge
