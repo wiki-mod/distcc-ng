@@ -63,6 +63,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`doc/verification-checklist.md`**: new Section 9 entry documenting a
+  container-based `make check` hang caused by zombie accumulation, not a
+  distcc-ng code bug -- `distccd --daemon`'s `dcc_detach()`
+  (`src/dparent.c`) correctly daemonizes via `fork()` + immediate parent
+  `_exit(0)` + `setsid()` (the standard, intentional Unix daemon pattern,
+  borrowed from rsync), which reparents it to whatever process is PID 1.
+  A `su`-based non-root drop (the pattern this same section's other two
+  entries use) makes `su` that PID 1, and `su` never reaps a reparented
+  zombie -- `test/testdistcc.py`'s `WithDaemon_Case.killDaemon()` can't
+  `wait()` a detached daemon, so it sends `SIGTERM` and polls
+  `os.kill(pid, 0)` in a loop until that raises `ESRCH`; a zombie still
+  has a live PID entry, so the poll keeps succeeding and the loop spins
+  forever with nothing to reap it: a real, silent hang (near-zero CPU, no
+  error output) indistinguishable from a slow test. Fix is `--init` on
+  the `docker run` invocation (real `tini`
+  as PID 1); confirmed live cutting the 3.6.3-NG release (killed the
+  hung run, reproduced the zombie tree via `ps auxf`, re-ran clean).
+  Section 8 also gained a matching cleanup check for `<defunct>`
+  entries.
+
 - **`src/util.c`**: added real `assert()` invariant checks to `str_endswith()`,
   `str_startswith()`, and `argv_contains()` -- each already implicitly assumed
   its pointer arguments were non-NULL (an unguarded `strlen()`/`strcmp()` on a

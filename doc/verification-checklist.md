@@ -270,6 +270,13 @@ flag value.
       pre-existing/unrelated entries explicitly identified as such).
 - [ ] No leftover daemon/compiler processes (`ps aux | grep -i distcc`
       etc. clean).
+- [ ] For any container-based run: no persistent `[distccd] <defunct>`
+      zombie owned by PID 1 in `ps auxf`/`docker top` — a zombie by itself
+      is not the signal (a live parent that simply hasn't called
+      `waitpid()` yet is completely normal and briefly produces one too);
+      specifically a *reparented* `distccd` zombie whose parent is PID 1
+      means a real init process was missing and a hang was only narrowly
+      avoided. See Section 9's `--init`/zombie-accumulation entry.
 - [ ] No dangling images/networks left from a one-off test build, unless
       deliberately kept for reuse (say so explicitly rather than leaving
       it ambiguous whether cleanup was forgotten or intentional).
@@ -352,6 +359,46 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       which specific capability the syscall under test actually needs
       before treating an "Operation not permitted" as a code bug). Found
       verifying the 3.6.1-NG release (2026-07-23).
+- [ ] **A container with no real init process silently hangs `make check`
+      via zombie accumulation — confirmed to be a container-tooling gap,
+      not a distcc-ng code bug.** `distccd --daemon` deliberately
+      daemonizes via `dcc_detach()` (`src/dparent.c`): it `fork()`s, the
+      immediate parent calls `_exit(0)` right away ("this guy is about to
+      go away so as to detach from the controlling process" — borrowed
+      from rsync, the function's own doc comment says so), and the child
+      calls `setsid()` to leave its controlling session. This is the
+      textbook, correct Unix daemonization pattern every pre-systemd
+      daemon uses — its whole point is to orphan the daemon so it
+      survives its spawner exiting, which necessarily reparents it to
+      whatever process is PID 1 in that namespace. Running the build+test
+      step via `docker run ... bash -c '... su -s /bin/bash <user> -c
+      "..."'` (the pattern the two entries above already use to drop from
+      root to the image's non-root user) makes `su` that PID 1 in place of
+      a real init — and `su`, like `bash`, never reaps a reparented
+      zombie. The actual hang is in `test/testdistcc.py`'s own
+      `WithDaemon_Case.killDaemon()`: since the harness can't `wait()` a
+      detached daemon (its own comment says so), it sends `SIGTERM` and
+      then polls with `os.kill(pid, 0)` in a `while 1` loop until that
+      call raises `OSError` (`ESRCH`) -- but a zombie still has a live PID
+      table entry, so `kill(pid, 0)` keeps succeeding against it
+      indefinitely, and the loop only exits once something actually reaps
+      the zombie. With no real init to do that, the loop spins forever at
+      0.2s intervals: a real, silent hang with the stuck process burning
+      near-zero CPU (`ps aux`'s `TIME` column stays at seconds while
+      wall-clock elapses in hours) and no error output at all —
+      indistinguishable at a glance from "still running a slow test."
+      Diagnostic signal: `ps
+      auxf` inside the container shows multiple `[distccd] <defunct>`
+      entries whose parent is PID 1 (or the `su`/`bash` wrapper), not a
+      live test process. Fix: add `--init` to the `docker run` invocation
+      (runs `tini` as real PID 1, which does reap reparented zombies)
+      rather than assuming a slow run is just... slow, or suspecting
+      `dcc_detach()`'s daemonization itself — any daemonizing program in
+      any init-less container hits this identically; it is not specific
+      to distcc-ng. Found and confirmed (killed the hung run, reproduced
+      the zombie tree via `ps auxf`, re-ran clean with `--init` added)
+      cutting the 3.6.3-NG release (2026-07-30). See Section 8's matching
+      cleanup check.
 
 ## Keeping this checklist current
 
