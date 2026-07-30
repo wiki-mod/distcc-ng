@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.4-NG] - 2026-07-30
+
 ### Fixed
 
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
