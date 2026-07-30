@@ -63,6 +63,42 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/c-build.yml`**: new `coverage` job builds the real test
+  suite with gcov instrumentation (`--coverage -O0`), captures statement/branch
+  C coverage via `lcov` (excluding vendored `lzo/` and the `check_PROGRAMS`
+  C test drivers, `src/h_*.c`), separately captures Python coverage for
+  `include_server/*.py` (a real, substantial production component, not a
+  peripheral tool -- excluding it would understate what "most of the code"
+  actually covers) via a coverage-recording `PYTHON` wrapper script generated
+  at job runtime (a real single-token executable, since Makefile.in passes
+  `$(PYTHON)` as one token to code that forwards it straight to `subprocess`
+  as an executable name -- a multiword override fails outright), and publishes
+  both reports without any third-party service: a table in the job summary
+  (`$GITHUB_STEP_SUMMARY`) plus the full `coverage.info`/`coverage-python.xml`
+  as a `coverage-reports` build artifact. GitHub's own native "Code Quality"
+  coverage feature was checked and ruled out -- it requires GitHub
+  Enterprise Cloud/Team, not available on this org's Free plan (confirmed
+  via `gh api orgs/<org>`). Codecov was tried first (tokenless upload for a
+  public repo) but rejected outright by Codecov itself
+  (`"Token required - not valid tokenless upload"`) and, independent of
+  that, is not something to route third-party coverage data through
+  without deliberate opt-in -- reverted in favor of the GitHub-native
+  approach above. Also reruns `AutogroupNicenessPrivilegeDrop_Case` under
+  `sudo` before lcov captures (mirroring `make_check`'s own pattern for that
+  root-only case), and installs `libseccomp-dev`/`--with-seccomp` so the real
+  `HAVE_SECCOMP` sandbox path is included. Three separate `lcov --remove`
+  patterns (`popt/`, `test/`, `/usr/*`) turned out to be dead on arrival --
+  none ever matched anything this job's own build produces -- caught via
+  real CI runs and removed rather than suppressed with `--ignore-errors
+  unused` (AGENTS.md rule 76, added because of this). Motivated by the
+  OpenSSF Best Practices Badge `test_most` criterion; without an
+  auto-detected Coveralls/Codecov badge, that criterion is met with a manual
+  justification linking to a real CI run instead. Separate job from
+  `make_check`, since gcov instrumentation changes what's being measured and
+  this job's coverage report is not itself a pass/fail gate; redirects to
+  `current_dev` on the nightly schedule run, matching
+  `make_check`/`distributed_e2e`'s own redirect.
+
 - **`src/util.c`**: documented `argv_contains()` as unused dead code. A
   current-tree recursive grep (`grep -Ri "argv_contains"`) only confirms no
   caller exists *today*; the stronger claim that none has existed since the
