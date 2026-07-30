@@ -37,6 +37,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   silent hang in this recurring CI job, not just an ad-hoc local run.
   Added `--init` so a real init (`tini`) reaps those zombies.
 
+## [3.6.3-NG] - 2026-07-30
+
+### Fixed
+
 - **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
   derives directly from `github.event_name`/`github.ref` instead of
   `build_and_selftest`'s `publish_eligible` job output, so a run that fails
