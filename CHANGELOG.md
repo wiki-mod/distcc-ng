@@ -128,6 +128,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   normative only; that kind of narrative belongs in a PR/commit description
   or this project's own memory system, not in the governance file itself.
 
+- **`AGENTS.md`**: added rule 76 -- do not add defensive/precautionary code
+  (an exclusion pattern, a fallback branch, a compatibility shim, an extra
+  flag) by copying it from a similar existing case without confirming it
+  actually applies to the specific configuration being written; an
+  inapplicable pattern must be left out, not kept "just in case" and then
+  paired with a suppression flag once a tool complains about it (which
+  would also violate rule 66).
+
 - **`AGENTS.md`**: extended rule 62 -- a claim that a bug or vulnerability
   exists in code, especially external/upstream code not under this repo's
   control, now additionally requires tracing the complete relevant call
