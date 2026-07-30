@@ -536,20 +536,28 @@ jobs:
           # genuinely corrupt report upload silently.
           lcov --capture --directory . --output-file coverage_raw.info \
             --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
-          # Exclude vendored third-party sources (lzo/), the test harness
-          # itself (test/), and the check_PROGRAMS C test drivers
-          # (src/h_*.c, built and run by `make check` but never part of
-          # distcc-ng's own shipped code) -- this criterion is about
-          # coverage of this project's own code, not of code it merely
-          # bundles or of the test scaffolding that does the covering. No
-          # popt/ pattern here: this job's apt list installs libpopt-dev,
-          # so configure always picks up the system library (see
-          # configure.ac's popt auto-detect) and the vendored popt/ tree
-          # is never built in this job -- an exclude pattern for it would
-          # match nothing and lcov flags an unmatched pattern as an error
-          # (confirmed live) rather than silently accepting it.
+          # Exclude vendored third-party sources (lzo/) and the
+          # check_PROGRAMS C test drivers (src/h_*.c, built and run by
+          # `make check` but never part of distcc-ng's own shipped code)
+          # -- this criterion is about coverage of this project's own
+          # code, not of code it merely bundles or of the test scaffolding
+          # that does the covering. No popt/, test/, or /usr/* pattern
+          # here: this job's apt list installs libpopt-dev, so configure
+          # always picks up the system library (see configure.ac's popt
+          # auto-detect) and the vendored popt/ tree is never built in
+          # this job; test/ holds only Python test scripts plus
+          # test/fuzz/fuzz_rpc_argv.c, which isn't part of this build at
+          # all (ClusterFuzzLite's own workflow compiles it separately);
+          # and every .gcda this job ever produces corresponds to one of
+          # this project's own compiled .c files (src/, lzo/, the
+          # include_server C extension), never to anything under /usr.
+          # None of the three ever produces a .gcda under its own path,
+          # so each would match nothing -- lcov flags an unmatched
+          # pattern as an error (confirmed live, three times on this
+          # same line) rather than silently accepting it, per AGENTS.md
+          # rule 76.
           lcov --remove coverage_raw.info \
-            '*/lzo/*' '*/test/*' '*/src/h_*.c' '/usr/*' \
+            '*/lzo/*' '*/src/h_*.c' \
             --output-file coverage.info \
             --rc branch_coverage=1
           lcov --list coverage.info --rc branch_coverage=1
