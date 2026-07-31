@@ -11,6 +11,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`.github/workflows/package-release.yml`**: `publish_manifest` now also
+  moves a floating `:latest` tag to each release's container images
+  (`ghcr.io/wiki-mod/distcc-ng` and `-pump`), alongside the existing
+  immutable `<version>-NG` tag -- only on a real tag push, never on a
+  manual/`workflow_dispatch` test build. Previously no `:latest` tag
+  existed for the release images at all (maintainer decision, 2026-07-30:
+  this absence was itself an undiscussed choice by an earlier session, not
+  an intentional policy -- `doc/release-versioning.md`'s "no release may
+  ever be untagged" rule governs the GitHub Release/version tag, not
+  whether an *additional* convenience pointer may also exist).
+
 ### Fixed
 
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
