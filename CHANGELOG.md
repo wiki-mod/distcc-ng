@@ -11,6 +11,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`README.md`**: added a "Quick start (Docker)" section -- previously had
+  zero mention of the published GHCR images at all, despite this fork
+  publishing three separate images (`distcc-ng`, `distcc-ng-pump`,
+  `distcc-ng-nightly`).
+- **`doc/docker.md`**: corrected its release-image pull examples, which
+  documented a `:latest` tag that has never actually existed (verified live
+  against the GHCR API) -- release images are deliberately only ever
+  tagged with their real `<version>-NG` string, per
+  `doc/release-versioning.md`'s "no release may ever be untagged" policy.
+
 ### Fixed
 
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step

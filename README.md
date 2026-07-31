@@ -54,6 +54,29 @@ kernel, rsync, KDE, GNOME (via GARNOME), Samba and Ethereal.  distcc
 is nearly linearly scalable for small numbers of machines: for a
 typical case, three machines are 2.6 times faster than one.
 
+## Quick start (Docker)
+
+distcc-ng publishes pre-built container images to GHCR -- no build
+toolchain required to try a `distccd` server:
+
+```bash
+docker run -d --name distccd -p 3632:3632 ghcr.io/wiki-mod/distcc-ng-nightly:latest
+```
+
+This pulls the `:latest` nightly image (built daily from this fork's
+`current_dev` branch). For a stable, reproducible version instead, use one
+of the versioned release images -- `ghcr.io/wiki-mod/distcc-ng:<version>`
+(plain) or `ghcr.io/wiki-mod/distcc-ng-pump:<version>` (with pump mode) --
+see the [Releases page](https://github.com/wiki-mod/distcc-ng/releases) for
+the current version tag; release images are deliberately never published
+under a floating `:latest` tag (see `doc/release-versioning.md`).
+
+The default `CMD` starts `distccd` bound to `127.0.0.1` only
+(`--allow 127.0.0.1 --enable-tcp-insecure`) -- safe out of the box, but you
+must override `--allow` for a real network deployment. See
+[`doc/docker.md`](doc/docker.md) for the full image reference (variants,
+tags, publishing schedule) and `man distccd` for `--allow` syntax.
+
 ## Pump mode
 
 distcc's "pump" mode improves on plain distcc by distributing not only
