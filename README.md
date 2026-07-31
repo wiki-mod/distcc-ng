@@ -60,16 +60,18 @@ distcc-ng publishes pre-built container images to GHCR -- no build
 toolchain required to try a `distccd` server:
 
 ```bash
-docker run -d --name distccd -p 3632:3632 ghcr.io/wiki-mod/distcc-ng-nightly:latest
+docker run -d --name distccd -p 3632:3632 ghcr.io/wiki-mod/distcc-ng:latest
 ```
 
-This pulls the `:latest` nightly image (built daily from this fork's
-`current_dev` branch). For a stable, reproducible version instead, use one
-of the versioned release images -- `ghcr.io/wiki-mod/distcc-ng:<version>`
-(plain) or `ghcr.io/wiki-mod/distcc-ng-pump:<version>` (with pump mode) --
-see the [Releases page](https://github.com/wiki-mod/distcc-ng/releases) for
-the current version tag; release images are deliberately never published
-under a floating `:latest` tag (see `doc/release-versioning.md`).
+`:latest` always tracks the most recently tagged stable release (plain
+build; use `ghcr.io/wiki-mod/distcc-ng-pump:latest` instead for pump mode).
+For a specific, pinned version instead, use the immutable
+`ghcr.io/wiki-mod/distcc-ng:<version>-NG` tag -- see the
+[Releases page](https://github.com/wiki-mod/distcc-ng/releases) for the
+exact version. If you want to track this fork's own bleeding-edge
+`current_dev` branch instead of a stable release (Firefox
+Nightly-style, not something to run in production), there's also
+`ghcr.io/wiki-mod/distcc-ng-nightly:latest`, rebuilt daily.
 
 The default `CMD` starts `distccd` bound to `127.0.0.1` only
 (`--allow 127.0.0.1 --enable-tcp-insecure`) -- safe out of the box, but you

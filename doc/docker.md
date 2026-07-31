@@ -25,27 +25,32 @@ scanned with Trivy, and shipped with an SPDX SBOM.
 
 ### Pulling
 
-Neither image is ever published under a floating `:latest` tag --
-`doc/release-versioning.md`'s "no release may ever be untagged" policy
-means every release image is only ever tagged with its real
-`<version>-NG` string (e.g. `3.6.4-NG`). Check the
-[Releases page](https://github.com/wiki-mod/distcc-ng/releases) for the
-current version, then:
+Every release image carries its real, immutable `<version>-NG` tag (e.g.
+`3.6.4-NG`) -- this is the one `doc/release-versioning.md`'s "no release
+may ever be untagged" policy is actually about, and every immutable
+reference (the GitHub Release, the SBOM, this workflow's own digest pins)
+names that tag specifically. `publish_manifest` (`.github/workflows/
+package-release.yml`) *additionally* moves a floating `:latest` tag to
+each real tagged release, as a convenience pointer at the same
+already-versioned content -- not a replacement for the version tag, and
+only ever moved on a real tag push, never a manual test build:
 
 ```bash
-docker pull ghcr.io/wiki-mod/distcc-ng:<version>-NG
+docker pull ghcr.io/wiki-mod/distcc-ng:latest        # current stable release
+docker pull ghcr.io/wiki-mod/distcc-ng:<version>-NG  # pinned to an exact version
+docker pull ghcr.io/wiki-mod/distcc-ng-pump:latest
 docker pull ghcr.io/wiki-mod/distcc-ng-pump:<version>-NG
 ```
 
-For a moving, always-current-`current_dev` image instead (no version to
-look up), use `ghcr.io/wiki-mod/distcc-ng-nightly:latest` (see
-`.github/workflows/nightly-publish.yml`) -- not a substitute for a real
-tagged release, but useful for a quick local try.
+For this fork's own bleeding-edge `current_dev` branch instead of a stable
+release (Firefox Nightly-style, not for production), there's also
+`ghcr.io/wiki-mod/distcc-ng-nightly:latest`, rebuilt daily (see
+`.github/workflows/nightly-publish.yml`).
 
 ### Running as a server
 
 ```bash
-docker run -d --name distccd -p 3632:3632 ghcr.io/wiki-mod/distcc-ng:<version>-NG
+docker run -d --name distccd -p 3632:3632 ghcr.io/wiki-mod/distcc-ng:latest
 ```
 
 The default `CMD` starts `distccd --daemon --no-detach --log-stderr --allow
