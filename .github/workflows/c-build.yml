@@ -637,3 +637,56 @@ jobs:
       - name: Run distributed-compile end-to-end test
         run: bash test/e2e/run-e2e.sh
 
+  # Opt-in ASan/UBSan sanitizer build, per #266's recommendation. Never runs
+  # on push/pull_request -- unlike make_check's schedule leg, this is not a
+  # per-commit or per-PR gate: it exists to catch new memory-safety/UB
+  # regressions on a relaxed cadence, not to block every change. Same
+  # `changes` gate as the other jobs is kept for consistency, but it always
+  # evaluates true here anyway since the job only ever runs on
+  # workflow_dispatch/schedule (see the `changes` job's own forced-true path
+  # for those two events).
+  sanitizer_check:
+    name: ASan/UBSan sanitizer check (opt-in)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Same schedule redirect as the other jobs above: the nightly run
+          # evaluates from master but must validate current_dev.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        with:
+          apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev
+      - run: ./autogen.sh
+      # --without-seccomp: the sandboxed exec path is orthogonal to what this
+      # job checks (memory-safety/UB in the client/daemon's own code) and
+      # instrumenting a seccomp-filtered child under ASan/UBSan adds
+      # complexity (syscalls the filter itself makes) with no matching
+      # benefit here. -fno-sanitize-recover=address (a real memory-safety
+      # violation is always fatal) paired with -fsanitize-recover=undefined
+      # (UBSan prints and continues, so one UB report doesn't mask the rest
+      # of the same test run). -Wno-stringop-truncation works around a
+      # -Werror false positive in src/util.c's dcc_trim_path() that only
+      # surfaces when sanitizer instrumentation combines with -Werror (found
+      # triaging #266) -- not itself a real bug.
+      - run: |
+          ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
+      - run: make
+      # detect_leaks=0: this project's own client-side allocation pattern
+      # (short-lived process, several process-lifetime allocations reclaimed
+      # by the OS at exit rather than explicitly freed) was triaged in #266
+      # and is not itself a bug -- see PR #352. Enabling leak detection here
+      # would just re-report that same already-understood, accepted class on
+      # every run instead of surfacing genuinely new memory-safety/UB
+      # regressions, which is this job's actual purpose.
+      - run: ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 make check
+

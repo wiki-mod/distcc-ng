@@ -13,6 +13,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/c-build.yml`**: new opt-in `sanitizer_check` job
+  (ASan/UBSan, `workflow_dispatch`/`schedule` only, never on push/PR) per
+  #266's recommendation -- `ASAN_OPTIONS=detect_leaks=0` so the
+  already-triaged, accepted process-lifetime allocation pattern (PR #352)
+  doesn't get re-reported as noise on every run; catches new memory-safety
+  and UB regressions going forward instead.
 - **`.github/workflows/package-release.yml`**: `publish_manifest` now also
   moves a floating `:latest` tag to each release's container images
   (`ghcr.io/wiki-mod/distcc-ng` and `-pump`), alongside the existing
