@@ -48,6 +48,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
+  log for a `COMPILE_OK` line exactly once, right after the compile
+  subprocess exited -- an intermittent CI failure (#300) showed this can
+  race the daemon's own log write for that same compile. Replaced with a
+  new shared `WithDaemon_Case.waitForLogPattern()` poll helper (moved out
+  of `AutogroupNicenessPrivilegeDrop_Case`'s previously-private copy, no
+  behavior change there), bounded at 5s. Verified with 10 consecutive runs
+  of the affected test, all green.
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
   still called `lcov --list` with the deprecated `lcov_branch_coverage` RC
   name, missed when the job's other three `lcov` invocations were already
