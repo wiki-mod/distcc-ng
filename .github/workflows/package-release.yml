@@ -452,6 +452,28 @@ jobs:
             --tag "${IMAGE_BASE}" \
             "${tags[@]}"
 
+          # Move the floating `latest` tag to this release too, alongside
+          # the immutable version tag above -- only on a real tag push
+          # (github.ref_type == 'tag'), never on a manual/workflow_dispatch
+          # test build (which would otherwise clobber `latest` with an
+          # untagged, unreleased "manual-N" build). This doesn't relax
+          # doc/release-versioning.md's "no release may ever be untagged"
+          # rule: `latest` is a second, additional pointer at the exact
+          # same already-versioned manifest, not a replacement for the
+          # real <version>-NG tag, which is still what every immutable
+          # reference (the GitHub Release, the SBOM, this job's own digest
+          # pins) actually names. Simplifying assumption: this repo
+          # currently maintains one linear release train (no parallel
+          # maintenance branches releasing older major versions), so "most
+          # recently tagged" and "newest version" are always the same tag
+          # -- revisit this if that ever changes.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            latest_tag="${IMAGE_BASE%:*}:latest"
+            docker buildx imagetools create \
+              --tag "${latest_tag}" \
+              "${tags[@]}"
+          fi
+
   publish_github_release:
     needs: [setup, build_packages, publish_manifest]
     if: github.ref_type == 'tag'
