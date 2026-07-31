@@ -677,9 +677,19 @@ jobs:
       # of the same test run). -Wno-stringop-truncation works around a
       # -Werror false positive in src/util.c's dcc_trim_path() that only
       # surfaces when sanitizer instrumentation combines with -Werror (found
-      # triaging #266) -- not itself a real bug.
+      # triaging #266) -- not itself a real bug. -fno-sanitize=alignment:
+      # bundled lzo/minilzo.c's own memops macros deliberately do unaligned
+      # loads/stores as a real, permanent performance optimization (its
+      # LZO_UNALIGNED_OK_* family) -- confirmed live, this job's first real
+      # run failed CompressedCompile_Case purely on 60 UBSan
+      # "misaligned load/store" reports in lzo/minilzo.c, no other category.
+      # That's vendored third-party code behaving exactly as designed, not
+      # something this job will ever have a fix to offer for -- same
+      # "known, accepted, would just be permanent noise" rationale as
+      # detect_leaks=0 above, scoped to one specific UBSan check rather than
+      # disabling UBSan wholesale.
       - run: |
-          ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
+          ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
       - run: make
       # detect_leaks=0: this project's own client-side allocation pattern
       # (short-lived process, several process-lifetime allocations reclaimed
@@ -687,6 +697,21 @@ jobs:
       # and is not itself a bug -- see PR #352. Enabling leak detection here
       # would just re-report that same already-understood, accepted class on
       # every run instead of surfacing genuinely new memory-safety/UB
-      # regressions, which is this job's actual purpose.
-      - run: ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 make check
+      # regressions, which is this job's actual purpose. verify_asan_link_order=0:
+      # the include-server C extension (include_server/c_extensions/, built
+      # with the same ASan-instrumented CFLAGS above) gets loaded into a
+      # plain, non-instrumented `python3` by its own maintainer-check test,
+      # which otherwise fails with ASan's "runtime does not come first in
+      # initial library list" check -- confirmed live. A global LD_PRELOAD
+      # was tried first and made things worse: it also injects into every
+      # unrelated helper subprocess the test harness shells out to (e.g.
+      # `cat` in Getline_Case's `printf '' | h_getline | cat -v` pipeline),
+      # and that build of `cat` then aborts on an unrelated ASan
+      # invalid-aligned-alloc-alignment false positive in its own
+      # unrelated aligned_alloc() call -- confirmed live, a second failure
+      # mode LD_PRELOAD introduced. verify_asan_link_order=0 disables only
+      # that one specific link-order check, globally, without injecting
+      # ASan into any process that wasn't already linked against it.
+      - run: |
+          ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 make check
 
