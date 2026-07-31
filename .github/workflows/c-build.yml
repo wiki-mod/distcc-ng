@@ -677,9 +677,19 @@ jobs:
       # of the same test run). -Wno-stringop-truncation works around a
       # -Werror false positive in src/util.c's dcc_trim_path() that only
       # surfaces when sanitizer instrumentation combines with -Werror (found
-      # triaging #266) -- not itself a real bug.
+      # triaging #266) -- not itself a real bug. -fno-sanitize=alignment:
+      # bundled lzo/minilzo.c's own memops macros deliberately do unaligned
+      # loads/stores as a real, permanent performance optimization (its
+      # LZO_UNALIGNED_OK_* family) -- confirmed live, this job's first real
+      # run failed CompressedCompile_Case purely on 60 UBSan
+      # "misaligned load/store" reports in lzo/minilzo.c, no other category.
+      # That's vendored third-party code behaving exactly as designed, not
+      # something this job will ever have a fix to offer for -- same
+      # "known, accepted, would just be permanent noise" rationale as
+      # detect_leaks=0 above, scoped to one specific UBSan check rather than
+      # disabling UBSan wholesale.
       - run: |
-          ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
+          ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
       - run: make
       # detect_leaks=0: this project's own client-side allocation pattern
       # (short-lived process, several process-lifetime allocations reclaimed

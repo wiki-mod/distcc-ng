@@ -18,7 +18,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   #266's recommendation -- `ASAN_OPTIONS=detect_leaks=0` so the
   already-triaged, accepted process-lifetime allocation pattern (PR #352)
   doesn't get re-reported as noise on every run; catches new memory-safety
-  and UB regressions going forward instead.
+  and UB regressions going forward instead. Also `-fno-sanitize=alignment`:
+  bundled `lzo/minilzo.c`'s own memops macros deliberately do unaligned
+  loads/stores as a real, permanent optimization -- this job's first live
+  run failed `CompressedCompile_Case` purely on 60 UBSan misaligned-access
+  reports there, no other category, so that one check is scoped out rather
+  than disabling UBSan wholesale.
 - **`.github/workflows/package-release.yml`**: `publish_manifest` now also
   moves a floating `:latest` tag to each release's container images
   (`ghcr.io/wiki-mod/distcc-ng` and `-pump`), alongside the existing
