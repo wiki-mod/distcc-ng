@@ -493,6 +493,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
   `man/distcc.1` zstd documentation) were already done in earlier PRs.
 
+- **`README.md`**: added the OpenSSF Baseline badge alongside the existing
+  Best Practices badge. `master` had picked up a Baseline-only swap during
+  an earlier release cut without going back through `current_dev`; both
+  badges now show on both branches instead of one replacing the other.
+
 ### Security
 
 - **`.github/workflows/osv-scanner.yml`**: dropped the redundant top-level
