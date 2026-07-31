@@ -697,6 +697,18 @@ jobs:
       # and is not itself a bug -- see PR #352. Enabling leak detection here
       # would just re-report that same already-understood, accepted class on
       # every run instead of surfacing genuinely new memory-safety/UB
-      # regressions, which is this job's actual purpose.
-      - run: ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 make check
+      # regressions, which is this job's actual purpose. LD_PRELOAD: the
+      # include-server C extension (include_server/c_extensions/, built with
+      # the same ASan-instrumented CFLAGS above) gets loaded into a plain,
+      # non-instrumented `python3` by its own maintainer-check test --
+      # confirmed live, this job's second run failed
+      # include-server-maintainer-check with ASan's own "runtime does not
+      # come first in initial library list" error, the standard symptom of
+      # an ASan-built shared object loaded into an uninstrumented host
+      # process. Preloading the matching runtime (gcc's own reported path)
+      # for the whole `make check` invocation is the standard fix, not a
+      # suppression -- the C extension's own tests still run under real
+      # ASan/UBSan instrumentation.
+      - run: |
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1 make check
 
