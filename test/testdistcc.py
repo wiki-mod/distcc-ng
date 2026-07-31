@@ -332,6 +332,36 @@ as soon as that happens we can go ahead and start the client."""
     def teardown(self):
         SimpleDistCC_Case.teardown(self)
 
+    def waitForLogPattern(self, pattern, timeout, logfile=None):
+        """Poll a daemon log file for `pattern`, up to `timeout` seconds.
+
+        Needed whenever the event being waited for (the daemon logging
+        something from a forked child, or flushing a compile's own log
+        line) can happen after this test's own next step already started
+        -- a single one-shot read right after that step can race a
+        slow/contended CI runner and miss content logged a moment later.
+        Returns the full log content once `pattern` is found; fails the
+        test with the log seen so far if the timeout is reached without a
+        match. `logfile` defaults to self.daemon_logfile.
+        """
+        if logfile is None:
+            logfile = self.daemon_logfile
+        deadline = time.time() + timeout
+        log_contents = ""
+        while True:
+            try:
+                with open(logfile, 'rt') as f:
+                    log_contents = f.read()
+            except IOError:
+                log_contents = ""
+            if re.search(pattern, log_contents) is not None:
+                return log_contents
+            if time.time() > deadline:
+                self.fail(
+                    "timed out after %ds waiting for %r in the daemon log, "
+                    "got:\n%s" % (timeout, pattern, log_contents))
+            time.sleep(0.2)
+
 
     def killDaemon(self):
         try:
@@ -1456,17 +1486,23 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         return self.distcc() + \
                self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
 
+    # A one-shot read right after the compile subprocess exits can race the
+    # daemon's own log write for that same compile (found via a real,
+    # intermittent CI failure -- issue #300): the client-side compile
+    # returning does not guarantee the server has finished flushing its log
+    # line yet. Bounded at 5s, generous relative to a local compile.
+    LOG_WRITE_TIMEOUT = 5
+
     def runtest(self):
         # A working binary alone can't distinguish a real remote
         # distribution from a silent local fallback (both produce a valid
         # testtmp) -- grepping the daemon's own independent log for
         # COMPILE_OK is the actual proof the compile was distributed, per
         # doc/verification-checklist.md section 3's real-two-host evidence
-        # bar.
+        # bar. waitForLogPattern() polls instead of a single read, see
+        # LOG_WRITE_TIMEOUT above.
         CompileHello_Case.runtest(self)
-        with open(self.daemon_logfile) as f:
-            daemon_log = f.read()
-        self.assert_re_search(r'COMPILE_OK', daemon_log)
+        self.waitForLogPattern(r'COMPILE_OK', self.LOG_WRITE_TIMEOUT)
 
 
 class LanguageSpecific_Case(Compilation_Case):
@@ -2376,35 +2412,6 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
     # in well under a second.
     AUTOGROUP_WARNING_TIMEOUT = 15
 
-    def _waitForLogPattern(self, pattern, timeout):
-        """Poll self.daemon_logfile for `pattern`, up to `timeout` seconds.
-
-        Needed because the event being waited for (dcc_set_autogroup_niceness()
-        actually running and logging its result) happens in a forked child
-        well after this test's startDaemon() already returned -- a single
-        one-shot read right after startDaemon() can race a slow/contended
-        CI runner and either miss a warning that is logged a moment later,
-        or (worse) read /proc/<pid>/autogroup before the write it's
-        checking has even happened. Returns the full log content once
-        `pattern` is found; fails the test with the log seen so far if the
-        timeout is reached without a match.
-        """
-        deadline = time.time() + timeout
-        log_contents = ""
-        while True:
-            try:
-                with open(self.daemon_logfile, 'rt') as f:
-                    log_contents = f.read()
-            except IOError:
-                log_contents = ""
-            if re.search(pattern, log_contents) is not None:
-                return log_contents
-            if time.time() > deadline:
-                self.fail(
-                    "timed out after %ds waiting for %r in the daemon log, "
-                    "got:\n%s" % (timeout, pattern, log_contents))
-            time.sleep(0.2)
-
     def runtest(self):
         with open(self.daemon_pidfile, 'rt') as f:
             pid = int(f.read())
@@ -2426,7 +2433,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         # already completed (the log call is the last thing that function
         # does), so this doubles as the synchronization point for the
         # /proc read below, not just a check on its own.
-        self._waitForLogPattern(
+        self.waitForLogPattern(
             r'autogroup nice -?\d+ failed: Operation not permitted',
             self.AUTOGROUP_WARNING_TIMEOUT)
 
