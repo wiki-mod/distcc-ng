@@ -505,10 +505,25 @@ ReportDiscrepancies() {
 # SIGTERM to that whole group, including this script and whatever invoked
 # it. `ps -p 0` never had this problem (it just fails cleanly), so this
 # guard is specifically needed now that the check goes through `kill`.
-IncludeServerAlive() {
+#
+# Pattern-matching against the literal string "0" is not enough: "00",
+# "000", etc. are also valid all-zero pid spellings that a plain `*0)`
+# case arm does not catch, but still resolve to pid/process-group 0 once
+# passed to `kill`. Arithmetic comparison (`-gt 0`) handles every
+# spelling correctly, so digits are validated first (arithmetic
+# comparison on a non-numeric string is a shell error, not a clean
+# false), then compared numerically.
+IsPositivePid() {
   case "$1" in
-    ''|*[!0-9]*|0) return 1 ;;
+    ''|*[!0-9]*) return 1 ;;
   esac
+  [ "$1" -gt 0 ] 2>/dev/null
+}
+
+IncludeServerAlive() {
+  if ! IsPositivePid "$1"; then
+    return 1
+  fi
   if ! kill -0 "$1" 2>/dev/null; then
     return 1
   fi
@@ -527,9 +542,9 @@ IncludeServerAlive() {
 # glibc), falling back to the ps-based check on non-Linux platforms
 # (BSD/macOS/Cygwin) where /proc/pid/cmdline does not exist.
 IncludeServerPidLooksRight() {
-  case "$1" in
-    ''|*[!0-9]*|0) return 1 ;;
-  esac
+  if ! IsPositivePid "$1"; then
+    return 1
+  fi
   if [ -r "/proc/$1/cmdline" ]; then
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
     return $?
