@@ -361,25 +361,18 @@ RUN set -eux; \
 # a real distributed-compile verification run needs to bind a port and
 # read/write the mounted worktree, both of which work as a non-root user.
 #
-# HOST_UID/HOST_GID (issue #286, experimental -- not yet a decided
-# convention): let a caller rebuild this image with the non-root user's
-# uid/gid matching their own host uid, so a bind-mounted checkout is
-# already owned by this image's own user with no `chown` step needed at
-# all. Defaults (1000/1000) are chosen to reproduce this image's own prior
-# unparameterized `useradd` behavior for anyone who doesn't pass the
-# build-args (Debian's login.defs UID_MIN/GID_MIN is 1000, and no package
-# installed above creates a regular, non-system account, so plain
-# `useradd` here should already resolve to 1000:1000 by default -- being
-# confirmed empirically via this image's own CI as part of issue #286's
-# investigation, not assumed without checking) -- this is not yet the
-# standing convention for docker/verify/Dockerfile, only a probe being
-# evaluated against approach 2 (`docker run --user`) before either
-# replaces the current root+chown+su pattern documented in
-# doc/verification-checklist.md section 9.
-ARG HOST_UID=1000
-ARG HOST_GID=1000
-RUN groupadd --gid "${HOST_GID}" verify \
-    && useradd --create-home --shell /bin/bash --uid "${HOST_UID}" --gid "${HOST_GID}" verify
+# Deliberately no build-arg-parameterized uid/gid here (issue #286
+# considered this -- "approach 1", a HOST_UID/HOST_GID build-arg matching
+# the caller's own host uid -- and confirmed empirically via this image's
+# own CI that it works cleanly). Not adopted: it would require rebuilding
+# this image locally with a matching build-arg any time the caller's own
+# uid differs from this image's baked-in 1000, which reintroduces exactly
+# the local build step issue #264's "pull and run, nothing to build"
+# requirement exists to avoid. `docker run --user $(id -u):$(id -g)`
+# (see doc/verification-checklist.md section 9) solves the same
+# bind-mount-ownership problem against this exact, unmodified,
+# already-published image instead, with no rebuild ever needed.
+RUN useradd --create-home --shell /bin/bash verify
 USER verify
 WORKDIR /home/verify
 

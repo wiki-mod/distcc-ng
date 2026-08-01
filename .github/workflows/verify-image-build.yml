@@ -101,222 +101,90 @@ jobs:
             -v "${{ github.workspace }}/docker/verify:/verify:ro" \
             distcc-ng-verify:ci bash /verify/selftest-ptrace.sh
 
-      # --- issue #286 investigation: temporary diagnostic + probe steps ---
-      # (below, up to "end issue #286 probes") -- these exist only to gather
-      # real evidence for whether root+chown+su (the step further down) is
-      # actually necessary, or whether a build-arg matching the host uid
-      # (approach 1) or `docker run --user` (approach 2) can avoid needing
-      # root inside the container at all. Deliberately operate on isolated
-      # copies of the checkout (never ${{ github.workspace }} itself) so
-      # they cannot perturb the pre-existing "Real distcc-ng build+test"
-      # step below, which remains the unmodified baseline for comparison.
-      # Removed once issue #286 reaches a decision (either replacing that
-      # step with the winning approach, or being closed with these findings
-      # if neither approach empirically works).
-      - name: "issue #286: prepare isolated probe checkouts"
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/i286-diag-src" "${RUNNER_TEMP}/i286-probe-a-src" "${RUNNER_TEMP}/i286-probe-b-src"
-          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-diag-src/"
-          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-probe-a-src/"
-          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-probe-b-src/"
-
-      - name: "issue #286: diagnostic -- runner/workspace/container uid facts"
-        run: |
-          set -euo pipefail
-          echo "== runner's own id (whatever uid actions/checkout wrote the workspace as) =="
-          id
-          echo "== workspace ownership (actions/checkout's real uid:gid) =="
-          stat -c '%u:%g %n' "${{ github.workspace }}"
-          echo "== image's baked-in 'verify' user (unmodified image, no build-arg) =="
-          docker run --rm distcc-ng-verify:ci id
-          echo "== unmodified image, default user, read-only bind mount: can it write? =="
-          docker run --rm -v "${RUNNER_TEMP}/i286-diag-src:/work/src:ro" distcc-ng-verify:ci \
-            sh -c 'id; ls -ld /work/src; touch /work/src/.i286_probe_write 2>&1 || echo "WRITE DENIED (ro mount, expected)"'
-          echo "== unmodified image, default user, read-write bind mount, no --user: can it write? =="
-          docker run --rm -v "${RUNNER_TEMP}/i286-diag-src:/work/src:rw" distcc-ng-verify:ci \
-            sh -c 'id; touch /work/src/.i286_probe_write 2>&1 && { echo "WRITE OK"; rm -f /work/src/.i286_probe_write; } || echo "WRITE DENIED (uid mismatch, this is the problem issue #286 is about)"'
-          echo "== unmodified image, --user \$(id -u):\$(id -g) (approach 2 shape), read-write bind mount =="
-          docker run --rm --user "$(id -u):$(id -g)" -v "${RUNNER_TEMP}/i286-diag-src:/work/src:rw" distcc-ng-verify:ci \
-            sh -c 'id; echo "HOME=$HOME"; whoami 2>&1 || echo "whoami: no /etc/passwd entry for this uid"; touch /work/src/.i286_probe_write2 2>&1 && { echo "WRITE OK"; rm -f /work/src/.i286_probe_write2; } || echo "WRITE DENIED"'
-
-      - name: "issue #286: Probe A (approach 1 -- build-arg HOST_UID/HOST_GID matching the runner)"
-        run: |
-          set -euo pipefail
-          docker build -f docker/verify/Dockerfile \
-            --build-arg "HOST_UID=$(id -u)" --build-arg "HOST_GID=$(id -g)" \
-            -t distcc-ng-verify:i286-probe-a .
-          docker run --rm --init --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
-            -v "${RUNNER_TEMP}/i286-probe-a-src:/work/src:rw" -w /work/src \
-            distcc-ng-verify:i286-probe-a bash -c '
-              set -euo pipefail
-              id
-              ./autogen.sh
-              ./configure PYTHON=python3
-              make
-              make check
-            ' 2>&1 | tee "${RUNNER_TEMP}/i286-probe-a-check.log"
-
-      - name: "issue #286: Probe B (approach 2 -- docker run --user matching the runner, unmodified image)"
-        # Uses the unmodified `distcc-ng-verify:ci` image (no rebuild, no
-        # build-arg) -- the whole appeal of approach 2 for the *published*
-        # image's own "pull and run, no build step" promise (issue #264).
-        # `-e HOME=...` + `mkdir -p "$HOME"` is a deliberate, pre-emptive fix
-        # for a known real risk with an arbitrary numeric --user uid: Docker
-        # does not synthesize an /etc/passwd entry for a uid with no
-        # matching name, so an unset $HOME (or one Docker leaves pointing at
-        # "/", not writable by this uid) would otherwise break anything that
-        # resolves a cache/config dir off $HOME (ccache's default cache dir,
-        # in particular -- not exercised by this probe's plain
-        # autogen/configure/make/make check, but real for the later ccache+
-        # Redis step's own pattern). If this workaround turns out to be
-        # unnecessary here, the diagnostic step above already shows that
-        # directly (its third `docker run` block runs the same --user shape
-        # without this env var).
-        run: |
-          set -euo pipefail
-          docker run --rm --init --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
-            --user "$(id -u):$(id -g)" \
-            -v "${RUNNER_TEMP}/i286-probe-b-src:/work/src:rw" -w /work/src \
-            -e HOME=/tmp/i286-probe-b-home \
-            distcc-ng-verify:ci bash -c '
-              set -euo pipefail
-              mkdir -p "$HOME"
-              id
-              echo "HOME=$HOME"
-              ./autogen.sh
-              ./configure PYTHON=python3
-              make
-              make check
-            ' 2>&1 | tee "${RUNNER_TEMP}/i286-probe-b-check.log"
-
-      # The actual three-way comparison (baseline vs Probe A vs Probe B) runs
-      # after the pre-existing "Real distcc-ng build+test inside the image"
-      # step below, since that step is the baseline and its log doesn't
-      # exist yet at this point in the job -- see the "three-way comfychair
-      # comparison" step further down.
-      # --- end issue #286 probes ---
-
       - name: Real distcc-ng build+test inside the image
         # Proves the image is sufficient for this repo's own toolchain, not
         # just that gcc exists -- the full real validation bar (AGENTS.md's
         # Required Validation section).
         #
-        # Two real CI failures were found and fixed getting this step right,
-        # both a consequence of the same root cause (actions/checkout leaves
-        # the bind-mounted workspace owned by the runner's own uid, which
-        # differs from the image's `verify` uid -- a bind-mount ownership
-        # mismatch that a real local `docker run`, see docker/verify/
-        # README.md, never hits, since the same host user owns both sides
-        # of the mount there):
+        # `--user "$(id -u):$(id -g)"` (issue #286): this used to run as
+        # `--user root`, `chown -R verify:verify` the bind-mounted
+        # workspace, then `su -s /bin/bash verify -c '...'` -- root was
+        # needed transiently only to fix a bind-mount ownership mismatch
+        # (actions/checkout leaves the workspace owned by the runner's own
+        # uid, e.g. 1001, which differs from the image's baked-in `verify`
+        # uid, 1000). The maintainer flagged during PR #283 review that
+        # reaching for root at all, even transiently, for a narrow `chown`,
+        # shouldn't become an unquestioned standing convention without
+        # checking whether it's actually necessary (issue #286). It is not:
+        # `--user $(id -u):$(id -g)` makes the container process itself run
+        # as the runner's own uid, so it already owns the bind-mounted
+        # workspace with no `chown`/`su`/root involved at any point --
+        # confirmed empirically (issue #286's own investigation, PR #405):
+        # a real CI run comparing the old root+chown+su pattern against
+        # this one produced byte-identical `test/testdistcc.py`/comfychair
+        # results (138 OK, 16 NOTRUN, 0 FAIL, including root-only cases
+        # like `Unicode_Case` and `AutogroupNicenessPrivilegeDrop_Case`
+        # correctly NOTRUN-skipping under this non-root uid exactly as they
+        # did under the old su'd-to-`verify` non-root uid). `distccd` is
+        # thus never started as real root at all under this pattern either
+        # -- the same property root+chown+su was carefully arranged to
+        # preserve, just without ever touching root to get there.
         #
-        # 1. Simply omitting --user verify does NOT run as root: the
-        #    Dockerfile sets `USER verify` as the image's own default, so an
-        #    explicit `--user root` was needed just to get write access at
-        #    all ("autom4te: error: cannot create autom4te.cache in
-        #    /work/src: Permission denied").
-        # 2. Running the *whole* build+test as real root then broke a
-        #    different, legitimate test: `make check`'s
-        #    maintainer-check-no-set-path (Unicode_Case) deliberately starts
-        #    distccd as root so it can exercise distccd's own privilege-drop
-        #    behavior (dcc_discard_root() dropping to uid=65534/nobody) --
-        #    that drop only actually happens when distccd's real uid is 0,
-        #    so forcing this whole step to run as root, only to work around
-        #    the mount-ownership mismatch, accidentally armed a real
-        #    privilege-drop code path that then couldn't write
-        #    _testtmp/Unicode_Case/distccd.log as uid=65534 (that directory
-        #    is root-owned, not nobody-writable). The correct fix isn't to
-        #    make the tree world-writable (would mask real permission bugs)
-        #    or skip that test (would lose real coverage this image exists
-        #    to provide) -- it's to only use root transiently to fix the
-        #    mount's ownership (chown to the image's own `verify` uid), then
-        #    actually run the build+test as `verify`, matching how this
-        #    image is meant to be used and how a real local `docker run`
-        #    already behaves, so distccd is never started as real root here
-        #    at all.
-        # 3. A third, separate real failure after both of the above were
-        #    fixed: test/testdistcc.py's Gdb_Case asserted gdb produced no
-        #    stderr, but got "warning: Error disabling address space
-        #    randomization: Operation not permitted" -- gdb's own default
-        #    behavior is to disable ASLR for the debuggee via personality(2)
-        #    before running it. Adding --cap-add=SYS_PTRACE alone did NOT
-        #    fix this (confirmed empirically: the identical warning
-        #    reappeared verbatim in the next CI run) -- capabilities and
-        #    seccomp are two independent Docker security layers, and
-        #    Docker's *default seccomp profile* denies personality()'s
-        #    ADDR_NO_RANDOMIZE flag outright, regardless of which
-        #    capabilities the container holds. This step's docker run had
-        #    no --security-opt at all, unlike docker/verify/
-        #    selftest-ptrace.sh's own `docker run`, which happens to avoid
-        #    tripping this because its gdb check only sets a breakpoint and
-        #    continues -- it never needs gdb to actually disable ASLR.
-        #    --security-opt seccomp=unconfined is scoped to this one CI
-        #    verification step (an isolated, ephemeral GitHub-hosted
-        #    runner, not the shipped runtime image or a multi-tenant host),
-        #    which is an acceptable trade-off for a container whose whole
-        #    purpose is real debugging with gdb/strace/ltrace -- a real
-        #    developer using this image locally for the same `make check`
-        #    would need the same flag for the same reason. Since Gdb_Case
-        #    failing makes the whole `test/testdistcc.py` invocation exit
-        #    non-zero, the Makefile's `&&`-chained follow-on
-        #    (`test/pump_include_server_path_test.py`) never even ran,
-        #    which is why its output never appeared in this step's log.
-        # --init runs a real init (tini) as this container's PID 1 instead
-        # of the su/bash wrapper below -- `make check` daemonizes and kills
-        # many short-lived distccd instances (dcc_detach()'s standard
-        # fork()+_exit(0)+setsid() pattern reparents each one to PID 1),
-        # and testdistcc.py's own teardown polls os.kill(pid, 0) waiting
-        # for each to actually disappear rather than wait()ing it (it
-        # can't -- the daemon detached). Without a real init to reap those
-        # reparented zombies, that poll spins forever: a real, silent hang
-        # in this exact recurring CI job, not just an ad-hoc local run. See
-        # doc/verification-checklist.md Section 9's matching entry.
+        # `-e HOME=/tmp/distcc-ng-verify-home` + `mkdir -p "$HOME"`: a real,
+        # confirmed-empirically-necessary companion fix, not a
+        # belt-and-suspenders guess. Docker does not synthesize an
+        # `/etc/passwd` entry for a numeric `--user` uid with no matching
+        # name in the image (`whoami` inside the container reports "cannot
+        # find name for user ID <uid>") -- and without an explicit `-e
+        # HOME=`, such a uid gets `$HOME=/`, which it cannot write to.
+        # Nothing in this repo's own `./autogen.sh`/`./configure`/`make`/
+        # `make check` chain needs `$HOME` to already exist as a real
+        # user's home directory, only a writable path to point it at.
+        #
+        # A third, separate real failure was found and fixed earlier
+        # getting this step right (retained from before issue #286, still
+        # applicable): test/testdistcc.py's Gdb_Case asserted gdb produced
+        # no stderr, but got "warning: Error disabling address space
+        # randomization: Operation not permitted" -- gdb's own default
+        # behavior is to disable ASLR for the debuggee via personality(2)
+        # before running it. Adding --cap-add=SYS_PTRACE alone did NOT fix
+        # this (confirmed empirically: the identical warning reappeared
+        # verbatim in the next CI run) -- capabilities and seccomp are two
+        # independent Docker security layers, and Docker's *default
+        # seccomp profile* denies personality()'s ADDR_NO_RANDOMIZE flag
+        # outright, regardless of which capabilities the container holds.
+        # --security-opt seccomp=unconfined is scoped to this one CI
+        # verification step (an isolated, ephemeral GitHub-hosted runner,
+        # not the shipped runtime image or a multi-tenant host), which is
+        # an acceptable trade-off for a container whose whole purpose is
+        # real debugging with gdb/strace/ltrace -- a real developer using
+        # this image locally for the same `make check` would need the same
+        # flag for the same reason.
+        # --init runs a real init (tini) as this container's PID 1 -- `make
+        # check` daemonizes and kills many short-lived distccd instances
+        # (dcc_detach()'s standard fork()+_exit(0)+setsid() pattern
+        # reparents each one to PID 1), and testdistcc.py's own teardown
+        # polls os.kill(pid, 0) waiting for each to actually disappear
+        # rather than wait()ing it (it can't -- the daemon detached).
+        # Without a real init to reap those reparented zombies, that poll
+        # spins forever: a real, silent hang in this exact recurring CI
+        # job, not just an ad-hoc local run. See doc/verification-
+        # checklist.md Section 9's matching entry.
         run: |
-          docker run --rm --user root --init --cap-add=SYS_PTRACE \
+          docker run --rm --user "$(id -u):$(id -g)" --init --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
             -v "${{ github.workspace }}:/work/src:rw" \
             -w /work/src \
+            -e HOME=/tmp/distcc-ng-verify-home \
             distcc-ng-verify:ci bash -c '
               set -euo pipefail
-              chown -R verify:verify /work/src
-              su -s /bin/bash verify -c "
-                set -euo pipefail
-                cd /work/src
-                ./autogen.sh
-                ./configure PYTHON=python3
-                make
-                make check
-              "
-            ' 2>&1 | tee "${RUNNER_TEMP}/i286-baseline-check.log"
-
-      - name: "issue #286: three-way comfychair comparison (baseline vs Probe A vs Probe B)"
-        # The real point of this investigation: same exit code is not the
-        # bar (AGENTS.md rule 66) -- the claim under test is "the same set
-        # of comfychair cases report OK, the same set legitimately NOTRUN
-        # (root-only cases skipping identically under a non-root uid), and
-        # zero FAIL" across today's root+chown+su baseline and both probes.
-        if: always()
-        run: |
-          set -euo pipefail
-          summarize() {
-            label="$1"; log="$2"
-            if [ ! -f "$log" ]; then
-              echo "${label}: NO LOG (step did not complete)"
-              return
-            fi
-            ok=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "$log" || true)
-            notrun=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "$log" || true)
-            fail=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "$log" || true)
-            echo "${label}: OK=${ok} NOTRUN=${notrun} FAIL=${fail}"
-            grep -E '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "$log" | sort > "${log}.notrun" || true
-          }
-          summarize "baseline (root+chown+su)" "${RUNNER_TEMP}/i286-baseline-check.log"
-          summarize "Probe A (build-arg HOST_UID/HOST_GID)" "${RUNNER_TEMP}/i286-probe-a-check.log"
-          summarize "Probe B (docker run --user)" "${RUNNER_TEMP}/i286-probe-b-check.log"
-          echo "== diff: baseline NOTRUN set vs Probe A NOTRUN set (empty output = identical) =="
-          diff "${RUNNER_TEMP}/i286-baseline-check.log.notrun" "${RUNNER_TEMP}/i286-probe-a-check.log.notrun" || true
-          echo "== diff: baseline NOTRUN set vs Probe B NOTRUN set (empty output = identical) =="
-          diff "${RUNNER_TEMP}/i286-baseline-check.log.notrun" "${RUNNER_TEMP}/i286-probe-b-check.log.notrun" || true
+              mkdir -p "$HOME"
+              id
+              ./autogen.sh
+              ./configure PYTHON=python3
+              make
+              make check
+            '
 
       - name: ccache + Redis remote-storage self-test
         # Proves the single most common real-world ccache deployment shape
@@ -361,50 +229,50 @@ jobs:
         # (no local ccache dir carried over), so the only way the second
         # invocation's compile can hit is if it actually fetched the object
         # back out of the first invocation's Redis push -- that is the
-        # real, specific claim this step exists to verify. Not reusing the
-        # earlier build+test step's exact `--user root` + `chown` + `su`
-        # sequence would leave this step dependent on that other step's
-        # ordering/side effects, so it repeats that same self-contained
-        # pattern here rather than assuming the workspace is still owned by
-        # `verify` from before.
+        # real, specific claim this step exists to verify. Repeats the same
+        # `--user $(id -u):$(id -g)` + `-e HOME=...` pattern the earlier
+        # build+test step above uses (issue #286 -- no root/chown/su
+        # anywhere in this workflow anymore), rather than assuming the
+        # workspace is still owned by any particular uid from before.
+        #
+        # `-e HOME=...` matters for a second, real reason here beyond the
+        # earlier step's autoconf/make needs: ccache's own *local* cache
+        # dir (its remote-storage push/pull still goes through a local
+        # cache layer first) defaults to a path under `$HOME` -- an unset
+        # or unwritable `$HOME` (see the build+test step's comment above:
+        # Docker leaves `$HOME=/` for a numeric `--user` with no matching
+        # `/etc/passwd` entry) would break the local half of ccache's own
+        # caching before Redis is ever involved. Each invocation gets a
+        # fresh, distinct temp `$HOME` under `$RUNNER_TEMP` (not reused
+        # between the two `docker run` calls) so neither can accidentally
+        # serve the second compile's hit from a leftover local cache dir
+        # instead of genuinely fetching it back out of Redis.
         run: |
           set -euo pipefail
 
-          # Stats logs go under $RUNNER_TEMP, never under the checked-out
-          # workspace: the su'd container command below runs `chown -R
-          # verify:verify /work/src` (needed so the non-root `verify` user
-          # can write the rebuilt src/dopt.o into the bind-mounted
-          # workspace), which changes that *host* directory's real
-          # ownership away from the runner's own user for the rest of this
-          # step -- a real, empirically-found failure here first: `tee
-          # first-run-stats.log` into the default (workspace) working
-          # directory failed with "Permission denied" once the chown from
-          # this step's own first `docker run` had already run.
           run_ccache_build () {
             local label="$1"
             local stats_file="$2"
-            docker run --rm --network host --user root \
+            local home_dir="$3"
+            mkdir -p "${home_dir}"
+            docker run --rm --network host --user "$(id -u):$(id -g)" \
               -v "${{ github.workspace }}:/work/src:rw" \
               -w /work/src \
               -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
+              -e HOME="${home_dir}" \
               distcc-ng-verify:ci bash -c '
                 set -euo pipefail
-                chown -R verify:verify /work/src
-                su -s /bin/bash verify -c "
-                  set -euo pipefail
-                  cd /work/src
-                  export CCACHE_REMOTE_STORAGE=\"${CCACHE_REMOTE_STORAGE}\"
-                  ccache --zero-stats >/dev/null
-                  touch src/dopt.c
-                  make CC=\"ccache gcc\" src/dopt.o
-                  ccache --show-stats
-                "
+                cd /work/src
+                ccache --zero-stats >/dev/null
+                touch src/dopt.c
+                make CC="ccache gcc" src/dopt.o
+                ccache --show-stats
               ' | tee "${stats_file}"
             echo "--- ${label}: ccache stats above ---"
           }
 
-          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log"
-          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log"
+          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log" "${RUNNER_TEMP}/ccache-home-1"
+          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log" "${RUNNER_TEMP}/ccache-home-2"
 
           if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
             echo "::error::ccache reported no cache hit on the second, fresh container -- Redis remote storage did not actually serve the cached object"
