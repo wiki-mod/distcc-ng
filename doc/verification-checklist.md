@@ -399,6 +399,42 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       the zombie tree via `ps auxf`, re-ran clean with `--init` added)
       cutting the 3.6.3-NG release (2026-07-30). See Section 8's matching
       cleanup check.
+- [ ] **A compiler that defaults to compressed ELF debug sections breaks
+      `Gdb_Case`/`GdbOpt1-3_Case` in pump mode — a real distccd-side bug,
+      not an environment quirk.** `src/fix_debug_info.c`'s
+      `dcc_fix_debug_info()` rewrites the server-side compilation directory
+      baked into a compiled object's DWARF debug info (`.debug_info`,
+      `.debug_str`, `.debug_line_str`) back to the client-side path, via a
+      raw byte search-and-replace directly on the mmap'd ELF section
+      contents — which silently assumes those sections are always
+      plain-text. On a real Alpine 3.20 container (`gcc (Alpine
+      13.2.1_git20240309)`), `.debug_str` and `.debug_line_str` carry the
+      ELF `SHF_COMPRESSED` flag (visible as `C` in `readelf -S`, zlib magic
+      `789c...` visible in the raw section bytes) by default — the search
+      string is genuine plain text once decompressed (confirmed via
+      `readelf --debug-dump=info`), but never appears in the section's raw
+      compressed bytes, so the rewrite finds zero occurrences and silently
+      no-ops. The binary keeps its server-side compilation directory baked
+      in; gdb (client-side) then can't find the source file
+      (`warning: <line>\t<file>: No such file or directory`). The same
+      compiler on the same real Debian 13 container (`gcc (Debian
+      14.2.0-19)`, this repo's own release base image) produces
+      uncompressed debug sections — same test passes there. Confirmed the
+      compression is a GCC/distro default rather than anything
+      musl/BusyBox-specific: compiling the same source with `-gz=none` on
+      the same Alpine gcc removes the `SHF_COMPRESSED` flag entirely
+      (verified via `readelf -S`). Not related to this repo's own
+      network-level zstd compression work (issue #101/pump-mode transport
+      compression) — this is the *compiler's* own debug-info encoding,
+      unrelated code path, confirmed no shared code between them. Isolated
+      independently of `distccd` itself, by building
+      `src/fix_debug_info.c`'s own `TEST` main() standalone and running
+      `dcc_fix_debug_info()` directly against a real compiled `.o` file
+      with a known compilation directory — same failure, confirming the
+      bug is in this file's raw-byte-search design, not somewhere else in
+      the daemon pipeline. Found evaluating Alpine support (issue #398);
+      not yet fixed as of this writing — see that issue's comment thread
+      for the full analysis and fix-direction discussion.
 
 ## Keeping this checklist current
 
