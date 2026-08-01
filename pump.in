@@ -43,6 +43,10 @@ srcdir=@srcdir@
 include_server=''
 
 
+# Handles the no-argument and -h/--help invocations by printing usage and
+# exiting 0 (not 1): a bare "pump" or "pump --help" is the user asking for
+# help, not an error, so the exit code must not trip a caller's failure
+# detection the way a real usage error would.
 CheckUsage() {
   if [ "$1" = "" -o "$1" = '-h' -o "$1" = '--help' ]; then
     cat <<'EOF'
@@ -189,6 +193,9 @@ MakeTmpFile() {
   fi
 }
 
+# Validates the distcc binary location before anything else runs, so a
+# misconfigured/relocated installation fails fast with a clear message here
+# rather than surfacing later as a confusing StartIncludeServer error.
 Initialize() {
   # We know the value of $PYTHON when this function is executed. The value is
   # set when the 'pump' script is made from 'pump.in'. Use this value in the
@@ -206,6 +213,9 @@ Initialize() {
   fi
 }
 
+# Gated on $verbose because --startup mode sets verbose=0: its stdout is
+# `eval`-ed by the caller as shell variable assignments, so any stray
+# progress text here would corrupt that output.
 PrintIncludeServerStatusMessage() {
   include_server_status=$1
   if [ "$verbose" = 1 ]; then
@@ -217,10 +227,19 @@ PrintIncludeServerStatusMessage() {
   fi
 }
 
+# Must query "$PYTHON" itself rather than assuming a version, since
+# include_server.py's install path is versioned (e.g. .../python3.11/...)
+# and has to match whichever interpreter this pump script was configured
+# against, not whatever "python3" happens to resolve to on $PATH.
 PythonMajorMinorVersion() {
   "$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])'
 }
 
+# Uses sysconfig instead of a hardcoded site-packages layout because the
+# purelib/platlib scheme (and whether a path is prefix-relative) varies
+# across distro Python packaging and virtualenvs; asking sysconfig directly
+# for each root avoids hardcoding a layout that would break under some of
+# them.
 PythonIncludeServerCandidatePaths() {
   "$PYTHON" - "$python_version" "$prefix" "$exec_prefix" "$distcc_parent" <<'PY'
 import sys
@@ -255,6 +274,10 @@ for root in roots:
 PY
 }
 
+# Treats a pre-set, existing $include_server as authoritative and returns
+# immediately: this lets an explicit override (or a repeat call within the
+# same run) skip the Python-version probe and candidate-path search below
+# entirely, rather than re-deriving a path that was already resolved.
 ResolveInstalledIncludeServer() {
   if [ -n "$include_server" ] && [ -f "$include_server" ]; then
     return 0
@@ -302,6 +325,12 @@ ResolveInstalledIncludeServer() {
   return 1
 }
 
+# StartIncludeServer redirects the include server's stdout/stderr to these
+# temp files (when redirect_io is set) precisely so a build tool invoking
+# "pump --startup" doesn't hang reading pipes the include server never
+# closes; this replays that captured output on failure/shutdown so it isn't
+# lost. The -f guards matter because the files only exist when redirect_io
+# was actually enabled.
 PrintIncludeServerOutput() {
   if [ -f "$include_server_stdout" ]; then
     cat "$include_server_stdout"
@@ -311,6 +340,10 @@ PrintIncludeServerOutput() {
   fi
 }
 
+# Gated on $verbose (not just printed unconditionally) because the same
+# code path runs for "pump --startup", whose stdout is `eval`-ed by the
+# caller and must stay free of anything but the environment assignments
+# from DumpEnvironmentVariables.
 Announce() {
   if [ "$verbose" = 1 ]; then
     echo "__________Using distcc-pump from $DISTCC_LOCATION"
@@ -439,6 +472,9 @@ StartIncludeServer() {
   fi
 }
 
+# Runs unconditionally at shutdown (called from ShutDown before it touches
+# the include server) so a discrepancy warning is still shown even if the
+# include server itself is already gone or unresponsive.
 ReportDiscrepancies() {
   # The discrepancy_counter file is created when a pump-mode distcc invocation
   # failed remotely but succeeded locally.
@@ -455,6 +491,28 @@ ReportDiscrepancies() {
   fi
   echo 'See the Distcc Discrepancy Symptoms section in the' \
        'include_server(1) man page.' 1>&2
+}
+
+# $1 must be a strictly positive integer before it ever reaches `kill`:
+# POSIX defines pid 0 as "every process in the sender's process group",
+# not literally "process 0" -- `kill -0 0` succeeds trivially (the caller
+# is itself in that group), and a later plain `kill 0` would deliver
+# SIGTERM to that whole group, including this script and whatever invoked
+# it. `ps -p 0` never had this problem (it just fails cleanly), so this
+# guard is specifically needed now that the check goes through `kill`.
+#
+# Pattern-matching against the literal string "0" is not enough: "00",
+# "000", etc. are also valid all-zero pid spellings that a plain `*0)`
+# case arm does not catch, but still resolve to pid/process-group 0 once
+# passed to `kill`. Arithmetic comparison (`-gt 0`) handles every
+# spelling correctly, so digits are validated first (arithmetic
+# comparison on a non-numeric string is a shell error, not a clean
+# false), then compared numerically.
+IsPositivePid() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -gt 0 ] 2>/dev/null
 }
 
 # Returns success (0) if the process with pid $1 both exists and is not a
@@ -497,29 +555,6 @@ ReportDiscrepancies() {
 # it ran forever as an orphan, holding open the stdout/stderr it inherited
 # from whatever invoked `pump`, hanging any caller reading that output
 # through a pipe.
-#
-# $1 must be a strictly positive integer before it ever reaches `kill`:
-# POSIX defines pid 0 as "every process in the sender's process group",
-# not literally "process 0" -- `kill -0 0` succeeds trivially (the caller
-# is itself in that group), and a later plain `kill 0` would deliver
-# SIGTERM to that whole group, including this script and whatever invoked
-# it. `ps -p 0` never had this problem (it just fails cleanly), so this
-# guard is specifically needed now that the check goes through `kill`.
-#
-# Pattern-matching against the literal string "0" is not enough: "00",
-# "000", etc. are also valid all-zero pid spellings that a plain `*0)`
-# case arm does not catch, but still resolve to pid/process-group 0 once
-# passed to `kill`. Arithmetic comparison (`-gt 0`) handles every
-# spelling correctly, so digits are validated first (arithmetic
-# comparison on a non-numeric string is a shell error, not a clean
-# false), then compared numerically.
-IsPositivePid() {
-  case "$1" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  [ "$1" -gt 0 ] 2>/dev/null
-}
-
 IncludeServerAlive() {
   if ! IsPositivePid "$1"; then
     return 1
@@ -552,6 +587,12 @@ IncludeServerPidLooksRight() {
   ps -p "$1" -o args= 2>/dev/null | grep -q 'include_server'
 }
 
+# Escalates SIGTERM to SIGKILL only after a grace period, rather than
+# killing immediately, so the include server gets a chance to exit cleanly
+# (flushing its own state) before being forced; both wait loops poll on
+# IncludeServerAlive rather than blocking on wait/waitpid, since the include
+# server is a resident-by-design forked process this script does not
+# directly parent-wait on.
 ShutDown() {
   ReportDiscrepancies
   # Always -- at exit -- shut down include_server and remove $socket_dir
@@ -666,6 +707,10 @@ ExportDISTCC_HOSTS() {
   fi
 }
 
+# Runs the lsdistcc host probe (up to ~150ms-1s) and StartIncludeServer
+# (~150ms) concurrently via backgrounding + `wait`, rather than
+# sequentially, because the two are independent and the probe's higher
+# latency would otherwise be pure added wall-clock on every pump invocation.
 StartIncludeServerAndDetermineHosts() {
   include_server_status=1 # ie, not running (yet)
   if [ -n "$DISTCC_POTENTIAL_HOSTS" ]; then
@@ -747,6 +792,12 @@ DumpEnvironmentVariables() {
   echo export PATH=\'$distcc_location:$PATH\'
 }
 
+# Dispatches to one of three modes: implicit wrap (run a command, then shut
+# down), or explicit --startup/--shutdown (let the caller run its own
+# command between the two, e.g. across multiple shell invocations). The
+# implicit-wrap and --startup paths both install `trap 'ShutDown' EXIT` so
+# the include server and $socket_dir are still cleaned up if the wrapped
+# command exits abnormally or the script itself is interrupted.
 Main() {
   CheckUsage "$@"
 
