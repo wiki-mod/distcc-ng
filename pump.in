@@ -477,15 +477,28 @@ ReportDiscrepancies() {
 #
 # If this ps invocation itself fails or returns no usable output, $state
 # stays empty and we fall through to the pre-existing "alive" behavior (the
-# plain ps -p check already passed above) rather than guessing -- a false
+# plain kill -0 check already passed above) rather than guessing -- a false
 # "it's a zombie" reading would be worse than the original bug, since it
 # would skip killing a process that is actually still running. Confirmed
 # this is exactly what happens on Cygwin: its minimal `ps` doesn't support
 # `-o` at all (fails with "unknown option -- o"), so $state is empty there
-# and this degrades to the old ps -p-only behavior rather than misreporting
-# a live process as a zombie.
+# and this degrades to the plain-alive behavior rather than misreporting
+# a live process as a zombie. Same degradation now also covers BusyBox
+# (Alpine's default `/bin/sh` userland): its `ps` doesn't implement `-p`
+# at all (not just `-o`), so `ps -o state= -p "$1"` fails outright there
+# too, same graceful "state stays empty" fallthrough.
+#
+# The base alive/dead check itself uses `kill -0` (POSIX-standard,
+# supported by every shell/OS including BusyBox), not `ps -p` -- found via
+# issue #399: BusyBox's `ps` doesn't implement `-p` at all, so a plain
+# `ps -p "$1"` always fails regardless of whether the pid is alive. That
+# silently made IncludeServerAlive() always report "not alive" on any
+# BusyBox-based system, so ShutDown() below never sent the include server
+# a SIGTERM -- it ran forever as an orphan, holding open the stdout/stderr
+# it inherited from whatever invoked `pump`, hanging any caller reading
+# that output through a pipe.
 IncludeServerAlive() {
-  if ! ps -p "$1" > /dev/null 2>&1; then
+  if ! kill -0 "$1" 2>/dev/null; then
     return 1
   fi
   state=`ps -o state= -p "$1" 2>/dev/null | tr -d '[:space:]'`
@@ -493,6 +506,21 @@ IncludeServerAlive() {
     Z*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+# Portable check for "does this pid still look like the include server",
+# used only to guard the unrecoverable SIGKILL escalation below against a
+# stale/recycled pid. Reads /proc/$pid/cmdline directly where available
+# (Linux only, but that covers BusyBox too -- /proc is a kernel feature,
+# not a ps-flavor concern, so this works identically under musl and
+# glibc), falling back to the ps-based check on non-Linux platforms
+# (BSD/macOS/Cygwin) where /proc/pid/cmdline does not exist.
+IncludeServerPidLooksRight() {
+  if [ -r "/proc/$1/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
+    return $?
+  fi
+  ps -p "$1" -o args= 2>/dev/null | grep -q 'include_server'
 }
 
 ShutDown() {

@@ -48,6 +48,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
+  check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
+  not implement at all -- always failing, so `ShutDown()` never sent the
+  include server SIGTERM on any BusyBox-based system. The include server
+  (resident by design) then ran forever as an orphan, holding open
+  whatever stdout/stderr it inherited, hanging any caller reading
+  `pump`'s output through a pipe. Replaced with `kill -0` (POSIX-standard,
+  no `ps` dependency); the SIGKILL-escalation's PID-recycling safety check
+  now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
+  -o args=`, falling back to the previous `ps`-based check on non-Linux
+  platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
+  container comparison (#398).
 - **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
   log for a `COMPILE_OK` line exactly once, right after the compile
   subprocess exited -- an intermittent CI failure (#300) showed this can
