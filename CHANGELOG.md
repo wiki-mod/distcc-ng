@@ -34,6 +34,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   an intentional policy -- `doc/release-versioning.md`'s "no release may
   ever be untagged" rule governs the GitHub Release/version tag, not
   whether an *additional* convenience pointer may also exist).
+- **`AGENTS.md`**: added rule 77 -- when multiple findings share the same
+  origin (the same PR review cycle, the same file, the same underlying
+  mechanism), file them as one issue with clearly separated sections
+  instead of splitting them across separate issues, unless they genuinely
+  need independent verification environments or independent fix efforts.
+  Motivated by #401 and #402 having been filed as two separate issues for
+  the same `pump.in` `ShutDown()` PR #400 review cycle; #402 was folded
+  back into #401 and closed.
 
 ### Documentation
 
