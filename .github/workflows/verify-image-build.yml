@@ -101,6 +101,102 @@ jobs:
             -v "${{ github.workspace }}/docker/verify:/verify:ro" \
             distcc-ng-verify:ci bash /verify/selftest-ptrace.sh
 
+      # --- issue #286 investigation: temporary diagnostic + probe steps ---
+      # (below, up to "end issue #286 probes") -- these exist only to gather
+      # real evidence for whether root+chown+su (the step further down) is
+      # actually necessary, or whether a build-arg matching the host uid
+      # (approach 1) or `docker run --user` (approach 2) can avoid needing
+      # root inside the container at all. Deliberately operate on isolated
+      # copies of the checkout (never ${{ github.workspace }} itself) so
+      # they cannot perturb the pre-existing "Real distcc-ng build+test"
+      # step below, which remains the unmodified baseline for comparison.
+      # Removed once issue #286 reaches a decision (either replacing that
+      # step with the winning approach, or being closed with these findings
+      # if neither approach empirically works).
+      - name: "issue #286: prepare isolated probe checkouts"
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/i286-diag-src" "${RUNNER_TEMP}/i286-probe-a-src" "${RUNNER_TEMP}/i286-probe-b-src"
+          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-diag-src/"
+          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-probe-a-src/"
+          cp -a "${{ github.workspace }}/." "${RUNNER_TEMP}/i286-probe-b-src/"
+
+      - name: "issue #286: diagnostic -- runner/workspace/container uid facts"
+        run: |
+          set -euo pipefail
+          echo "== runner's own id (whatever uid actions/checkout wrote the workspace as) =="
+          id
+          echo "== workspace ownership (actions/checkout's real uid:gid) =="
+          stat -c '%u:%g %n' "${{ github.workspace }}"
+          echo "== image's baked-in 'verify' user (unmodified image, no build-arg) =="
+          docker run --rm distcc-ng-verify:ci id
+          echo "== unmodified image, default user, read-only bind mount: can it write? =="
+          docker run --rm -v "${RUNNER_TEMP}/i286-diag-src:/work/src:ro" distcc-ng-verify:ci \
+            sh -c 'id; ls -ld /work/src; touch /work/src/.i286_probe_write 2>&1 || echo "WRITE DENIED (ro mount, expected)"'
+          echo "== unmodified image, default user, read-write bind mount, no --user: can it write? =="
+          docker run --rm -v "${RUNNER_TEMP}/i286-diag-src:/work/src:rw" distcc-ng-verify:ci \
+            sh -c 'id; touch /work/src/.i286_probe_write 2>&1 && { echo "WRITE OK"; rm -f /work/src/.i286_probe_write; } || echo "WRITE DENIED (uid mismatch, this is the problem issue #286 is about)"'
+          echo "== unmodified image, --user \$(id -u):\$(id -g) (approach 2 shape), read-write bind mount =="
+          docker run --rm --user "$(id -u):$(id -g)" -v "${RUNNER_TEMP}/i286-diag-src:/work/src:rw" distcc-ng-verify:ci \
+            sh -c 'id; echo "HOME=$HOME"; whoami 2>&1 || echo "whoami: no /etc/passwd entry for this uid"; touch /work/src/.i286_probe_write2 2>&1 && { echo "WRITE OK"; rm -f /work/src/.i286_probe_write2; } || echo "WRITE DENIED"'
+
+      - name: "issue #286: Probe A (approach 1 -- build-arg HOST_UID/HOST_GID matching the runner)"
+        run: |
+          set -euo pipefail
+          docker build -f docker/verify/Dockerfile \
+            --build-arg "HOST_UID=$(id -u)" --build-arg "HOST_GID=$(id -g)" \
+            -t distcc-ng-verify:i286-probe-a .
+          docker run --rm --init --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+            -v "${RUNNER_TEMP}/i286-probe-a-src:/work/src:rw" -w /work/src \
+            distcc-ng-verify:i286-probe-a bash -c '
+              set -euo pipefail
+              id
+              ./autogen.sh
+              ./configure PYTHON=python3
+              make
+              make check
+            ' 2>&1 | tee "${RUNNER_TEMP}/i286-probe-a-check.log"
+
+      - name: "issue #286: Probe B (approach 2 -- docker run --user matching the runner, unmodified image)"
+        # Uses the unmodified `distcc-ng-verify:ci` image (no rebuild, no
+        # build-arg) -- the whole appeal of approach 2 for the *published*
+        # image's own "pull and run, no build step" promise (issue #264).
+        # `-e HOME=...` + `mkdir -p "$HOME"` is a deliberate, pre-emptive fix
+        # for a known real risk with an arbitrary numeric --user uid: Docker
+        # does not synthesize an /etc/passwd entry for a uid with no
+        # matching name, so an unset $HOME (or one Docker leaves pointing at
+        # "/", not writable by this uid) would otherwise break anything that
+        # resolves a cache/config dir off $HOME (ccache's default cache dir,
+        # in particular -- not exercised by this probe's plain
+        # autogen/configure/make/make check, but real for the later ccache+
+        # Redis step's own pattern). If this workaround turns out to be
+        # unnecessary here, the diagnostic step above already shows that
+        # directly (its third `docker run` block runs the same --user shape
+        # without this env var).
+        run: |
+          set -euo pipefail
+          docker run --rm --init --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+            --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/i286-probe-b-src:/work/src:rw" -w /work/src \
+            -e HOME=/tmp/i286-probe-b-home \
+            distcc-ng-verify:ci bash -c '
+              set -euo pipefail
+              mkdir -p "$HOME"
+              id
+              echo "HOME=$HOME"
+              ./autogen.sh
+              ./configure PYTHON=python3
+              make
+              make check
+            ' 2>&1 | tee "${RUNNER_TEMP}/i286-probe-b-check.log"
+
+      # The actual three-way comparison (baseline vs Probe A vs Probe B) runs
+      # after the pre-existing "Real distcc-ng build+test inside the image"
+      # step below, since that step is the baseline and its log doesn't
+      # exist yet at this point in the job -- see the "three-way comfychair
+      # comparison" step further down.
+      # --- end issue #286 probes ---
+
       - name: Real distcc-ng build+test inside the image
         # Proves the image is sufficient for this repo's own toolchain, not
         # just that gcc exists -- the full real validation bar (AGENTS.md's
@@ -191,7 +287,36 @@ jobs:
                 make
                 make check
               "
-            '
+            ' 2>&1 | tee "${RUNNER_TEMP}/i286-baseline-check.log"
+
+      - name: "issue #286: three-way comfychair comparison (baseline vs Probe A vs Probe B)"
+        # The real point of this investigation: same exit code is not the
+        # bar (AGENTS.md rule 66) -- the claim under test is "the same set
+        # of comfychair cases report OK, the same set legitimately NOTRUN
+        # (root-only cases skipping identically under a non-root uid), and
+        # zero FAIL" across today's root+chown+su baseline and both probes.
+        if: always()
+        run: |
+          set -euo pipefail
+          summarize() {
+            label="$1"; log="$2"
+            if [ ! -f "$log" ]; then
+              echo "${label}: NO LOG (step did not complete)"
+              return
+            fi
+            ok=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "$log" || true)
+            notrun=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "$log" || true)
+            fail=$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "$log" || true)
+            echo "${label}: OK=${ok} NOTRUN=${notrun} FAIL=${fail}"
+            grep -E '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "$log" | sort > "${log}.notrun" || true
+          }
+          summarize "baseline (root+chown+su)" "${RUNNER_TEMP}/i286-baseline-check.log"
+          summarize "Probe A (build-arg HOST_UID/HOST_GID)" "${RUNNER_TEMP}/i286-probe-a-check.log"
+          summarize "Probe B (docker run --user)" "${RUNNER_TEMP}/i286-probe-b-check.log"
+          echo "== diff: baseline NOTRUN set vs Probe A NOTRUN set (empty output = identical) =="
+          diff "${RUNNER_TEMP}/i286-baseline-check.log.notrun" "${RUNNER_TEMP}/i286-probe-a-check.log.notrun" || true
+          echo "== diff: baseline NOTRUN set vs Probe B NOTRUN set (empty output = identical) =="
+          diff "${RUNNER_TEMP}/i286-baseline-check.log.notrun" "${RUNNER_TEMP}/i286-probe-b-check.log.notrun" || true
 
       - name: ccache + Redis remote-storage self-test
         # Proves the single most common real-world ccache deployment shape
