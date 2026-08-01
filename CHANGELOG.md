@@ -50,18 +50,29 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
   search-and-replace on ELF debug sections to rewrite the server-side
   compilation directory back to the client-side path, silently assuming
-  those sections are always plain-text. Alpine's default gcc
-  (13.2.1_git20240309) emits `.debug_str`/`.debug_line_str` with the
-  `SHF_COMPRESSED` flag set; the search string is genuine plain text once
-  decompressed, but never appears in the section's raw compressed bytes,
-  so the rewrite silently no-ops and `Gdb_Case`/`GdbOpt1-3_Case` fail in
-  pump mode on Alpine. Confirmed via a real Alpine 3.20 vs. Debian 13
-  container comparison, an isolated standalone reproduction of
+  those sections are always plain-text. On a real, current
+  `alpine:latest` (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets
+  the `SHF_COMPRESSED` flag set once the baked-in compilation-directory
+  string is long enough to cross GCC's own compression threshold
+  (confirmed size-dependent -- a short test path can misleadingly appear
+  fine); the search string is genuine plain text once decompressed, but
+  never appears in the section's raw compressed bytes, so the rewrite
+  silently no-ops and `Gdb_Case`/`GdbOpt1-3_Case` fail in pump mode on
+  Alpine. Confirmed via a real, current Alpine vs. Debian 13 container
+  comparison (Debian's own repos, including trixie-backports, top out at
+  gcc-14 -- no gcc-15 package exists there as of this writing, so the two
+  platforms weren't compared on equal gcc versions, only on their
+  respective actual defaults), an isolated standalone reproduction of
   `dcc_fix_debug_info()` against a real compiled object file, and
   confirming `-gz=none` removes the compression flag entirely (a
-  GCC/distro default, not anything musl/BusyBox-specific). Not yet fixed
-  as of this entry -- documented so the finding isn't rediscovered from
-  scratch; see #398 for the full analysis and fix-direction discussion.
+  GCC/distro default, not anything musl/BusyBox-specific). Also notes two
+  unrelated Alpine verification gotchas hit along the way: `popt-dev`
+  must be installed explicitly or the build silently falls back to this
+  repo's bundled `popt/` copy, which fails under gcc 15's new
+  `-Werror=calloc-transposed-args`; and `gdb` isn't installed by default.
+  Not yet fixed as of this entry -- documented so the finding isn't
+  rediscovered from scratch; see #398 for the full analysis and
+  fix-direction discussion.
 
 ### Fixed
 

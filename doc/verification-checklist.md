@@ -401,40 +401,61 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       cleanup check.
 - [ ] **A compiler that defaults to compressed ELF debug sections breaks
       `Gdb_Case`/`GdbOpt1-3_Case` in pump mode — a real distccd-side bug,
-      not an environment quirk.** `src/fix_debug_info.c`'s
-      `dcc_fix_debug_info()` rewrites the server-side compilation directory
-      baked into a compiled object's DWARF debug info (`.debug_info`,
-      `.debug_str`, `.debug_line_str`) back to the client-side path, via a
-      raw byte search-and-replace directly on the mmap'd ELF section
-      contents — which silently assumes those sections are always
-      plain-text. On a real Alpine 3.20 container (`gcc (Alpine
-      13.2.1_git20240309)`), `.debug_str` and `.debug_line_str` carry the
-      ELF `SHF_COMPRESSED` flag (visible as `C` in `readelf -S`, zlib magic
-      `789c...` visible in the raw section bytes) by default — the search
-      string is genuine plain text once decompressed (confirmed via
-      `readelf --debug-dump=info`), but never appears in the section's raw
-      compressed bytes, so the rewrite finds zero occurrences and silently
-      no-ops. The binary keeps its server-side compilation directory baked
-      in; gdb (client-side) then can't find the source file
-      (`warning: <line>\t<file>: No such file or directory`). The same
-      compiler on the same real Debian 13 container (`gcc (Debian
-      14.2.0-19)`, this repo's own release base image) produces
-      uncompressed debug sections — same test passes there. Confirmed the
-      compression is a GCC/distro default rather than anything
-      musl/BusyBox-specific: compiling the same source with `-gz=none` on
-      the same Alpine gcc removes the `SHF_COMPRESSED` flag entirely
-      (verified via `readelf -S`). Not related to this repo's own
-      network-level zstd compression work (issue #101/pump-mode transport
-      compression) — this is the *compiler's* own debug-info encoding,
-      unrelated code path, confirmed no shared code between them. Isolated
-      independently of `distccd` itself, by building
-      `src/fix_debug_info.c`'s own `TEST` main() standalone and running
-      `dcc_fix_debug_info()` directly against a real compiled `.o` file
-      with a known compilation directory — same failure, confirming the
-      bug is in this file's raw-byte-search design, not somewhere else in
-      the daemon pipeline. Found evaluating Alpine support (issue #398);
-      not yet fixed as of this writing — see that issue's comment thread
-      for the full analysis and fix-direction discussion.
+      not an environment quirk, and not specific to an old Alpine
+      release.** `src/fix_debug_info.c`'s `dcc_fix_debug_info()` rewrites
+      the server-side compilation directory baked into a compiled
+      object's DWARF debug info (`.debug_info`, `.debug_str`,
+      `.debug_line_str`) back to the client-side path, via a raw byte
+      search-and-replace directly on the mmap'd ELF section contents —
+      which silently assumes those sections are always plain-text. On a
+      real, current `alpine:latest` container (Alpine 3.24.1, `gcc
+      (Alpine) 15.2.0`, checked 2026-08-01), `.debug_line_str` carries the
+      ELF `SHF_COMPRESSED` flag (visible as `C` in `readelf -SW`, zlib
+      magic `789c...` visible in the raw section bytes) once the
+      compilation directory string is long enough to cross GCC's own
+      internal compression-worthwhile threshold — confirmed this is
+      size-dependent, not a fixed default: a short test path (e.g.
+      `/tmp/check2`) produced an uncompressed section and the test
+      appeared to pass, while a longer, more realistic distccd temp-dir
+      path (e.g. `/tmp/distccd_<hex>/tmp/<subdir>`, matching what
+      `dcc_get_new_tmpdir()`/`dcc_make_tmpnam()` actually produce in a
+      real build) reliably triggers compression — so a short-path smoke
+      test can miss this bug entirely. The search string is genuine plain
+      text once decompressed (confirmed via `readelf --debug-dump=info`),
+      but never appears in the section's raw compressed bytes, so the
+      rewrite finds zero occurrences and silently no-ops. The binary keeps
+      its server-side compilation directory baked in; gdb (client-side)
+      then can't find the source file (`warning: <line>\t<file>: No such
+      file or directory`). The same compiler on the same real Debian 13
+      container (`gcc (Debian 14.2.0-19)`, this repo's own release base
+      image — Debian 13/trixie's own repos, including trixie-backports,
+      top out at gcc-14; no gcc-15 package exists there as of this
+      writing) produces uncompressed debug sections at the same path
+      lengths — same test passes there. Confirmed the compression is a
+      GCC/distro default rather than anything musl/BusyBox-specific:
+      compiling the same source with `-gz=none` on the same Alpine gcc
+      removes the `SHF_COMPRESSED` flag entirely (verified via
+      `readelf -SW`). Not related to this repo's own network-level zstd
+      compression work (issue #101/pump-mode transport compression) —
+      this is the *compiler's* own debug-info encoding, unrelated code
+      path, confirmed no shared code between them. Isolated independently
+      of `distccd` itself, by building `src/fix_debug_info.c`'s own
+      `TEST` main() standalone and running `dcc_fix_debug_info()` directly
+      against a real compiled `.o` file with a known compilation
+      directory — same failure, confirming the bug is in this file's
+      raw-byte-search design, not somewhere else in the daemon pipeline.
+      Also note: Alpine needs `popt-dev` installed explicitly for
+      `configure` to detect system libpopt — without it, the build
+      silently falls back to this repo's bundled `popt/` copy, which
+      fails to compile under gcc 15's new
+      `-Werror=calloc-transposed-args` warning (`popt/poptconfig.c:141`,
+      a real but unrelated bug in the vendored fallback, not exposed at
+      all when system libpopt is used, as it is on this repo's own
+      Debian-based CI and release images). `gdb` is also not installed by
+      default on Alpine and must be added explicitly to reproduce this
+      finding. Found evaluating Alpine support (issue #398); not yet
+      fixed as of this writing — see that issue's comment thread for the
+      full analysis and fix-direction discussion.
 
 ## Keeping this checklist current
 
