@@ -596,13 +596,22 @@ IncludeServerAlive() {
 # (Linux only, but that covers BusyBox too -- /proc is a kernel feature,
 # not a ps-flavor concern, so this works identically under musl and
 # glibc). The fallback below is for platforms without /proc at all
-# (BSD/macOS/Cygwin): it deliberately avoids `ps -p`/`-o`, which BusyBox
-# does not support, by grepping plain unadorned `ps` output (universally
-# supported, including by BusyBox) for our pid as the line's leading
-# field. This matters even on Linux/BusyBox if /proc happens to be
-# unmounted or inaccessible -- that case falls through to this same
-# branch, and a `ps -p` fallback there would silently always fail exactly
-# like the original ShutDown() bug this PR fixes.
+# (BSD/macOS/Cygwin) and for a Linux/BusyBox system where /proc itself is
+# unmounted or inaccessible: on real, empirically-reproduced BusyBox
+# builds this happens two different ways -- some exit `ps` outright with
+# an error, others (confirmed live: Alpine 3.20's default busybox after
+# `umount /proc`) silently print only the header with zero process rows
+# and exit 0 -- so this cannot rely on `ps`'s exit status alone. Instead
+# it counts data rows in `ps`'s own output: zero rows means no process
+# identity information is available at all (not even about *other*
+# processes), which is not a genuine "pid not found" signal and must not
+# be treated as one. Refusing to escalate in that case would recreate
+# this PR's original bug in a new form -- an unresponsive include server
+# would then never be reaped on such a system -- so this accepts the
+# narrow, already-mitigated (post-SIGTERM-grace-period) pid-recycling
+# risk and allows escalation instead. When `ps` output does contain real
+# rows, a genuine "our pid isn't in there" result is trusted as a real
+# rejection.
 IncludeServerPidLooksRight() {
   if ! IsPositivePid "$1"; then
     return 1
@@ -611,7 +620,12 @@ IncludeServerPidLooksRight() {
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
     return $?
   fi
-  ps 2>/dev/null | grep "^[[:space:]]*$1[[:space:]]" | grep -q 'include_server'
+  ps_output=`ps 2>/dev/null`
+  ps_rows=`echo "$ps_output" | sed 1d | grep -c '[^[:space:]]'`
+  if [ "$ps_rows" -eq 0 ] 2>/dev/null; then
+    return 0
+  fi
+  echo "$ps_output" | grep "^[[:space:]]*$1[[:space:]]" | grep -q 'include_server'
 }
 
 # Escalates SIGTERM to SIGKILL only after a grace period, rather than
