@@ -360,15 +360,27 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       distcc-ng build+test inside the image" step for the current, real
       invocation.
       **One real, empirically-confirmed companion requirement**: pass an
-      explicit `-e HOME=<writable path>` (and `mkdir -p "$HOME"` inside the
-      container before anything else runs). Docker does not synthesize an
+      explicit `-e HOME=<a plain container-internal path, e.g.
+      /tmp/some-name>` and `mkdir -p "$HOME"` **inside the container's own
+      script**, before anything else runs. Docker does not synthesize an
       `/etc/passwd` entry for a numeric `--user` uid with no matching name
       in the image, so without an explicit `HOME`, such a uid gets
       `$HOME=/`, which it cannot write to — breaking anything that
       resolves a cache/config dir off `$HOME` (`ccache`'s own local cache
-      dir, in particular, confirmed while wiring the "ccache + Redis
-      remote-storage self-test" job onto this same pattern). Rootless
-      Docker/user-namespace remapping (the issue's third proposed
+      dir, in particular). Confirmed twice, once each way: first that the
+      override is necessary at all (the earlier build+test step's `make
+      check` failing without it), and separately that a *host*-side path
+      does not work as the value — an earlier version of the "ccache +
+      Redis remote-storage self-test" job set `-e HOME="$RUNNER_TEMP/some-
+      name"` and `mkdir -p` on that path **on the runner**, without
+      bind-mounting it into the container, so the container saw `$HOME`
+      pointing at a path that simply doesn't exist inside its own
+      filesystem at all — a real `ccache: error: Permission denied` CI
+      failure, not a permission-bits problem. The fix is a plain
+      container-internal path (`/tmp/...`) created by `mkdir -p` run as
+      part of the container's own command, never a host path assumed to
+      be visible inside the container without an explicit bind mount.
+      Rootless Docker/user-namespace remapping (the issue's third proposed
       alternative) was not empirically tested: it wasn't needed once
       `--user` was confirmed to work cleanly, and GitHub-hosted runners
       don't offer a rootless Docker daemon to test it against anyway.

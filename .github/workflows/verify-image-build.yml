@@ -235,33 +235,40 @@ jobs:
         # anywhere in this workflow anymore), rather than assuming the
         # workspace is still owned by any particular uid from before.
         #
-        # `-e HOME=...` matters for a second, real reason here beyond the
-        # earlier step's autoconf/make needs: ccache's own *local* cache
-        # dir (its remote-storage push/pull still goes through a local
-        # cache layer first) defaults to a path under `$HOME` -- an unset
-        # or unwritable `$HOME` (see the build+test step's comment above:
-        # Docker leaves `$HOME=/` for a numeric `--user` with no matching
-        # `/etc/passwd` entry) would break the local half of ccache's own
-        # caching before Redis is ever involved. Each invocation gets a
-        # fresh, distinct temp `$HOME` under `$RUNNER_TEMP` (not reused
-        # between the two `docker run` calls) so neither can accidentally
-        # serve the second compile's hit from a leftover local cache dir
-        # instead of genuinely fetching it back out of Redis.
+        # `-e HOME=/tmp/ccache-home` (+ `mkdir -p "$HOME"` inside the
+        # container, same as the earlier build+test step) matters for a
+        # second, real reason here beyond the earlier step's autoconf/make
+        # needs: ccache's own *local* cache dir (its remote-storage
+        # push/pull still goes through a local cache layer first) defaults
+        # to a path under `$HOME` -- an unset or unwritable `$HOME` (see
+        # the build+test step's comment above: Docker leaves `$HOME=/` for
+        # a numeric `--user` with no matching `/etc/passwd` entry) breaks
+        # the local half of ccache's own caching before Redis is ever
+        # involved -- confirmed for real: an earlier version of this step
+        # pointed `$HOME` at a *host* path under `$RUNNER_TEMP` without
+        # bind-mounting it into the container, which doesn't exist inside
+        # the container's own filesystem at all and failed with a real
+        # `ccache: error: Permission denied`. `/tmp/ccache-home` is a
+        # plain container-internal path instead, created fresh inside each
+        # invocation's own brand-new container filesystem -- no bind mount,
+        # no host-side directory, and (the actual point of using two
+        # separate `docker run` calls at all) never carried over between
+        # the first and second invocation, so the second compile's hit can
+        # only have come from Redis, not a leftover local cache dir.
         run: |
           set -euo pipefail
 
           run_ccache_build () {
             local label="$1"
             local stats_file="$2"
-            local home_dir="$3"
-            mkdir -p "${home_dir}"
             docker run --rm --network host --user "$(id -u):$(id -g)" \
               -v "${{ github.workspace }}:/work/src:rw" \
               -w /work/src \
               -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
-              -e HOME="${home_dir}" \
+              -e HOME=/tmp/ccache-home \
               distcc-ng-verify:ci bash -c '
                 set -euo pipefail
+                mkdir -p "$HOME"
                 cd /work/src
                 ccache --zero-stats >/dev/null
                 touch src/dopt.c
@@ -271,8 +278,8 @@ jobs:
             echo "--- ${label}: ccache stats above ---"
           }
 
-          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log" "${RUNNER_TEMP}/ccache-home-1"
-          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log" "${RUNNER_TEMP}/ccache-home-2"
+          run_ccache_build "First container (expect a MISS, pushes the object to Redis)" "${RUNNER_TEMP}/first-run-stats.log"
+          run_ccache_build "Second container (fresh filesystem, no local ccache dir -- a Hit here can only have come from Redis)" "${RUNNER_TEMP}/second-run-stats.log"
 
           if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
             echo "::error::ccache reported no cache hit on the second, fresh container -- Redis remote storage did not actually serve the cached object"
