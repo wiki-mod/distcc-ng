@@ -48,6 +48,39 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
+  check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
+  not implement at all -- always failing, so `ShutDown()` never sent the
+  include server SIGTERM on any BusyBox-based system. The include server
+  (resident by design) then ran forever as an orphan, holding open
+  whatever stdout/stderr it inherited, hanging any caller reading
+  `pump`'s output through a pipe. Replaced with `kill -0` (POSIX-standard,
+  no `ps` dependency); the SIGKILL-escalation's PID-recycling safety check
+  now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
+  -o args=`, falling back to the previous `ps`-based check on non-Linux
+  platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
+  container comparison (#398). Two further BusyBox-specific gaps in the
+  same code path were found and fixed in the same change: (1) the zombie
+  check in `IncludeServerAlive()` used `ps -o state= -p`, which BusyBox
+  also rejects outright, so a zombied include server was misreported
+  alive for the full SIGTERM/SIGKILL wait timeouts -- fixed by reading
+  the state character from `/proc/$pid/stat` directly (a new `ProcState()`
+  helper) whenever `/proc` is available; (2) `IncludeServerPidLooksRight()`'s
+  non-`/proc` fallback still called `ps -p ... -o args=`, reintroducing the
+  same BusyBox-incompatible pattern -- replaced with `ps -o pid,args` (no
+  `-p`, which BusyBox still rejects) to force full-argv output (needed
+  since the include server's short command name is just its interpreter,
+  e.g. `python3`, not `include_server`), falling back to plain unadorned
+  `ps` only if `-o` itself isn't supported (e.g. Cygwin), grepped for the
+  pid as the leading field; a zero-data-row result from either form is
+  treated as "no identity information available" rather than a genuine
+  rejection, to avoid recreating the original leak on a truly procfs-less
+  system. All reproduced and verified against real Alpine 3.20/BusyBox and
+  Debian 13/GNU-procps containers: a deterministically-created zombie
+  process, a fake include_server-named process to exercise the ps-fallback
+  identity check, a genuinely procfs-less environment (`umount /proc`),
+  and a real python3 process whose comm name lacks "include_server" while
+  its argv contains it.
 - **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
   log for a `COMPILE_OK` line exactly once, right after the compile
   subprocess exited -- an intermittent CI failure (#300) showed this can
