@@ -489,15 +489,26 @@ ReportDiscrepancies() {
 # too, same graceful "state stays empty" fallthrough.
 #
 # The base alive/dead check itself uses `kill -0` (POSIX-standard,
-# supported by every shell/OS including BusyBox), not `ps -p` -- found via
-# issue #399: BusyBox's `ps` doesn't implement `-p` at all, so a plain
-# `ps -p "$1"` always fails regardless of whether the pid is alive. That
-# silently made IncludeServerAlive() always report "not alive" on any
-# BusyBox-based system, so ShutDown() below never sent the include server
-# a SIGTERM -- it ran forever as an orphan, holding open the stdout/stderr
-# it inherited from whatever invoked `pump`, hanging any caller reading
-# that output through a pipe.
+# supported by every shell/OS including BusyBox), not `ps -p`: BusyBox's
+# `ps` doesn't implement `-p` at all, so a plain `ps -p "$1"` always fails
+# regardless of whether the pid is alive. That silently made
+# IncludeServerAlive() always report "not alive" on any BusyBox-based
+# system, so ShutDown() below never sent the include server a SIGTERM --
+# it ran forever as an orphan, holding open the stdout/stderr it inherited
+# from whatever invoked `pump`, hanging any caller reading that output
+# through a pipe.
+#
+# $1 must be a strictly positive integer before it ever reaches `kill`:
+# POSIX defines pid 0 as "every process in the sender's process group",
+# not literally "process 0" -- `kill -0 0` succeeds trivially (the caller
+# is itself in that group), and a later plain `kill 0` would deliver
+# SIGTERM to that whole group, including this script and whatever invoked
+# it. `ps -p 0` never had this problem (it just fails cleanly), so this
+# guard is specifically needed now that the check goes through `kill`.
 IncludeServerAlive() {
+  case "$1" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
   if ! kill -0 "$1" 2>/dev/null; then
     return 1
   fi
@@ -516,6 +527,9 @@ IncludeServerAlive() {
 # glibc), falling back to the ps-based check on non-Linux platforms
 # (BSD/macOS/Cygwin) where /proc/pid/cmdline does not exist.
 IncludeServerPidLooksRight() {
+  case "$1" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
   if [ -r "/proc/$1/cmdline" ]; then
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
     return $?
@@ -556,8 +570,7 @@ ShutDown() {
       # process. Confirm the pid still looks like the include server
       # (its command line contains the include-server script) before
       # escalating.
-      if ps -p "$include_server_pid" -o args= 2>/dev/null | \
-          grep -q 'include_server'; then
+      if IncludeServerPidLooksRight "$include_server_pid"; then
         echo '__________Sending SIGKILL to unresponsive distcc-pump' \
              'include server' 1>&2
         if kill -9 "$include_server_pid"; then
