@@ -1,7 +1,7 @@
 # `dcc_execvp()`'s directory-qualified-path failure silently retries with a bare-basename `$PATH` search
 
 **Fork issue:** [wiki-mod/distcc-ng#287](https://github.com/wiki-mod/distcc-ng/issues/287)
-**Fixed by:** wiki-mod/distcc-ng#TBD (draft PR, this change)
+**Fixed by:** [wiki-mod/distcc-ng#406](https://github.com/wiki-mod/distcc-ng/pull/406)
 **Upstream location:** `src/exec.c`, function `dcc_execvp()` (line 248)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-08-01)
 **Searched upstream issues/PRs for:** `dcc_execvp`, `execvp basename`, `wrong compiler`, `compiler substitution`, `PATH fallback exec` — no matching report or fix attempt found, open or closed. This exact fallback traces back to distcc's original 2008 SVN import (this fork's own `git log -S"cause unintnded behaviour" -- src/exec.c` finds it already present, word-for-word including the "I don't think that's a problem" comment, in the initial commit `d6532ae1`) — it predates both this fork and any upstream history searchable via `gh`.
