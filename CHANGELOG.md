@@ -59,7 +59,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
   now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
   -o args=`, falling back to the previous `ps`-based check on non-Linux
   platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
-  container comparison (#398).
+  container comparison (#398). Two further BusyBox-specific gaps in the
+  same code path were found and fixed in the same change: (1) the zombie
+  check in `IncludeServerAlive()` used `ps -o state= -p`, which BusyBox
+  also rejects outright, so a zombied include server was misreported
+  alive for the full SIGTERM/SIGKILL wait timeouts -- fixed by reading
+  the state character from `/proc/$pid/stat` directly (a new `ProcState()`
+  helper) whenever `/proc` is available; (2) `IncludeServerPidLooksRight()`'s
+  non-`/proc` fallback still called `ps -p ... -o args=`, reintroducing the
+  same BusyBox-incompatible pattern -- replaced with a plain unadorned `ps`
+  (no `-p`/`-o`) grepped for the pid as the leading field. Both reproduced
+  and verified against a real Alpine 3.20/BusyBox container: a
+  deterministically-created zombie process, and a fake include_server-named
+  process to exercise the ps-fallback identity check.
 - **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
   log for a `COMPILE_OK` line exactly once, right after the compile
   subprocess exited -- an intermittent CI failure (#300) showed this can
