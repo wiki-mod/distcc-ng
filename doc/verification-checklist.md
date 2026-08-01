@@ -399,7 +399,8 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       the zombie tree via `ps auxf`, re-ran clean with `--init` added)
       cutting the 3.6.3-NG release (2026-07-30). See Section 8's matching
       cleanup check.
-- [ ] **A compiler that defaults to compressed ELF debug sections breaks
+- [ ] **A toolchain whose assembler emits compressed ELF debug sections
+      (size-dependent, not a fixed default) breaks
       `Gdb_Case`/`GdbOpt1-3_Case` in pump mode — a real distccd-side bug,
       not an environment quirk, and not specific to an old Alpine
       release.** `src/fix_debug_info.c`'s `dcc_fix_debug_info()` rewrites
@@ -407,7 +408,14 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       object's DWARF debug info (`.debug_info`, `.debug_str`,
       `.debug_line_str`) back to the client-side path, via a raw byte
       search-and-replace directly on the mmap'd ELF section contents —
-      which silently assumes those sections are always plain-text. On a
+      which assumes the server-side path string is still present
+      byte-for-byte in the section's raw, uncompressed bytes, not that
+      the section itself is plain text (`.debug_info`/`.debug_line_str`
+      are structured binary DWARF data even when uncompressed;
+      `replace_string()` deliberately does a raw `memcmp`/`memcpy`
+      substring scan over that binary buffer without parsing its
+      structure, confirmed by reading `src/fix_debug_info.c`'s
+      `replace_string()`). On a
       real, current `alpine:latest` container (Alpine 3.24.1, `gcc
       (Alpine) 15.2.0`, checked 2026-08-01), `.debug_line_str` carries the
       ELF `SHF_COMPRESSED` flag (visible as `C` in `readelf -SW`, zlib
@@ -435,7 +443,7 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       `readelf --debug-dump=info`), but never appears in the section's
       raw compressed bytes, so `update_section()`'s `replace_string()`
       call finds zero occurrences; this is non-fatal and traced, not
-      silent -- `dcc_run_job()` still logs
+      silent -- `update_section()` itself still logs
       `rs_trace("\"%s\" section of file %s has no occurrences of \"%s\"",
       ...)` (`src/fix_debug_info.c:365`), visible under `distccd
       --verbose`, but the function still returns success and the rewrite

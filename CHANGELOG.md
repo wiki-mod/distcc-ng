@@ -49,8 +49,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   real `distccd`-side bug found evaluating Alpine support (#398):
   `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
   search-and-replace on ELF debug sections to rewrite the server-side
-  compilation directory back to the client-side path, assuming those
-  sections are always plain-text. On a real, current `alpine:latest`
+  compilation directory back to the client-side path, assuming the
+  path string is still present byte-for-byte in the section's raw,
+  uncompressed bytes -- not that the section itself is plain text
+  (`.debug_info`/`.debug_line_str` are structured binary DWARF data
+  even uncompressed; the search-and-replace deliberately scans that
+  binary buffer without parsing it). On a real, current `alpine:latest`
   (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets the
   `SHF_COMPRESSED` flag set once the baked-in compilation-directory
   string is long enough to cross a compression-worthwhile size threshold
