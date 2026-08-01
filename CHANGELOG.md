@@ -45,6 +45,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`doc/docker.md`**: updated its release-image pull examples for #389's
   new `:latest` tag on `distcc-ng`/`distcc-ng-pump` (current stable
   release), alongside the existing immutable `<version>-NG` tags.
+- **`doc/verification-checklist.md`**: new Section 9 entry documenting a
+  real `distccd`-side bug found evaluating Alpine support (#398):
+  `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
+  search-and-replace on ELF debug sections to rewrite the server-side
+  compilation directory back to the client-side path, silently assuming
+  those sections are always plain-text. Alpine's default gcc
+  (13.2.1_git20240309) emits `.debug_str`/`.debug_line_str` with the
+  `SHF_COMPRESSED` flag set; the search string is genuine plain text once
+  decompressed, but never appears in the section's raw compressed bytes,
+  so the rewrite silently no-ops and `Gdb_Case`/`GdbOpt1-3_Case` fail in
+  pump mode on Alpine. Confirmed via a real Alpine 3.20 vs. Debian 13
+  container comparison, an isolated standalone reproduction of
+  `dcc_fix_debug_info()` against a real compiled object file, and
+  confirming `-gz=none` removes the compression flag entirely (a
+  GCC/distro default, not anything musl/BusyBox-specific). Not yet fixed
+  as of this entry -- documented so the finding isn't rediscovered from
+  scratch; see #398 for the full analysis and fix-direction discussion.
 
 ### Fixed
 
