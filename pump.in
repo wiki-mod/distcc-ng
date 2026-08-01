@@ -515,6 +515,25 @@ IsPositivePid() {
   [ "$1" -gt 0 ] 2>/dev/null
 }
 
+# Reads the process state character (e.g. 'Z' for zombie) from
+# /proc/$1/stat -- a kernel-provided file, not a ps-flavor concern, so
+# this works identically under BusyBox and glibc/procps without ever
+# depending on `ps -o state=`. The second field (the process "comm" name)
+# is parenthesized but can itself contain spaces or closing parens, so the
+# state character is taken as the token right after the LAST ')' on the
+# line, not by naive whitespace splitting from the start.
+ProcState() {
+  procstate_pid="$1"
+  procstate_line=`cat "/proc/$procstate_pid/stat" 2>/dev/null` || return 1
+  case "$procstate_line" in
+    *')'*) ;;
+    *) return 1 ;;
+  esac
+  procstate_rest=${procstate_line##*) }
+  set -- $procstate_rest
+  echo "$1"
+}
+
 # Returns success (0) if the process with pid $1 both exists and is not a
 # zombie ('Z' state); returns failure (1) otherwise. A zombie process is
 # already dead as far as ShutDown()'s SIGTERM/SIGKILL wait loops are
@@ -524,27 +543,25 @@ IsPositivePid() {
 # loops wait the full timeout, or in the worst case deadlock a caller that
 # waits on this script to exit before reaping the zombie itself.
 #
-# The state field is requested as "-o state=" (an empty replacement header)
-# rather than GNU-only "--no-headers"/"-o state" or BSD's differently
-# structured header suppression, because appending "=" to a field name to
-# suppress its header is honored by both GNU procps and BSD/macOS ps --
-# this is the portable no-header idiom, not the Linux-specific one.
-# "state" (not "stat") is used because both GNU and BSD ps define it as
-# the single-letter symbolic state code (R/S/D/Z/T/...) without the extra
-# modifier characters ("+", "s", ...) that "stat"/"STAT" can append.
+# The state is read via ProcState (/proc/$pid/stat) in preference to
+# `ps -o state=` whenever /proc is available, because BusyBox's `ps`
+# supports neither `-p` nor reliably `-o`: a zombie include server under
+# BusyBox would otherwise pass the `kill -0` check below, fail the
+# `ps -o state= -p` probe outright, and be misreported as "alive" for the
+# full SIGTERM/SIGKILL wait timeouts in ShutDown() below.
 #
-# If this ps invocation itself fails or returns no usable output, $state
-# stays empty and we fall through to the pre-existing "alive" behavior (the
-# plain kill -0 check already passed above) rather than guessing -- a false
-# "it's a zombie" reading would be worse than the original bug, since it
-# would skip killing a process that is actually still running. Confirmed
-# this is exactly what happens on Cygwin: its minimal `ps` doesn't support
-# `-o` at all (fails with "unknown option -- o"), so $state is empty there
-# and this degrades to the plain-alive behavior rather than misreporting
-# a live process as a zombie. Same degradation now also covers BusyBox
-# (Alpine's default `/bin/sh` userland): its `ps` doesn't implement `-p`
-# at all (not just `-o`), so `ps -o state= -p "$1"` fails outright there
-# too, same graceful "state stays empty" fallthrough.
+# The `ps -o state= -p` probe is kept only as the fallback for platforms
+# without /proc (BSD/macOS/Cygwin). There, if the probe itself fails or
+# returns no usable output, $state stays empty and we fall through to the
+# pre-existing "alive" behavior (the plain kill -0 check already passed)
+# rather than guessing -- a false "it's a zombie" reading would be worse
+# than the original bug, since it would skip killing a process that is
+# actually still running. This is exactly what happens on Cygwin: its
+# minimal `ps` doesn't support `-o` at all, so $state stays empty there.
+# A Linux/BusyBox system with /proc unmounted or inaccessible would hit
+# this same fallback and its underlying `-p` limitation -- a known,
+# narrow residual gap (BusyBox normally always has /proc mounted), not
+# one this fallback attempts to solve.
 #
 # The base alive/dead check itself uses `kill -0` (POSIX-standard,
 # supported by every shell/OS including BusyBox), not `ps -p`: BusyBox's
@@ -562,7 +579,11 @@ IncludeServerAlive() {
   if ! kill -0 "$1" 2>/dev/null; then
     return 1
   fi
-  state=`ps -o state= -p "$1" 2>/dev/null | tr -d '[:space:]'`
+  if [ -r "/proc/$1/stat" ]; then
+    state=`ProcState "$1"`
+  else
+    state=`ps -o state= -p "$1" 2>/dev/null | tr -d '[:space:]'`
+  fi
   case "$state" in
     Z*) return 1 ;;
     *) return 0 ;;
@@ -574,8 +595,14 @@ IncludeServerAlive() {
 # stale/recycled pid. Reads /proc/$pid/cmdline directly where available
 # (Linux only, but that covers BusyBox too -- /proc is a kernel feature,
 # not a ps-flavor concern, so this works identically under musl and
-# glibc), falling back to the ps-based check on non-Linux platforms
-# (BSD/macOS/Cygwin) where /proc/pid/cmdline does not exist.
+# glibc). The fallback below is for platforms without /proc at all
+# (BSD/macOS/Cygwin): it deliberately avoids `ps -p`/`-o`, which BusyBox
+# does not support, by grepping plain unadorned `ps` output (universally
+# supported, including by BusyBox) for our pid as the line's leading
+# field. This matters even on Linux/BusyBox if /proc happens to be
+# unmounted or inaccessible -- that case falls through to this same
+# branch, and a `ps -p` fallback there would silently always fail exactly
+# like the original ShutDown() bug this PR fixes.
 IncludeServerPidLooksRight() {
   if ! IsPositivePid "$1"; then
     return 1
@@ -584,7 +611,7 @@ IncludeServerPidLooksRight() {
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
     return $?
   fi
-  ps -p "$1" -o args= 2>/dev/null | grep -q 'include_server'
+  ps 2>/dev/null | grep "^[[:space:]]*$1[[:space:]]" | grep -q 'include_server'
 }
 
 # Escalates SIGTERM to SIGKILL only after a grace period, rather than
