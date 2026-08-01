@@ -414,7 +414,9 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       magic `789c...` visible in the raw section bytes) once the
       compilation directory string is long enough to cross a
       compression-worthwhile size threshold. This is not a GCC-internal
-      decision: `gcc -### -gz -g -c` shows GCC dispatching to
+      decision: `gcc -### -gz -g -c t.c -o t.o` (a real source file is
+      required for this trace -- omitting it prints only GCC driver
+      metadata with no `as` invocation at all) shows GCC dispatching to
       `as --compress-debug-sections=zlib` -- the GNU assembler is what
       actually decides and performs the compression, not gcc itself.
       Confirmed this is size-dependent, not a fixed default: a short test
@@ -431,8 +433,13 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       short-path smoke test can miss this bug entirely. The search string
       is genuine plain text once decompressed (confirmed via
       `readelf --debug-dump=info`), but never appears in the section's
-      raw compressed bytes, so the rewrite finds zero occurrences and
-      silently no-ops. The binary keeps its server-side compilation
+      raw compressed bytes, so `update_section()`'s `replace_string()`
+      call finds zero occurrences; this is non-fatal and traced, not
+      silent -- `dcc_run_job()` still logs
+      `rs_trace("\"%s\" section of file %s has no occurrences of \"%s\"",
+      ...)` (`src/fix_debug_info.c:365`), visible under `distccd
+      --verbose`, but the function still returns success and the rewrite
+      itself never happens. The binary keeps its server-side compilation
       directory baked in; gdb (client-side) then can't find the source
       file (`warning: <line>\t<file>: No such file or directory`). A real
       Debian 13 container (`gcc (Debian 14.2.0-19)`, this repo's own
@@ -441,11 +448,15 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       same-compiler comparison; Debian 13/trixie's own repos, including
       trixie-backports, top out at gcc-14, no gcc-15 package exists there
       as of this writing) produces uncompressed debug sections at the
-      same path lengths — same test passes there. Confirmed the
-      compression is a toolchain-version behavior rather than anything
-      musl/BusyBox-specific: compiling the same source with `-gz=none` on
-      the same Alpine gcc removes the `SHF_COMPRESSED` flag entirely
-      (verified via `readelf -SW`). Not related to this repo's own
+      same path lengths — same test passes there. `-gz=none` on the same
+      Alpine gcc removes the `SHF_COMPRESSED` flag entirely (verified via
+      `readelf -SW`), which only shows the assembler flag controls
+      compression -- it does not by itself distinguish a GCC-version
+      effect from Alpine's own GCC build/packaging configuration, since
+      this was not tested with matched GCC versions across both
+      platforms. Describe this as toolchain/distro-configuration-dependent
+      behavior, not attributed to a specific cause, until reproduced with
+      controlled GCC versions. Not related to this repo's own
       network-level zstd compression work (issue #101/pump-mode transport
       compression) — this is the toolchain's own debug-info encoding,
       unrelated code path, confirmed no shared code between them.
@@ -454,27 +465,9 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       `dcc_fix_debug_info()` directly against a real compiled `.o` file
       with a known compilation directory — same failure, confirming the
       bug is in this file's raw-byte-search design, not somewhere else in
-      the daemon pipeline.
-      Also note: Alpine needs `popt-dev` installed explicitly for
-      `configure` to detect system libpopt — without it, `configure.ac`
-      visibly reports the fallback (`AC_MSG_NOTICE([system libpopt not
-      found (or disabled); building bundled popt ...])`, not a silent
-      choice) and builds this repo's bundled `popt/` copy instead, which
-      fails to compile under gcc 15's new
-      `-Werror=calloc-transposed-args` warning
-      (`popt/poptconfig.c:141`'s `calloc(sizeof(*b), (size_t)nb + 1)`).
-      That warning is itself a toolchain-compatibility false positive,
-      not a real allocation bug: `b` is `char *`, so `sizeof(*b)` is 1 and
-      the product is identical regardless of argument order — the build
-      failure exists only because `-Werror` promotes gcc 15's new
-      suspicious-order warning to a hard error, not because of any actual
-      runtime defect. Not exposed at all when system libpopt is used, as
-      it is on this repo's own Debian-based CI and release images. `gdb`
-      is also not installed by default on Alpine and must be added
-      explicitly to reproduce this finding. Found evaluating Alpine
-      support (issue #398); not yet fixed as of this writing — see that
-      issue's comment thread for the full analysis and fix-direction
-      discussion.
+      the daemon pipeline. Found evaluating Alpine support (issue #398);
+      not yet fixed as of this writing — see that issue's comment thread
+      for the full analysis and fix-direction discussion.
 
 ## Keeping this checklist current
 

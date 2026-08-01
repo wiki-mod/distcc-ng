@@ -49,12 +49,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   real `distccd`-side bug found evaluating Alpine support (#398):
   `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
   search-and-replace on ELF debug sections to rewrite the server-side
-  compilation directory back to the client-side path, silently assuming
-  those sections are always plain-text. On a real, current
-  `alpine:latest` (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets
-  the `SHF_COMPRESSED` flag set once the baked-in compilation-directory
+  compilation directory back to the client-side path, assuming those
+  sections are always plain-text. On a real, current `alpine:latest`
+  (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets the
+  `SHF_COMPRESSED` flag set once the baked-in compilation-directory
   string is long enough to cross a compression-worthwhile size threshold
-  -- confirmed via `gcc -### -gz` that GCC dispatches this to
+  -- confirmed via `gcc -### -gz -g -c <file>` (a real source file is
+  required for this trace) that GCC dispatches this to
   `as --compress-debug-sections=zlib`, i.e. the assembler decides and
   performs the compression, not gcc itself. Confirmed size-dependent -- a
   short test path can misleadingly appear fine, while a realistic
@@ -63,25 +64,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `dcc_make_tmpnam()`, which only names individual files) reliably
   triggers it. The search string is genuine plain text once decompressed,
   but never appears in the section's raw compressed bytes, so the rewrite
-  silently no-ops and `Gdb_Case`/`GdbOpt1-3_Case` fail in pump mode on
-  Alpine. Confirmed via a real, current Alpine vs. Debian 13 container
-  comparison (a different gcc version on a different distro/container,
-  not a controlled same-compiler comparison; Debian's own repos,
-  including trixie-backports, top out at gcc-14 -- no gcc-15 package
-  exists there as of this writing), an isolated standalone reproduction
-  of `dcc_fix_debug_info()` against a real compiled object file, and
-  confirming `-gz=none` removes the compression flag entirely (a
-  toolchain-version behavior, not anything musl/BusyBox-specific). Also
-  notes two unrelated Alpine verification gotchas hit along the way:
-  `popt-dev` must be installed explicitly, or `configure.ac` visibly
-  reports the fallback (not silently) and builds this repo's bundled
-  `popt/` copy, which fails under gcc 15's new
-  `-Werror=calloc-transposed-args` -- itself a toolchain-compatibility
-  false positive (the flagged `calloc(sizeof(*b), (size_t)nb + 1)` call
-  is functionally correct since `b` is `char *`), not a real allocation
-  bug; and `gdb` isn't installed by default. Not yet fixed as of this
-  entry -- documented so the finding isn't rediscovered from scratch; see
-  #398 for the full analysis and fix-direction discussion.
+  finds zero occurrences -- non-fatal and traced (`rs_trace()` logs it
+  under `distccd --verbose`), not silent -- and
+  `Gdb_Case`/`GdbOpt1-3_Case` fail in pump mode on Alpine as a result. A
+  real, current Debian 13 container (a different gcc version on a
+  different distro/container, not a controlled same-compiler comparison;
+  Debian's own repos, including trixie-backports, top out at gcc-14 --
+  no gcc-15 package exists there as of this writing) produces
+  uncompressed debug sections at the same path lengths instead --
+  `-gz=none` on the same Alpine gcc also removes the compression flag,
+  but this only shows the assembler flag controls compression, not that
+  the GCC version specifically is the cause (not tested with matched GCC
+  versions across platforms); described as toolchain/distro-configuration
+  -dependent rather than attributed to a specific cause. Not yet fixed as
+  of this entry -- documented so the finding isn't rediscovered from
+  scratch; see #398 for the full analysis and fix-direction discussion.
 
 ### Fixed
 
