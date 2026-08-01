@@ -45,6 +45,44 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`doc/docker.md`**: updated its release-image pull examples for #389's
   new `:latest` tag on `distcc-ng`/`distcc-ng-pump` (current stable
   release), alongside the existing immutable `<version>-NG` tags.
+- **`doc/verification-checklist.md`**: new Section 9 entry documenting a
+  real `distccd`-side bug found evaluating Alpine support (#398):
+  `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
+  search-and-replace on ELF debug sections to rewrite the server-side
+  compilation directory back to the client-side path, assuming the
+  path string is still present byte-for-byte in the section's raw,
+  uncompressed bytes -- not that the section itself is plain text
+  (`.debug_info`/`.debug_line_str` are structured binary DWARF data
+  even uncompressed; the search-and-replace deliberately scans that
+  binary buffer without parsing it). On a real, current `alpine:latest`
+  (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets the
+  `SHF_COMPRESSED` flag set once the baked-in compilation-directory
+  string is long enough to cross a compression-worthwhile size threshold
+  -- confirmed via `gcc -### -gz -g -c <file>` (a real source file is
+  required for this trace) that GCC dispatches this to
+  `as --compress-debug-sections=zlib`, i.e. the assembler decides and
+  performs the compression, not gcc itself. Confirmed size-dependent -- a
+  short test path can misleadingly appear fine, while a realistic
+  distccd compile-working-directory path (formed by
+  `make_temp_dir_and_chdir_for_cpp()` in `src/serve.c`, not
+  `dcc_make_tmpnam()`, which only names individual files) reliably
+  triggers it. The search string is genuine plain text once decompressed,
+  but never appears in the section's raw compressed bytes, so the rewrite
+  finds zero occurrences -- non-fatal and traced (`rs_trace()` logs it
+  under `distccd --verbose`), not silent -- and
+  `Gdb_Case`/`GdbOpt1-3_Case` fail in pump mode on Alpine as a result. A
+  real, current Debian 13 container (a different gcc version on a
+  different distro/container, not a controlled same-compiler comparison;
+  Debian's own repos, including trixie-backports, top out at gcc-14 --
+  no gcc-15 package exists there as of this writing) produces
+  uncompressed debug sections at the same path lengths instead --
+  `-gz=none` on the same Alpine gcc also removes the compression flag,
+  but this only shows the assembler flag controls compression, not that
+  the GCC version specifically is the cause (not tested with matched GCC
+  versions across platforms); described as toolchain/distro-configuration
+  -dependent rather than attributed to a specific cause. Not yet fixed as
+  of this entry -- documented so the finding isn't rediscovered from
+  scratch; see #398 for the full analysis and fix-direction discussion.
 
 ### Fixed
 
