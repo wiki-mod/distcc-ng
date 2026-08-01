@@ -262,29 +262,48 @@ static DWORD dcc_execvp_cyg(char **argv, const char *input_file,
  *
  * Does not return, either execs the compiler in place, or exits with
  * a message.
- **/
+ *
+ * This function runs unchanged on both distcc's own local exec paths
+ * (src/compile.c, src/cpp.c: a trusted, locally-typed argv[0]) and
+ * distccd's exec of a compiler chosen by a remote, potentially
+ * differently-configured client (src/serve.c). Only the case where
+ * argv[0] has no directory component gets a PATH search here: POSIX
+ * execvp() already performs one itself whenever the filename has no
+ * '/', so a bare basename that fails above has already had every
+ * candidate on $PATH tried and there is nothing more to usefully
+ * retry. A directory-qualified argv[0] (absolute, or relative with a
+ * '/') is different: execvp() treats that as a literal path and never
+ * consults $PATH for it, so failing here means specifically that path
+ * doesn't exist on the host actually doing the exec. Retrying such a
+ * failure against a bare-basename PATH search used to be this
+ * function's whole second half -- but on a host whose toolchain layout
+ * differs from wherever argv[0] was originally resolved (client vs.
+ * server, or a stale local install), that PATH search can silently
+ * land on a *different* same-named compiler than the one actually
+ * selected, with no error and no visible signal that a substitution
+ * happened at all. Failing loudly here instead relies on the same
+ * ordinary remote-compile-failure handling every other exec failure
+ * already goes through upstream (a logged warning plus an automatic
+ * local retry when DISTCC_FALLBACK is enabled, a clear hard failure
+ * otherwise) -- strictly safer than a quiet wrong-compiler run. */
 static void dcc_execvp(char **argv)
 {
-    char *slash;
-
     execvp(argv[0], argv);
 
-    /* If we're still running, the program was not found on the path.  One
-     * thing that might have happened here is that the client sent an absolute
-     * compiler path, but the compiler's located somewhere else on the server.
-     * In the absence of anything better to do, we search the path for its
-     * basename.
-     *
-     * Actually this code is called on both the client and server, which might
-     * cause unintnded behaviour in contrived cases, like giving a full path
-     * to a file that doesn't exist.  I don't think that's a problem. */
-
-    slash = strrchr(argv[0], '/');
-    if (slash)
-        execvp(slash + 1, argv);
-
-    /* shouldn't be reached */
-    rs_log_error("failed to exec %s: %s", argv[0], strerror(errno));
+    if (dcc_find_basename(argv[0]) == argv[0]) {
+        /* No directory component: the execvp() above already searched
+         * $PATH for this exact name, so there is no narrower name left
+         * to retry with. */
+        rs_log_error("failed to exec %s: %s", argv[0], strerror(errno));
+    } else {
+        /* Directory-qualified and not found at that exact location.
+         * Deliberately not retrying with a PATH search on just the
+         * basename -- see the function comment above. */
+        rs_log_error("failed to exec %s: %s "
+                      "(not retrying with a PATH search for a substitute "
+                      "compiler)",
+                      argv[0], strerror(errno));
+    }
 
     dcc_exit(EXIT_COMPILER_MISSING); /* a generalization, i know */
 }

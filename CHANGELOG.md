@@ -623,6 +623,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `TokenPermissionsID` finding #145 ("topLevel 'security-events' permission
   set to 'write'") — refs #222/#267.
 
+### Security
+
+- **`src/exec.c`**: `dcc_execvp()` no longer silently retries a failed
+  exec of a directory-qualified `argv[0]` (absolute, or relative with a
+  `/`) with a second `execvp()` on just its basename, letting the
+  exec'ing host's own `$PATH` resolve a substitute. This ran identically
+  on `distcc`'s local exec paths and on `distccd`'s exec of a compiler
+  chosen by a remote client; on a server whose toolchain layout differs
+  from wherever `argv[0]` was originally resolved, the fallback could
+  silently run a *different* same-named compiler than the one actually
+  selected, with no error and no signal to the client that a
+  substitution happened -- more likely to be exercised in practice since
+  #281's directory-preserving cross-compile resolution. A bare-basename
+  `argv[0]` is unaffected: POSIX `execvp()` already performs a full
+  `$PATH` search for it in the very first call, so there was never a
+  narrower name left to retry with in that case. Now any exec failure
+  fails loudly (`EXIT_COMPILER_MISSING`), which the client's existing
+  remote-compile-failure handling already turns into a logged warning
+  plus an automatic local retry (`DISTCC_FALLBACK=1`, the default) or a
+  clear hard failure (`DISTCC_FALLBACK=0`) -- never a silent
+  wrong-compiler "success." Refs #287.
+
 ## [3.6.1-NG] - 2026-07-23
 
 ### Fixed

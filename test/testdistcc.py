@@ -2973,6 +2973,79 @@ class MissingCompiler_Case(CompileHello_Case):
         self.assert_re_search(r'failed to exec', errs)
 
 
+class PathQualifiedCompilerNotSubstituted_Case(CompileHello_Case):
+    """A directory-qualified argv[0] missing on the server must fail
+    loudly, never silently run a different same-named binary instead.
+
+    Regression test for exec.c's dcc_execvp(): before the fix, a failed
+    execvp() of a directory-qualified argv[0] (an absolute or otherwise
+    '/'-containing compiler path resolved on the client, e.g. by PR #281's
+    directory-preserving cross-compiler rewrite, that doesn't exist at
+    that exact location on the server) fell back to a second execvp() on
+    just the basename, letting the server's own $PATH resolve it. If the
+    server happens to have a *different* binary of the same name
+    somewhere on $PATH, that binary silently runs instead -- no error, no
+    signal to the client that a substitution happened, and (as this test
+    would otherwise show) a "successful" compile against the wrong
+    compiler. This test puts such a substitute binary on the daemon's
+    $PATH (deliberately not the client's, so only the server-side
+    fallback is exercised) under a distinctive name, sends a directory-
+    qualified path ending in that same name that exists nowhere on the
+    filesystem, and confirms both that the compile fails with
+    EXIT_COMPILER_MISSING and that the substitute binary was never
+    actually invoked."""
+
+    MARKER_NAME = "distcc_test_execvp_marker_cc"
+
+    def sourceFilename(self):
+        # Must already be preprocessed, so distcc does not need to run
+        # the (nonexistent) compiler locally for the cpp step.
+        return "testtmp.i"
+
+    def source(self):
+        return """int foo;"""
+
+    def setup(self):
+        # Build the substitute-compiler fixture before the daemon starts:
+        # startDaemon() below needs self.marker_dir to already exist when
+        # it prepends it to the daemon's own $PATH.
+        self.marker_dir = os.path.join(self.tmpdir, "server_path_extra")
+        os.mkdir(self.marker_dir)
+        self.marker_script = os.path.join(self.marker_dir, self.MARKER_NAME)
+        self.marker_ran_file = os.path.join(self.tmpdir, "marker_ran")
+        with open(self.marker_script, "w") as f:
+            f.write("#!/bin/sh\ntouch %s\nexit 0\n" %
+                    _ShellSafe(self.marker_ran_file))
+        os.chmod(self.marker_script, 0o700)
+        CompileHello_Case.setup(self)
+
+    def startDaemon(self):
+        # Give the *daemon* -- not the client -- a $PATH that can resolve
+        # self.MARKER_NAME, mirroring how the base class temporarily
+        # overrides TMPDIR a few lines above it: modify the environment
+        # only for the duration of actually starting the (detaching)
+        # daemon process, then restore it so the client's own $PATH is
+        # unaffected by this test's fixture.
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = self.marker_dir + os.pathsep + old_path
+        try:
+            WithDaemon_Case.startDaemon(self)
+        finally:
+            os.environ['PATH'] = old_path
+
+    def runtest(self):
+        nonexistent_path = os.path.join(
+            self.tmpdir, "nowhere_on_any_host", self.MARKER_NAME)
+        msgs, errs = self.runcmd(
+            self.distcc_without_fallback() + _ShellSafe(nonexistent_path) +
+            " -c testtmp.i",
+            expectedResult=EXIT_COMPILER_MISSING)
+        self.assert_re_search(r'failed to exec', errs)
+        if os.path.exists(self.marker_ran_file):
+            self.fail("the substitute compiler on the daemon's $PATH ran "
+                       "instead of failing loudly for the nonexistent, "
+                       "directory-qualified compiler path")
+
 
 class RemoteAssemble_Case(WithDaemon_Case):
     """Test remote assembly of a .s file."""
@@ -3320,6 +3393,7 @@ tests = [
          SyntaxError_Case,
          NoHosts_Case,
          MissingCompiler_Case,
+         PathQualifiedCompilerNotSubstituted_Case,
          RemoteAssemble_Case,
          PreprocessAsm_Case,
          ModeBits_Case,
