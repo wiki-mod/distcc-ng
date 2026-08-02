@@ -156,6 +156,43 @@ other needed the *basename*, not the raw path) in the same review round.
       host or a hand-built fake dispatcher script, not the verification
       container. Note this limitation explicitly rather than silently
       working around it if you hit it again.
+- [ ] **The daemon's compiler-name whitelist rejects an absolute/
+      directory-qualified compiler name outright, before `dcc_execvp()`'s
+      own fallback logic is ever reached, unless `--enable-tcp-insecure`
+      (or `DISTCC_CMDLIST`) is set.** `dcc_check_compiler_whitelist()`
+      (`src/serve.c`) runs first; a test scenario built around an absolute
+      `argv[0]` against a plain `distccd` (no `--enable-tcp-insecure`) gets
+      rejected with `CRITICAL! compiler name <...> cannot be an absolute
+      path` and never touches the exec path at all — a real, separate
+      defense layer, but not evidence about `dcc_execvp()` itself. Found
+      verifying issue #287/PR #406's fix over a real two-container setup:
+      the first attempt (whitelist active) proved the whitelist's own
+      absolute-path rejection is a real, independent safety net, not that
+      the fix worked; only a second run with `--enable-tcp-insecure` (the
+      mode `test/testdistcc.py`'s own `startDaemon()` already uses by
+      default) actually exercised `dcc_execvp()`'s fallback removal.
+      **Test both configurations when a change touches this exec path** —
+      one confirms the whitelist's own defense-in-depth, the other
+      confirms the actual code change.
+- [ ] **Real two-container technique for compiler-identity/substitution
+      bugs**: place a substitute "marker" script under the compiler's
+      *real, already-whitelisted* name (e.g. the container's actual
+      `x86_64-linux-gnu-gcc`) earlier on the **server** container's own
+      `$PATH` than the real compiler (the client's `$PATH` must stay
+      untouched, so only the server-side fallback is exercised); have the
+      marker `touch` a sentinel file and exit 0 without compiling anything.
+      From the client, send a directory-qualified compiler path sharing
+      that same basename but existing nowhere on the server. Verify from
+      the **server's own log** (not the client's exit code alone): the
+      real fix's trace line appears, the sentinel file was never created,
+      and no `COMPILE_OK` was logged for that job — then run the identical
+      compile against the compiler's real, existing path as a positive
+      control confirming legitimate compiles still succeed and produce a
+      real `COMPILE_OK`. Used to verify issue #287/PR #406 over `docker
+      network create` + two `docker run` containers (not `docker-compose`
+      — full control over each container's own `$PATH`/env needed a plain
+      `docker run` per side rather than the fixed service definitions in
+      `test/e2e/docker-compose.yml`).
 
 ## 4. External-host / network compatibility changes
 
@@ -384,6 +421,33 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       alternative) was not empirically tested: it wasn't needed once
       `--user` was confirmed to work cleanly, and GitHub-hosted runners
       don't offer a rootless Docker daemon to test it against anyway.
+- [ ] **`make check`'s `distcc-maintainer-check`/`maintainer-check-no-
+      set-path` chain can fail with `distccd: not found` on some Docker
+      hosts even though the target's own `PATH="`pwd`:$(RESTRICTED_PATH)"`
+      setup looks correct on read — unresolved, host-specific, not a code
+      defect.** Found running a full `./autogen.sh && ./configure && make
+      && make check` inside the buildtools image on an SSH-reachable Linux
+      host (not GitHub Actions): every real `test/testdistcc.py` case
+      passes cleanly (including a genuinely new one), but the final
+      `maintainer-check-no-set-path` re-run then fails immediately with
+      `/bin/sh: 1: distccd: not found` trying to start the very first
+      daemon. Confirmed this is **not** caused by whatever change is being
+      verified — reproduces identically on a clean, unmodified `current_dev`
+      checkout on the same host — and **not** a general regression, since
+      the identical `make check` invocation passes in this repo's own
+      GitHub Actions `make_check` job for the same commits. Root cause not
+      determined (plausibly something about how this specific host's
+      Docker/shell setup propagates the Makefile-set `PATH` into
+      `test/testdistcc.py`'s own Python subprocess calls, but not
+      confirmed). **Until root-caused: treat a full local `make check`
+      run's real signal as everything up to and including the last
+      `test/testdistcc.py`-driven comfychair case line (`Lsdistcc_Case`
+      through the final real test case) — a failure strictly in the
+      trailing `maintainer-check-no-set-path` re-run, with every real test
+      case already having reported `OK`/`NOTRUN` moments earlier in the
+      same log, is this known host quirk, not a new defect** — but verify
+      that pattern matches exactly (all real cases already passed) before
+      assuming it, don't pattern-match on the target name alone.
 - [ ] **A root-only test needs the specific capability its own syscall
       requires, not just "run as root."** Docker's default root capability
       set is not the same as a real host root's — `AutogroupNicenessPrivilegeDrop_Case`
