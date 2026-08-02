@@ -93,6 +93,23 @@ handling, anything touching `src/lock.c`, `src/state.c`, `src/zeroconf.c`,
       supposed to deny (or use `strace`/a minimal test binary that issues
       it) and confirm the sandboxed child is actually killed/blocked, not
       just that the compile happened to work.
+      **Concrete technique** (used for issue #360/PR #408): compile a tiny
+      C "marker" binary that calls a syscall in the built-in denylist
+      (`src/sandbox-seccomp.c`'s `dcc_seccomp_denied_syscalls[]` — `ptrace`
+      is a convenient one, real compilers never call it) and logs the raw
+      return value/`errno` to a sentinel file. Install it on the **server**
+      under the compiler name the client actually sends — not the bare
+      name the user types: `dcc_gcc_rewrite_fqn()` rewrites a bare `gcc`
+      to the target triplet (e.g. `x86_64-linux-gnu-gcc`) client-side
+      before the request ever reaches the server, so a marker placed only
+      at `/usr/bin/gcc` is silently never invoked (confirmed by checking
+      the server's own log for which command name it actually received,
+      after a first attempt missed it entirely this way). Send a real
+      compile job to it and read the sentinel file back from the server
+      afterward — expect `SCMP_ACT_ERRNO(EPERM)`, i.e. the syscall
+      returning `-1`/`errno=EPERM`, not a kill signal (see the filter's
+      actual configured action in `src/sandbox-seccomp.c`, currently
+      `SCMP_ACT_ERRNO`, before assuming the process gets killed).
 - [ ] Check both `fail-open`/`fail-closed` and `require-seccomp` paths if
       touched: a runtime install failure and a `--without-seccomp` build
       are two independent scenarios (see `doc/seccomp-sandbox.md`) — don't
@@ -100,6 +117,26 @@ handling, anything touching `src/lock.c`, `src/state.c`, `src/zeroconf.c`,
 - [ ] Confirm behavior on a host **without** libseccomp/non-Linux is
       unchanged (no new hard dependency introduced silently — see
       `doc/compatibility-policy.md`).
+      **If the change makes `libseccomp-dev` a new mandatory build
+      dependency for a real release artifact** (not just a test/verify
+      image): check the actual built `.rpm`/`.deb`, not just that
+      `configure` detects the library. `ldd $(which distccd)` shows
+      whether the binary itself now dynamically links `libseccomp.so.2`;
+      `rpm -qp --requires <file>.rpm` / `dpkg-deb -I <file>.deb` show
+      whether that new link got auto-declared as a real package
+      dependency (RPM's/`alien`'s own shared-library dependency detection
+      does this automatically from the built binary — don't assume it
+      happened, read the actual built package). A real CI-built artifact
+      can be pulled down for this even without a real tag: `gh workflow
+      run package-release.yml --ref <branch> -f publish_container=false`
+      dispatches the real release-packaging pipeline on any branch without
+      publishing anything (no tag needed, see `doc/release-versioning.md`
+      for why only a real tag may ever drive an actual published release);
+      download the resulting artifact via `gh api
+      repos/<owner>/<repo>/actions/artifacts/<id>/zip` (`gh run download`
+      can fail on an artifact whose zip contains a same-named directory as
+      another entry — fetch the raw zip via `gh api` and unzip it
+      directly instead).
 
 ## 3. Distribution / scheduling behavior changes (`src/arg.c`'s `dcc_scan_args()`, host selection, fallback logic)
 
@@ -179,7 +216,15 @@ other needed the *basename*, not the raw path) in the same review round.
       *real, already-whitelisted* name (e.g. the container's actual
       `x86_64-linux-gnu-gcc`) earlier on the **server** container's own
       `$PATH` than the real compiler (the client's `$PATH` must stay
-      untouched, so only the server-side fallback is exercised); have the
+      untouched, so only the server-side fallback is exercised). **Use
+      the name the client actually sends, not the name the user typed**:
+      `dcc_gcc_rewrite_fqn()` (`src/compile.c`) rewrites a bare `gcc`
+      invocation to the target triplet (e.g. `x86_64-linux-gnu-gcc`)
+      client-side before the request is ever sent — a marker placed only
+      at a literal `gcc` on the server is silently never invoked (confirm
+      the actual name reaching the server from its own log if a marker
+      appears not to fire; a first attempt at issue #360/PR #408's own
+      negative test missed exactly this way). Have the
       marker `touch` a sentinel file and exit 0 without compiling anything.
       From the client, send a directory-qualified compiler path sharing
       that same basename but existing nowhere on the server. Verify from

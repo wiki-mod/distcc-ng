@@ -42,9 +42,31 @@ See `doc/release-versioning.md` for the full versioning and release process.
   Motivated by #401 and #402 having been filed as two separate issues for
   the same `pump.in` `ShutDown()` PR #400 review cycle; #402 was folded
   back into #401 and closed.
+- **`doc/release-checklist.md`**: new document gathering what must actually
+  be true before a release ships, distinct from `doc/release-versioning.md`
+  (the tagging/branching mechanics) and `doc/verification-checklist.md`
+  (per-change-category verification). States its own founding principle up
+  front: a green build proves nothing about correctness or safety -- issue
+  #360's own release-artifact seccomp regression shipped silently through
+  a build matrix that was green the entire time.
 
 ### Documentation
 
+- **`doc/verification-checklist.md`**: three further findings from real
+  verification of #360/PR #408, added to Section 2 and Section 3a. (1) A
+  concrete technique for a real seccomp negative test: a marker binary
+  calling a denylisted syscall (`ptrace`), installed under the name the
+  client actually sends server-side, not the name the user typed --
+  `dcc_gcc_rewrite_fqn()` rewrites a bare `gcc` to the target triplet
+  before the request is sent, so a marker at the literal typed name is
+  silently never invoked. (2) How to verify a new hard dependency (e.g.
+  `libseccomp`) got correctly auto-declared on a real built `.rpm`/`.deb`,
+  not just detected by `configure` -- `rpm -qp --requires`/`dpkg-deb -I`
+  against a real CI-built artifact, obtainable without a real tag via
+  `gh workflow run package-release.yml -f publish_container=false`. (3) A
+  `gh run download` gotcha when an artifact's zip contains a same-named
+  file/directory collision -- fetch the raw zip via `gh api
+  .../artifacts/<id>/zip` instead.
 - **`doc/verification-checklist.md`**: three findings from real cross-
   container verification of #287/PR #406 and #286/PR #405, added to
   Section 3a and Section 9. (1) The daemon's compiler-name whitelist
