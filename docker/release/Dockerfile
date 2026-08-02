@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       build-essential \
       ccache \
       libpopt-dev \
+      libseccomp-dev \
       libzstd-dev \
       pkg-config \
       python3-dev \
@@ -70,6 +71,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libpopt0 \
+      libseccomp2 \
       libzstd1 \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
@@ -107,6 +109,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libpopt0 \
+      libseccomp2 \
       libzstd1 \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
