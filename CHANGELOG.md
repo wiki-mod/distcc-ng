@@ -45,6 +45,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/verification-checklist.md`**: three findings from real cross-
+  container verification of #287/PR #406 and #286/PR #405, added to
+  Section 3a and Section 9. (1) The daemon's compiler-name whitelist
+  rejects an absolute/directory-qualified compiler name before
+  `dcc_execvp()`'s own fallback is ever reached, unless
+  `--enable-tcp-insecure`/`DISTCC_CMDLIST` is set -- a change touching
+  `dcc_execvp()` needs both configurations tested, not just one. (2) A
+  reusable real two-container technique for compiler-identity bugs: a
+  same-named "marker" substitute compiler placed earlier on the
+  *server's* own `$PATH`, verified via the server's own log plus a
+  sentinel file, not the client's exit code alone. (3) `make check`'s
+  `maintainer-check-no-set-path` re-run can fail with `distccd: not
+  found` on some Docker hosts (confirmed reproducing identically on a
+  clean `current_dev` checkout, not caused by either PR, and not
+  reproducing in this repo's own GitHub Actions `make_check` job) --
+  root cause not determined, documented as a known, unresolved
+  host-specific quirk rather than a code defect.
 - **`README.md`**: added a "Quick start (Docker)" section -- previously had
   zero mention of the published GHCR images at all, despite this fork
   publishing three separate images (`distcc-ng`, `distcc-ng-pump`,
