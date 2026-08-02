@@ -134,6 +134,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (an early attempt pointed `HOME` at a host path never bind-mounted
   into the container, producing a real `ccache: error: Permission
   denied` -- fixed by using a container-internal path instead).
+- **`docker/release/Dockerfile`** and **`.github/workflows/package-release.yml`**:
+  every real, published `distccd` artifact -- the `distcc-ng`/`distcc-ng-pump`/
+  `distcc-ng-nightly` container images and the `.rpm`/`.deb` packages built by
+  the release workflow -- previously built with `HAVE_SECCOMP` never defined,
+  so the seccomp sandbox for remote compiler processes (`src/sandbox-seccomp.c`)
+  compiled out entirely and the daemon logged a warning about it on every
+  startup (#360). Neither `docker/release/Dockerfile`'s build stage nor
+  `package-release.yml`'s own `apt` dependency list ever installed
+  `libseccomp-dev` -- confirmed by a real before/after build+run comparison
+  (baseline logs `Warning: built without libseccomp support...`, fixed build
+  logs `seccomp sandbox enabled for remote compiler processes`) and a real
+  compile through the fixed image. Swept for the same gap across every other
+  release-relevant file per AGENTS.md rule 73: `docker/verify/Dockerfile`,
+  `test/e2e/Dockerfile`, and `test/e2e-full/Dockerfile` already had
+  `libseccomp-dev`; `package-release.yml`'s `apt` list (used to build the real
+  `.rpm`/`.deb` release packages via `scripts/build-release-packages.sh`) did
+  not and is fixed in the same change.
 
 ### Fixed
 
