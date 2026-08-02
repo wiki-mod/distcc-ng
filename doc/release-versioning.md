@@ -38,6 +38,10 @@ automatically from commit messages or PR titles.
 
 ## Cutting A Release (Manual, Maintainer-Driven)
 
+**Before starting this process**, work through `doc/release-checklist.md` in
+full — this section covers the tagging/branching mechanics, not what must
+actually be true about the release's content before it ships.
+
 1. The maintainer decides the next version number (`X.Y.Z-NG`), informed by
    `CHANGELOG.md`'s `[Unreleased]` section — not derived from it automatically.
 2. Cut `release/X.Y.Z-NG` from `current_dev` (via the standard throwaway-branch

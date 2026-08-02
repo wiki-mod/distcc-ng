@@ -37,7 +37,8 @@ test/                    # comfychair-based test harness (testdistcc.py — real
                          # daemon+compile tests, not just unit tests)
 packaging/               # RPM/.deb packaging (rpm.spec, rpm.sh, deb.sh)
 docker/release/          # Release container image
-doc/                     # release-versioning.md, compatibility-policy.md, protocol docs
+doc/                     # release-versioning.md, release-checklist.md,
+                         # compatibility-policy.md, protocol docs
 scripts/                 # build-release-packages.sh, check-release-version.sh
 .github/workflows/       # c-build.yml (build+test), package-release.yml (tagged releases),
                          # changelog-check.yml, actionlint.yml
