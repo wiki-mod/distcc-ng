@@ -360,6 +360,18 @@ RUN set -eux; \
 # Non-root by default (matches docker/release/Dockerfile's convention);
 # a real distributed-compile verification run needs to bind a port and
 # read/write the mounted worktree, both of which work as a non-root user.
+#
+# Deliberately no build-arg-parameterized uid/gid here (issue #286
+# considered this -- "approach 1", a HOST_UID/HOST_GID build-arg matching
+# the caller's own host uid -- and confirmed empirically via this image's
+# own CI that it works cleanly). Not adopted: it would require rebuilding
+# this image locally with a matching build-arg any time the caller's own
+# uid differs from this image's baked-in 1000, which reintroduces exactly
+# the local build step issue #264's "pull and run, nothing to build"
+# requirement exists to avoid. `docker run --user $(id -u):$(id -g)`
+# (see doc/verification-checklist.md section 9) solves the same
+# bind-mount-ownership problem against this exact, unmodified,
+# already-published image instead, with no rebuild ever needed.
 RUN useradd --create-home --shell /bin/bash verify
 USER verify
 WORKDIR /home/verify

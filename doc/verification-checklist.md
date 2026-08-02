@@ -319,31 +319,71 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       diagnostic signal to add `--security-opt seccomp=unconfined` (or a
       custom seccomp profile explicitly allowing the denied syscall) rather
       than re-checking the capability flag again.
-- [ ] **A root-owned bind mount breaks `distccd`'s own privilege-drop
-      test.** Running the whole build+test step as container root (often
-      needed to work around a bind-mounted host checkout being owned by a
-      different uid than the image's own non-root user) arms `distccd`'s
-      real `dcc_discard_root()` privilege-drop-to-`uid=65534`/nobody
-      behavior (`test/testdistcc.py`'s `Unicode_Case`, exercised via `make
-      check`'s `maintainer-check-no-set-path` target) — which then fails
-      with a real "Permission denied" writing into the still-root-owned
-      test directory. This is not a bug in the drop behavior itself, only
-      a mismatch between "root in the container" and "a test that
-      deliberately changes uid mid-run." Do not fix this by making the
-      tree world-writable (masks real permission bugs) or skipping the
-      test (loses real coverage). Fix by using root only transiently to
-      `chown` the mounted tree to the image's own non-root user, then
-      actually running the build+test as that non-root user (`su -s
-      /bin/bash <user> -c '...'`) — matching how a real local `docker run`
-      already behaves when the same host user owns both sides of the
-      mount. **This resolves the immediate symptom, but reaching for root
-      at all — even transiently, even for a narrow `chown` — should not
-      become the unquestioned standing convention for every future
-      container-based verification effort just because it was the first
-      thing that worked.** Whether a build-arg matching the host uid,
-      Docker's own `--user` flag, or rootless Docker/user-namespace
-      remapping can avoid needing root here at all is tracked separately in
-      issue #286, not decided here.
+- [ ] **A bind-mounted host checkout owned by a different uid than the
+      image's own non-root user needs `docker run --user`, not root.**
+      When the bind-mounted checkout's owning uid (e.g. a CI runner's own
+      uid, or a local host user) differs from the image's baked-in
+      non-root user's uid, the container can't write into it under that
+      baked-in user at all ("Permission denied", or `autom4te: error:
+      cannot create autom4te.cache in ...: Permission denied"). Reaching
+      for `--user root` plus a transient `chown` to the image's own user,
+      then dropping to that user for the actual build+test (`su -s
+      /bin/bash <user> -c '...'`), was this repo's first working fix
+      (issue #264) — but running the whole step as container root along
+      the way arms `distccd`'s real `dcc_discard_root()` privilege-drop-
+      to-`uid=65534`/nobody behavior (`test/testdistcc.py`'s `Unicode_Case`,
+      exercised via `make check`'s `maintainer-check-no-set-path` target),
+      which then fails with a real "Permission denied" writing into the
+      still-root-owned test directory — not a bug in the drop behavior
+      itself, only a mismatch between "root in the container" and "a test
+      that deliberately changes uid mid-run."
+      **Resolved (issue #286): root is not actually necessary at all.**
+      `docker run --user "$(id -u):$(id -g)"` makes the container process
+      itself run as the *caller's* own uid, so it already owns the
+      bind-mounted checkout with no `chown`/`su`/root step anywhere —
+      confirmed empirically by a real CI run (PR #405) comparing the old
+      root+chown+su pattern against `--user $(id -u):$(id -g)` (and,
+      separately, against a build-arg-parameterized image rebuild matching
+      the host uid) on the exact same `docker/verify/Dockerfile` image and
+      the same real `./autogen.sh && ./configure && make && make check`:
+      all three produced byte-identical `test/testdistcc.py`/comfychair
+      results (138 OK, 16 NOTRUN, 0 FAIL, including root-only cases like
+      `Unicode_Case` and `AutogroupNicenessPrivilegeDrop_Case` correctly
+      NOTRUN-skipping identically under all three). `--user` was adopted
+      over the build-arg approach specifically because it needs no image
+      rebuild at all and works directly against the exact, unmodified,
+      already-published image — the build-arg approach would otherwise
+      have reintroduced a local build step for any caller whose own uid
+      doesn't match the image's baked-in default, which is exactly what
+      issue #264's "pull and run, nothing to build" requirement exists to
+      avoid. See `.github/workflows/verify-image-build.yml`'s "Real
+      distcc-ng build+test inside the image" step for the current, real
+      invocation.
+      **One real, empirically-confirmed companion requirement**: pass an
+      explicit `-e HOME=<a plain container-internal path, e.g.
+      /tmp/some-name>` and `mkdir -p "$HOME"` **inside the container's own
+      script**, before anything else runs. Docker does not synthesize an
+      `/etc/passwd` entry for a numeric `--user` uid with no matching name
+      in the image, so without an explicit `HOME`, such a uid gets
+      `$HOME=/`, which it cannot write to — breaking anything that
+      resolves a cache/config dir off `$HOME` (`ccache`'s own local cache
+      dir, in particular). Confirmed twice, once each way: first that the
+      override is necessary at all (the earlier build+test step's `make
+      check` failing without it), and separately that a *host*-side path
+      does not work as the value — an earlier version of the "ccache +
+      Redis remote-storage self-test" job set `-e HOME="$RUNNER_TEMP/some-
+      name"` and `mkdir -p` on that path **on the runner**, without
+      bind-mounting it into the container, so the container saw `$HOME`
+      pointing at a path that simply doesn't exist inside its own
+      filesystem at all — a real `ccache: error: Permission denied` CI
+      failure, not a permission-bits problem. The fix is a plain
+      container-internal path (`/tmp/...`) created by `mkdir -p` run as
+      part of the container's own command, never a host path assumed to
+      be visible inside the container without an explicit bind mount.
+      Rootless Docker/user-namespace remapping (the issue's third proposed
+      alternative) was not empirically tested: it wasn't needed once
+      `--user` was confirmed to work cleanly, and GitHub-hosted runners
+      don't offer a rootless Docker daemon to test it against anyway.
 - [ ] **A root-only test needs the specific capability its own syscall
       requires, not just "run as root."** Docker's default root capability
       set is not the same as a real host root's — `AutogroupNicenessPrivilegeDrop_Case`

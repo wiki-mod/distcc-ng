@@ -144,10 +144,12 @@ docker run --rm -v "$PWD:/work/src:rw" -w /work/src \
   bash -c './autogen.sh && ./configure PYTHON=python3 && make && make check'
 ```
 
-(If your host user doesn't already own the bind-mounted checkout the way
-CI's runner does, see `doc/verification-checklist.md` section 9 for the
-`chown`-then-drop-to-`verify`-user pattern that avoids arming `distccd`'s
-own root privilege-drop test by accident.)
+If the image's baked-in non-root user doesn't already own the bind-mounted
+checkout (your own uid differs from the image's default), add `--user
+"$(id -u):$(id -g)"` and `-e HOME=<a writable path>` to the `docker run`
+above instead of running as the image's default user or as root -- see
+`doc/verification-checklist.md` section 9 for why both flags are needed
+and what breaks without the `HOME` override.
 
 ### Workflow changes
 

@@ -92,6 +92,32 @@ See `doc/release-versioning.md` for the full versioning and release process.
   of this entry -- documented so the finding isn't rediscovered from
   scratch; see #398 for the full analysis and fix-direction discussion.
 
+### Security
+
+- **`.github/workflows/verify-image-build.yml`**: the "Real distcc-ng
+  build+test inside the image" and "ccache + Redis remote-storage
+  self-test" steps no longer run any part of `docker/verify`-based
+  verification as root (#286). Previously both ran the actual build+test
+  as container root, `chown -R`'d the bind-mounted checkout to the
+  image's non-root `verify` user, then dropped to that user via `su` --
+  a real, working fix (#264) for a uid mismatch between the runner's
+  checkout and the image's baked-in user, but root access was never
+  actually required for the mismatch itself. Replaced with
+  `docker run --user "$(id -u):$(id -g)"` plus an explicit
+  container-internal `-e HOME=...` -- no root, no `chown`, no `su`,
+  anywhere in this workflow. Confirmed via three real CI runs (baseline
+  root+chown+su vs. a build-arg-uid-match alternative vs. this `--user`
+  approach) that all three produce identical results (138 OK, 16 NOTRUN,
+  0 FAIL, byte-identical NOTRUN sets including root-gated tests like
+  `Unicode_Case` correctly still skipping); `--user` was chosen over the
+  build-arg alternative because it needs no image rebuild and works
+  directly against the already-published `distcc-ng-buildtools:latest`
+  image. `doc/verification-checklist.md` section 9 and `CONTRIBUTING.md`
+  updated to describe the new pattern and its real `HOME` requirement
+  (an early attempt pointed `HOME` at a host path never bind-mounted
+  into the container, producing a real `ccache: error: Permission
+  denied` -- fixed by using a container-internal path instead).
+
 ### Fixed
 
 - **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
