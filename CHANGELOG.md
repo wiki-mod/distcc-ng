@@ -190,6 +190,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/serve.c`, `include_server/parse_command.py`**: `--include=/path`
+  (GCC/Clang's combined-form force-include flag) was not recognized by
+  either the server-side argument rewriter (`tweak_include_arguments_for_
+  server()`'s `include_options[]` had `-include` but not `--include=`) or
+  the include server's own option parser (`CPP_OPTIONS_APPEARING_AS_
+  ASSIGNMENTS` had `--sysroot` but not `--include`) -- so a header pulled
+  in only via `--include=/absolute/client/path` was never mirrored to the
+  server and its path was never rewritten to the server's root_dir in pump
+  mode, causing a real "file not found" server-side. Found compiling a
+  real `-sys` crate (`aws-lc-sys`/BoringSSL) through pump mode.
 - **`test/testdistcc.py`**: `daemon_lifetime()` (default 60s, up to 300s for
   `BigAssFile_Case`) is a hard `alarm()`-based cutoff that kills the test
   daemon once it expires, regardless of whether a test is still using it --

@@ -133,6 +133,7 @@ class ParseCommandUnitTest(unittest.TestCase):
           + " -isystem system -Imice -iquote/and -I/men a.c "
           + " -include included_A.h "
           + " -includeincluded_B.h "
+          + " --include=included_C.h "
           + " -Wa,macros_A.s "
           + " -Wa,[macros_B.s] "
           + " -Wa,arch/x86/kernel/macros.s -Wa,- "
@@ -150,7 +151,7 @@ class ParseCommandUnitTest(unittest.TestCase):
        filepath),
       (('/and', 'mice', '/men', 'system'),
        ('mice', '/men', 'system'),
-       ["included_A.h", "included_B.h",
+       ["included_A.h", "included_B.h", "included_C.h",
         "macros_A.s", "macros_B.s", "arch/x86/kernel/macros.s"],
        'a.c'))
 
