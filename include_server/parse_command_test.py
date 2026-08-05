@@ -134,6 +134,8 @@ class ParseCommandUnitTest(unittest.TestCase):
           + " -include included_A.h "
           + " -includeincluded_B.h "
           + " --include=included_C.h "
+          + " -imacros included_D.h "
+          + " --imacros=included_E.h "
           + " -Wa,macros_A.s "
           + " -Wa,[macros_B.s] "
           + " -Wa,arch/x86/kernel/macros.s -Wa,- "
@@ -152,6 +154,7 @@ class ParseCommandUnitTest(unittest.TestCase):
       (('/and', 'mice', '/men', 'system'),
        ('mice', '/men', 'system'),
        ["included_A.h", "included_B.h", "included_C.h",
+        "included_D.h", "included_E.h",
         "macros_A.s", "macros_B.s", "arch/x86/kernel/macros.s"],
        'a.c'))
 

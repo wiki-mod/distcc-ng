@@ -1439,6 +1439,46 @@ int main(void) {
         return "--include=%s" % os.path.abspath(self.headerFilename())
 
 
+class ImacrosEqualsForceInclude_Case(CompileHello_Case):
+    """Same bug, same fix, for "--imacros=/absolute/path" (GCC/Clang's
+    combined form of -imacros: like --include=, but only the macro
+    definitions from the file are kept, any other output from scanning
+    it is discarded -- irrelevant here since headerFilename()'s content
+    is only a #define anyway).
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server()
+    and include_server/parse_command.py's CPP_OPTIONS_APPEARING_AS_
+    ASSIGNMENTS: both had "-imacros" but not "--imacros=", the same gap
+    already found and fixed for "--include=" (#416)."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "--imacros= server-side rewriting only applies in pump "
+                "mode (see --pump); in plain mode cpp runs client-side, "
+                "so --imacros= is resolved locally before the server ever "
+                "sees it, and clang/gcc legitimately warns 'argument "
+                "unused during compilation' passing it to a compile-only "
+                "invocation of an already-preprocessed .i file")
+        CompileHello_Case.setup(self)
+
+    def source(self):
+        # Deliberately does NOT #include headerFilename() itself: HELLO_WORLD
+        # must come exclusively from --imacros=, so a failure to rewrite its
+        # path server-side shows up as an undefined-macro compile error, not
+        # ambiguously alongside a normal #include of the same file.
+        return """
+#include <stdio.h>
+int main(void) {
+    puts(HELLO_WORLD);
+    return 0;
+}
+"""
+
+    def compileOpts(self):
+        return "--imacros=%s" % os.path.abspath(self.headerFilename())
+
+
 class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
     not a basename re-resolved via a fresh PATH search.
@@ -3459,6 +3499,7 @@ tests = [
          BackslashInMacro_Case,
          BackslashInFilename_Case,
          IncludeEqualsForceInclude_Case,
+         ImacrosEqualsForceInclude_Case,
          CPlusPlus_Case,
          ObjectiveC_Case,
          ObjectiveCPlusPlus_Case,
