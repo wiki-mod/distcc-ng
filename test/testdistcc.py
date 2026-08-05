@@ -1526,8 +1526,17 @@ class SysrootAbsolutePath_Case(CompileHello_Case):
         # header-less sysroot) completes.
         self.runcmd_unchecked(self.compileCmd())
 
-        log = self.waitForLogPattern(r"-isysroot (\S+)", 10)
-        m = re.search(r"-isysroot (\S+)", log)
+        # Anchored to "forking to execute" specifically (dcc_spawn_child()'s
+        # own unconditional trace, src/exec.c) -- the daemon log also shows
+        # the RAW, pre-rewrite argv earlier (e.g. "(dcc_r_argv) got
+        # arguments: ..."), and a bare "-isysroot" search matches that
+        # first, unrewritten occurrence instead of the final one actually
+        # used to spawn the compiler (confirmed empirically: an earlier,
+        # unanchored version of this regex matched the raw argv and always
+        # reported "not rewritten", even though tracing through the fix
+        # showed the eventual exec did get the correct rewritten path).
+        log = self.waitForLogPattern(r"forking to execute.*-isysroot (\S+)", 10)
+        m = re.search(r"forking to execute.*-isysroot (\S+)", log)
         rewritten = m.group(1)
         if rewritten == fake_sysroot:
             self.fail("sysroot path was not rewritten at all: %s" % rewritten)
