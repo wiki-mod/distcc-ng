@@ -1479,6 +1479,60 @@ int main(void) {
         return "--imacros=%s" % os.path.abspath(self.headerFilename())
 
 
+class SysrootAbsolutePath_Case(CompileHello_Case):
+    """Test that "-isysroot /absolute/path" has its path rewritten for the
+    server, the same way other absolute include-family paths already are.
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server():
+    include_options[] had no entry at all for "-isysroot"/"--sysroot=" --
+    include_server/compiler_defaults.py already accounts for a client
+    sysroot when deciding which absolute system-include directories need
+    mirroring to the server, so the header content lands in the right
+    place, but without this rewrite the compile command sent to the
+    server still names the client's own un-mirrored absolute sysroot
+    path, so the server compiler looks for headers there instead of
+    where they actually got mirrored to (root_dir + that path).
+
+    Uses a fully self-contained fake sysroot (not the real system one),
+    and a source with no real system-header dependency (no <stdio.h>):
+    pointing a real system's own header lookup at a fake sysroot would
+    break compilation for an unrelated reason, and testing against the
+    real system sysroot could accidentally pass even with the bug
+    present, since the real path already exists identically on both
+    "sides" of this single-host test setup."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "-isysroot server-side rewriting only applies in pump mode "
+                "(see --pump); in plain mode cpp runs client-side, so the "
+                "sysroot is resolved locally before the server ever sees it")
+        CompileHello_Case.setup(self)
+
+    def headerFilename(self):
+        sysroot_include = os.path.join(os.getcwd(), "fake_sysroot", "usr", "include")
+        if not os.path.isdir(sysroot_include):
+            os.makedirs(sysroot_include)
+        return os.path.join(sysroot_include, "testhdr.h")
+
+    def headerSource(self):
+        return "#define VALUE 42\n"
+
+    def source(self):
+        return """
+#include <testhdr.h>
+int main(void) {
+    return VALUE - 42;
+}
+"""
+
+    def compileOpts(self):
+        return "-isysroot %s" % os.path.join(os.getcwd(), "fake_sysroot")
+
+    def checkBuiltProgramMsgs(self, msgs):
+        self.assert_equal(msgs, '')
+
+
 class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
     not a basename re-resolved via a fresh PATH search.
@@ -3500,6 +3554,7 @@ tests = [
          BackslashInFilename_Case,
          IncludeEqualsForceInclude_Case,
          ImacrosEqualsForceInclude_Case,
+         SysrootAbsolutePath_Case,
          CPlusPlus_Case,
          ObjectiveC_Case,
          ObjectiveCPlusPlus_Case,

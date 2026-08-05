@@ -457,7 +457,22 @@ static int dcc_check_compiler_whitelist(char *_compiler_name)
  * needed. Without this entry, a client-supplied absolute path after
  * "--include=" was never rewritten to the server's root_dir, so the
  * server looked for a path that only exists on the client -- found
- * compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump mode. */
+ * compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump mode.
+ *
+ * "-isysroot"/"--sysroot=" had no entry here at all until found by a
+ * deliberate sweep for this same bug class: include_server/compiler_
+ * defaults.py already accounts for a client-supplied sysroot when
+ * deciding which absolute system-include directories need mirroring to
+ * the server, so the directory *contents* land correctly under root_dir
+ * -- but without a rewrite here, the compile command sent to the server
+ * still names the client's own absolute sysroot path, so the compiler
+ * looks for those headers at the un-mirrored client path instead of
+ * where the include server actually put them (root_dir + that path).
+ * Same rewrite mechanism as any other absolute path in this array --
+ * the sysroot argument names a directory rather than a file, but this
+ * function's rewrite is plain string prefixing with no file-vs-
+ * directory distinction, so no other logic change is needed here
+ * either. */
 static const char *include_options[] = {
     "-I",
     "-include",
@@ -470,6 +485,8 @@ static const char *include_options[] = {
     "-iwithprefixbefore",
     "-isystem",
     "-iquote",
+    "-isysroot",
+    "--sysroot=",
     NULL
 };
 
