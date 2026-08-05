@@ -60,6 +60,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`support-upstream/`**: retroactively added the mandatory upstream-
+  relevance writeups for PRs #415-#419 (missed at the time each PR was
+  opened) -- the `--lifetime` test-daemon timing fix, the `--include=`/
+  `--imacros=`/`-isysroot`/`--sysroot=` server-side pump-mode rewriting
+  gaps, and the `runcmd_background()` shell-exec-vs-fork hazard. All
+  five confirmed present in upstream's own live source at commit
+  `8d569d19`; one (the shell-exec hazard) cross-references upstream's
+  own prior, narrower fix for the same root cause (PR #548).
 - **`doc/verification-checklist.md`**: Section 9's rootless-Docker note
   corrected -- it previously claimed rootless Docker "was not empirically
   tested" and that "GitHub-hosted runners don't offer a rootless Docker
