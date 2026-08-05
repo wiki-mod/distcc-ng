@@ -206,6 +206,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/serve.c`**: `-isysroot`/`--sysroot=` had no entry at all in
+  `tweak_include_arguments_for_server()`'s `include_options[]` -- the
+  include server already accounts for a client sysroot when deciding
+  which absolute system-include directories to mirror to the server, so
+  header content landed in the right place, but the compile command
+  sent to the server still named the client's own un-mirrored absolute
+  sysroot path, so the server compiler looked for headers there instead
+  of where they actually got mirrored to. Found via the same sweep that
+  found `--imacros=`'s gap, after fixing `--include=` (#416).
 - **`src/serve.c`, `include_server/parse_command.py`**: `--imacros=/path`
   (GCC/Clang's combined form of `-imacros`) had the exact same gap just
   fixed for `--include=` -- missing from both `tweak_include_arguments_

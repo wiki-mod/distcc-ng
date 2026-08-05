@@ -1479,6 +1479,72 @@ int main(void) {
         return "--imacros=%s" % os.path.abspath(self.headerFilename())
 
 
+class SysrootAbsolutePath_Case(CompileHello_Case):
+    """Test that "-isysroot /absolute/path" has its path rewritten for the
+    server, the same way other absolute include-family paths already are.
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server():
+    include_options[] had no entry at all for "-isysroot"/"--sysroot=", so
+    a client-side absolute sysroot path was never rewritten to the
+    server's root_dir.
+
+    Checks the server's own log for the actual, rewritten argv it forked,
+    rather than requiring a full successful compile: whether the include
+    server's system-directory *mirroring* also handles an arbitrary,
+    fully self-contained sysroot is a separate question from whether
+    serve.c rewrites the sysroot argument's own path, and coupling both
+    in one test made it fragile across compilers -- confirmed via a real
+    CI failure reproduced on macOS/clang (clang's own stricter sysroot
+    validation affects what include_server/compiler_defaults.py's
+    compiler-probing sees) but not on Linux/gcc, tracing to the
+    mirroring/discovery side, not this fix."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "-isysroot server-side rewriting only applies in pump mode "
+                "(see --pump); in plain mode cpp runs client-side, so the "
+                "sysroot is resolved locally before the server ever sees it")
+        CompileHello_Case.setup(self)
+
+    def source(self):
+        # Content is irrelevant -- this test never checks compile success
+        # (see runtest() below), only needs a real (non-preprocessed) .c
+        # file so pump mode's server-side cpp actually engages.
+        return "int main(void) { return 0; }\n"
+
+    def compileOpts(self):
+        return "-isysroot %s" % os.path.abspath("fake_sysroot")
+
+    def runtest(self):
+        fake_sysroot = os.path.abspath("fake_sysroot")
+        os.makedirs(fake_sysroot)
+
+        # Exit code deliberately ignored -- this test only cares whether
+        # the argv the server forked has the sysroot path rewritten, not
+        # whether the job (which cannot really succeed against a fake,
+        # header-less sysroot) completes.
+        self.runcmd_unchecked(self.compileCmd())
+
+        # Anchored to "forking to execute" specifically (dcc_spawn_child()'s
+        # own unconditional trace, src/exec.c) -- the daemon log also shows
+        # the RAW, pre-rewrite argv earlier (e.g. "(dcc_r_argv) got
+        # arguments: ..."), and a bare "-isysroot" search matches that
+        # first, unrewritten occurrence instead of the final one actually
+        # used to spawn the compiler (confirmed empirically: an earlier,
+        # unanchored version of this regex matched the raw argv and always
+        # reported "not rewritten", even though tracing through the fix
+        # showed the eventual exec did get the correct rewritten path).
+        log = self.waitForLogPattern(r"forking to execute.*-isysroot (\S+)", 10)
+        m = re.search(r"forking to execute.*-isysroot (\S+)", log)
+        rewritten = m.group(1)
+        if rewritten == fake_sysroot:
+            self.fail("sysroot path was not rewritten at all: %s" % rewritten)
+        if not rewritten.endswith(fake_sysroot):
+            self.fail("rewritten sysroot %r does not end with the original %r" %
+                       (rewritten, fake_sysroot))
+
+
 class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
     not a basename re-resolved via a fresh PATH search.
@@ -3500,6 +3566,7 @@ tests = [
          BackslashInFilename_Case,
          IncludeEqualsForceInclude_Case,
          ImacrosEqualsForceInclude_Case,
+         SysrootAbsolutePath_Case,
          CPlusPlus_Case,
          ObjectiveC_Case,
          ObjectiveCPlusPlus_Case,
