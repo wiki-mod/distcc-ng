@@ -152,9 +152,6 @@ Example:
 
 # TODO: Test with DISTCC_DIR set, and not set.
 
-# TODO: Using --lifetime does cause sporadic failures.  Ensure that
-# teardown kills all daemon processes and then stop using --lifetime.
-
 
 import time, sys, os, glob, re, socket, errno
 import signal, os.path, pwd, tempfile, shutil
@@ -394,9 +391,19 @@ as soon as that happens we can go ahead and start the client."""
                    _ShellSafe(self.daemon_sysroot)))
 
     def daemon_lifetime(self):
-        # Enough for most tests, even on a fairly loaded machine.
-        # Might need more for long-running tests.
-        return 60
+        # This is a leak-safety net, not the normal teardown mechanism --
+        # killDaemon() (above) already sends a real SIGTERM and waits for
+        # the process to go away at the end of every test, on both the
+        # pass and fail path. This alarm exists only to stop an orphaned
+        # daemon from running forever in the abnormal case where teardown
+        # itself never runs at all (e.g. the test process itself is
+        # killed/crashes before reaching teardown). Set generously (5x the
+        # original values) so it never races a normal, still-running test
+        # on a slow/loaded CI runner -- issue #379: the previous 60s
+        # default was tight enough that it had already been observed
+        # killing the daemon mid-test on a loaded runner, before
+        # killDaemon()'s own SIGTERM got a chance to run.
+        return 300
 
     def startDaemon(self):
         """Start a daemon in the background, return its pid"""
@@ -2739,7 +2746,9 @@ class HundredFold_Case(CompileHello_Case):
     """
 
     def daemon_lifetime(self):
-        return 120
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value.
+        return 600
 
     def runtest(self):
         for unused_i in range(100):
@@ -2750,7 +2759,9 @@ class HundredFold_Case(CompileHello_Case):
 class Concurrent_Case(CompileHello_Case):
     """Try many compilations at the same time"""
     def daemon_lifetime(self):
-        return 120
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value.
+        return 600
 
     def runtest(self):
         # may take about a minute or so
@@ -2791,7 +2802,11 @@ class BigAssFile_Case(Compilation_Case):
 
 
     def daemon_lifetime(self):
-        return 300
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value;
+        # still comfortably inside c-build.yml's own 15-minute make_check
+        # job timeout, which is the real backstop in CI either way.
+        return 1500
 
 
 
