@@ -2860,15 +2860,27 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
     compiler child, it also select()s on the client's own socket; once
     that read returns EOF (client gone), it logs "Client fd disconnected,
     killing job" and sends SIGTERM (killpg, falling back to a plain kill)
-    to the child. Uses "sleep" as the "compiler" -- distcc does not
-    itself check that argv[0] is a real compiler (see
-    BinFalse_Case/BinTrue_Case above) -- the same technique the original
-    upstream TODO for this scenario suggested ("Run 'sleep' as a
-    compiler... kill the client and make sure that the server and
-    'sleep' promptly terminate")."""
+    to the child. The original upstream TODO for this scenario suggested
+    "Run 'sleep' as a compiler" -- tried literally first, but GNU
+    coreutils' sleep parses its own argv rather than ignoring it like
+    "true"/"false" do (BinFalse_Case/BinTrue_Case above), so distcc's
+    appended "-c <path> -o <path>" makes it error out immediately instead
+    of actually sleeping (confirmed empirically: the job failed in well
+    under a second, never reaching the disconnect-detection window at
+    all). A tiny real shell script that never references its own
+    positional parameters -- so distcc's appended compile-style
+    arguments are harmlessly ignored -- sleeps for real instead."""
 
     def runtest(self):
         open("testtmp.i", "wt").write("int main() {}")
+
+        slow_compiler = os.path.abspath("slow_compiler")
+        f = open(slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 30\n")
+        finally:
+            f.close()
+        os.chmod(slow_compiler, 0o700)
 
         # runcmd_background() forks and execs "/bin/sh -c cmd" -- for a
         # single simple command like this one (a leading env-var
@@ -2876,14 +2888,14 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
         # rather than forking again, so the returned pid is the real
         # distcc client process, not a wrapper shell around it.
         client_pid = self.runcmd_background(
-            self.distcc_without_fallback() + "sleep 30 -c testtmp.i")
+            self.distcc_without_fallback() + slow_compiler + " -c testtmp.i")
 
-        # Wait for the server to have actually forked the "sleep" child --
-        # killing the client any earlier would race the job even
+        # Wait for the server to have actually forked the slow_compiler
+        # child -- killing the client any earlier would race the job even
         # starting. dcc_spawn_child() traces every forked argv
         # unconditionally (given --verbose, which WithDaemon_Case's
         # daemon_command() always passes).
-        self.waitForLogPattern(r"forking to execute.*sleep", 10)
+        self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
 
         # A real crash/network drop, not a graceful client exit -- SIGKILL
         # so the client cannot close its own socket cleanly on the way
