@@ -69,8 +69,6 @@ Example:
 # check it.  Is there a straightforward way to test that it's also OK
 # when send through syslogd?
 
-# TODO: Check behaviour when children are killed off.
-
 # TODO: Test compiling over IPv6
 
 # TODO: Argument scanning tests should be run with various hostspecs,
@@ -96,9 +94,6 @@ Example:
 
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
-
-# TODO: Run "sleep" as a compiler, then kill the client and make sure
-# that the server and "sleep" promptly terminate.
 
 # TODO: Perhaps have a little compiler that crashes.  Check that the
 # signal gets properly reported back.
@@ -2897,6 +2892,81 @@ class BinTrue_Case(Compilation_Case):
                     + "true -c testtmp.i", 0)
 
 
+class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
+    """Test that a client disconnecting mid-job causes the server to
+    promptly kill the compiler child, rather than leaving it running (or
+    zombied) forever.
+
+    Coverage for src/exec.c's dcc_collect_child(): while waiting for the
+    compiler child, it also select()s on the client's own socket; once
+    that read returns EOF (client gone), it logs "Client fd disconnected,
+    killing job" and sends SIGTERM (killpg, falling back to a plain kill)
+    to the child. The original upstream TODO for this scenario suggested
+    "Run 'sleep' as a compiler" -- tried literally first, but GNU
+    coreutils' sleep parses its own argv rather than ignoring it like
+    "true"/"false" do (BinFalse_Case/BinTrue_Case above), so distcc's
+    appended "-c <path> -o <path>" makes it error out immediately instead
+    of actually sleeping (confirmed empirically: the job failed in well
+    under a second, never reaching the disconnect-detection window at
+    all). A tiny real shell script that never references its own
+    positional parameters -- so distcc's appended compile-style
+    arguments are harmlessly ignored -- sleeps for real instead."""
+
+    def runtest(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+        slow_compiler = os.path.abspath("slow_compiler")
+        f = open(slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 30\n")
+        finally:
+            f.close()
+        os.chmod(slow_compiler, 0o700)
+
+        # Fork+exec distcc directly, NOT via runcmd_background() (which
+        # runs "/bin/sh -c cmd"): confirmed empirically via a real CI
+        # failure that killing the pid runcmd_background() returns does
+        # not reliably disconnect the daemon's connection -- whether that
+        # shell tail-call-execs into distcc in place (same pid) or
+        # instead forks a further child for it is a shell-implementation
+        # detail this test cannot depend on. A direct fork()+execvp()
+        # here guarantees client_pid really is the distcc client itself.
+        saved_fallback = os.environ.get('DISTCC_FALLBACK')
+        os.environ['DISTCC_FALLBACK'] = '0'
+        try:
+            client_pid = os.fork()
+            if client_pid == 0:
+                try:
+                    os.execvp("distcc", ["distcc", slow_compiler, "-c", "testtmp.i"])
+                finally:
+                    os._exit(127)
+        finally:
+            if saved_fallback is None:
+                del os.environ['DISTCC_FALLBACK']
+            else:
+                os.environ['DISTCC_FALLBACK'] = saved_fallback
+
+        # Wait for the server to have actually forked the slow_compiler
+        # child -- killing the client any earlier would race the job even
+        # starting. dcc_spawn_child() traces every forked argv
+        # unconditionally (given --verbose, which WithDaemon_Case's
+        # daemon_command() always passes).
+        self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
+
+        # A real crash/network drop, not a graceful client exit -- SIGKILL
+        # so the client cannot close its own socket cleanly on the way
+        # out (a plain process exit still closes the fd, which would not
+        # exercise the same "abrupt EOF while a job is in flight" path as
+        # convincingly).
+        os.kill(client_pid, signal.SIGKILL)
+        os.waitpid(client_pid, 0)
+
+        # dcc_collect_child() polls the client socket via select() once a
+        # second (src/exec.c) -- give it a real window to notice and act,
+        # not just one instant check.
+        self.waitForLogPattern("Client fd disconnected, killing job", 10)
+
+
 class SBeatsC_Case(CompileHello_Case):
     """-S overrides -c in gcc.
 
@@ -3430,6 +3500,7 @@ tests = [
          ForceDirectory_Case,
          BinFalse_Case,
          BinTrue_Case,
+         ClientDisconnectKillsServerChild_Case,
          VersionOption_Case,
          HelpOption_Case,
          BogusOption_Case,

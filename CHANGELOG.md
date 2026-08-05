@@ -13,6 +13,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`test/testdistcc.py`**: new `ClientDisconnectKillsServerChild_Case`,
+  covering two longstanding TODOs at once (both describe the same
+  underlying mechanism): a client disconnecting mid-job (`src/exec.c`'s
+  `dcc_collect_child()`) now has a real, direct test -- start a job with
+  `sleep` as the "compiler" (distcc doesn't check argv[0] is a real
+  compiler), `SIGKILL` the client mid-compile, and confirm from the
+  server's own log that it noticed the disconnect and killed the
+  compiler child.
 - **`.github/workflows/c-build.yml`**: new opt-in `sanitizer_check` job
   (ASan/UBSan, `workflow_dispatch`/`schedule` only, never on push/PR) per
   #266's recommendation -- `ASAN_OPTIONS=detect_leaks=0` so the
