@@ -69,8 +69,6 @@ Example:
 # check it.  Is there a straightforward way to test that it's also OK
 # when send through syslogd?
 
-# TODO: Check behaviour when children are killed off.
-
 # TODO: Test compiling over IPv6
 
 # TODO: Argument scanning tests should be run with various hostspecs,
@@ -96,9 +94,6 @@ Example:
 
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
-
-# TODO: Run "sleep" as a compiler, then kill the client and make sure
-# that the server and "sleep" promptly terminate.
 
 # TODO: Perhaps have a little compiler that crashes.  Check that the
 # signal gets properly reported back.
@@ -2856,6 +2851,54 @@ class BinTrue_Case(Compilation_Case):
                     + "true -c testtmp.i", 0)
 
 
+class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
+    """Test that a client disconnecting mid-job causes the server to
+    promptly kill the compiler child, rather than leaving it running (or
+    zombied) forever.
+
+    Coverage for src/exec.c's dcc_collect_child(): while waiting for the
+    compiler child, it also select()s on the client's own socket; once
+    that read returns EOF (client gone), it logs "Client fd disconnected,
+    killing job" and sends SIGTERM (killpg, falling back to a plain kill)
+    to the child. Uses "sleep" as the "compiler" -- distcc does not
+    itself check that argv[0] is a real compiler (see
+    BinFalse_Case/BinTrue_Case above) -- the same technique the original
+    upstream TODO for this scenario suggested ("Run 'sleep' as a
+    compiler... kill the client and make sure that the server and
+    'sleep' promptly terminate")."""
+
+    def runtest(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+        # runcmd_background() forks and execs "/bin/sh -c cmd" -- for a
+        # single simple command like this one (a leading env-var
+        # assignment, no pipes/lists), the shell exec-replaces itself
+        # rather than forking again, so the returned pid is the real
+        # distcc client process, not a wrapper shell around it.
+        client_pid = self.runcmd_background(
+            self.distcc_without_fallback() + "sleep 30 -c testtmp.i")
+
+        # Wait for the server to have actually forked the "sleep" child --
+        # killing the client any earlier would race the job even
+        # starting. dcc_spawn_child() traces every forked argv
+        # unconditionally (given --verbose, which WithDaemon_Case's
+        # daemon_command() always passes).
+        self.waitForLogPattern(r"forking to execute.*sleep", 10)
+
+        # A real crash/network drop, not a graceful client exit -- SIGKILL
+        # so the client cannot close its own socket cleanly on the way
+        # out (a plain process exit still closes the fd, which would not
+        # exercise the same "abrupt EOF while a job is in flight" path as
+        # convincingly).
+        os.kill(client_pid, signal.SIGKILL)
+        os.waitpid(client_pid, 0)
+
+        # dcc_collect_child() polls the client socket via select() once a
+        # second (src/exec.c) -- give it a real window to notice and act,
+        # not just one instant check.
+        self.waitForLogPattern("Client fd disconnected, killing job", 10)
+
+
 class SBeatsC_Case(CompileHello_Case):
     """-S overrides -c in gcc.
 
@@ -3388,6 +3431,7 @@ tests = [
          ForceDirectory_Case,
          BinFalse_Case,
          BinTrue_Case,
+         ClientDisconnectKillsServerChild_Case,
          VersionOption_Case,
          HelpOption_Case,
          BogusOption_Case,
