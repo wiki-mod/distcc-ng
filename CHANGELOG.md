@@ -206,6 +206,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
+  OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
+  trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
+  out or run anything from the fork, so carry none of the real risk), and a
+  pure explanatory comment in `changelog-check.yml` that only mentions
+  `github.event.pull_request.title`, never actually interpolates it. Now only
+  counts `pull_request_target` as risky when the same file also references
+  the PR's own head ref/sha (the actual dangerous combination), and strips
+  whole-line comments before searching for real interpolation. Re-verified
+  live against this repo's actual state (2026-08-05): now correctly reports
+  Met, and a constructed genuinely-risky pattern still correctly reports
+  NotMet.
 - **`src/serve.c`**: `-isysroot`/`--sysroot=` had no entry at all in
   `tweak_include_arguments_for_server()`'s `include_options[]` -- the
   include server already accounts for a client sysroot when deciding

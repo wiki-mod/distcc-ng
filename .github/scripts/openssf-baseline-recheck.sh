@@ -91,18 +91,45 @@ check_ac03() {
 }
 
 # OSPS-BR-01.01 / OSPS-BR-01.03: no workflow uses the dangerous
-# pull_request_target trigger, and no workflow interpolates untrusted
-# PR/issue/comment title or body text directly (this is a conservative,
+# pull_request_target trigger *in its actually-dangerous shape*, and no
+# workflow interpolates untrusted PR/issue/comment title or body text
+# directly.
+#
+# pull_request_target itself is not the risk -- it is safe (and a normal,
+# recommended pattern) for a workflow that only reads metadata (labels,
+# issue/PR numbers) via trusted, official actions, which is what both of
+# this repo's two users of it do (labeler.yml, add-to-project.yml: no
+# checkout, no execution of anything from the fork). The real OSPS-BR-01
+# concern is a workflow that ALSO checks out and runs the PR's own
+# (attacker-controlled) head commit while running with pull_request_target's
+# elevated, secret-bearing permissions -- confirmed by re-reading both files
+# directly against real repo state (2026-08-05) rather than trusting a bare
+# "does the string appear" grep, which flagged both as NotMet even though
+# neither is actually risky.
+#
+# So: only count a pull_request_target hit as risky if the SAME file also
+# references the PR's own head ref/sha (the standard way a workflow would
+# check out untrusted fork code) -- this is still a conservative,
 # over-inclusive grep across the whole file rather than a real YAML/shell
-# parse of run: step bodies -- it will flag a file that merely mentions the
-# pattern in a comment too, which is the safe direction for a recheck).
+# parse of run: step bodies, which is the safe direction for a recheck.
 check_br01() {
   local hits=0
-  if grep -rl "pull_request_target" .github/workflows/*.yml >/dev/null 2>&1; then
-    hits=1
-  fi
-  if grep -rE 'github\.event\.(pull_request|issue|comment)\.(title|body)' \
-      .github/workflows/*.yml >/dev/null 2>&1; then
+  local f
+  for f in .github/workflows/*.yml; do
+    if grep -q "pull_request_target" "${f}" 2>/dev/null \
+        && grep -qE 'pull_request\.head\.(sha|ref)' "${f}" 2>/dev/null; then
+      hits=1
+    fi
+  done
+  # A pure comment line (e.g. explaining *why* some other line reads this
+  # field) is not a real interpolation -- confirmed by a real false
+  # positive on changelog-check.yml, which only mentions
+  # github.event.pull_request.title inside a "# ..." explanatory comment,
+  # never actually uses it in a run: step. Strip whole-line comments
+  # before searching; a real inline interpolation never starts a line
+  # with "#" after leading whitespace, so this cannot mask an actual hit.
+  if grep -v '^[[:space:]]*#' .github/workflows/*.yml 2>/dev/null \
+      | grep -qE 'github\.event\.(pull_request|issue|comment)\.(title|body)'; then
     hits=1
   fi
   if [ "${hits}" -eq 0 ]; then
