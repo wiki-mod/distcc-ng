@@ -176,6 +176,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/e2e-full/docker-compose.yml`**: added `init: true` to both
+  `ng-node` and `native-node` services -- neither declared a real init, so
+  PID 1 was `sleep infinity`, which never reaps a reparented child.
+  `run-bidirectional-e2e.sh` starts and `pkill`s `distccd` in place, once
+  per leg, inside the same long-lived container across all four legs
+  (direction A/B x plain/pump) -- the same gotcha `doc/verification-
+  checklist.md` section 9 already documents (originally fixed for
+  `verify-image-build.yml` via PR #375/#377, but this file predates that
+  sweep by a week and was never checked afterward). Confirmed live running
+  the harness's real Samba workload: 4 `[distccd] <defunct>` zombies per
+  container without the fix, 0 with it (#264, #413).
+- **`test/e2e-full/run-bidirectional-e2e.sh`**: `DAEMON_JOBS` default
+  changed from a hardcoded `4` to `$(nproc)`, matching the variable's own
+  doc comment ("distccd --jobs value (default: nproc)"), which the code
+  never actually implemented -- was silently capping the server side below
+  the client's own `$(nproc)`-scoped build parallelism (#264, #413).
 - **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
   check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
   not implement at all -- always failing, so `ShutDown()` never sent the
