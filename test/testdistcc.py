@@ -2882,13 +2882,28 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
             f.close()
         os.chmod(slow_compiler, 0o700)
 
-        # runcmd_background() forks and execs "/bin/sh -c cmd" -- for a
-        # single simple command like this one (a leading env-var
-        # assignment, no pipes/lists), the shell exec-replaces itself
-        # rather than forking again, so the returned pid is the real
-        # distcc client process, not a wrapper shell around it.
-        client_pid = self.runcmd_background(
-            self.distcc_without_fallback() + slow_compiler + " -c testtmp.i")
+        # Fork+exec distcc directly, NOT via runcmd_background() (which
+        # runs "/bin/sh -c cmd"): confirmed empirically via a real CI
+        # failure that killing the pid runcmd_background() returns does
+        # not reliably disconnect the daemon's connection -- whether that
+        # shell tail-call-execs into distcc in place (same pid) or
+        # instead forks a further child for it is a shell-implementation
+        # detail this test cannot depend on. A direct fork()+execvp()
+        # here guarantees client_pid really is the distcc client itself.
+        saved_fallback = os.environ.get('DISTCC_FALLBACK')
+        os.environ['DISTCC_FALLBACK'] = '0'
+        try:
+            client_pid = os.fork()
+            if client_pid == 0:
+                try:
+                    os.execvp("distcc", ["distcc", slow_compiler, "-c", "testtmp.i"])
+                finally:
+                    os._exit(127)
+        finally:
+            if saved_fallback is None:
+                del os.environ['DISTCC_FALLBACK']
+            else:
+                os.environ['DISTCC_FALLBACK'] = saved_fallback
 
         # Wait for the server to have actually forked the slow_compiler
         # child -- killing the client any earlier would race the job even
