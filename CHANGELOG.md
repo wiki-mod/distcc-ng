@@ -206,6 +206,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`scripts/check-pr-tracking-metadata.sh`**: the project-board GraphQL
+  query (and the response-count check just below it) built a `python3 -c`
+  program by interpolating shell values straight into the Python source
+  text, with `pr_number`/`project_number` landing as bare literals rather
+  than string literals -- a non-numeric value produced a Python
+  `SyntaxError` instead of a clear error, and in the worst case a crafted
+  value would execute as Python. `pr_number` comes from `PR_NUMBER`,
+  which was only ever checked for presence (`:?`), never for shape.
+  Fixed both instances by passing `project_owner`/`pr_number`/`repo_name`/
+  `project_number` through the environment and reading them via
+  `os.environ` inside the Python program instead, which removes the
+  interpolation entirely, and added an explicit `PR_NUMBER`
+  positive-integer validation alongside the existing `:?` presence check
+  so a bad value now fails with a readable `::error::` message naming the
+  variable. Severity is low: `changelog-check.yml`'s `workflow_dispatch`
+  input can set an arbitrary-string `PR_NUMBER` for the `require_changelog`
+  job in the same file, but (verified while fixing this) the
+  `pr_tracking_metadata` job that actually runs this script is gated to
+  `pull_request` events only and always sources `PR_NUMBER` from
+  `github.event.pull_request.number`, which is always an integer -- so
+  this is a hardening fix for a latent footgun and a defense against a
+  future workflow change, not a live path today. (#364)
 - **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
   OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
   trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
