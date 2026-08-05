@@ -190,6 +190,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/testdistcc.py`**: `daemon_lifetime()` (default 60s, up to 300s for
+  `BigAssFile_Case`) is a hard `alarm()`-based cutoff that kills the test
+  daemon once it expires, regardless of whether a test is still using it --
+  a slow/loaded CI runner could outrun it, killing the daemon mid-test
+  before `killDaemon()`'s own `SIGTERM` teardown got a chance to run
+  (#379). Since `killDaemon()` already reliably tears the daemon down via
+  `SIGTERM` at the end of every test, the alarm is only meant as a
+  leak-safety net for the abnormal case where teardown itself never runs --
+  raised 5x across the board (60s/120s/300s -> 300s/600s/1500s) so it no
+  longer races a normal, still-running test.
 - **`test/e2e-full/docker-compose.yml`**: added `init: true` to both
   `ng-node` and `native-node` services -- neither declared a real init, so
   PID 1 was `sleep infinity`, which never reaps a reparented child.
