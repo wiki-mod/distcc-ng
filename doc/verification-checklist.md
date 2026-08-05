@@ -429,9 +429,14 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       the host uid) on the exact same `docker/verify/Dockerfile` image and
       the same real `./autogen.sh && ./configure && make && make check`:
       all three produced byte-identical `test/testdistcc.py`/comfychair
-      results (138 OK, 16 NOTRUN, 0 FAIL, including root-only cases like
-      `Unicode_Case` and `AutogroupNicenessPrivilegeDrop_Case` correctly
-      NOTRUN-skipping identically under all three). `--user` was adopted
+      results (138 OK, 16 NOTRUN, 0 FAIL at the time of PR #405, including
+      root-only cases like `Unicode_Case` and
+      `AutogroupNicenessPrivilegeDrop_Case` correctly NOTRUN-skipping
+      identically under all three; that 138 count has since grown to 142
+      as of `caee881d` -- PR #406 added one new test case,
+      `PathQualifiedCompilerNotSubstituted_Case` -- see the rootless-Docker
+      re-comparison below, which repeats this same check on the current
+      commit). `--user` was adopted
       over the build-arg approach specifically because it needs no image
       rebuild at all and works directly against the exact, unmodified,
       already-published image — the build-arg approach would otherwise
@@ -462,10 +467,58 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       container-internal path (`/tmp/...`) created by `mkdir -p` run as
       part of the container's own command, never a host path assumed to
       be visible inside the container without an explicit bind mount.
-      Rootless Docker/user-namespace remapping (the issue's third proposed
-      alternative) was not empirically tested: it wasn't needed once
-      `--user` was confirmed to work cleanly, and GitHub-hosted runners
-      don't offer a rootless Docker daemon to test it against anyway.
+      **Rootless Docker/user-namespace remapping (the issue's third
+      proposed alternative) has since been empirically tested too** (issue
+      #286 follow-up, since `--user` alone answers the immediate `chown`
+      problem but not the broader "should the daemon itself run as root"
+      question):
+      - **Real two-container distributed-compile e2e**, the actual
+        unmodified `test/e2e/run-e2e.sh` + `test/e2e/docker-compose.yml`
+        (the same script CI's `distributed_e2e` job runs), pointed at a
+        rootless Docker context (`DOCKER_CONTEXT=rootless`) instead of the
+        default rootful one: 187 real remote compiles, verified from the
+        server's own independent log, distributed object byte-identical to
+        a local-only build. Confirms rootless Docker's own daemon manages
+        custom bridge networking (IPAM, a fixed `10.88.0.0/24` subnet)
+        correctly from inside its own netns.
+      - **Real `make check` parity**, the exact `docker run` invocation
+        from `verify-image-build.yml`'s build+test step, differing only in
+        which daemon backs it, both at `caee881d`: rootful `--user
+        "$(id -u):$(id -g)"` and rootless `--user 1000:1000` (checkout
+        pre-`chown`ed into the rootless daemon's own subuid range) both
+        produced **142 OK, 16 NOTRUN, 0 FAIL**, `diff`-identical case-result
+        lists line for line, including the `Gdb_Case`/`GdbOpt1-3_Case`/
+        `GdbPrefixMap_Case` family.
+      - **GitHub-hosted-runner feasibility, tested directly** (the earlier
+        claim above that GitHub-hosted runners "don't offer a rootless
+        Docker daemon" was itself never actually tested — it was an
+        assumption): a genuine `ubuntu-latest` runner already has a
+        rootful daemon running, so `dockerd-rootless-setuptool.sh` needs
+        `FORCE_ROOTLESS_INSTALL=1` to install alongside it; separately,
+        Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1`
+        default blocks the unprivileged user-namespace creation rootless
+        Docker relies on, needing `sudo sysctl -w
+        kernel.apparmor_restrict_unprivileged_userns=0` first. With both
+        in place, a real container ran successfully through the resulting
+        rootless daemon on a genuine `ubuntu-latest` runner (job
+        `rootless_docker_ghactions_probe` in run
+        [30935447301](https://github.com/wiki-mod/distcc-ng/actions/runs/30935447301),
+        concluded `success`; the run's own overall status shows
+        `cancelled` because two unrelated jobs in the same throwaway probe
+        workflow were separately cancelled, not because this job failed).
+      - **Conclusion: rootless Docker is feasible, but not adopted.** Both
+        approaches produce byte-identical build/test results, so this is
+        purely a setup-cost/isolation-benefit tradeoff, not a correctness
+        one. Rootless needs two extra `sudo`-requiring setup steps per job
+        that `--user` needs zero equivalent of; that cost is paid on every
+        single job on this repo's actual CI (100% `ubuntu-latest`, no
+        `self-hosted` runner anywhere in `.github/workflows/`), for an
+        isolation benefit that matters far more on a persistent,
+        multi-tenant self-hosted host than on GitHub's ephemeral,
+        single-tenant-per-job runners. `--user` remains the standing
+        approach for this repo's CI; rootless Docker is documented here as
+        a viable option to revisit only if this repo ever adds a
+        persistent self-hosted runner.
 - [ ] **`make check`'s `distcc-maintainer-check`/`maintainer-check-no-
       set-path` chain can fail with `distccd: not found` on some Docker
       hosts even though the target's own `PATH="`pwd`:$(RESTRICTED_PATH)"`
