@@ -1416,6 +1416,17 @@ class IncludeEqualsForceInclude_Case(CompileHello_Case):
     found compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump
     mode."""
 
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "--include= server-side rewriting only applies in pump "
+                "mode (see --pump); in plain mode cpp runs client-side, "
+                "so --include= is resolved locally before the server ever "
+                "sees it, and clang/gcc legitimately warns 'argument "
+                "unused during compilation' passing it to a compile-only "
+                "invocation of an already-preprocessed .i file")
+        CompileHello_Case.setup(self)
+
     def source(self):
         # Deliberately does NOT #include headerFilename() itself: HELLO_WORLD
         # must come exclusively from --include=, so a failure to rewrite its
