@@ -46,7 +46,7 @@ source ./lib.sh
 
 readonly WORKLOAD="${WORKLOAD:-samba}"
 readonly WAF_TARGETS="${WAF_TARGETS:-}"
-readonly DAEMON_JOBS="${DAEMON_JOBS:-4}"
+readonly DAEMON_JOBS="${DAEMON_JOBS:-$(nproc)}"
 
 # /e2e-scripts is this same directory (test/e2e-full), bind-mounted
 # read-only into both containers by docker-compose.yml -- the workload
