@@ -447,9 +447,21 @@ static int dcc_check_compiler_whitelist(char *_compiler_name)
 #endif
 }
 
+/* "--include=" (GCC/Clang's combined-form force-include flag, e.g.
+ * "--include=/path/to/header.h") is listed separately from "-include" (the
+ * older two-token form): tweak_include_arguments_for_server() below treats
+ * whatever matched here as a literal prefix immediately followed by the
+ * path, exactly like it already does for "-Ifoo" -- listing the "="
+ * as part of the array entry (matching prefix_map_options's own
+ * "-ffile-prefix-map=" style below) means no other logic change is
+ * needed. Without this entry, a client-supplied absolute path after
+ * "--include=" was never rewritten to the server's root_dir, so the
+ * server looked for a path that only exists on the client -- found
+ * compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump mode. */
 static const char *include_options[] = {
     "-I",
     "-include",
+    "--include=",
     "-imacros",
     "-idirafter",
     "-iprefix",

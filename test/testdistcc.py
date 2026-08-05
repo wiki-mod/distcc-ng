@@ -1403,6 +1403,36 @@ int main(void) {
 }
 """
 
+class IncludeEqualsForceInclude_Case(CompileHello_Case):
+    """Test that "--include=/absolute/path" (GCC/Clang's combined-form
+    force-include flag) has its embedded absolute path rewritten for the
+    server, the same way the older two-token "-include /absolute/path"
+    form already is.
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server():
+    its include_options[] list had "-include" but not "--include=", so a
+    client-side absolute path following "--include=" was never rewritten to
+    the server's own root_dir and the server compiler could not find it --
+    found compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump
+    mode."""
+
+    def source(self):
+        # Deliberately does NOT #include headerFilename() itself: HELLO_WORLD
+        # must come exclusively from --include=, so a failure to rewrite its
+        # path server-side shows up as an undefined-macro compile error, not
+        # ambiguously alongside a normal #include of the same file.
+        return """
+#include <stdio.h>
+int main(void) {
+    puts(HELLO_WORLD);
+    return 0;
+}
+"""
+
+    def compileOpts(self):
+        return "--include=%s" % os.path.abspath(self.headerFilename())
+
+
 class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
     not a basename re-resolved via a fresh PATH search.
@@ -3347,6 +3377,7 @@ tests = [
          ComputedInclude_Case,
          BackslashInMacro_Case,
          BackslashInFilename_Case,
+         IncludeEqualsForceInclude_Case,
          CPlusPlus_Case,
          ObjectiveC_Case,
          ObjectiveCPlusPlus_Case,

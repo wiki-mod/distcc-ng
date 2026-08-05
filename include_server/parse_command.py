@@ -164,7 +164,16 @@ CPP_OPTIONS_TWO_WORDS.update(CPP_OPTIONS_ALWAYS_TWO_WORDS)
 # b) always take an argument, and c) have that argument separated from
 # the option by '='.
 CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS = {
-  '--sysroot':     lambda ps, arg: ps.set_sysroot(arg)
+  '--sysroot':     lambda ps, arg: ps.set_sysroot(arg),
+  # GCC/Clang's combined-form force-include flag ("--include=/path/to/hdr.h"),
+  # the same option as '-include' above (CPP_OPTIONS_MAYBE_TWO_WORDS) in its
+  # older two-token form. Without this, a header pulled in only via
+  # "--include=" was never added to include_files, so the include server
+  # never mirrored it to the server at all in pump mode -- found together
+  # with the matching src/serve.c gap (tweak_include_arguments_for_server()'s
+  # include_options[]) while investigating a real -sys crate build failure
+  # (aws-lc-sys/BoringSSL).
+  '--include':     lambda ps, arg: ps.include_files.append(arg),
 }
 
 # These are the cpp options that do not take an argument.
