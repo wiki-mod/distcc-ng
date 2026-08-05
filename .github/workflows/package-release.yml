@@ -66,6 +66,19 @@ jobs:
       # property, applied to setup instead of build_container. This also
       # resolves the same open question PR #354's 7207b01 left unverified
       # for e2e-image-build.yml.
+      #
+      # This value only ever changes if setup itself is re-run, which
+      # "Re-run failed jobs" never does once setup has succeeded (it almost
+      # always does, being pure string handling with no external
+      # dependency). GitHub's job-rerun API docs state that re-running a job
+      # also re-runs the jobs that depend on it -- not independently tested
+      # here, only relied on by inference -- so a deliberate, out-of-band
+      # rerun of just this job would be expected to cascade to
+      # build_container and publish_manifest too, keeping all three in
+      # step; see the "Upload this run's digest" step below for the one
+      # narrower rerun shape (a single already-succeeded matrix leg,
+      # forced in isolation) that neither this fix nor the prior code
+      # actually covers.
       run_attempt: ${{ steps.meta.outputs.run_attempt }}
     steps:
       # Trial run (#58): audit-only egress monitoring, does not block any
@@ -396,26 +409,36 @@ jobs:
           printf '%s\n' "${digest}" > "digest-${{ matrix.variant }}-${{ matrix.platform }}.txt"
 
       - name: Upload this run's digest
-        # Artifact name includes an attempt number: GitHub's v4 artifacts
-        # can be fetched across previous attempts of the same run unless
-        # explicitly scoped, so a fresh arm64 failure on a rerun (retrying
-        # the same workflow run) could otherwise still recover an earlier
-        # attempt's successful arm64 digest artifact -- the exact stale-
-        # pairing risk this digest mechanism exists to prevent, just moved
-        # from the registry tag to the artifact store.
+        # Artifact name includes an attempt discriminator: GitHub's v4
+        # artifacts can be fetched across previous attempts of the same run
+        # unless explicitly scoped, so an unscoped name could resolve a
+        # stale, earlier attempt's digest artifact instead of this run's own
+        # -- the stale-pairing risk this digest mechanism exists to prevent,
+        # just moved from the registry tag to the artifact store.
         #
-        # Deliberately needs.setup.outputs.run_attempt, NOT this job's own
-        # github.run_attempt (issue #363): on a "Re-run failed jobs" where
-        # this job already succeeded and publish_manifest failed,
-        # build_container is not re-run, so its own github.run_attempt is
-        # never even evaluated again -- but if it were (e.g. a rerun that
-        # also targets this leg), it would report the NEW, incremented
-        # attempt number while publish_manifest's download pattern below
-        # must match the name THIS upload actually used. Both producer and
-        # consumer instead read the same needs.setup.outputs.run_attempt,
-        # which is pinned to whichever attempt setup itself last actually
-        # ran in -- see that job output's comment for the empirical
-        # confirmation that this value really does survive a rerun.
+        # Deliberately needs.setup.outputs.run_attempt (issue #363), NOT
+        # this job's own github.run_attempt -- see that job output's comment
+        # for the empirical confirmation that a not-re-run job's output
+        # really does survive a rerun, and for why this sidesteps a matrix
+        # job's own overwritten-outputs sharp edge.
+        #
+        # Why this still closes the original stale-pairing gap despite the
+        # suffix no longer changing on every attempt: "Re-run failed jobs"
+        # (the actual failure mode in #363) never re-executes a leg whose
+        # own conclusion was already success, and arm64's continue-on-error
+        # above means even a *failing* arm64 build is reported success --
+        # so within one run, each leg's upload step runs at most once across
+        # every attempt, and it always runs before setup could ever have
+        # been forced to produce a second, different run_attempt value.
+        # Every artifact that exists for this run therefore carries the one
+        # value setup resolved, and there is no earlier-attempt duplicate of
+        # the same name to collide with.
+        # Residual sharp edge, not fully closed by either the old or this
+        # scheme: manually force-rerunning one already-succeeded matrix leg
+        # in isolation (GitHub's per-job rerun, not "Re-run failed jobs")
+        # re-executes only that leg -- its sibling legs' artifacts, and
+        # setup's output, are untouched either way, so a maintainer doing
+        # this deliberately should expect to need a full rerun instead.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}-${{ needs.setup.outputs.run_attempt }}
