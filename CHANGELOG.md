@@ -228,6 +228,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `github.event.pull_request.number`, which is always an integer -- so
   this is a hardening fix for a latent footgun and a defense against a
   future workflow change, not a live path today. (#364)
+- **`.github/workflows/package-release.yml`**: `publish_manifest` derived the
+  digest-artifact pattern it downloads from its own `github.run_attempt`,
+  while `build_container` (a different job) uploaded using ITS OWN
+  `github.run_attempt`. On a real "Re-run failed jobs" -- where
+  `build_container` already succeeded and is therefore not re-run, but
+  `run_attempt` still increments for the jobs that are -- the two numbers
+  diverged and `publish_manifest` could never find the artifacts again,
+  making a real tagged release's manifest step permanently unrecoverable via
+  the normal retry path. Same error class as PR #354's `7207b01` fix for
+  `e2e-image-build.yml`; found by extending that sweep to the rest of the
+  repository (#363). Fix: the attempt number is now resolved once, as a job
+  output of the existing non-matrixed `setup` job (already a `needs:` of
+  both `build_container` and `publish_manifest`), and both producer and
+  consumer read `needs.setup.outputs.run_attempt` instead of re-evaluating
+  `github.run_attempt` in their own job context. Confirmed empirically
+  (scratch probe, PR #423, closed unmerged) that a not-re-run job's outputs
+  do survive into a later attempt via the `needs` context -- see the code
+  comment on `setup`'s `run_attempt` output for the real run URL and log
+  evidence, which resolves the same open question PR #354 had left
+  unverified.
 - **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
   OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
   trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
