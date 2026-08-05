@@ -174,6 +174,11 @@ CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS = {
   # include_options[]) while investigating a real -sys crate build failure
   # (aws-lc-sys/BoringSSL).
   '--include':     lambda ps, arg: ps.include_files.append(arg),
+  # Same gap, same fix, for '-imacros' (CPP_OPTIONS_MAYBE_TWO_WORDS above):
+  # GCC/Clang also document a "--imacros=file" combined form
+  # (https://gcc.gnu.org/onlinedocs/gcc/Preprocessor-Options.html), which
+  # was missing here just like "--include=" was.
+  '--imacros':     lambda ps, arg: ps.include_files.append(arg),
 }
 
 # These are the cpp options that do not take an argument.

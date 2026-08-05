@@ -198,6 +198,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/serve.c`, `include_server/parse_command.py`**: `--imacros=/path`
+  (GCC/Clang's combined form of `-imacros`) had the exact same gap just
+  fixed for `--include=` -- missing from both `tweak_include_arguments_
+  for_server()`'s `include_options[]` and `parse_command.py`'s
+  `CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS`. Found via a deliberate sweep
+  for the same bug pattern elsewhere after fixing `--include=` (#416).
 - **`src/serve.c`, `include_server/parse_command.py`**: `--include=/path`
   (GCC/Clang's combined-form force-include flag) was not recognized by
   either the server-side argument rewriter (`tweak_include_arguments_for_

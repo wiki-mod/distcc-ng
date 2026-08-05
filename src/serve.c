@@ -463,6 +463,7 @@ static const char *include_options[] = {
     "-include",
     "--include=",
     "-imacros",
+    "--imacros=",
     "-idirafter",
     "-iprefix",
     "-iwithprefix",
