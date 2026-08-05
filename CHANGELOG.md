@@ -52,6 +52,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/verification-checklist.md`**: Section 9's rootless-Docker note
+  corrected -- it previously claimed rootless Docker "was not empirically
+  tested" and that "GitHub-hosted runners don't offer a rootless Docker
+  daemon to test it against anyway," both since found false (#286): a real
+  two-container e2e (187 remote compiles), a real `make check` parity
+  check (142/16/0, `diff`-identical to the existing `--user` approach),
+  and a direct GitHub Actions probe all confirm rootless Docker works,
+  including on `ubuntu-latest`, with two extra `sudo`-requiring setup
+  steps. Conclusion recorded: not adopted for this repo's actual CI (no
+  isolation benefit worth the per-job setup cost on ephemeral,
+  single-tenant runners), kept as a documented option for a future
+  self-hosted runner. Also corrected the stale "138 OK" baseline citation
+  to the current 142/16/0 count (test suite grew by one case, PR #406,
+  since that number was first recorded).
 - **`doc/verification-checklist.md`**: three further findings from real
   verification of #360/PR #408, added to Section 2 and Section 3a. (1) A
   concrete technique for a real seccomp negative test: a marker binary
