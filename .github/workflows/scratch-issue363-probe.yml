@@ -1,0 +1,52 @@
+name: SCRATCH issue363 run_attempt probe
+
+# THROWAWAY workflow for a one-off empirical experiment (issue #363). Not
+# meant to be merged; lives only on branch scratch/issue363-run-attempt-probe
+# and gets deleted together with that branch once the experiment is done.
+#
+# Question being answered: when GitHub's "Re-run failed jobs" starts a new
+# attempt without re-running a job that already succeeded, does that job's
+# `outputs:` (as seen via the `needs` context in a downstream job that IS
+# re-run) still reflect the values it set in the earlier, non-re-run
+# attempt? job_a always succeeds and stamps its own github.run_attempt into
+# an output. job_b deliberately fails on attempt 1 (via a step gated on
+# github.run_attempt == 1) and, on attempt 2, prints what it sees in
+# needs.job_a.outputs.producer_attempt alongside its own github.run_attempt.
+# If those differ (producer_attempt stays "1" while job_b's own attempt is
+# "2"), that proves the output survived from the non-re-run attempt.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  job_a:
+    runs-on: ubuntu-latest
+    outputs:
+      producer_attempt: ${{ steps.stamp.outputs.producer_attempt }}
+    steps:
+      - name: Stamp this attempt's run_attempt
+        id: stamp
+        shell: bash
+        run: |
+          echo "producer_attempt=${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "job_a ran on attempt ${{ github.run_attempt }}"
+
+  job_b:
+    needs: [job_a]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail deliberately on attempt 1 only
+        if: github.run_attempt == '1'
+        shell: bash
+        run: |
+          echo "deliberately failing job_b on attempt 1 so a rerun is needed"
+          exit 1
+
+      - name: Report what needs.job_a.outputs looks like on this attempt
+        shell: bash
+        run: |
+          echo "job_b's own github.run_attempt: ${{ github.run_attempt }}"
+          echo "needs.job_a.outputs.producer_attempt: ${{ needs.job_a.outputs.producer_attempt }}"
