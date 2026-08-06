@@ -13,6 +13,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/actions/harden-runner/`**: new composite action consolidating
+  17 verbatim copies of the Harden Runner step (issue #362 item 1) across
+  `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
+  `nightly-publish.yml`, `package-release.yml`, `verify-image-build.yml`.
+  Previously thought structurally blocked (a local composite action
+  requires `actions/checkout` to already have run, but Harden Runner must
+  remain the job's genuinely first step) -- unblocked by GitHub's new `$/`
+  self-repository `uses:` syntax (Changelog, 2026-07-30), which resolves
+  with no checkout required. Verified empirically against this repo's own
+  runners before rolling out (see issue #362's tracking comment for the
+  live evidence). New `.github/actionlint.yaml` suppresses actionlint's
+  current false positive on `$/` (not yet recognized upstream, tracked at
+  rhysd/actionlint#711), scoped to only `$/`-prefixed references so a
+  genuinely unpinned action elsewhere is still caught. The pinned
+  `step-security/harden-runner` SHA now only needs bumping in one place
+  instead of 17.
 - **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
   new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
   GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
