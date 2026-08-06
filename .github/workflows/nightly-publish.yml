@@ -64,19 +64,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/build-and-check
         with:
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-nightly-${{ github.run_id }}
-          restore-keys: |
-            ccache-nightly-
-      - run: ./autogen.sh
-      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
-      - run: make
-      - run: make check
+          cache-key-prefix: ccache-nightly
+          autoconf-cache-key-prefix: autoconf-nightly
 
   # --- Gate 2: real distributed-compile e2e (reuses the committed harness) --
   distributed_e2e:
@@ -90,8 +81,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - name: Run distributed-compile end-to-end test
-        run: bash test/e2e/run-e2e.sh
+      - uses: $/.github/actions/distributed-e2e-test
 
   # --- Publish, only if BOTH gates passed -----------------------------------
   publish:
@@ -112,9 +102,7 @@ jobs:
           # Full history so the nightly tag can be force-moved onto this commit.
           fetch-depth: 0
 
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
-        with:
-          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+      - uses: $/.github/actions/install-packaging-deps
 
       - name: Resolve the built commit
         # Under schedule/workflow_dispatch the workflow is evaluated from the

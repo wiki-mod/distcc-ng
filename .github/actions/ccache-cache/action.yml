@@ -1,0 +1,27 @@
+name: Cache the ccache object directory
+description: >-
+  Shared ccache actions/cache setup (issue #362 item 7) -- c-build.yml,
+  nightly-publish.yml, and package-release.yml all set the same
+  CCACHE_DIR and use the same rolling-key pattern (always restore the
+  latest for the given prefix, always save a new one -- actions/cache
+  no-ops a save on an exact key collision, so bumping github.run_id into
+  the key avoids that and keeps the cache warm across runs), differing
+  only in the key prefix.
+
+inputs:
+  path:
+    description: "Directory to cache, e.g. the caller's env.CCACHE_DIR"
+    required: true
+  key-prefix:
+    description: "e.g. 'ccache-nightly', 'ccache-release', or 'ccache-ubuntu-latest'"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key-prefix }}-${{ github.run_id }}
+        restore-keys: |
+          ${{ inputs.key-prefix }}-

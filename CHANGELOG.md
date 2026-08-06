@@ -11,6 +11,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`nightly-publish.yml`**: its packaging apt list was missing
+  `libseccomp-dev`, which `package-release.yml`'s own list already had --
+  the two had silently drifted (exactly the risk issue #362 item 6
+  warns about). `libseccomp` is an optional, auto-detected dependency
+  (`configure.ac`'s `--with-seccomp`, `PKG_CHECK_MODULES([SECCOMP],
+  [libseccomp >= 2.4], ...)`), so the gap never failed a build -- it
+  silently built nightly binaries without the seccomp sandbox instead.
+  Fixed by consolidating both workflows onto one shared list (see
+  `.github/actions/install-packaging-deps/`, item 6 below) that includes
+  it; nightly builds now also get the seccomp sandbox. Deliberate
+  behavior change, not incidental to the consolidation.
+
 ### Added
 
 - **`.github/actions/harden-runner/`**: new composite action consolidating
@@ -50,6 +64,33 @@ See `doc/release-versioning.md` for the full versioning and release process.
   PAT with `delete:packages`) while every other caller uses the default
   token. Uses the `$/` self-repository syntax (see issue #362 item 1 for
   the full rationale and `actionlint.yaml` suppression this also needs).
+- **`.github/actions/install-build-deps/`**, **`install-packaging-deps/`**,
+  **`ccache-cache/`**: new composite actions consolidating the duplicated
+  apt package lists and ccache `actions/cache` setup shared by
+  `c-build.yml`, `nightly-publish.yml`, and `package-release.yml`
+  (issue #362 items 6/7). `install-build-deps` takes an optional `brew`
+  input so `c-build.yml`'s matrixed macOS/Linux step (which needs both
+  `apt:` and `brew:` in one call) can still pass its own Homebrew list
+  through unchanged.
+- **`.github/actions/build-and-check/`**: new composite action
+  consolidating the 5-of-7-steps-identical `build_check` job body shared
+  by `nightly-publish.yml` and `package-release.yml` (issue #362 item 4)
+  -- install deps, ccache + autom4te.cache setup, `autogen.sh`,
+  `configure`, `make`, `make check`. Checkout (ref differs per caller)
+  and Harden Runner (presence differs -- both jobs are pure local
+  build/test with no GitHub API or registry write either way, so this is
+  a per-caller call, not something the action should decide) stay with
+  each caller. The autom4te.cache caching that only `package-release.yml`
+  had is now always applied (see the `Fixed` entry for the apt-list
+  asymmetry item 4 also resolves, same principle).
+- **`.github/actions/distributed-e2e-test/`**: new composite action
+  consolidating the identical "checkout, then run
+  `test/e2e/run-e2e.sh`" job shared by `c-build.yml`,
+  `nightly-publish.yml`, and `package-release.yml`'s own
+  `distributed_e2e` jobs (issue #362 item 5). `master-heartbeat.yml`'s
+  own `run-e2e.sh` call is deliberately not touched -- it sets
+  step-level `env:` overrides (`E2E_CLIENT_SCRIPT`, `E2E_MAX_ATTEMPTS`,
+  etc.) that a composite action's internal steps would not inherit.
 - **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
   new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
   GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
