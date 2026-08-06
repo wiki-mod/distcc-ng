@@ -4144,9 +4144,15 @@ class SSHMode_Case(CompileHello_Case):
         self._sshd_pidfile = sshd_pidfile
         self.add_cleanup(self.killSshd)
 
+        # -o UserKnownHostsFile=/dev/null discards the write but ssh still
+        # prints a "Warning: Permanently added ... to the list of known
+        # hosts" notice on stderr every time -- LogLevel=ERROR silences
+        # that (and other) sub-error noise without hiding a real
+        # connection failure, which ssh still reports at ERROR level.
         os.environ['DISTCC_SSH'] = (
             "%s -p %d -i %s -o StrictHostKeyChecking=no "
-            "-o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+            "-o UserKnownHostsFile=/dev/null -o BatchMode=yes "
+            "-o LogLevel=ERROR"
             % (ssh_bin, ssh_port, client_key))
         os.environ['DISTCC_HOSTS'] = '@127.0.0.1'
 
