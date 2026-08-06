@@ -24,7 +24,11 @@ if [ ! -f "$configure_ac" ]; then
     exit 1
 fi
 
-configured_version="$(sed -n 's/^AC_INIT(\[distcc\],\[\([^]]*\)\].*/\1/p' "$configure_ac")"
+# AC_INIT's package-name argument is "distcc-ng", not "distcc" -- the RPM/
+# deb package name is deliberately distinct from the distcc/distccd/pump
+# binary names, which keep their own upstream names unchanged. Match the
+# actual package name literally rather than assuming it equals a binary name.
+configured_version="$(sed -n 's/^AC_INIT(\[distcc-ng\],\[\([^]]*\)\].*/\1/p' "$configure_ac")"
 
 if [ -z "$configured_version" ]; then
     echo "error: could not parse AC_INIT version out of $configure_ac" >&2
