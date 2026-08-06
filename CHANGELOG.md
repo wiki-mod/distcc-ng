@@ -13,6 +13,33 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`pump.in`**: two `ShutDown()` process-liveness/identity bugs (issue #401,
+  split out from PR #400's review).
+  - **BSD/macOS `ps` fallback could miss a genuinely alive include
+    server.** `IncludeServerPidLooksRight()`'s non-`/proc` fallback called
+    plain `ps -o pid,args` with no process-selection flag; on BSD/macOS
+    `ps`, that silently omits a process with no controlling terminal --
+    exactly how the include server is started. Confirmed live on a real
+    `macOS-latest` GitHub Actions runner (not a PTY simulation): a
+    backgrounded, tty-less test child was `NOTFOUND` by the bare call, but
+    found by both `-A` and `-x`. Without this, a perfectly healthy include
+    server could be misreported as "doesn't look right", which callers
+    then read as "already gone, don't signal it" -- leaking it as an
+    unreaped orphan instead of shutting it down. Fixed by trying
+    `ps -A -o pid,args` first; the existing `-o pid,args`/bare `ps`
+    fallbacks stay for a `ps` that rejects `-A`.
+  - **The pre-SIGTERM send had no identity guard, only the SIGKILL
+    escalation did.** `pump --startup`/`pump --shutdown` are two separate
+    process invocations connected only by `$INCLUDE_SERVER_PID` in the
+    environment, so real wall-clock time can pass in which the real
+    include server exits and the OS recycles its pid for an unrelated
+    process before `--shutdown` runs -- and SIGTERM is just as fatal to
+    that unrelated process as SIGKILL. `IncludeServerPidLooksRight()` is
+    now checked before the SIGTERM send too, not just the SIGKILL
+    escalation. New regression test
+    `test/pump_shutdown_pid_identity_test.py` hands `pump --shutdown` the
+    pid of a real, unrelated running process and asserts it survives.
+
 - **`.github/workflows/openssf-baseline-recheck.yml`**: `check_br07()`
   (OSPS-BR-07.01, secret scanning + push protection) reads
   `repos/{repo}`'s `security_and_analysis` field, which GitHub only

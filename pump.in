@@ -591,8 +591,10 @@ IncludeServerAlive() {
 }
 
 # Portable check for "does this pid still look like the include server",
-# used only to guard the unrecoverable SIGKILL escalation below against a
-# stale/recycled pid. Reads /proc/$pid/cmdline directly where available
+# used to guard both the SIGTERM and the SIGKILL escalation below against a
+# stale/recycled pid -- SIGTERM is normally fatal too, so it needs the same
+# protection as SIGKILL, not just the unrecoverable escalation. Reads
+# /proc/$pid/cmdline directly where available
 # (Linux only, but that covers BusyBox too -- /proc is a kernel feature,
 # not a ps-flavor concern, so this works identically under musl and
 # glibc). The fallback below is for platforms without /proc at all
@@ -622,6 +624,21 @@ IncludeServerAlive() {
 # pid-recycling risk and allows escalation instead. When `ps` output does
 # contain real rows, a genuine "our pid isn't in there" result is trusted
 # as a real rejection.
+#
+# `-A` is requested first (issue #401 finding 1): a plain `ps -o pid,args`
+# with no selection flag can silently omit a process with no controlling
+# terminal on BSD/macOS ps -- confirmed live on a real macOS-latest GitHub
+# Actions runner (not a PTY simulation): a backgrounded, tty-less child
+# was NOTFOUND by bare `ps -o pid,args`, but FOUND by both `-A` and `-x`.
+# The include server is started detached (no controlling tty) by Main(),
+# so on macOS/BSD the un-flagged fallback used to be able to report a
+# perfectly healthy, correctly-identified include server as "doesn't look
+# right" -- which this function's callers then read as "already gone,
+# don't signal it", silently leaking the real include server as an
+# unreaped orphan process instead of shutting it down. `-A` is tried
+# first, `-o pid,args` alone stays as a fallback for a `ps` that rejects
+# `-A` (GNU/procps and BusyBox both already work correctly without it,
+# per the comment above, so this ordering costs them nothing).
 IncludeServerPidLooksRight() {
   if ! IsPositivePid "$1"; then
     return 1
@@ -630,7 +647,7 @@ IncludeServerPidLooksRight() {
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'include_server'
     return $?
   fi
-  ps_output=`ps -o pid,args 2>/dev/null` || ps_output=`ps 2>/dev/null`
+  ps_output=`ps -A -o pid,args 2>/dev/null` || ps_output=`ps -o pid,args 2>/dev/null` || ps_output=`ps 2>/dev/null`
   ps_rows=`echo "$ps_output" | sed 1d | grep -c '[^[:space:]]'`
   if [ "$ps_rows" -eq 0 ] 2>/dev/null; then
     return 0
@@ -649,57 +666,78 @@ ShutDown() {
   # Always -- at exit -- shut down include_server and remove $socket_dir
   if [ -n "$include_server_pid" ] && \
     IncludeServerAlive "$include_server_pid"; then
-    if [ "$verbose" = 1 ]; then
-      echo '__________Shutting down distcc-pump include server'
-    fi
-    if ! kill "$include_server_pid"; then
-      echo '__________Could not send SIGTERM to distcc-pump include server' 1>&2
+    # The SIGTERM below is normally fatal to whatever process receives it,
+    # exactly like the SIGKILL escalation further down, so it needs the same
+    # pid-identity guard rather than trusting $include_server_pid on the
+    # strength of the liveness check alone. This matters specifically for
+    # the two-invocation `pump --startup` / (arbitrary delay) / `pump
+    # --shutdown` path: those are two separate process invocations,
+    # connected only by $INCLUDE_SERVER_PID passed through the environment
+    # (see Main()'s --startup/--shutdown case arms), so real wall-clock time
+    # can pass in which the original include server exits and the OS
+    # recycles its pid for an unrelated process before --shutdown ever
+    # runs. The implicit-wrap path (plain `pump COMMAND`) forks the include
+    # server itself moments earlier in the very same script invocation, so
+    # this check is expected to always pass there; applying it
+    # unconditionally keeps ShutDown() itself simple rather than branching
+    # on which of the three Main() modes reached it.
+    if ! IncludeServerPidLooksRight "$include_server_pid"; then
+      echo '__________Not sending SIGTERM: pid' "$include_server_pid" \
+           'no longer looks like the include server (it likely already' \
+           'exited and the pid was reused)' 1>&2
     else
-      # Allow a short grace period for clean exit, then force kill.
-      include_server_wait_count=0
-      include_server_wait_limit=200   # 200 * 0.01s ~= 2s
-      while IncludeServerAlive "$include_server_pid"; do
-        if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
-          echo '__________Timed out waiting for distcc-pump include server' \
-               'to stop after SIGTERM' 1>&2
-          break
-        fi
-        include_server_wait_count=`expr "$include_server_wait_count" + 1`
-        sleep 0.01
-      done
-    fi
-
-    if IncludeServerAlive "$include_server_pid"; then
-      # SIGKILL is unrecoverable, unlike the SIGTERM sent above, so a
-      # stale/reused pid is worse here: if the include server already
-      # exited during the grace period above and the OS quickly recycled
-      # its pid for an unrelated process, we must not force-kill that
-      # process. Confirm the pid still looks like the include server
-      # (its command line contains the include-server script) before
-      # escalating.
-      if IncludeServerPidLooksRight "$include_server_pid"; then
-        echo '__________Sending SIGKILL to unresponsive distcc-pump' \
-             'include server' 1>&2
-        if kill -9 "$include_server_pid"; then
-          include_server_wait_count=0
-          include_server_wait_limit=100   # 100 * 0.01s ~= 1s
-          while IncludeServerAlive "$include_server_pid"; do
-            if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
-              echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
-                   1>&2
-              break
-            fi
-            include_server_wait_count=`expr "$include_server_wait_count" + 1`
-            sleep 0.01
-          done
-        else
-          echo '__________Error: could not send SIGKILL to distcc-pump include server' \
-               1>&2
-        fi
+      if [ "$verbose" = 1 ]; then
+        echo '__________Shutting down distcc-pump include server'
+      fi
+      if ! kill "$include_server_pid"; then
+        echo '__________Could not send SIGTERM to distcc-pump include server' 1>&2
       else
-        echo '__________Not sending SIGKILL: pid' "$include_server_pid" \
-             'no longer looks like the include server (it likely already' \
-             'exited and the pid was reused)' 1>&2
+        # Allow a short grace period for clean exit, then force kill.
+        include_server_wait_count=0
+        include_server_wait_limit=200   # 200 * 0.01s ~= 2s
+        while IncludeServerAlive "$include_server_pid"; do
+          if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+            echo '__________Timed out waiting for distcc-pump include server' \
+                 'to stop after SIGTERM' 1>&2
+            break
+          fi
+          include_server_wait_count=`expr "$include_server_wait_count" + 1`
+          sleep 0.01
+        done
+      fi
+
+      if IncludeServerAlive "$include_server_pid"; then
+        # SIGKILL is unrecoverable, unlike the SIGTERM sent above, so a
+        # stale/reused pid is worse here: if the include server already
+        # exited during the grace period above and the OS quickly recycled
+        # its pid for an unrelated process, we must not force-kill that
+        # process. Confirm the pid still looks like the include server
+        # (its command line contains the include-server script) before
+        # escalating.
+        if IncludeServerPidLooksRight "$include_server_pid"; then
+          echo '__________Sending SIGKILL to unresponsive distcc-pump' \
+               'include server' 1>&2
+          if kill -9 "$include_server_pid"; then
+            include_server_wait_count=0
+            include_server_wait_limit=100   # 100 * 0.01s ~= 1s
+            while IncludeServerAlive "$include_server_pid"; do
+              if [ "$include_server_wait_count" -ge "$include_server_wait_limit" ]; then
+                echo '__________Error: distcc-pump include server did not exit after SIGKILL' \
+                     1>&2
+                break
+              fi
+              include_server_wait_count=`expr "$include_server_wait_count" + 1`
+              sleep 0.01
+            done
+          else
+            echo '__________Error: could not send SIGKILL to distcc-pump include server' \
+                 1>&2
+          fi
+        else
+          echo '__________Not sending SIGKILL: pid' "$include_server_pid" \
+               'no longer looks like the include server (it likely already' \
+               'exited and the pid was reused)' 1>&2
+        fi
       fi
     fi
   fi

@@ -217,6 +217,7 @@ man8dir = $(mandir)/man8
 test_SOURCE = test/comfychair.py \
 	test/onetest.py \
 	test/pump_include_server_path_test.py \
+	test/pump_shutdown_pid_identity_test.py \
 	test/testdistcc.py \
 	find_c_extension.sh
 
@@ -819,7 +820,9 @@ maintainer-check-no-set-path: pump
 	  fi; \
 	  $(PYTHON) "$(srcdir)/test/testdistcc.py" $(TESTDISTCC_OPTS) && \
 	  $(PYTHON) "$(srcdir)/test/pump_include_server_path_test.py" \
-	    "$(builddir)/pump" "$(PYTHON)"; \
+	    "$(builddir)/pump" "$(PYTHON)" && \
+	  $(PYTHON) "$(srcdir)/test/pump_shutdown_pid_identity_test.py" \
+	    "$(builddir)/pump"; \
 	fi
 
 distcc-maintainer-check: check_programs
