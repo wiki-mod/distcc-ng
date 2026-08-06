@@ -44,6 +44,9 @@ permissions:
   # (#324); removed rather than kept "just in case".
   contents: read
 
+# Both jobs below are deliberately excluded from issue #361's fix: pure
+# read-only lint (no write scope, no secret consumed), and per that issue's
+# caveat 3 the runtime roughly doubling for a job this short isn't worth it.
 jobs:
   action-lint:
     runs-on: ubuntu-latest

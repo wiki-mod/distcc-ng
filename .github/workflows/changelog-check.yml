@@ -47,6 +47,10 @@ permissions:
   contents: read
   pull-requests: read
 
+# All three jobs below are deliberately excluded from issue #361's fix: they
+# only read PR metadata/diff and write a PR comment/label via the default
+# token, no long-lived secret, and per that issue's caveat 3 the runtime
+# roughly doubling for jobs this short isn't worth it.
 jobs:
   require_changelog:
     runs-on: ubuntu-latest
