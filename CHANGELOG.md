@@ -270,6 +270,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`test/testdistcc.py`**: second atomic pass over issue #275's remaining
+  header-block `TODO`s, each checked individually against the live source
+  (not sampled or trusted from a prior pass). Two fully resolved, removed:
+  "Have a little compiler that takes a very long time to run... try
+  interrupting the connection" (`ClientDisconnectKillsServerChild_Case`,
+  landed via PR #417, already covers this exact scenario -- the comment
+  was never removed at the time); "Test lzo is parsed properly"
+  (`CompressedCompile_Case` already does a real functional round-trip
+  compile through `,lzo`, plus `--lzo` runs the entire suite under lzo
+  compression and several hostspec-parsing tests already exercise `,lzo`
+  tokens). Two narrowed rather than removed, since only half of what they
+  describe is actually covered: the daemon-output-redirect TODO (every
+  daemon-based test already redirects to a file via `--log-file` and polls
+  it with `waitForLogPattern()`, and `BadLogFile_Case` covers the failure
+  case -- only the "also OK through syslogd" half remains open); the
+  `DISTCC_DIR` TODO (`HostFile_Case` already covers the *set* case --
+  every test's `stripEnvironment()` sets it unconditionally -- but no test
+  ever exercises it *unset*).
 - **`test/testdistcc.py`**: removed three stale header-block `TODO`s
   (issue #275) confirmed already covered by current code, re-verified
   against the live source rather than trusted from an earlier pass:

@@ -63,9 +63,11 @@ Example:
 
 # TODO: Do all this with malloc debugging on.
 
-# TODO: Redirect daemon output to a file so that we can more easily
-# check it.  Is there a straightforward way to test that it's also OK
-# when send through syslogd?
+# TODO: Is there a straightforward way to test that daemon output is
+# also OK when sent through syslogd? (Redirecting it to a file is no
+# longer a gap -- startDaemon()/waitForLogPattern() below already do
+# that for every daemon-based test, and BadLogFile_Case covers the
+# failure-to-open-logfile case.)
 
 # TODO: Test compiling over IPv6
 
@@ -96,10 +98,6 @@ Example:
 
 # TODO: Perhaps have a little compiler that crashes.  Check that the
 # signal gets properly reported back.
-
-# TODO: Have a little compiler that takes a very long time to run.
-# Try interrupting the connection and see if the compiler is cleaned
-# up in a reasonable time.
 
 # TODO: Try to build a nonexistent source file.  Check that we only
 # get one error message -- if there were two, we would incorrectly
@@ -137,9 +135,8 @@ Example:
 
 # TODO: Check again in --no-prefork mode.
 
-# TODO: Test lzo is parsed properly
-
-# TODO: Test with DISTCC_DIR set, and not set.
+# TODO: Test with DISTCC_DIR unset (every test above always sets it via
+# stripEnvironment(); HostFile_Case already covers the set case).
 
 
 import time, sys, os, glob, re, socket, errno
