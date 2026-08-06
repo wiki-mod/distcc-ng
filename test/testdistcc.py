@@ -2686,7 +2686,12 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
                      "done\n")
         finally:
             f.close()
-        os.chmod(compiler, 0o700)
+        # 0755, not 0700: the daemon-forked compiler child runs as the
+        # dropped-privilege DROP_USER, not root, and needs real "other"
+        # execute permission on this file (confirmed live: 0700 fails
+        # with "Permission denied", exit code 110, dcc_execvp()'s own
+        # error for an unexecutable compiler).
+        os.chmod(compiler, 0o755)
 
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
