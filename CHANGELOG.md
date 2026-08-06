@@ -192,9 +192,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   purely via the SSH session's own `$PATH`, which a fresh non-login SSH
   session does not inherit from the test process, so `sshd_config` needs
   its own `SetEnv PATH=...` pointed at the built binaries' directory.
-  Skips cleanly if `sshd`/`ssh-keygen`/`ssh` aren't found.
-  `.github/actions/install-build-deps/action.yml` now installs
-  `openssh-server`/`openssh-client` so this runs in CI too.
+  Deliberately not wired into CI: verified once, live, with `openssh-server`/
+  `openssh-client` installed by hand on a real host, not added to any shared
+  CI apt list -- this is a one-time verification that the mechanism works,
+  not meant to become a standing/recurring test with a permanent new CI
+  dependency footprint. Skips cleanly (`NotRunError`) wherever `sshd`/
+  `ssh-keygen`/`ssh` aren't installed, which is every CI runner today.
 - **`.github/actions/harden-runner/`**: new composite action consolidating
   17 verbatim copies of the Harden Runner step (issue #362 item 1) across
   `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
