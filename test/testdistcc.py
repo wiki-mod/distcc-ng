@@ -1991,9 +1991,8 @@ class Gdb_Case(CompileHello_Case):
         # between the two testtmp binaries.  For Microsoft PE output,
         # I've seen binaries differ in two places, though I don't know
         # why (timestamp?).  We do the best we can in those cases.
-        if _IsMachO('link/%s' % testtmp_exe):
-            # TODO(csilvers): we can do better (make sure all 16 bytes are
-            # consecutive, or even parse Mach-O to remove the UUID first).
+        is_macho = _IsMachO('link/%s' % testtmp_exe)
+        if is_macho:
             acceptable_diffbytes = 16
         elif _IsPE('link/%s' % testtmp_exe):
             acceptable_diffbytes = 2
@@ -2001,8 +2000,22 @@ class Gdb_Case(CompileHello_Case):
             acceptable_diffbytes = 0
         rc, msgs, errs = self.runcmd_unchecked("cmp -l link/%s run/%s"
                                                % (testtmp_exe, testtmp_exe))
+        diff_lines = msgs.strip().splitlines()
+        too_many_diffs = len(diff_lines) > acceptable_diffbytes
+        # issue #275: for Mach-O, also confirm the differing bytes are one
+        # *consecutive* run -- consistent with them really being the
+        # embedded UUID (a real, single, fixed-size field) rather than
+        # <=16 bytes scattered across the binary, which the plain count
+        # check above would let through as a false pass. `cmp -l`'s first
+        # column is the 1-indexed byte offset.
+        non_consecutive_diffs = False
+        if is_macho and diff_lines and not too_many_diffs:
+            offsets = [int(line.split()[0]) for line in diff_lines]
+            offsets.sort()
+            non_consecutive_diffs = (
+                offsets[-1] - offsets[0] + 1 != len(offsets))
         if (rc != 0 and
-            (errs or len(msgs.strip().splitlines()) > acceptable_diffbytes)):
+            (errs or too_many_diffs or non_consecutive_diffs)):
             # Just do the cmp again to give a good error message
             self.runcmd("cmp link/%s run/%s" % (testtmp_exe, testtmp_exe))
 
