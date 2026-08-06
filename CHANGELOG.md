@@ -231,6 +231,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/codeql.yml`**: master's branch ruleset has a native
+  "Require code scanning results" rule (`code_scanning_tools: CodeQL,
+  alerts_threshold: all`), a second, independent mechanism from the
+  `required_status_checks` list that already required the three
+  `Analyze (c-cpp/python/actions)` check-runs to exist. This job's
+  per-language path filter (added for #267/#336's own reason -- avoid a
+  full C build + scan on doc/workflow-only diffs) satisfies the check-run
+  requirement with a green skip, but a skipped language never calls
+  `codeql-action/analyze`, so it never uploads a SARIF result either --
+  which the native rule treats as unsatisfied regardless of the
+  check-run's own conclusion, blocking merge with "Code scanning is still
+  expecting N results from CodeQL". Confirmed live on PR #426 (a
+  `.github/workflows` + `CHANGELOG.md`-only diff against master):
+  permanently merge-blocked this way even with all three `Analyze` checks
+  green. Fixed by forcing all three languages relevant whenever the
+  target branch is `master`, regardless of what actually changed --
+  `current_dev` has no such ruleset rule and keeps the real path-filtered
+  optimization.
 - **`scripts/check-pr-tracking-metadata.sh`**: the project-board GraphQL
   query (and the response-count check just below it) built a `python3 -c`
   program by interpolating shell values straight into the Python source
