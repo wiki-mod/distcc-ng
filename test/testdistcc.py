@@ -71,21 +71,20 @@ Example:
 
 # TODO: Test compiling over IPv6
 
-# TODO: Argument scanning tests should be run with various hostspecs,
-# because that makes a big difference to how the client handles them.
+# Argument scanning tests across various hostspecs was declined (issue
+# #275): dcc_scan_args() (src/arg.c) takes only the compiler argv, never a
+# hostspec -- the distribute/local classification cannot possibly vary by
+# hostspec in the current architecture, so a hostspec-varying test would
+# be a no-op, always producing the same result ScanArgs_Case already
+# checks once.
 
 # TODO: Test that ccache gets hits when calling distcc.  Presumably
 # this is skipped if we can't find ccache.  Need to parse `ccache -s`.
-
-# TODO: Set TMPDIR to be inside the working directory, and perhaps
-# also set DISTCC_SAVE_TEMPS.  Might help for debugging.
 
 # Check that without DISTCC_SAVE_TEMPS temporary files are cleaned up.
 
 # TODO: Perhaps redirect stdout, stderr to a temporary file while
 # running?  Use os.open(), os.dup2().
-
-# TODO: Test crazy option arguments like "distcc -o -output -c foo.c"
 
 # TODO: Add test harnesses that just exercise the bulk file transfer
 # routines.
@@ -98,10 +97,6 @@ Example:
 
 # TODO: Perhaps have a little compiler that crashes.  Check that the
 # signal gets properly reported back.
-
-# TODO: Try to build a nonexistent source file.  Check that we only
-# get one error message -- if there were two, we would incorrectly
-# have tried to build the program both remotely and locally.
 
 # TODO: Test a compiler that produces 0 byte output.  I don't know an
 # easy way to get that out of gcc aside from the Apple port though.
@@ -134,9 +129,6 @@ Example:
 # TODO: Test backoff from downed hosts.
 
 # TODO: Check again in --no-prefork mode.
-
-# TODO: Test with DISTCC_DIR unset (every test above always sets it via
-# stripEnvironment(); HostFile_Case already covers the set case).
 
 
 import time, sys, os, glob, re, socket, errno
@@ -788,6 +780,14 @@ class ScanArgs_Case(SimpleDistCC_Case):
                  ("gcc -DMYNAME=quasibar.c bar.c -c -o bar.o", "distribute", "bar.c", "bar.o"),
                  ("gcc -ohello.o -c hello.c", "distribute", "hello.c", "hello.o"),
                  ("ccache gcc -c hello.c", "distribute", "hello.c", "hello.o"),
+
+                 # "Crazy option arguments" (issue #275): a -o VALUE that
+                 # itself looks like another flag must still be taken
+                 # literally as the output filename -- src/arg.c's
+                 # dcc_scan_args() takes the very next argv unconditionally
+                 # once it sees a bare "-o" ("Whatever follows must be the
+                 # output"), so it never re-parses "-output" as a flag.
+                 ("gcc -o -output -c foo.c", "distribute", "foo.c", "-output"),
                  ("gcc hello.o", "local"),
                  ("gcc -o hello.o hello.c", "local"),
                  ("gcc -o hello.o -c hello.s", "local"),
@@ -3196,6 +3196,25 @@ class MissingCompiler_Case(CompileHello_Case):
         self.assert_re_search(r'failed to exec', errs)
 
 
+class NonexistentSourceFile_Case(CompileHello_Case):
+    """Try to build a source file that was never created (issue #275).
+
+    We expect exactly one error message. If distcc's local-fallback path
+    ever incorrectly retried the compile locally after a remote failure,
+    the same "no such file" error would be reported a second time -- the
+    original concern this TODO recorded."""
+
+    def setup(self):
+        WithDaemon_Case.setup(self)
+        # Deliberately skip createSource(): testtmp.c is never written.
+
+    def runtest(self):
+        msgs, errs = self.runcmd(self.distcc_without_fallback()
+                                 + self._cc + " -o testtmp.o -c testtmp.c",
+                                 expectedResult=EXIT_DISTCC_FAILED)
+        self.assert_equal(len(re.findall(r'[Nn]o such file', errs)), 1)
+
+
 class PathQualifiedCompilerNotSubstituted_Case(CompileHello_Case):
     """A directory-qualified argv[0] missing on the server must fail
     loudly, never silently run a different same-named binary instead.
@@ -3454,6 +3473,29 @@ class HostFile_Case(CompileHello_Case):
         CompileHello_Case.teardown(self)
 
 
+class HostFileDistccDirUnset_Case(CompileHello_Case):
+    """Same coverage as HostFile_Case, but with $DISTCC_DIR itself unset
+    (issue #275) -- every other test in this suite always has it set, via
+    stripEnvironment()'s own unconditional os.environ['DISTCC_DIR'] = ddir,
+    so the ~/.distcc fallback path (src/tempfile.c's dcc_get_top_dir())
+    never otherwise gets exercised."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        del os.environ['DISTCC_HOSTS']
+        del os.environ['DISTCC_DIR']
+        self.save_home = os.environ['HOME']
+        os.environ['HOME'] = os.getcwd()
+        distcc_dir = os.path.join(os.environ['HOME'], '.distcc')
+        os.mkdir(distcc_dir)
+        open(distcc_dir + '/hosts', 'w').write('127.0.0.1:%d%s' %
+            (self.server_port, _server_options))
+
+    def teardown(self):
+        os.environ['HOME'] = self.save_home
+        CompileHello_Case.teardown(self)
+
+
 class Lsdistcc_Case(WithDaemon_Case):
     """Check lsdistcc"""
 
@@ -3620,12 +3662,14 @@ tests = [
          SyntaxError_Case,
          NoHosts_Case,
          MissingCompiler_Case,
+         NonexistentSourceFile_Case,
          PathQualifiedCompilerNotSubstituted_Case,
          RemoteAssemble_Case,
          PreprocessAsm_Case,
          ModeBits_Case,
          EmptySource_Case,
          HostFile_Case,
+         HostFileDistccDirUnset_Case,
          AbsSourceFilename_Case,
          Getline_Case,
          Unicode_Case,

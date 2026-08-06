@@ -105,6 +105,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`test/testdistcc.py`**: real new test coverage for three of issue #275's
+  longstanding header-block `TODO`s, rather than only re-triaging them.
+  - `NonexistentSourceFile_Case`: compiles a source file that was never
+    created and asserts exactly one "no such file" error is reported --
+    the original TODO's concern was a local-fallback retry after the
+    remote failure silently doubling the same error message.
+  - `HostFileDistccDirUnset_Case`: same coverage as `HostFile_Case`, but
+    with `$DISTCC_DIR` itself unset, exercising `src/tempfile.c`'s
+    `dcc_get_top_dir()` `~/.distcc` fallback -- every other test always
+    has `DISTCC_DIR` set via `stripEnvironment()`, so this path was never
+    otherwise reached.
+  - `ScanArgs_Case` gained a case for `gcc -o -output -c foo.c` (an output
+    filename that itself looks like a flag) -- confirmed via `src/arg.c`'s
+    `dcc_scan_args()` that a bare `-o` unconditionally takes the next argv
+    as the output, so this was already handled correctly, just untested.
+  - Declined, with reasoning recorded in the comment: "argument scanning
+    tests should be run with various hostspecs" -- `dcc_scan_args()` takes
+    only the compiler argv, never a hostspec, so the classification cannot
+    vary by hostspec in the current architecture; a hostspec-varying test
+    would be a structural no-op.
 - **`.github/actions/harden-runner/`**: new composite action consolidating
   17 verbatim copies of the Harden Runner step (issue #362 item 1) across
   `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
@@ -287,7 +307,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   case -- only the "also OK through syslogd" half remains open); the
   `DISTCC_DIR` TODO (`HostFile_Case` already covers the *set* case --
   every test's `stripEnvironment()` sets it unconditionally -- but no test
-  ever exercises it *unset*).
+  ever exercises it *unset*). Also removed the `TMPDIR`/`DISTCC_SAVE_TEMPS`
+  TODO, flagged as stale-and-removable back on 2026-07-21 but never
+  actually removed until now -- caught only by going back and re-checking
+  the *already-triaged* items too, not just the ones still marked open.
 - **`test/testdistcc.py`**: removed three stale header-block `TODO`s
   (issue #275) confirmed already covered by current code, re-verified
   against the live source rather than trusted from an earlier pass:
