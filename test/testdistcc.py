@@ -91,9 +91,6 @@ Example:
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
 
-# TODO: Perhaps have a little compiler that crashes.  Check that the
-# signal gets properly reported back.
-
 # TODO: Test a compiler that produces 0 byte output.  I don't know an
 # easy way to get that out of gcc aside from the Apple port though.
 
@@ -111,8 +108,6 @@ Example:
 # real root via sudo on a real Linux kernel, so the "may need root
 # privileges" limitation that deferred this for 15+ years no longer
 # applies for at least this one --user scenario.
-
-# TODO: Test that recursion safeguard works.
 
 # TODO: Test masquerade mode.  Requires us to create symlinks in a
 # special directory on the path.
@@ -3005,6 +3000,33 @@ class BinTrue_Case(Compilation_Case):
                     + "true -c testtmp.i", 0)
 
 
+class CrashingCompiler_Case(Compilation_Case):
+    """A compiler that crashes (issue #275): src/exec.c's
+    dcc_critique_status() converts a signaled child into a 128+signal
+    exit code (the Unix convention) and logs the signal name via
+    strsignal() -- never exercised by any existing test. BinFalse_Case/
+    BinTrue_Case above only cover a normal nonzero exit, not a real
+    signal death.
+
+    Uses a tiny real shell script (same technique as
+    ClientDisconnectKillsServerChild_Case's slow_compiler) rather than a
+    literal signal-sending binary, since none of coreutils' own tools
+    reliably kill themselves with a specific signal on all platforms."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        crasher = os.path.abspath("crashing_compiler")
+        f = open(crasher, "w")
+        try:
+            f.write("#!/bin/sh\nkill -SEGV $$\n")
+        finally:
+            f.close()
+        os.chmod(crasher, 0o700)
+        self.runcmd(self.distcc() + crasher + " -c testtmp.i", 128 + 11)
+
+
 class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
     """Test that a client disconnecting mid-job causes the server to
     promptly kill the compiler child, rather than leaving it running (or
@@ -3227,6 +3249,32 @@ class NoHosts_Case(CompileHello_Case):
         return self.distcc_with_fallback() + \
                self._cc + " -o testtmp.o -c %s" % (self.sourceFilename())
 
+
+
+class RecursionSafeguard_Case(CompileHello_Case):
+    """Test that the recursion safeguard works (issue #275).
+
+    src/safeguard.c's dcc_recursion_safeguard() reads _DISTCC_SAFEGUARD
+    from the environment (set by a prior distcc invocation via
+    dcc_increment_safeguard(), guarding against distcc somehow calling
+    itself, e.g. a misconfigured $CC or masquerade symlink loop); compile.c's
+    dcc_build_somewhere() checks it before anything else (`if (sg_level)
+    goto run_local;`, ahead of even dcc_scan_args()) and skips straight to
+    a local compile without ever attempting to contact a host.
+
+    Pre-setting it here and pointing DISTCC_HOSTS at a real TCP port with
+    nothing listening proves this directly: without the guard, this
+    compile would fail (nothing to connect to, no fallback host); with
+    it, distcc never even tries, and the compile succeeds."""
+
+    def runtest(self):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
+        os.environ['_DISTCC_SAFEGUARD'] = '1'
+        self.compile()
 
 
 class MissingCompiler_Case(CompileHello_Case):
@@ -3757,6 +3805,7 @@ tests = [
          ForceDirectory_Case,
          BinFalse_Case,
          BinTrue_Case,
+         CrashingCompiler_Case,
          ClientDisconnectKillsServerChild_Case,
          VersionOption_Case,
          HelpOption_Case,
@@ -3778,6 +3827,7 @@ tests = [
          ImpliedOutput_Case,
          SyntaxError_Case,
          NoHosts_Case,
+         RecursionSafeguard_Case,
          MissingCompiler_Case,
          NonexistentSourceFile_Case,
          PathQualifiedCompilerNotSubstituted_Case,
