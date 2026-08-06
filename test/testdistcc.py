@@ -91,17 +91,11 @@ Example:
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
 
-# TODO: Test a compiler that produces 0 byte output.  I don't know an
-# easy way to get that out of gcc aside from the Apple port though.
-
 # TODO: Test a compiler that sleeps for a long time; try killing the
 # server and make sure it goes away.
 
 # TODO: Test scheduler.  Perhaps run really slow jobs to make things
 # deterministic, and test that they're dispatched in a reasonable way.
-
-# TODO: Test a nasty cpp that always writes to stdout regardless of
-# -o.
 
 # Giving up privilege using --user is now covered, root-only, by
 # AutogroupNicenessPrivilegeDrop_Case below: GitHub Actions runners give
@@ -2954,6 +2948,65 @@ class BigAssFile_Case(Compilation_Case):
 
 
 
+class ZeroByteOutputCompiler_Case(Compilation_Case):
+    """A compiler that produces 0-byte output (issue #275). The original
+    TODO's blocking premise ("I don't know an easy way to get that out of
+    gcc aside from the Apple port") is obsolete: the same fake-executable
+    technique already used for fake_ssh/slow_compiler/crashing_compiler
+    elsewhere in this file trivially simulates it -- a tiny script that
+    creates its -o target via `touch` (a real, valid, genuinely empty
+    file) instead of actually compiling anything."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        compiler = os.path.abspath("zero_byte_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(compiler, 0o700)
+        self.runcmd(self.distcc() + compiler + " -c testtmp.i -o testtmp.o", 0)
+        self.assert_equal(os.path.getsize("testtmp.o"), 0)
+
+
+class NastyCppWritesStdout_Case(Compilation_Case):
+    """A "nasty" cpp/compiler that always writes to stdout regardless of
+    -o (issue #275). src/serve.c captures the compiler child's stdout
+    into a real "SOUT" wire-protocol slot, sent unconditionally,
+    independent of compile success (src/serve.c:989-992 send it before
+    the success/failure branch at 997), and src/clirpc.c streams it
+    straight through to the client's own real stdout
+    (`dcc_r_bulk(STDOUT_FILENO, ...)`) -- confirming this is already
+    handled by design, not a distcc bug, just never actually tested."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        compiler = os.path.abspath("nasty_stdout_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "echo NASTY_STDOUT_MARKER\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(compiler, 0o700)
+        out, errs = self.runcmd(self.distcc() + compiler +
+                                " -c testtmp.i -o testtmp.o")
+        self.assert_re_search("NASTY_STDOUT_MARKER", out)
+
+
 class BinFalse_Case(Compilation_Case):
     """Compiler that fails without reading input.
 
@@ -3803,6 +3856,8 @@ tests = [
          ZstdPumpCompile_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
+         ZeroByteOutputCompiler_Case,
+         NastyCppWritesStdout_Case,
          BinFalse_Case,
          BinTrue_Case,
          CrashingCompiler_Case,
