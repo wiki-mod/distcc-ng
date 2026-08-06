@@ -105,8 +105,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **`test/testdistcc.py`**: real new test coverage for three of issue #275's
+- **`test/testdistcc.py`**: real new test coverage for five of issue #275's
   longstanding header-block `TODO`s, rather than only re-triaging them.
+  - `IPv6Compile_Case`: a real compile over `[::1]`, both `distccd --listen`
+    and the client's `[addr]:port` hostspec syntax. Both were already
+    address-family-agnostic (`getaddrinfo()`/`AF_UNSPEC` in `src/srvnet.c`
+    and `src/access.c`; `src/hosts.c`'s `dcc_parse_tcp_host()` already
+    strips the brackets) -- this was purely an untested path, and
+    `src/hosts.c`'s own top-of-file doc comment ("IPv6 literals are not
+    supported yet") was stale and corrected in the same change. Skips
+    cleanly if the host has no IPv6 loopback.
+  - `CppFromStdin_Case`: compiles `gcc -x c -c -o testtmp.o -` with real
+    source piped through stdin. `src/arg.c`'s `dcc_scan_args()` never
+    recognizes a bare `-` as source (`dcc_is_source()` matches only by
+    extension), so this exercises its "no visible input file" local-only
+    path -- a real, deliberate fallback, not a bug, but previously
+    completely untested.
   - `NonexistentSourceFile_Case`: compiles a source file that was never
     created and asserts exactly one "no such file" error is reported --
     the original TODO's concern was a local-fallback retry after the

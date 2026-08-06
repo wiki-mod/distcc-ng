@@ -59,8 +59,6 @@ Example:
 # twice and examine the log file to make sure we got a hit.  Also
 # check that the binary works properly.
 
-# TODO: Test cpp from stdin
-
 # TODO: Do all this with malloc debugging on.
 
 # TODO: Is there a straightforward way to test that daemon output is
@@ -68,8 +66,6 @@ Example:
 # longer a gap -- startDaemon()/waitForLogPattern() below already do
 # that for every daemon-based test, and BadLogFile_Case covers the
 # failure-to-open-logfile case.)
-
-# TODO: Test compiling over IPv6
 
 # Argument scanning tests across various hostspecs was declined (issue
 # #275): dcc_scan_args() (src/arg.c) takes only the compiler argv, never a
@@ -2168,6 +2164,32 @@ large foo!
         pass
 
 
+class CppFromStdin_Case(Compilation_Case):
+    """Compile from stdin (issue #275): "gcc -x c -c - -o testtmp.o" with
+    real source piped in. src/arg.c's dcc_scan_args() never recognizes a
+    bare "-" via dcc_is_source() (that function matches only by filename
+    extension, and "-" has none), so *input_file stays NULL and the scan
+    returns EXIT_DISTCC_FAILED ("no visible input file") -- compile.c's
+    dispatch (`if (ret != 0) goto lock_local;`) then compiles directly and
+    unconditionally locally, independent of DISTCC_FALLBACK entirely (that
+    env var only matters for a failure *after* a remote attempt was made,
+    which never happens here). This is a real functional check that stdin
+    input still compiles successfully, not a distribution test.
+
+    Deliberately self-contained (no #include of a header file, unlike
+    CompileHello_Case): a quoted #include's search relative to "the
+    current file's own directory" is not well-defined for stdin, which
+    has no real path -- avoided entirely rather than relying on it."""
+
+    def source(self):
+        return "int foo(void) { return 0; }\n"
+
+    def runtest(self):
+        cmd = ("cat %s | %s%s -x c -c -o testtmp.o -" %
+               (self.sourceFilename(), self.distcc(), self._cc))
+        self.runcmd(cmd)
+
+
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
     def _readDaemonLog(self):
@@ -3496,6 +3518,48 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
         CompileHello_Case.teardown(self)
 
 
+class IPv6Compile_Case(CompileHello_Case):
+    """Compile over IPv6 (issue #275). distccd's own dcc_socket_listen()
+    (src/srvnet.c) and the client's hostspec parser (src/hosts.c's
+    dcc_parse_tcp_host(), which already handles bracketed "[addr]:port"
+    syntax) are both address-family-agnostic via getaddrinfo()/AF_UNSPEC --
+    this was purely an untested code path, not a missing feature. (The
+    "IPv6 literals are not supported yet" line in src/hosts.c's own top-of-
+    file doc comment is stale and contradicted by dcc_parse_tcp_host()'s
+    real bracket-parsing code a few hundred lines below it.)
+
+    Skips cleanly (NotRunError) if this host genuinely has no IPv6
+    loopback -- startDaemon()'s bind-retry loop only handles port
+    conflicts (EXIT_BIND_FAILED -> retry a higher port), not a missing
+    address family, so probing first here avoids a hang."""
+
+    def setup(self):
+        probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            probe.bind(('::1', 0))
+        except OSError:
+            raise comfychair.NotRunError('no IPv6 loopback on this host')
+        finally:
+            probe.close()
+        CompileHello_Case.setup(self)
+
+    def daemon_command(self):
+        return (self.distccd() +
+                "--verbose --lifetime=%d --daemon --log-file %s "
+                "--pid-file %s --port %d --listen ::1 --allow ::1 "
+                "--enable-tcp-insecure --sysroot %s"
+                % (self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+    def setupEnv(self):
+        WithDaemon_Case.setupEnv(self)
+        os.environ['DISTCC_HOSTS'] = ('[::1]:%d%s' %
+          (self.server_port, _server_options))
+
+
 class Lsdistcc_Case(WithDaemon_Case):
     """Check lsdistcc"""
 
@@ -3630,6 +3694,7 @@ tests = [
          CppError_Case,
          BadInclude_Case,
          PreprocessPlainText_Case,
+         CppFromStdin_Case,
          NoDetachDaemon_Case,
          AutogroupNicenessPrivilegeDrop_Case,
          SBeatsC_Case,
@@ -3670,6 +3735,7 @@ tests = [
          EmptySource_Case,
          HostFile_Case,
          HostFileDistccDirUnset_Case,
+         IPv6Compile_Case,
          AbsSourceFilename_Case,
          Getline_Case,
          Unicode_Case,
