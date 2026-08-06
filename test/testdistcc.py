@@ -54,8 +54,6 @@ Example:
 
 # TODO: Some kind of direct test of the host selection algorithm.
 
-# TODO: Test host files containing \r.
-
 # TODO: Test that ccache correctly caches compilations through distcc:
 # make up a random file so it won't hit, then compile once and compile
 # twice and examine the log file to make sure we got a hit.  Also
@@ -90,7 +88,8 @@ Example:
 # TODO: Add test harnesses that just exercise the bulk file transfer
 # routines.
 
-# TODO: Test -MD, -MMD, -M, etc.
+# TODO: Test -MMD and bare -M dependency generation (-MD itself is covered
+# by DashMD_DashMF_DashMT_Case/DashWpMD_Case below).
 
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
@@ -106,8 +105,6 @@ Example:
 # get one error message -- if there were two, we would incorrectly
 # have tried to build the program both remotely and locally.
 
-# TODO: Test compiling a 0-byte source file.  This should be allowed.
-
 # TODO: Test a compiler that produces 0 byte output.  I don't know an
 # easy way to get that out of gcc aside from the Apple port though.
 
@@ -116,9 +113,6 @@ Example:
 
 # TODO: Test scheduler.  Perhaps run really slow jobs to make things
 # deterministic, and test that they're dispatched in a reasonable way.
-
-# TODO: Test generating dependencies with -MD.  Possibly can't be
-# done.
 
 # TODO: Test a nasty cpp that always writes to stdout regardless of
 # -o.
