@@ -52,8 +52,6 @@ Example:
 # abstract superclasses just provide methods that can be called,
 # rather than establishing default behaviour.
 
-# TODO: Some kind of direct test of the host selection algorithm.
-
 # TODO: Do all this with malloc debugging on.
 
 # TODO: Is there a straightforward way to test that daemon output is
@@ -2812,6 +2810,113 @@ class ZstdPumpCompile_Case(CompileHello_Case):
             log)
 
 
+class HostSelectionAlgorithm_Case(CompileHello_Case):
+    """Direct test of the host-selection algorithm (issue #275).
+
+    src/where.c's dcc_lock_one() scans slot index 0, then 1, ...; within
+    each slot index it tries every configured host in DISTCC_HOSTS list
+    order, taking the first one with a free slot at that index
+    (src/lock.c's dcc_lock_host(), a real flock()-based lockfile per
+    host+slot). For *sequential* (not concurrently racing) dispatch this
+    is fully deterministic: with two single-slot hosts, a first job
+    always lands on the first host in the list, and a second job
+    launched while the first is still running is guaranteed to land on
+    the second host, since the first host's only slot is still locked.
+    (Concurrent dispatch under real load, e.g. `make -jN`, additionally
+    depends on which process's flock() call the kernel happens to
+    grant first when several race for the same slot -- that part is
+    not, and cannot be made, deterministic; this test only covers the
+    part of the algorithm that actually is.)
+
+    Starts two real distccd instances, each with exactly one job slot
+    (the "/1" hostspec suffix -- src/hosts.c's dcc_parse_multiplier()),
+    and a slow (sleeping) fake compiler so the first job's lock stays
+    held while the second job is dispatched. Confirms via each daemon's
+    own log which one actually served which compile, rather than just
+    asserting both compiles eventually succeeded."""
+
+    def setup(self):
+        SimpleDistCC_Case.setup(self)
+        self.slow_compiler = os.path.abspath("slow_compiler")
+        f = open(self.slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 3\n")
+        finally:
+            f.close()
+        os.chmod(self.slow_compiler, 0o700)
+
+        self.daemon_a_pidfile = os.path.join(os.getcwd(), "daemon_a.pid")
+        self.daemon_a_logfile = os.path.join(os.getcwd(), "daemon_a.log")
+        self.daemon_b_pidfile = os.path.join(os.getcwd(), "daemon_b.pid")
+        self.daemon_b_logfile = os.path.join(os.getcwd(), "daemon_b.log")
+        self.port_a = DISTCC_TEST_PORT
+        self.port_b = DISTCC_TEST_PORT + 1
+
+        self._start_daemon(self.port_a, self.daemon_a_pidfile,
+                           self.daemon_a_logfile)
+        self._start_daemon(self.port_b, self.daemon_b_pidfile,
+                           self.daemon_b_logfile)
+        self.add_cleanup(lambda: self._kill_daemon(self.daemon_a_pidfile))
+        self.add_cleanup(lambda: self._kill_daemon(self.daemon_b_pidfile))
+
+        os.environ['DISTCC_HOSTS'] = (
+            '127.0.0.1:%d/1 127.0.0.1:%d/1' % (self.port_a, self.port_b))
+        os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
+        os.environ['DISTCC_VERBOSE'] = '1'
+        self.createSource()
+
+    def _start_daemon(self, port, pidfile, logfile):
+        cmd = (self.distccd() +
+               "--verbose --lifetime=60 --daemon --jobs 1 --log-file %s "
+               "--pid-file %s --port %d --allow 127.0.0.1 "
+               "--enable-tcp-insecure" %
+               (_ShellSafe(logfile), _ShellSafe(pidfile), port))
+        result, out, err = self.runcmd_unchecked(cmd)
+        if result != 0:
+            self.fail("failed to start daemon on port %d: %s" %
+                      (port, err))
+
+    def _kill_daemon(self, pidfile):
+        try:
+            pid = int(open(pidfile, 'rt').read())
+        except IOError:
+            return
+        os.kill(pid, signal.SIGTERM)
+
+    def _waitForPattern(self, logfile, pattern, timeout):
+        deadline = time.time() + timeout
+        content = ""
+        while True:
+            try:
+                content = open(logfile).read()
+            except IOError:
+                content = ""
+            if re.search(pattern, content):
+                return content
+            if time.time() > deadline:
+                self.fail("timed out after %ds waiting for %r in %s, got:\n%s" %
+                          (timeout, pattern, logfile, content))
+            time.sleep(0.2)
+
+    def runtest(self):
+        job1_pid = self.runcmd_background(
+            self.distcc_without_fallback() + self.slow_compiler +
+            " -c testtmp.c -o job1.o")
+        # Confirms job 1 really landed on the first host in the list.
+        self._waitForPattern(self.daemon_a_logfile,
+                             r"forking to execute.*slow_compiler", 10)
+
+        # Host A's single slot is still held by job 1's still-sleeping
+        # compile, so job 2 must land on host B.
+        self.runcmd(self.distcc_without_fallback() + self.slow_compiler +
+                    " -c testtmp.c -o job2.o")
+        daemon_b_log = open(self.daemon_b_logfile).read()
+        self.assert_re_search(r"forking to execute.*slow_compiler",
+                              daemon_b_log)
+
+        os.waitpid(job1_pid, 0)
+
+
 class ScanIncludes_Case(CompileHello_Case):
     """Test --scan-includes"""
 
@@ -3988,6 +4093,7 @@ tests = [
          EmptyDefine_Case,
          DashWpMD_Case,
          ZstdPumpCompile_Case,
+         HostSelectionAlgorithm_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
          ZeroByteOutputCompiler_Case,
