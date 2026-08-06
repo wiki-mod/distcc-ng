@@ -84,12 +84,6 @@ Example:
 # distinct untested bulk.c code path was identified beyond what these
 # already cover.
 
-# TODO: Test using '.include' in an assembly file, and make sure that
-# it is resolved on the client, not on the server.
-
-# TODO: Test a compiler that sleeps for a long time; try killing the
-# server and make sure it goes away.
-
 # TODO: Test scheduler.  Perhaps run really slow jobs to make things
 # deterministic, and test that they're dispatched in a reasonable way.
 
@@ -3760,6 +3754,71 @@ msg:
 
 
 
+class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
+    """Test that a ".s" file's ".include" is always resolved locally,
+    never mis-resolved server-side (issue #275).
+
+    src/filename.c's own top-of-file comment states the actual design:
+    "As of 0.10, .s and .S files are never distributed, because they
+    might contain '.include' pseudo-operations, which are resolved by
+    the assembler." dcc_is_source()/dcc_is_preprocessed() confirm this
+    is still true today: both gate ".s"/".S" recognition behind
+    "#ifdef ENABLE_REMOTE_ASSEMBLE", a macro never defined anywhere in
+    this project's build (no configure.ac/Makefile.in toggle exists for
+    it at all) -- so dcc_is_source() always returns false for a ".s"
+    file, dcc_scan_args() never finds an input_file for it, and it
+    falls into exactly the same "no visible input file" local-only path
+    CppFromStdin_Case already exercises for stdin input.
+
+    This means the original TODO's concern ("what if a .include'd file
+    only exists on the client, but gets resolved -- or fails to resolve
+    -- server-side instead") cannot occur structurally: nothing about a
+    ".s" file's compilation is ever sent to a server in the first
+    place. Proven directly, the same way RecursionSafeguard_Case/
+    NoHosts_Case prove "never touches the network": DISTCC_HOSTS points
+    at a real TCP port with nothing listening, DISTCC_FALLBACK=0 (so a
+    real distribution attempt would fail loudly, not silently recover)
+    -- and the compile still succeeds, because it never tries to
+    connect at all. local_only.inc exists only in this test's own
+    scratch directory, so a successful compile also directly confirms
+    the local assembler (not some other, unreachable copy) resolved the
+    ".include" itself.
+
+    (RemoteAssemble_Case/PreprocessAsm_Case above predate this finding
+    and never actually confirmed remote distribution either way -- their
+    own names are misnomers for the same reason, but correcting that is
+    a separate, cosmetic-only change and out of scope here.)"""
+
+    asm_filename = 'test_include.s'
+    inc_filename = 'local_only.inc'
+
+    def setup(self):
+        SimpleDistCC_Case.setup(self)
+        open(self.inc_filename, 'wt').write(".equ VALUE, 42\n")
+        open(self.asm_filename, 'wt').write(
+            '.include "%s"\n'
+            ".data\n"
+            "  .align 4\n"
+            "  .type marker,object\n"
+            "  .size marker,4\n"
+            "marker:\n"
+            "  .long VALUE\n" % self.inc_filename)
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
+
+    def runtest(self):
+        msgs, errs = self.runcmd(self.distcc_without_fallback() +
+                                  self._cc + " -o test_include.o -c %s" %
+                                  self.asm_filename)
+        self.assert_equal(msgs, '')
+        self.assert_equal(errs, '')
+        self.assert_equal(os.path.exists('test_include.o'), True)
+
+
 class ModeBits_Case(CompileHello_Case):
     """Check distcc obeys umask"""
     def runtest(self):
@@ -4046,6 +4105,81 @@ class NoForkDaemon_Case(CompileHello_Case):
                    _ShellSafe(self.daemon_pidfile),
                    self.server_port,
                    _ShellSafe(self.daemon_sysroot)))
+
+
+class ServerKilledMidJob_Case(NoForkDaemon_Case):
+    """Test killing the server (not the client) mid-job (issue #275):
+    the mirror image of ClientDisconnectKillsServerChild_Case above.
+
+    Deliberately built on NoForkDaemon_Case's --no-fork daemon, not the
+    default preforked model: in the default model, the top-level pid
+    recorded in the pidfile is only the accept()-dispatching parent --
+    a *separate* pool worker process actually holds the client-facing
+    socket for an already-accepted connection, so killing the parent
+    pid would not touch an in-flight job at all. --no-fork's whole point
+    (dcc_nofork_parent(), src/dparent.c) is that there is exactly one
+    process doing everything, so the pidfile's pid is guaranteed to be
+    the one actually blocked in dcc_collect_child() holding the client
+    socket open for this specific job.
+
+    Killing it there (SIGKILL, simulating a real crash, not a graceful
+    shutdown) immediately drops the client's connection while the
+    client is still waiting on a response. This exercises a genuinely
+    different failure point in src/compile.c than any existing
+    connection-failure test (NoServer_Case, BackoffFromDownedHost_Case):
+    those fail at connect() time, before any job is ever sent, and are
+    handled by the same top-level "goto fallback" as this case -- but
+    a fully in-flight job failing partway through (dcc_compile_remote()
+    itself returning an error because the socket died) had no test
+    exercising that specific path before this one.
+
+    With the default DISTCC_FALLBACK=1, the expected -- and confirmed
+    live -- behavior is a clean local fallback: the compile still
+    succeeds, logged the same way NoServer_Case already asserts
+    ("failed to distribute ... running locally instead"), because
+    src/compile.c's fallback handling doesn't distinguish *why*
+    dcc_compile_remote() failed.
+
+    The compiler child (slow_compiler, sleeping) inevitably becomes an
+    orphan once its parent (the daemon we just killed) is gone -- SIGKILL
+    cannot be caught to run any child-reaping cleanup code first, so
+    there is no mechanism that could prevent this, and it is not a bug
+    this test can meaningfully assert against. It is reparented to pid 1
+    and simply runs out its own sleep on its own; this test never waits
+    on it and does not depend on it going away."""
+
+    def runtest(self):
+        slow_compiler = os.path.abspath("slow_compiler")
+        f = open(slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 30\n")
+        finally:
+            f.close()
+        os.chmod(slow_compiler, 0o700)
+
+        client_pid = self.runcmd_background(
+            self.distcc_with_fallback() + slow_compiler +
+            " -o testtmp.o -c testtmp.c")
+
+        self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
+
+        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        os.kill(daemon_pid, signal.SIGKILL)
+        # killDaemon() (teardown) tolerates the pidfile being gone (an
+        # IOError on open()) but not SIGTERM-ing an already-dead pid (an
+        # unhandled OSError) -- remove it now that we've done the kill
+        # ourselves, so teardown sees "already gone" the same way it
+        # would for a daemon that exited on its own.
+        os.remove(self.daemon_pidfile)
+
+        exited_pid, waitstatus = os.waitpid(client_pid, 0)
+        self.assert_equal(os.WIFSIGNALED(waitstatus), False)
+        self.assert_equal(os.WEXITSTATUS(waitstatus), 0)
+        self.assert_equal(os.path.exists("testtmp.o"), True)
+
+        log = open(os.environ['DISTCC_LOG']).read()
+        self.assert_re_search(r'failed to distribute.*running locally instead',
+                              log)
 
 
 class SSHMode_Case(CompileHello_Case):
@@ -4348,6 +4482,7 @@ tests = [
          PathQualifiedCompilerNotSubstituted_Case,
          RemoteAssemble_Case,
          PreprocessAsm_Case,
+         AssemblyIncludeLocalOnly_Case,
          ModeBits_Case,
          EmptySource_Case,
          CcacheHitThroughDistcc_Case,
@@ -4355,6 +4490,7 @@ tests = [
          HostFileDistccDirUnset_Case,
          IPv6Compile_Case,
          NoForkDaemon_Case,
+         ServerKilledMidJob_Case,
          SSHMode_Case,
          AbsSourceFilename_Case,
          Getline_Case,
