@@ -3347,7 +3347,13 @@ class RecursionSafeguard_Case(CompileHello_Case):
     Pre-setting it here and pointing DISTCC_HOSTS at a real TCP port with
     nothing listening (rather than a real, reachable one) deliberately
     proves the guard fires before any network attempt: if it didn't, this
-    would instead fail with a connection error, not EXIT_RECURSION."""
+    would instead fail with a connection error, not EXIT_RECURSION.
+
+    A second real fix, found on the very next run: WithDaemon_Case's own
+    setupEnv() leaves DISTCC_LOG pointed at a real file, so rs_log_crit()'s
+    message goes there, not to this process's own stderr -- the assertion
+    below saw an empty string until DISTCC_LOG was cleared first, the same
+    way NoHosts_Case (above) already does for its own log-message check."""
 
     def runtest(self):
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3355,6 +3361,7 @@ class RecursionSafeguard_Case(CompileHello_Case):
         down_port = probe.getsockname()[1]
         probe.close()
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
+        os.environ['DISTCC_LOG'] = ''
         os.environ['_DISTCC_SAFEGUARD'] = '1'
         msgs, errs = self.runcmd(self.distcc_without_fallback() +
                                  self._cc + " -o testtmp.o -c testtmp.c",
