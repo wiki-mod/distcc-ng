@@ -9,6 +9,11 @@ name: SCRATCH dollar-syntax probe
 on:
   push:
     branches: [scratch/dollar-syntax-probe]
+  pull_request:
+    branches: [current_dev]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * 0'
 
 permissions:
   contents: read
@@ -28,3 +33,17 @@ jobs:
           echo "workspace contents after checkout:"
           ls -la .
           test -f AGENTS.md && echo "AGENTS.md present -- checkout succeeded"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the $/ syntax file with actionlint
+        shell: bash
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work:ro" \
+            -w /work \
+            ghcr.io/wiki-mod/distcc-ng-buildtools:latest \
+            bash -c 'actionlint -color .github/workflows/scratch-dollar-syntax-probe.yml'
