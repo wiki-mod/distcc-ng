@@ -13,6 +13,26 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
+  new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
+  GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
+  `-e2e`, individually selectable or all at once). Deletes every genuinely
+  untagged version and old disposable `manual-N` test-build tags from
+  `package-release.yml` beyond the two most recent run numbers, guarded by
+  a `dry_run` input (default `true`) that only lists candidates without
+  deleting anything. Before treating a version as safely deletable, the
+  script re-resolves every currently-tagged reference's manifest and skips
+  any digest still referenced as a platform-specific child of a live
+  multi-arch manifest list, rather than trusting that this repo's own
+  pipeline always tags children explicitly (verified true today, but not
+  re-checked here as a standing guarantee). Deleting a package version
+  requires a classic PAT with `delete:packages` (the default `GITHUB_TOKEN`
+  cannot do this regardless of the `packages: write` permission, same
+  constraint already documented for `wiki-mod/lancache-ng`'s own
+  `GHCR_PACKAGE_DELETE_PAT`); this workflow reads that same secret name,
+  which must be created for this repo separately. Motivated by live GHCR
+  state at the time of writing: `distcc-ng-nightly` had 21 of 22 versions
+  untagged, `distcc-ng` had 26 of 91.
 - **`test/testdistcc.py`**: new `ClientDisconnectKillsServerChild_Case`,
   covering two longstanding TODOs at once (both describe the same
   underlying mechanism): a client disconnecting mid-job (`src/exec.c`'s
