@@ -1,0 +1,83 @@
+name: GHCR package cleanup
+
+# Deletes stale GHCR package versions for this repo's own container
+# packages: every genuinely untagged version, and old disposable "manual-N"
+# workflow_dispatch test builds from package-release.yml beyond the two most
+# recent run numbers. See .github/scripts/ghcr-cleanup.sh for the full
+# rationale and safety checks -- this workflow only wires that script's
+# inputs to a manual trigger.
+#
+# workflow_dispatch-only for now: no schedule is armed yet. Add one only
+# after a few manual dry_run=true (and then dry_run=false) runs have been
+# reviewed against the real registry state.
+#
+# MASTER-SYNCED FILE (see AGENTS.md rule 65's word-identical discipline,
+# applied here to a workflow file instead of a rules file): workflow_dispatch
+# only fires from a workflow file that already exists on the default branch
+# (master), so this file (and its companion .github/scripts/ghcr-cleanup.sh)
+# was copied onto master ahead of the real current_dev->master promotion,
+# same one-off-exception precedent as .github/release-drafter.yml (#132/#133)
+# and this repo's own AGENTS.md/CLAUDE.md (#126/#127). Any future edit to
+# either file must be applied to BOTH master and current_dev in the same
+# change, or they will silently drift until the next promotion overwrites
+# master's copy.
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Which package to clean up"
+        type: choice
+        options:
+          - all
+          - distcc-ng
+          - distcc-ng-pump
+          - distcc-ng-nightly
+          - distcc-ng-buildtools
+          - distcc-ng-e2e
+        default: all
+      dry_run:
+        description: "List what would be deleted without deleting anything"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        env:
+          GHCR_PACKAGE_DELETE_PAT: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+        run: printf '%s\n' "${GHCR_PACKAGE_DELETE_PAT}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Resolve target packages
+        id: packages
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.package }}" = "all" ]; then
+            echo "list=distcc-ng distcc-ng-pump distcc-ng-nightly distcc-ng-buildtools distcc-ng-e2e" >> "${GITHUB_OUTPUT}"
+          else
+            echo "list=${{ inputs.package }}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Clean up GHCR package versions
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGES: ${{ steps.packages.outputs.list }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: bash .github/scripts/ghcr-cleanup.sh
