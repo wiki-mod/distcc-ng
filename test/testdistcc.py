@@ -2656,6 +2656,52 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         self.assert_equal(autogroup_nice, 0)
 
 
+class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
+    """Root-only: does --user actually drop privilege for the compile
+    itself (issue #275) -- the general functional test AGENTS.md/the
+    header-block TODO always meant, distinct from
+    AutogroupNicenessPrivilegeDrop_Case above (reused here entirely for
+    its already-solved root/chown/ancestor-traversal setup dance), which
+    only ever asserts one narrow negative-autogroup-niceness EPERM
+    warning, never the dropped-privilege child process's actual uid.
+
+    Uses a fake compiler that reports its own real uid via `id -u`,
+    forwarded to the client verbatim through the SOUT wire-protocol slot
+    (the same mechanism NastyCppWritesStdout_Case's own docstring
+    documents in full) -- and asserts it's the drop user's uid, never
+    root's, proving --user's privilege drop actually reaches the
+    compiler child distccd forks, not just the daemon process itself."""
+
+    def runtest(self):
+        drop_pw = pwd.getpwnam(self.DROP_USER)
+
+        compiler = os.path.abspath("uid_reporting_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "id -u\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(compiler, 0o700)
+
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
+        os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
+        os.environ['DISTCC_VERBOSE'] = '1'
+        open("testtmp.i", "wt").write("int main() {}")
+
+        out, errs = self.runcmd(self.distcc_without_fallback() + compiler +
+                                " -c testtmp.i -o testtmp.o")
+        reported_uid = int(out.strip())
+        self.assert_(reported_uid != 0,
+                     "compiler child ran as uid 0 (root) -- --user's "
+                     "privilege drop did not reach it")
+        self.assert_equal(reported_uid, drop_pw.pw_uid)
+
+
 class ImplicitCompiler_Case(CompileHello_Case):
     """Test giving no compiler works"""
     def compileCmd(self):
@@ -4139,6 +4185,7 @@ tests = [
          CppFromStdin_Case,
          NoDetachDaemon_Case,
          AutogroupNicenessPrivilegeDrop_Case,
+         UserPrivilegeDropFunctional_Case,
          SBeatsC_Case,
          DashD_Case,
          EmptyDefine_Case,
