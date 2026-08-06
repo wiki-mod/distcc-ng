@@ -16,11 +16,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
   new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
   GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
-  `-e2e`, individually selectable or all at once). Deletes every genuinely
-  untagged version and old disposable `manual-N` test-build tags from
-  `package-release.yml` beyond the two most recent run numbers, guarded by
-  a `dry_run` input (default `true`) that only lists candidates without
-  deleting anything. Before treating a version as safely deletable, the
+  `-e2e`, individually selectable or all at once). Deletes untagged
+  versions beyond the 3 most recently created (kept as a rollback
+  fallback -- `distcc-ng-nightly` moves a single floating `latest` tag
+  daily, so each previous build becomes untagged the moment a new one
+  lands; deleting all of them immediately would leave no fallback if the
+  newest nightly turns out broken) and old disposable `manual-N`
+  test-build tags from `package-release.yml` beyond the two most recent
+  run numbers, guarded by a `dry_run` input (default `true`) that only
+  lists candidates without deleting anything. Before treating a version
+  as safely deletable, the
   script re-resolves every currently-tagged reference's manifest and skips
   any digest still referenced as a platform-specific child of a live
   multi-arch manifest list, rather than trusting that this repo's own
