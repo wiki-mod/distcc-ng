@@ -120,12 +120,6 @@ Example:
 # TODO: Test SSH mode.  May need to skip if we can't ssh to this
 # machine.  Perhaps provide a little null-ssh.
 
-# TODO: Test path stripping.
-
-# TODO: Test backoff from downed hosts.
-
-# TODO: Check again in --no-prefork mode.
-
 
 import time, sys, os, glob, re, socket, errno
 import signal, os.path, pwd, tempfile, shutil
@@ -3143,6 +3137,41 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
                               msgs)
 
 
+class BackoffFromDownedHost_Case(CompileHello_Case):
+    """Backoff from a downed host (issue #275): src/backoff.c's
+    dcc_disliked_host()/dcc_remove_disliked() mark a host that failed to
+    connect and skip it on later invocations for DISTCC_BACKOFF_PERIOD
+    seconds -- a real cross-invocation persistence mechanism (a timefile
+    under $DISTCC_DIR), distinct from MixedServerPumpFallback_Case above
+    (which only covers choose_host's same-invocation fallback to the next
+    host after a DNS-resolution failure, never touching backoff.c at all).
+
+    Lists a real TCP port with nothing listening first, a real daemon
+    second: the compile still succeeds (falls through to the second host,
+    the same within-invocation mechanism MixedServerPumpFallback_Case
+    covers) but should also mark the down host disliked -- confirmed via
+    the client's own trace log ("mark ...backoff...", from
+    dcc_mark_timefile(), src/timefile.c)."""
+
+    def setup(self):
+        # Probe a real, currently-unused TCP port, then close it right
+        # away -- nothing will be listening on it by the time the compile
+        # below tries to connect, so the connection is refused quickly
+        # rather than timing out.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        CompileHello_Case.setup(self)
+        os.environ['DISTCC_HOSTS'] = ('127.0.0.1:%d 127.0.0.1:%d%s' %
+            (down_port, self.server_port, _server_options))
+
+    def runtest(self):
+        self.compile()
+        log = open(os.environ['DISTCC_LOG']).read()
+        self.assert_re_search(r'mark .*backoff', log)
+
+
 class ImpliedOutput_Case(CompileHello_Case):
     """Test handling absence of -o"""
     def compileCmd(self):
@@ -3560,6 +3589,28 @@ class IPv6Compile_Case(CompileHello_Case):
           (self.server_port, _server_options))
 
 
+class NoForkDaemon_Case(CompileHello_Case):
+    """Recheck compiling against a --no-fork daemon (issue #275): the
+    original TODO's "--no-prefork" wording refers to what's actually
+    named --no-fork today (src/dopt.c's opt_no_fork). Instead of the
+    normal preforked worker-pool model (dcc_preforking_parent(),
+    src/prefork.c), the daemon runs a single-process accept loop
+    (dcc_nofork_parent(), src/dparent.c) that calls dcc_service_job()
+    directly for each connection -- a genuinely different code path,
+    not just a flag with no effect."""
+
+    def daemon_command(self):
+        return (self.distccd() +
+                "--verbose --lifetime=%d --daemon --no-fork --log-file %s "
+                "--pid-file %s --port %d --allow 127.0.0.1 "
+                "--enable-tcp-insecure --sysroot %s"
+                % (self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+
 class Lsdistcc_Case(WithDaemon_Case):
     """Check lsdistcc"""
 
@@ -3720,6 +3771,7 @@ tests = [
          AccessDenied_Case,
          NoServer_Case,
          MixedServerPumpFallback_Case,
+         BackoffFromDownedHost_Case,
          InvalidHostSpec_Case,
          ParseHostSpec_Case,
          SecureShellCommandEnvironment_Case,
@@ -3736,6 +3788,7 @@ tests = [
          HostFile_Case,
          HostFileDistccDirUnset_Case,
          IPv6Compile_Case,
+         NoForkDaemon_Case,
          AbsSourceFilename_Case,
          Getline_Case,
          Unicode_Case,

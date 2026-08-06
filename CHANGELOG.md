@@ -105,8 +105,25 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **`test/testdistcc.py`**: real new test coverage for five of issue #275's
+- **`test/testdistcc.py`**: real new test coverage for seven of issue #275's
   longstanding header-block `TODO`s, rather than only re-triaging them.
+  - `NoForkDaemon_Case`: recheck against a `--no-fork` daemon (the
+    header-block TODO's stale "--no-prefork" name for the real flag) --
+    `src/dparent.c`'s `dcc_nofork_parent()` is a genuinely different
+    single-process accept loop from the normal preforked worker-pool
+    model, previously never exercised by any test.
+  - `BackoffFromDownedHost_Case`: lists a real-but-nothing-listening TCP
+    port first and a real daemon second. Confirms `src/backoff.c`'s
+    `dcc_disliked_host()` marks the down host via a timefile (checked in
+    the client's own trace log), the actual cross-invocation backoff
+    persistence mechanism -- distinct from the existing
+    `MixedServerPumpFallback_Case`, which only covers a same-invocation
+    DNS-failure fallback and never touches `backoff.c` at all.
+  - The "Test path stripping" TODO removed as already resolved:
+    `GdbPrefixMap_Case` already exercises `tweak_prefix_map_arguments_for_server()`
+    (`src/serve.c`, landed closing issue #76) end-to-end -- a third
+    instance of the same "feature landed, header comment never removed"
+    pattern already found and fixed twice earlier in this same issue.
   - `IPv6Compile_Case`: a real compile over `[::1]`, both `distccd --listen`
     and the client's `[addr]:port` hostspec syntax. Both were already
     address-family-agnostic (`getaddrinfo()`/`AF_UNSPEC` in `src/srvnet.c`
