@@ -1,0 +1,30 @@
+name: SCRATCH dollar-syntax probe
+
+# Throwaway, to be deleted before merge -- validates issue #362 item 1's
+# proposed fix (referencing a same-repo composite action via the new $/
+# self-repository syntax, GitHub Changelog 2026-07-30) actually lets Harden
+# Runner run as the literal first step with no prior checkout, before
+# rolling it out to all real call sites.
+
+on:
+  push:
+    branches: [scratch/dollar-syntax-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - name: Confirm no checkout happened before this point
+        run: |
+          echo "workspace contents before any checkout:"
+          ls -la .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Confirm checkout worked after the composite action ran
+        run: |
+          echo "workspace contents after checkout:"
+          ls -la .
+          test -f AGENTS.md && echo "AGENTS.md present -- checkout succeeded"

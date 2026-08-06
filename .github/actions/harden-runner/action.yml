@@ -1,0 +1,16 @@
+name: Harden Runner (audit-only egress monitoring)
+description: >-
+  Scratch probe (issue #362 item 1): wraps step-security/harden-runner in a
+  single first-step call, referenced via the new $/ self-repository syntax
+  (GitHub Changelog, 2026-07-30) so it can still run before actions/checkout
+  without needing this action's own repo checked out first. Not yet the
+  real consolidation -- this is a one-off validation that $/ actually works
+  on this repo's runners before rolling it out to all 12+ call sites.
+
+runs:
+  using: composite
+  steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+      with:
+        egress-policy: audit
