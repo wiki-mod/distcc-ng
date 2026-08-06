@@ -39,6 +39,44 @@ See `doc/release-versioning.md` for the full versioning and release process.
     escalation. New regression test
     `test/pump_shutdown_pid_identity_test.py` hands `pump --shutdown` the
     pid of a real, unrelated running process and asserts it survives.
+- **Packaging (issue #412)**: this fork's `.rpm`/`.deb` packages installed
+  under the exact same paths as the real, independently-packaged `distcc`
+  (and, on Fedora/RHEL, the separately-named `distcc-server`), guaranteeing
+  a file collision on install rather than a version-skew warning --
+  co-installing both was never actually possible, just silently broken.
+  - `configure.ac`'s `AC_INIT` package name changed from `distcc` to
+    `distcc-ng`. Binary names (`distcc`, `distccd`, `pump`) are unchanged
+    -- this only renames the *package*, the same pattern as `syslog-ng`
+    shipping a binary still literally called `syslog`.
+    `scripts/check-release-version.sh`'s version-parsing regex updated to
+    match.
+  - `packaging/RedHat/rpm.spec`: added `Conflicts:`/`Obsoletes:` against
+    the real `distcc` (client subpackage) and `distcc-server` (server
+    subpackage, the real Fedora/RHEL name -- confirmed live via
+    `dnf repoquery`) packages, alongside the existing `Provides:` lines.
+    Verified live in a throwaway Fedora container, both install orders:
+    `rpm -U` over an installed real `distcc` cleanly obsoletes it; a plain
+    `rpm -i` of real `distcc` over an installed `distcc-ng` is correctly
+    rejected.
+  - `packaging/deb.sh`: `alien` does not carry `Provides`/`Conflicts`/
+    `Obsoletes` from the source RPM into the generated `.deb`'s control
+    file at all (confirmed by reading `Alien::Package::Deb::prep()` in
+    alien's own source). Added a post-processing step patching
+    `Conflicts: distcc` / `Replaces: distcc` into every `.deb` this script
+    produces -- Debian's real `distcc` package is a single unified
+    client+server package (confirmed live via packages.debian.org), so
+    both this fork's client- and server-derived `.deb`s need to conflict
+    with the same real package name, unlike the RPM side's two distinct
+    names. Also found and fixed the same latent bug in this file's own
+    pre-existing cleanup line while wiring this up: both it and the new
+    patching loop originally tried to match generated `.deb` filenames
+    by embedding `$PACKAGE`/`$VERSION` in a glob, but `alien` rewrites
+    the RPM version string into Debian's own syntax (e.g. `3.7.0-NG` ->
+    `3.7.0-1.NG`), so `$VERSION` never appears as a literal substring of
+    the real filename -- confirmed live (a real CI dispatch of this
+    script failed with `dpkg-deb: error: failed to read archive ...
+    No such file or directory` before this fix). Both now match a bare
+    `*.deb` instead.
 
 - **`.github/workflows/openssf-baseline-recheck.yml`**: `check_br07()`
   (OSPS-BR-07.01, secret scanning + push protection) reads

@@ -26,6 +26,20 @@ Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
 Provides: distcc
+# Conflicts/Obsoletes against the real, independently-packaged "distcc"
+# (Fedora/RHEL ship it under that exact name): this fork's client binaries,
+# config files, and doc paths are installed at the identical locations, so
+# co-installing both is a guaranteed file collision, not just a version
+# skew. Left unversioned deliberately -- any version of the real distcc
+# collides on the same paths, there is no version boundary to draw (rpm
+# warns "not recommended to have unversioned Obsoletes", a stylistic
+# warning already present for the Obsoletes line below, not a new class of
+# problem this line introduces). Verified live in a throwaway Fedora
+# container, both install orders: `rpm -U` over an installed real "distcc"
+# cleanly obsoletes it; a plain `rpm -i` of real "distcc" over an installed
+# distcc-ng is correctly rejected with "conflicts with"/"is obsoleted by".
+Conflicts: distcc
+Obsoletes: distcc
 Obsoletes: crosstool-distcc distcc-include-server
 
 %description
@@ -99,6 +113,15 @@ rm -rf $RPM_BUILD_ROOT
 Summary: Server side program for distributed C/C++ compilations.
 Group: Development/Languages
 Provides: distccd
+# Real Fedora/RHEL name the server package "distcc-server", not "distccd"
+# (confirmed live via `dnf repoquery` against the real Fedora repos) --
+# conflict/obsolete against that real package name. It installs the exact
+# same colliding paths this subpackage does (/usr/bin/distccd, /etc/distcc/
+# clients.allow, /etc/distcc/commands.allow.sh, /usr/lib/distcc, confirmed
+# via `dnf repoquery -l distcc-server`), so the same unversioned-collision
+# rationale as the client package's Conflicts/Obsoletes above applies here.
+Conflicts: distcc-server
+Obsoletes: distcc-server
 Obsoletes: crosstool-distcc-server
 
 %description server
