@@ -34,6 +34,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   ahead of the real promotion so PR #426 can actually merge -- same
   pattern as PR #337 -> #338.
 
+### Added
+
+- **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
+  manual (`workflow_dispatch`-only for now) cleanup for this repo's own GHCR
+  container packages, added to master ahead of the real `current_dev` ->
+  `master` promotion because `workflow_dispatch` only fires from a workflow
+  file that already exists on the default branch. See the full changelog
+  entry on `current_dev` (PR #425) for the complete rationale; this is the
+  same one-off-exception copy, not a separate feature.
+
 ### Security
 
 - **Bumped `actions/upload-artifact`** (`.github/workflows/c-build.yml`'s
