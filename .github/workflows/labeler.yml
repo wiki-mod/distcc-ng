@@ -14,6 +14,10 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Deliberately excluded from issue #361's fix (caveat 3): a single pinned
+  # action, no checkout of untrusted code -- the runtime doubling for a job
+  # this short isn't worth it here, a real cost/benefit call left to the
+  # maintainer.
   labeler:
     name: Apply path-based labels
     runs-on: ubuntu-latest

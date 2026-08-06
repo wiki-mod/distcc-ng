@@ -38,6 +38,8 @@ jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    # Deliberately excluded from issue #361's fix (caveat 3): a real
+    # cost/benefit call left to the maintainer, not bundled into this pass.
     permissions:
       # security-events: write lets the SARIF upload step publish to this
       # repo's code-scanning alerts. id-token: write is unused while

@@ -121,6 +121,35 @@ See `doc/release-versioning.md` for the full versioning and release process.
   genuinely unpinned action elsewhere is still caught. The pinned
   `step-security/harden-runner` SHA now only needs bumping in one place
   instead of 17.
+- **Harden Runner egress audit added to previously-uncovered jobs** (issue
+  #361), a distinct gap from item 1 above: that item only consolidated the
+  17 jobs that already had the step duplicated inline, while a systematic
+  audit found 25 of 41 jobs across 14 workflow files had no Harden Runner
+  step at all, including several holding real write scopes or a long-lived
+  PAT. Added as the first step to: `nightly-publish.yml`'s `build_check`,
+  `distributed_e2e`, `publish`, `report`; `changelog-update-on-release.yml`'s
+  `update_changelog`; all three `master-heartbeat.yml` jobs; `c-build.yml`'s
+  `changes`, `popt_fallback_build`, `popt_vendor_check`; `codeql.yml`'s
+  `changes`; `add-to-project.yml`'s PAT-consuming job;
+  `openssf-baseline-recheck.yml`'s `recheck` (now runs as
+  `GHCR_PACKAGE_DELETE_PAT`, added after this issue's own table was written,
+  same "consumes a real long-lived secret" criterion); and
+  `e2e-image-build.yml`'s `report` (found applying the same fix already
+  made to the other two `report` jobs above, per AGENTS.md rule 73's
+  same-error-class sweep). Caveat 2 (whether the existing, OS-unguarded
+  Harden Runner step silently no-ops or warns on `c-build.yml`'s
+  `make_check (macOS-latest)` leg) resolved with a real run log: it
+  installs a full macOS system extension (network filter, DNS proxy,
+  process monitor) and completes with `outcome=success`, no warning --
+  safe to copy the same unguarded pattern elsewhere. Deliberately excluded,
+  each with its own one-line comment: `osv-scanner.yml`'s two jobs
+  (`uses:`-only reusable-workflow calls, no step list to prepend to --
+  caveat 1) and the remaining lint/label-only jobs across `actionlint.yml`,
+  `changelog-check.yml`, `codeql.yml`'s `analyze`, `release-drafter.yml`,
+  `scorecard.yml`, `clusterfuzzlite-pr.yml`, `labeler.yml` (caveat 3 --
+  short-job runtime roughly doubles for a step that adds little here,
+  left as an explicit maintainer decision rather than bundled in).
+  `egress-policy` stays `audit` everywhere; no move to block mode.
 - **`.github/actions/changed-files/`**: new composite action consolidating
   the duplicated changed-file diff computation shared by `c-build.yml`'s
   and `codeql.yml`'s own `changes` jobs (issue #362 item 2) -- the same

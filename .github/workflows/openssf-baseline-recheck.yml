@@ -45,6 +45,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Added alongside issue #361's fix even though this job wasn't in that
+      # issue's original "Suggested scope" list: the step below now runs as
+      # GHCR_PACKAGE_DELETE_PAT, a real long-lived repo-scoped PAT (#312/#435)
+      # -- the exact same "consumes a real long-lived secret" criterion the
+      # issue used to justify add-to-project.yml's inclusion.
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev

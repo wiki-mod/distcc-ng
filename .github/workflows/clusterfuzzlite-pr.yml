@@ -24,6 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Deliberately excluded from issue #361's fix (caveat 3): a real
+  # cost/benefit call left to the maintainer, not bundled into this pass.
   PR:
     runs-on: ubuntu-latest
     strategy:

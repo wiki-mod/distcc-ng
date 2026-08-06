@@ -59,6 +59,10 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       actions: ${{ steps.filter.outputs.actions }}
     steps:
+      # Same "cheap checkout + git diff" shape as c-build.yml's own `changes`
+      # job (issue #361's "if cheap" cost/benefit call) -- added here too for
+      # consistency rather than leaving an identical job pattern half-covered.
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -136,6 +140,8 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Deliberately excluded from issue #361's fix (caveat 3): a real
+    # cost/benefit call left to the maintainer, not bundled into this pass.
     # actions: read lets codeql-action/init resolve this workflow's own run
     # context (needed on some repo configurations); security-events: write
     # is what actually lets codeql-action/analyze upload SARIF results to

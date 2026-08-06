@@ -62,6 +62,11 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
+      # Cheap enough (checkout + a git diff, no build/install/network-facing
+      # third-party tooling) that caveat 3's runtime-doubling cost/benefit
+      # call comes out in favor of adding it here too (issue #361's own
+      # "Suggested scope" item 4 flags this job as "if cheap").
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -255,6 +260,7 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
@@ -320,6 +326,7 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Vendored version marker matches what this repo claims to ship
         run: |
