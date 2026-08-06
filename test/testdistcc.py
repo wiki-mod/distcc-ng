@@ -99,10 +99,6 @@ Example:
 # privileges" limitation that deferred this for 15+ years no longer
 # applies for at least this one --user scenario.
 
-# TODO: Test SSH mode.  May need to skip if we can't ssh to this
-# machine.  Perhaps provide a little null-ssh.
-
-
 import time, sys, os, glob, re, socket, errno
 import signal, os.path, pwd, tempfile, shutil
 import comfychair
@@ -4052,6 +4048,120 @@ class NoForkDaemon_Case(CompileHello_Case):
                    _ShellSafe(self.daemon_sysroot)))
 
 
+class SSHMode_Case(CompileHello_Case):
+    """Test distcc's SSH transport mode (issue #275).
+
+    src/ssh.c's dcc_ssh_connect() builds "<DISTCC_SSH> -l <user> <host>
+    distccd --inetd --enable-tcp-insecure" and execvp()s it directly (no
+    shell); src/hosts.c's dcc_parse_ssh_host() parses a "user@host"
+    DISTCC_HOSTS token (empty user, here, since we connect as ourselves --
+    dcc_dup_part() returns NULL for a zero-length part, so no "-l" is
+    added at all) to select DCC_MODE_SSH.  SecureShellCommandEnvironment_Case
+    (above) already exercises that argv construction against a fake
+    logging "ssh" script, but never actually connects or runs a real
+    distccd -- this test does: a real, ephemeral, key-only, non-root sshd
+    listening on 127.0.0.1 is started, and a real compile is distributed
+    to a real "distccd --inetd" spawned fresh by that sshd for the SSH
+    session, exactly as a real SSH-mode deployment would run it.
+
+    distccd is found purely via the SSH session's own $PATH, and a fresh,
+    non-login SSH session does not inherit this test's $PATH -- hence
+    sshd_config's "SetEnv PATH=...", pointed at the directory holding the
+    just-built distccd, below.
+
+    Skips cleanly (NotRunError) if sshd/ssh-keygen/ssh aren't found."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+
+        sshd_bin = shutil.which("sshd") or "/usr/sbin/sshd"
+        keygen_bin = shutil.which("ssh-keygen")
+        ssh_bin = shutil.which("ssh")
+        if (not os.access(sshd_bin, os.X_OK) or not keygen_bin
+                or not ssh_bin):
+            raise comfychair.NotRunError(
+                'sshd/ssh-keygen/ssh not found -- cannot test SSH mode')
+
+        distccd_dir = None
+        for d in os.environ['PATH'].split(':'):
+            candidate = os.path.join(d, 'distccd')
+            if os.access(candidate, os.X_OK):
+                distccd_dir = os.path.dirname(os.path.abspath(candidate))
+                break
+        if distccd_dir is None:
+            raise comfychair.NotRunError(
+                'could not find the built distccd binary on PATH')
+
+        sshdir = os.path.abspath("sshtest")
+        os.mkdir(sshdir)
+
+        host_key = os.path.join(sshdir, "host_key")
+        self.runcmd("%s -t ed25519 -f %s -N '' -q" %
+                    (keygen_bin, _ShellSafe(host_key)))
+
+        client_key = os.path.join(sshdir, "client_key")
+        self.runcmd("%s -t ed25519 -f %s -N '' -q" %
+                    (keygen_bin, _ShellSafe(client_key)))
+
+        authorized_keys = os.path.join(sshdir, "authorized_keys")
+        shutil.copyfile(client_key + ".pub", authorized_keys)
+        os.chmod(authorized_keys, 0o600)
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        ssh_port = probe.getsockname()[1]
+        probe.close()
+
+        sshd_pidfile = os.path.join(sshdir, "sshd.pid")
+        sshd_logfile = os.path.join(sshdir, "sshd.log")
+        sshd_config = os.path.join(sshdir, "sshd_config")
+        f = open(sshd_config, "w")
+        try:
+            f.write(
+                "Port %d\n"
+                "ListenAddress 127.0.0.1\n"
+                "HostKey %s\n"
+                "AuthorizedKeysFile %s\n"
+                "PidFile %s\n"
+                "UsePAM no\n"
+                "StrictModes no\n"
+                "PasswordAuthentication no\n"
+                "ChallengeResponseAuthentication no\n"
+                "PrintMotd no\n"
+                "Subsystem sftp none\n"
+                "SetEnv PATH=%s:/usr/local/bin:/usr/bin:/bin\n"
+                % (ssh_port, host_key, authorized_keys, sshd_pidfile,
+                   distccd_dir))
+        finally:
+            f.close()
+
+        # sshd forks and detaches once it has bound the listening socket
+        # (the same reason WithDaemon_Case.startDaemon() can just block on
+        # distccd's own start command), so this blocks only briefly.
+        self.runcmd("%s -f %s -E %s" %
+                    (sshd_bin, _ShellSafe(sshd_config),
+                     _ShellSafe(sshd_logfile)))
+        self._sshd_pidfile = sshd_pidfile
+        self.add_cleanup(self.killSshd)
+
+        os.environ['DISTCC_SSH'] = (
+            "%s -p %d -i %s -o StrictHostKeyChecking=no "
+            "-o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+            % (ssh_bin, ssh_port, client_key))
+        os.environ['DISTCC_HOSTS'] = '@127.0.0.1'
+
+    def killSshd(self):
+        try:
+            pid = int(open(self._sshd_pidfile, 'rt').read().strip())
+        except IOError:
+            # sshd probably already exited
+            return
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
 class Lsdistcc_Case(WithDaemon_Case):
     """Check lsdistcc"""
 
@@ -4239,6 +4349,7 @@ tests = [
          HostFileDistccDirUnset_Case,
          IPv6Compile_Case,
          NoForkDaemon_Case,
+         SSHMode_Case,
          AbsSourceFilename_Case,
          Getline_Case,
          Unicode_Case,

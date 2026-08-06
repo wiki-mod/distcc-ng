@@ -179,6 +179,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
     only the compiler argv, never a hostspec, so the classification cannot
     vary by hostspec in the current architecture; a hostspec-varying test
     would be a structural no-op.
+- **`test/testdistcc.py`**: new `SSHMode_Case` (issue #275), the last
+  originally-open TODO with an existing, provably real implementation --
+  `src/ssh.c`'s `dcc_ssh_connect()`/`src/hosts.c`'s `dcc_parse_ssh_host()`
+  (`"@host"` SSH-mode hostspec, `DCC_MODE_SSH`) had zero test coverage
+  beyond `SecureShellCommandEnvironment_Case`'s fake-`ssh`-script argv
+  check, which never actually connects or runs a real `distccd`. This
+  test starts a real, ephemeral, key-only, non-root `sshd` on
+  `127.0.0.1` and distributes a real compile to a real
+  `distccd --inetd` spawned fresh by that `sshd` for the SSH session --
+  the same mechanism a real SSH-mode deployment uses. `distccd` is found
+  purely via the SSH session's own `$PATH`, which a fresh non-login SSH
+  session does not inherit from the test process, so `sshd_config` needs
+  its own `SetEnv PATH=...` pointed at the built binaries' directory.
+  Skips cleanly if `sshd`/`ssh-keygen`/`ssh` aren't found.
+  `.github/actions/install-build-deps/action.yml` now installs
+  `openssh-server`/`openssh-client` so this runs in CI too.
 - **`.github/actions/harden-runner/`**: new composite action consolidating
   17 verbatim copies of the Harden Runner step (issue #362 item 1) across
   `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
