@@ -1167,47 +1167,6 @@ class ParseHostSpec_Case(SimpleDistCC_Case):
         assert out == expected, "expected %s\ngot %s" % (repr(expected), repr(out))
 
 
-class MasqueradeMode_Case(CompileHello_Case):
-    """Test masquerade mode (issue #275).
-
-    src/climasq.c's dcc_support_masquerade() is what makes this work: when
-    distcc is invoked under a name other than "distcc" (src/distcc.c's
-    main(), the `else` branch for a masqueraded argv[0]), it finds which
-    PATH component contains the symlink that was actually exec'd, strips
-    everything up to and including that component, and re-resolves the
-    same basename (e.g. "gcc") against what's left of PATH -- so the real
-    compiler is found instead of looping back into distcc itself. The
-    TODO's own stated setup requirement ("create symlinks in a special
-    directory on the path") is exactly what real masquerade deployment
-    already looks like (`update-distcc-symlinks`, src/daemon.c's
-    dcc_warn_masquerade_whitelist()) -- this test does the same thing at
-    a small, self-contained scale: symlink "gcc" to the just-built distcc
-    binary in a test-local directory, prepend that directory to PATH, and
-    invoke "gcc" directly (no "distcc" in the command line at all)."""
-
-    def setup(self):
-        CompileHello_Case.setup(self)
-        distcc_path = None
-        for d in os.environ['PATH'].split(':'):
-            candidate = os.path.join(d, 'distcc')
-            if os.access(candidate, os.X_OK):
-                distcc_path = os.path.abspath(candidate)
-                break
-        if distcc_path is None:
-            raise comfychair.NotRunError('could not find the built distcc '
-                                         'binary on PATH')
-        self.masq_dir = os.path.abspath('masquerade_bin')
-        os.mkdir(self.masq_dir)
-        os.symlink(distcc_path, os.path.join(self.masq_dir, 'gcc'))
-        os.environ['PATH'] = self.masq_dir + ':' + os.environ['PATH']
-
-    def compileCmd(self):
-        # Deliberately no "distcc" anywhere in this command -- the
-        # masquerade symlink is what makes "gcc" resolve to distcc.
-        return ("gcc -o testtmp.o " + self.compileOpts() +
-                " -c %s" % self.sourceFilename())
-
-
 class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
     """Check that DISTCC_SSH options survive repeated Secure Shell connects."""
     def runtest(self):
@@ -1335,6 +1294,47 @@ int main(void) {
 
     def checkBuiltProgramMsgs(self, msgs):
         self.assert_equal(msgs, "hello world\n")
+
+
+class MasqueradeMode_Case(CompileHello_Case):
+    """Test masquerade mode (issue #275).
+
+    src/climasq.c's dcc_support_masquerade() is what makes this work: when
+    distcc is invoked under a name other than "distcc" (src/distcc.c's
+    main(), the `else` branch for a masqueraded argv[0]), it finds which
+    PATH component contains the symlink that was actually exec'd, strips
+    everything up to and including that component, and re-resolves the
+    same basename (e.g. "gcc") against what's left of PATH -- so the real
+    compiler is found instead of looping back into distcc itself. The
+    TODO's own stated setup requirement ("create symlinks in a special
+    directory on the path") is exactly what real masquerade deployment
+    already looks like (`update-distcc-symlinks`, src/daemon.c's
+    dcc_warn_masquerade_whitelist()) -- this test does the same thing at
+    a small, self-contained scale: symlink "gcc" to the just-built distcc
+    binary in a test-local directory, prepend that directory to PATH, and
+    invoke "gcc" directly (no "distcc" in the command line at all)."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        distcc_path = None
+        for d in os.environ['PATH'].split(':'):
+            candidate = os.path.join(d, 'distcc')
+            if os.access(candidate, os.X_OK):
+                distcc_path = os.path.abspath(candidate)
+                break
+        if distcc_path is None:
+            raise comfychair.NotRunError('could not find the built distcc '
+                                         'binary on PATH')
+        self.masq_dir = os.path.abspath('masquerade_bin')
+        os.mkdir(self.masq_dir)
+        os.symlink(distcc_path, os.path.join(self.masq_dir, 'gcc'))
+        os.environ['PATH'] = self.masq_dir + ':' + os.environ['PATH']
+
+    def compileCmd(self):
+        # Deliberately no "distcc" anywhere in this command -- the
+        # masquerade symlink is what makes "gcc" resolve to distcc.
+        return ("gcc -o testtmp.o " + self.compileOpts() +
+                " -c %s" % self.sourceFilename())
 
 
 class CommaInFilename_Case(CompileHello_Case):
