@@ -105,6 +105,29 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`test/testdistcc.py`**: real new test coverage for two more of issue
+  #275's longstanding header-block `TODO`s.
+  - `HostSelectionAlgorithm_Case`: direct test of `src/where.c`'s
+    `dcc_lock_one()`. Read the function in full (the issue's own explicit
+    prerequisite) before concluding anything: it scans slot index 0, then
+    1, ..., trying every configured host in `DISTCC_HOSTS` list order at
+    each index and taking the first with a free slot -- fully
+    deterministic for *sequential* dispatch (concurrent dispatch under
+    real load additionally depends on which process's `flock()` the
+    kernel grants first, which cannot be made deterministic and this test
+    doesn't attempt to cover). Starts two real `distccd` instances with
+    one job slot each and a sleeping fake compiler so the first job's
+    lock stays held while the second is dispatched, confirming via each
+    daemon's own log which one actually served which compile.
+  - `MasqueradeMode_Case`: symlinks "gcc" to the just-built `distcc`
+    binary in a test-local directory, prepends that directory to `PATH`,
+    and invokes "gcc" directly (no "distcc" anywhere in the command
+    line). Confirmed by reading `src/climasq.c`'s
+    `dcc_support_masquerade()` in full: it finds the `PATH` component
+    containing the symlink actually exec'd, strips everything up to and
+    including it, and re-resolves the same basename against what's left
+    of `PATH` -- the real compiler is found instead of looping back into
+    distcc itself.
 - **`test/testdistcc.py`**: real new test coverage for seven of issue #275's
   longstanding header-block `TODO`s, rather than only re-triaging them.
   - `NoForkDaemon_Case`: recheck against a `--no-fork` daemon (the
