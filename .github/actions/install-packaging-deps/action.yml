@@ -1,0 +1,21 @@
+name: Install packaging apt dependencies
+description: >-
+  Shared apt package list (issue #362 item 6) for building the real
+  release .rpm/.deb packages -- nightly-publish.yml and package-release.yml
+  both needed this list kept in sync by hand. They had already drifted:
+  package-release.yml carried libseccomp-dev (for configure.ac's optional
+  --with-seccomp auto-detection, PKG_CHECK_MODULES([SECCOMP], [libseccomp
+  >= 2.4], ...)), nightly-publish.yml did not -- silently building nightly
+  binaries without the seccomp sandbox (configure.ac degrades gracefully,
+  no build failure, so nothing would have flagged this). Consolidated on
+  package-release.yml's fuller list; nightly builds now also get the
+  seccomp sandbox. Deliberate behavior change, not incidental to the
+  consolidation -- called out explicitly per issue #362's "no behavior
+  change intended... state how that was confirmed" acceptance criterion.
+
+runs:
+  using: composite
+  steps:
+    - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      with:
+        apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien

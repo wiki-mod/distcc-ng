@@ -1,0 +1,18 @@
+name: Run distributed-compile E2E test
+description: >-
+  Real distributed-compile validation (issue #362 item 5), shared by
+  c-build.yml, nightly-publish.yml, and package-release.yml's own
+  distributed_e2e jobs -- all three reduce to "checkout, then run
+  test/e2e/run-e2e.sh", differing only in checkout ref and Harden Runner
+  presence, both of which stay with each caller. distcc-ng's own source
+  tree is built across two containers (a distccd server + a distcc
+  client) over a bridge network, in both plain and pump mode, and a
+  distributed compile is checked byte-for-byte against a local-only one
+  -- this is what actually proves a compile crosses the network rather
+  than being silently completed by distcc's local-fallback path.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: bash test/e2e/run-e2e.sh

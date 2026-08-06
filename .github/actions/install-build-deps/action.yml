@@ -1,0 +1,24 @@
+name: Install build/test apt dependencies
+description: >-
+  Shared apt package list (issue #362 item 6) for building distcc-ng and
+  running make check -- c-build.yml's Linux matrix leg, nightly-publish.yml,
+  and package-release.yml all needed the exact same list kept in sync by
+  hand. A duplicated dependency list drifts silently: a package added for a
+  new build requirement in one file and not the other produces a failure
+  only in the workflow nobody edited.
+
+inputs:
+  brew:
+    description: >-
+      Optional Homebrew package list, passed through unchanged for macOS
+      matrix legs (only c-build.yml needs this).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      with:
+        apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
+        brew: ${{ inputs.brew }}

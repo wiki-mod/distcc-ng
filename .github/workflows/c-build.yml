@@ -129,13 +129,12 @@ jobs:
           # master, which push/pull_request already cover on every change.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - if: needs.changes.outputs.relevant == 'true'
-        uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+        uses: $/.github/actions/install-build-deps
         with:
           # Note: aclocal is packaged with automake in Homebrew, so we need it
           # even though we don't use automake.
-          brew: autoconf automake popt python@3.13 python-setuptools ccache zstd
           # Note: no gdb on macOS because it's apparently not supported on arm64
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
+          brew: autoconf automake popt python@3.13 python-setuptools ccache zstd
           # brew-cask: TODO
           # choco: TODO
       - if: needs.changes.outputs.relevant == 'true'
@@ -147,12 +146,10 @@ jobs:
       # exact key collision, so bumping github.run_id into the key avoids
       # that and keeps the cache warm across runs).
       - if: needs.changes.outputs.relevant == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: $/.github/actions/ccache-cache
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.os }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ matrix.os }}-
+          key-prefix: ccache-${{ matrix.os }}
       # Cache autoconf/aclocal's macro-trace cache (autom4te.cache, produced
       # by ./autogen.sh's aclocal/autoheader/autoconf calls). Safe to restore
       # even when stale -- like ccache above, it's content-checked, not
@@ -608,8 +605,7 @@ jobs:
           # from master but must validate current_dev.
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       # docker and the compose plugin are preinstalled on ubuntu-latest.
-      - name: Run distributed-compile end-to-end test
-        run: bash test/e2e/run-e2e.sh
+      - uses: $/.github/actions/distributed-e2e-test
 
   # Opt-in ASan/UBSan sanitizer build, per #266's recommendation. Never runs
   # on push/pull_request -- unlike make_check's schedule leg, this is not a
