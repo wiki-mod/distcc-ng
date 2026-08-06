@@ -270,6 +270,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`test/testdistcc.py`**: removed three stale header-block `TODO`s
+  (issue #275) confirmed already covered by current code, re-verified
+  against the live source rather than trusted from an earlier pass:
+  host files containing `\r` (`src/hosts.c`'s `dcc_dup_part()` calls and
+  its line-reading loop already include `\r` in every delimiter set),
+  compiling a 0-byte source file (`EmptySource_Case`), and dependency
+  generation with `-MD` (`DashMD_DashMF_DashMT_Case`/`DashWpMD_Case`).
+  The broader "-MD, -MMD, -M, etc." TODO is narrowed rather than removed
+  outright: `-MMD` and bare `-M` dependency generation still have no real
+  test coverage (only incidental touches -- an argument-scan
+  classification test and an unrelated `error_rc` workaround test --
+  neither verifies generated `.d` file contents for either flag).
 - **`support-upstream/`**: retroactively added the mandatory upstream-
   relevance writeups for PRs #415-#419 (missed at the time each PR was
   opened) -- the `--lifetime` test-daemon timing fix, the `--include=`/
