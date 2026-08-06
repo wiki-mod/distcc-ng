@@ -1,0 +1,11 @@
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # actionlint doesn't recognize the new $/ self-repository `uses:`
+      # syntax yet (GitHub Changelog, 2026-07-30) and flags it as a
+      # malformed reference missing a ref -- upstream tracked at
+      # rhysd/actionlint#711 (open). Scoped to lines actually starting
+      # with "$/" so a genuinely unpinned/malformed third-party action
+      # reference elsewhere is still caught.
+      - specifying action "\$/.+" in invalid format because ref is missing
+      - reusable workflow call "\$/.+" at "uses" is not following the format
