@@ -74,8 +74,17 @@ Example:
 # TODO: Perhaps redirect stdout, stderr to a temporary file while
 # running?  Use os.open(), os.dup2().
 
-# TODO: Add test harnesses that just exercise the bulk file transfer
-# routines.
+# A standalone bulk-transfer (src/bulk.c) test harness was considered and
+# declined (issue #275): unlike src/arg.c/src/strip.c/src/parsemask.c
+# (each has its own h_scanargs/h_strip/h_parsemask C test helper), bulk.c
+# has no dedicated helper binary, and every real compile in this suite
+# already exercises dcc_x_file()/dcc_r_file() incidentally --
+# BigAssFile_Case for a large upload, CompressedCompile_Case for the
+# compressed path, every other case for a normal-sized round trip. A
+# genuinely isolated unit-style test would need a new C helper (a build-
+# system change), out of scope for a test-file-only issue, and no
+# distinct untested bulk.c code path was identified beyond what these
+# already cover.
 
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
