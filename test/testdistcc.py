@@ -4149,17 +4149,36 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
     on it and does not depend on it going away."""
 
     def runtest(self):
+        # Sleeps first (the window this test needs), then creates its -o
+        # target via `touch` (same technique as ZeroByteOutputCompiler_Case
+        # above) so the local-fallback re-run -- which invokes this exact
+        # script again -- leaves a real, checkable testtmp.o behind
+        # instead of none at all.
         slow_compiler = os.path.abspath("slow_compiler")
         f = open(slow_compiler, "w")
         try:
-            f.write("#!/bin/sh\nsleep 30\n")
+            f.write("#!/bin/sh\n"
+                     "sleep 5\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
         finally:
             f.close()
         os.chmod(slow_compiler, 0o700)
 
+        # ".i" (already preprocessed) rather than ".c": otherwise
+        # dcc_cpp_maybe() runs slow_compiler locally first (as "-E") to
+        # preprocess, which -- since it ignores its own argv and just
+        # sleeps -- would stall the *client's* upload of the source
+        # file for the same 30s, before the daemon side is ever
+        # reached at all. ClientDisconnectKillsServerChild_Case (above)
+        # uses the same ".i" trick for the same reason.
+        open("testtmp.i", "wt").write("int main() {}")
+
         client_pid = self.runcmd_background(
             self.distcc_with_fallback() + slow_compiler +
-            " -o testtmp.o -c testtmp.c")
+            " -o testtmp.o -c testtmp.i")
 
         self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
 
