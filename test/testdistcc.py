@@ -122,6 +122,7 @@ EXIT_COMPILER_CRASHED        = 104
 EXIT_OUT_OF_MEMORY           = 105
 EXIT_BAD_HOSTSPEC            = 106
 EXIT_COMPILER_MISSING        = 110
+EXIT_RECURSION               = 111
 EXIT_ACCESS_DENIED           = 113
 
 DISTCC_TEST_PORT             = 42000
@@ -3330,15 +3331,23 @@ class RecursionSafeguard_Case(CompileHello_Case):
     src/safeguard.c's dcc_recursion_safeguard() reads _DISTCC_SAFEGUARD
     from the environment (set by a prior distcc invocation via
     dcc_increment_safeguard(), guarding against distcc somehow calling
-    itself, e.g. a misconfigured $CC or masquerade symlink loop); compile.c's
-    dcc_build_somewhere() checks it before anything else (`if (sg_level)
-    goto run_local;`, ahead of even dcc_scan_args()) and skips straight to
-    a local compile without ever attempting to contact a host.
+    itself, e.g. a misconfigured $CC or masquerade symlink loop).
+    src/distcc.c's main() checks it immediately after computing sg_level
+    (`if (sg_level - tweaked_path > 0)`, well before dcc_build_somewhere()
+    is ever called) and treats a positive level as a hard, fatal
+    configuration error: EXIT_RECURSION (111), logged as "distcc seems to
+    have invoked itself recursively!" -- it does NOT quietly fall back to
+    a local compile (an earlier version of this test/docstring assumed
+    that incorrectly; corrected after a real run showed exit 111, not 0,
+    confirmed live: with DISTCC_VERBOSE=1/DISTCC_LOG set, the trace reads
+    "safeguard level=1" followed immediately by that CRITICAL line, no
+    network connection ever attempted -- so the fix here is only the
+    test's own expected exit code, not any src/ change).
 
     Pre-setting it here and pointing DISTCC_HOSTS at a real TCP port with
-    nothing listening proves this directly: without the guard, this
-    compile would fail (nothing to connect to, no fallback host); with
-    it, distcc never even tries, and the compile succeeds."""
+    nothing listening (rather than a real, reachable one) deliberately
+    proves the guard fires before any network attempt: if it didn't, this
+    would instead fail with a connection error, not EXIT_RECURSION."""
 
     def runtest(self):
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3347,7 +3356,10 @@ class RecursionSafeguard_Case(CompileHello_Case):
         probe.close()
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
         os.environ['_DISTCC_SAFEGUARD'] = '1'
-        self.compile()
+        msgs, errs = self.runcmd(self.distcc_without_fallback() +
+                                 self._cc + " -o testtmp.o -c testtmp.c",
+                                 EXIT_RECURSION)
+        self.assert_re_search("invoked itself recursively", errs)
 
 
 class MissingCompiler_Case(CompileHello_Case):
@@ -3374,7 +3386,17 @@ class NonexistentSourceFile_Case(CompileHello_Case):
     We expect exactly one error message. If distcc's local-fallback path
     ever incorrectly retried the compile locally after a remote failure,
     the same "no such file" error would be reported a second time -- the
-    original concern this TODO recorded."""
+    original concern this TODO recorded.
+
+    Exit code corrected after a real run (confirmed live: exit 1, not
+    100): dcc_is_source() (src/filename.c) matches purely by filename
+    extension, never checking the file actually exists, so "testtmp.c" is
+    still scanned as a perfectly normal, distributable source argument --
+    only the compiler itself (cc1), not distcc's own argument scan, ever
+    notices the file is missing. That's a genuine, ordinary compiler
+    failure (dcc_critique_status()'s "normal failure gives exit code 1"
+    branch, src/exec.c), not the EXIT_DISTCC_FAILED distcc reserves for
+    its own pre-flight rejections."""
 
     def setup(self):
         WithDaemon_Case.setup(self)
@@ -3383,7 +3405,7 @@ class NonexistentSourceFile_Case(CompileHello_Case):
     def runtest(self):
         msgs, errs = self.runcmd(self.distcc_without_fallback()
                                  + self._cc + " -o testtmp.o -c testtmp.c",
-                                 expectedResult=EXIT_DISTCC_FAILED)
+                                 expectedResult=1)
         self.assert_equal(len(re.findall(r'[Nn]o such file', errs)), 1)
 
 
@@ -3640,14 +3662,32 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
     actually work end-to-end through a real distributed compile. Skips
     cleanly (skip_on_noexec) if ccache isn't installed -- the original
     TODO's own hedge ("presumably this is skipped if we can't find
-    ccache")."""
+    ccache").
+
+    Corrected after a real run (confirmed live via the buildtools
+    container): CCACHE_DIR must be set *before* WithDaemon_Case.setup()
+    starts distccd, not after -- the daemon is a long-lived process that
+    only ever inherits the environment it was started with, and every
+    server-side "ccache <cc> ..." child it later forks for a real job
+    inherits *that* snapshot, not whatever the client's own os.environ
+    looks like by the time compile() runs. Getting this backwards left
+    the server-side ccache calls silently pointed at ccache's own default
+    cache location instead of this test's private one. Also: distcc's own
+    client-side cpp step re-invokes the same "ccache <cc>" wrapper for a
+    bare "-E" (preprocess-only) call -- confirmed live via
+    CCACHE_DEBUG=1/CCACHE_LOGFILE tracing (Result: called_for_preprocessing)
+    -- so `ccache -s` genuinely shows *two* uncacheable calls (one per
+    compile()) alongside the two real, cacheable ones; asserting a
+    nonzero Hits count (not the literal substring "cache hit", which
+    ccache 4.x's real `-s` output never contains at all -- it says
+    "Hits:") is what actually reflects a real cache hit."""
 
     def setup(self):
-        CompileHello_Case.setup(self)
-        self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
         self.ccache_dir = os.path.abspath('ccache_test_dir')
         os.mkdir(self.ccache_dir)
         os.environ['CCACHE_DIR'] = self.ccache_dir
+        CompileHello_Case.setup(self)
+        self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
 
     def compileCmd(self):
         return (self.distcc_without_fallback() +
@@ -3658,7 +3698,7 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
         self.compile()   # first compile: cold, populates the cache
         self.compile()   # second compile: should hit
         out, errs = self.runcmd("ccache -s")
-        self.assert_re_search(r"[Cc]ache hit", out)
+        self.assert_re_search(r"Hits:\s+[1-9]", out)
 
 
 class HostFile_Case(CompileHello_Case):
@@ -3700,19 +3740,38 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
 
 
 class IPv6Compile_Case(CompileHello_Case):
-    """Compile over IPv6 (issue #275). distccd's own dcc_socket_listen()
-    (src/srvnet.c) and the client's hostspec parser (src/hosts.c's
-    dcc_parse_tcp_host(), which already handles bracketed "[addr]:port"
-    syntax) are both address-family-agnostic via getaddrinfo()/AF_UNSPEC --
-    this was purely an untested code path, not a missing feature. (The
-    "IPv6 literals are not supported yet" line in src/hosts.c's own top-of-
-    file doc comment is stale and contradicted by dcc_parse_tcp_host()'s
-    real bracket-parsing code a few hundred lines below it.)
+    """Compile over IPv6 (issue #275).
 
-    Skips cleanly (NotRunError) if this host genuinely has no IPv6
-    loopback -- startDaemon()'s bind-retry loop only handles port
-    conflicts (EXIT_BIND_FAILED -> retry a higher port), not a missing
-    address family, so probing first here avoids a hang."""
+    Real finding, confirmed live via the buildtools container: IPv6
+    address parsing throughout this codebase (src/access.c's
+    dcc_parse_mask(), src/srvnet.c's dcc_socket_listen(), src/clinet.c,
+    src/netutil.c) only exists behind the `ENABLE_RFC2553` compile-time
+    macro, which is only ever defined by configure.ac's `--enable-rfc2553`
+    -- an opt-in flag this project's own build configs never pass
+    (neither the default `./configure` invocation, nor c-build.yml's CI
+    matrix, nor the buildtools image). Without it, dcc_parse_mask() falls
+    back to plain inet_aton(), which cannot parse "::1" at all ("can't
+    parse internet address", confirmed live) -- and dopt.c's own default
+    private-network allowlist literally omits "::1/128" in that case,
+    with the source comment "ipv6 addresses can only be parsed with
+    this". distcc-ng's client-side hostspec parser (src/hosts.c's
+    dcc_parse_tcp_host(), bracket-stripping) is genuinely
+    RFC2553-independent and does work regardless -- but the *server*
+    side is not, so a real end-to-end compile is not achievable against
+    any binary built the way this project actually builds it today.
+    Rather than silently asserting success against a code path that
+    cannot currently be exercised, this probes for exactly that gate and
+    skips (NotRunError) with the real reason, rather than guessing pass
+    or fail. Whether to flip `--enable-rfc2553` on by default project-wide
+    is a separate, real decision (a build-configuration change, not a
+    test-only one) -- out of scope here.
+
+    (src/hosts.c's own top-of-file doc comment, "IPv6 literals are not
+    supported yet", was stale for the *client-side hostspec parsing*
+    question that comment was actually about, and is corrected alongside
+    this test -- that specific claim was wrong; the broader server-side
+    RFC2553 gate above is a separate, real, still-current limitation this
+    docstring's correction doesn't paper over.)"""
 
     def setup(self):
         probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
@@ -3722,6 +3781,22 @@ class IPv6Compile_Case(CompileHello_Case):
             raise comfychair.NotRunError('no IPv6 loopback on this host')
         finally:
             probe.close()
+        # Real end-to-end IPv6 support additionally requires distccd to
+        # have been built with --enable-rfc2553 (see class docstring) --
+        # probe for that gate with a real, throwaway invocation before
+        # committing to the full setup chain below, rather than letting
+        # WithDaemon_Case.startDaemon()'s bind-retry loop (which only
+        # understands a port conflict, EXIT_BIND_FAILED) turn this into a
+        # hard failure instead of a clean, explained skip.
+        # No --daemon: dcc_parse_mask() runs during option parsing, before
+        # any socket work, so a real RFC2553 gate fails immediately in the
+        # foreground -- nothing is left listening or lingering either way.
+        rc, out, err = self.runcmd_unchecked(
+            self.distccd() + "--listen ::1 --allow ::1 --port 41999")
+        if "can't parse internet address" in err:
+            raise comfychair.NotRunError(
+                'distccd was not built with --enable-rfc2553; '
+                'IPv6 --listen/--allow is unavailable')
         CompileHello_Case.setup(self)
 
     def daemon_command(self):
