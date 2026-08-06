@@ -13,6 +13,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/openssf-baseline-recheck.yml`**: `check_br07()`
+  (OSPS-BR-07.01, secret scanning + push protection) reads
+  `repos/{repo}`'s `security_and_analysis` field, which GitHub only
+  returns for a token with admin access to the repo -- `github.token`
+  never qualified regardless of the job's own `permissions:` block
+  (confirmed live, 2026-08-05: the field was absent, not null, from the
+  response for both `github.token` and the existing
+  `PROJECT_AUTOMATION_PAT`). `GHCR_PACKAGE_DELETE_PAT` now also carries
+  `repo` scope for this reason; the whole script (comment posting
+  included) runs as that token instead. `issues: write` dropped from the
+  job's `permissions:` block since it no longer affects anything once
+  `GH_TOKEN` is the PAT (issue #312).
+
 - **`nightly-publish.yml`**: its packaging apt list was missing
   `libseccomp-dev`, which `package-release.yml`'s own list already had --
   the two had silently drifted (exactly the risk issue #362 item 6
