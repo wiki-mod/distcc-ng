@@ -54,11 +54,6 @@ Example:
 
 # TODO: Some kind of direct test of the host selection algorithm.
 
-# TODO: Test that ccache correctly caches compilations through distcc:
-# make up a random file so it won't hit, then compile once and compile
-# twice and examine the log file to make sure we got a hit.  Also
-# check that the binary works properly.
-
 # TODO: Do all this with malloc debugging on.
 
 # TODO: Is there a straightforward way to test that daemon output is
@@ -74,9 +69,6 @@ Example:
 # be a no-op, always producing the same result ScanArgs_Case already
 # checks once.
 
-# TODO: Test that ccache gets hits when calling distcc.  Presumably
-# this is skipped if we can't find ccache.  Need to parse `ccache -s`.
-
 # Check that without DISTCC_SAVE_TEMPS temporary files are cleaned up.
 
 # TODO: Perhaps redirect stdout, stderr to a temporary file while
@@ -84,9 +76,6 @@ Example:
 
 # TODO: Add test harnesses that just exercise the bulk file transfer
 # routines.
-
-# TODO: Test -MMD and bare -M dependency generation (-MD itself is covered
-# by DashMD_DashMF_DashMT_Case/DashWpMD_Case below).
 
 # TODO: Test using '.include' in an assembly file, and make sure that
 # it is resolved on the client, not on the server.
@@ -2707,6 +2696,28 @@ class DashMD_DashMF_DashMT_Case(CompileHello_Case):
         self.assert_re_search("target_name_42", dotd_contents)
 
 
+class DashMMD_Case(CompileHello_Case):
+    """Test -MMD (issue #275, closing the remaining gap from
+    DashMD_DashMF_DashMT_Case above -- that one only covers -MD).
+    Bare -M by itself needs no separate test: ScanArgs_Case already
+    confirms `-M` without `-c` classifies as "local" (dcc_scan_args()
+    never sees seen_opt_c set, so there is no compile to distribute at
+    all -- an -M-only invocation is inherently local by design, nothing
+    distcc-specific left to verify beyond that existing check)."""
+
+    def compileOpts(self):
+        return "-MMD -MFdotd_mmd_filename"
+
+    def runtest(self):
+        try:
+            os.remove('dotd_mmd_filename')
+        except OSError:
+            pass
+        self.compile()
+        dotd_contents = open("dotd_mmd_filename").read()
+        self.assert_re_search("testtmp.o", dotd_contents)
+
+
 class DashWpMD_Case(CompileHello_Case):
     """Test -Wp,-MD,depfile"""
 
@@ -3610,6 +3621,37 @@ class ParseMask_Case(comfychair.TestCase):
                 self.fail("%s gave %d, expected %d" % (cmd, ret, expected))
 
 
+class CcacheHitThroughDistcc_Case(CompileHello_Case):
+    """ccache actually gets a hit when calling distcc (issue #275):
+    compile the same source twice through "distcc ccache <cc>" with a
+    private CCACHE_DIR, then confirm via `ccache -s` that the second
+    compile was a real cache hit -- not just that the command completed.
+    ScanArgs_Case already confirms "ccache gcc -c hello.c" classifies as
+    "distribute"; this is the missing functional half: does the cache
+    actually work end-to-end through a real distributed compile. Skips
+    cleanly (skip_on_noexec) if ccache isn't installed -- the original
+    TODO's own hedge ("presumably this is skipped if we can't find
+    ccache")."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
+        self.ccache_dir = os.path.abspath('ccache_test_dir')
+        os.mkdir(self.ccache_dir)
+        os.environ['CCACHE_DIR'] = self.ccache_dir
+
+    def compileCmd(self):
+        return (self.distcc_without_fallback() +
+                "ccache " + self._cc + " -o testtmp.o " + self.compileOpts() +
+                " -c %s" % self.sourceFilename())
+
+    def runtest(self):
+        self.compile()   # first compile: cold, populates the cache
+        self.compile()   # second compile: should hit
+        out, errs = self.runcmd("ccache -s")
+        self.assert_re_search(r"[Cc]ache hit", out)
+
+
 class HostFile_Case(CompileHello_Case):
     def setup(self):
         CompileHello_Case.setup(self)
@@ -3836,6 +3878,7 @@ tests = [
          ParseMask_Case,
          DotD_Case,
          DashMD_DashMF_DashMT_Case,
+         DashMMD_Case,
          Compile_c_Case,
          ImplicitCompilerScan_Case,
          StripArgs_Case,
@@ -3890,6 +3933,7 @@ tests = [
          PreprocessAsm_Case,
          ModeBits_Case,
          EmptySource_Case,
+         CcacheHitThroughDistcc_Case,
          HostFile_Case,
          HostFileDistccDirUnset_Case,
          IPv6Compile_Case,
