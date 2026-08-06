@@ -30,12 +30,24 @@ jobs:
   # `Analyze (c-cpp/python/actions)` are all required status checks on
   # master's ruleset, so -- same lesson as c-build.yml (refs #267/#336) --
   # any gating here has to keep all three check-runs genuinely present,
-  # not skip the whole workflow via a path filter. Unlike c-build.yml this
-  # was never a MERGE-BLOCKING bug (this workflow never had a path filter
-  # to begin with), just a waste: every PR ran a full C build + CodeQL
-  # scan for all three languages even when e.g. only README.md changed.
-  # This job computes one relevant/not-relevant flag per language so each
-  # matrix leg can skip its own real work independently.
+  # not skip the whole workflow via a path filter. This job computes one
+  # relevant/not-relevant flag per language so each matrix leg can skip
+  # its own real work independently while still reporting a green
+  # check-run under its exact required name.
+  #
+  # That handles required_status_checks, but master's ruleset also has a
+  # second, independent native rule -- "Require code scanning results"
+  # (code_scanning_tools: CodeQL, alerts_threshold: all) -- which checks
+  # for an actual uploaded SARIF analysis per language, not a check-run's
+  # conclusion. A language this job marks not-relevant never calls
+  # codeql-action/analyze, so it never uploads anything; its check-run is
+  # a green skip, but the native rule still sees zero results for that
+  # language and blocks merge ("Code scanning is still expecting N
+  # results from CodeQL"), independent of every check-run's own outcome.
+  # Confirmed live on PR #426. So the `filter` step below forces all three
+  # languages relevant whenever the target branch is master, regardless
+  # of what actually changed -- current_dev has no such ruleset rule and
+  # keeps the real path-filtered optimization.
   changes:
     name: Detect relevant changes per CodeQL language
     runs-on: ubuntu-latest
@@ -56,6 +68,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          # PR base branch for pull_request events, current branch name for
+          # push events -- either way, "what branch is this commit landing
+          # on".
+          TARGET_BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "schedule" ]; then
@@ -65,6 +81,32 @@ jobs:
               echo "actions=true"
             } >> "$GITHUB_OUTPUT"
             echo "forced by $EVENT_NAME -- always runs the full scan"
+            exit 0
+          fi
+          # master's own ruleset has a native "Require code scanning
+          # results" rule (code_scanning_tools: CodeQL, alerts_threshold:
+          # all) -- a completely separate mechanism from the
+          # required_status_checks list above. That rule checks whether an
+          # actual SARIF analysis was uploaded for the commit, per
+          # language; a language skipped via this job's path filter never
+          # calls codeql-action/analyze at all, so it never uploads
+          # anything, even though its own check-run still shows green
+          # (skipped, not failed). required_status_checks is satisfied by
+          # the green skip; the native code_scanning rule is not -- it
+          # blocks merge with "Code scanning is still expecting N results
+          # from CodeQL" regardless of the check-run's own conclusion.
+          # Confirmed live on PR #426 (a .github/workflows + CHANGELOG.md
+          # only diff against master): permanently merge-blocked this way
+          # even with all three Analyze checks green. So a target of
+          # master always gets the full, unskipped scan; current_dev has
+          # no such ruleset rule and keeps the path-filtered optimization.
+          if [ "$TARGET_BRANCH" = "master" ]; then
+            {
+              echo "c_cpp=true"
+              echo "python=true"
+              echo "actions=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "targeting master -- its ruleset requires real CodeQL results for every language on every commit, never skip"
             exit 0
           fi
           if [ "$EVENT_NAME" = "pull_request" ]; then
