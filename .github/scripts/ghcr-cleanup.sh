@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 #
 # Deletes stale GHCR container package versions for one or more of this
-# repo's own packages: every genuinely untagged version (never pullable by
-# any tag, so keeping it around serves no purpose), and old disposable
-# "manual-N" workflow_dispatch test builds (package-release.yml's manual
-# test-build path) beyond the KEEP_MANUAL most recent run numbers. Never
-# touches a real version tag (X.Y.Z-NG...), "latest", or "nightly" -- those
-# are matched against an explicit allow-nothing-else regex, not inferred by
-# exclusion.
+# repo's own packages: untagged versions beyond the KEEP_UNTAGGED most
+# recently created ones, and old disposable "manual-N" workflow_dispatch
+# test builds (package-release.yml's manual test-build path) beyond the
+# KEEP_MANUAL most recent run numbers. Never touches a real version tag
+# (X.Y.Z-NG...), "latest", or "nightly" -- those are matched against an
+# explicit allow-nothing-else regex, not inferred by exclusion.
+#
+# KEEP_UNTAGGED exists because "untagged" does not always mean "orphaned
+# cruft": for distcc-ng-nightly specifically, nightly-publish.yml moves a
+# single floating `latest` tag onto a new digest every successful run, so
+# each previous day's build becomes untagged the moment a new one lands --
+# deleting all of them immediately would leave zero rollback fallback if
+# the newest nightly turns out broken. A failed nightly run never reaches
+# this at all (nightly-publish.yml's `publish` job needs both build/e2e
+# gates to succeed, no `if: always()`, so a failure never pushes or moves
+# anything), so KEEP_UNTAGGED only ever has to cover real, successful
+# prior builds.
 #
 # Safety: an "untagged" version can, in principle, still be referenced as a
 # platform-specific child of a multi-arch manifest list that some OTHER tag
@@ -42,6 +52,7 @@ set -euo pipefail
 : "${PACKAGES:?PACKAGES required, space-separated container package names}"
 DRY_RUN="${DRY_RUN:-true}"
 KEEP_MANUAL="${KEEP_MANUAL:-2}"
+KEEP_UNTAGGED="${KEEP_UNTAGGED:-3}"
 
 delete_version() {
   local pkg="$1" id="$2" reason="$3"
@@ -72,15 +83,30 @@ for pkg in ${PACKAGES}; do
   done <<< "${all_tags}"
 
   # --- Untagged versions, minus anything a live manifest list still points
-  # to -------------------------------------------------------------------
-  while IFS=$'\t' read -r id digest; do
+  # to, keeping the KEEP_UNTAGGED most recently created remaining ones as a
+  # rollback fallback ------------------------------------------------------
+  deletable_untagged="$(
+    jq -r '.[] | select((.metadata.container.tags | length) == 0) | [.created_at, .id, .name] | @tsv' <<< "${versions_json}" \
+      | while IFS=$'\t' read -r created id digest; do
+          [ -z "${id}" ] && continue
+          if [ -n "${protected[${digest}]+x}" ]; then
+            echo "SKIP untagged ${digest} (${pkg}#${id}): still referenced by a live multi-arch manifest" >&2
+            continue
+          fi
+          printf '%s\t%s\t%s\n' "${created}" "${id}" "${digest}"
+        done | sort -r
+  )"
+
+  kept=0
+  while IFS=$'\t' read -r created id digest; do
     [ -z "${id}" ] && continue
-    if [ -n "${protected[${digest}]+x}" ]; then
-      echo "SKIP untagged ${digest} (${pkg}#${id}): still referenced by a live multi-arch manifest"
+    kept=$((kept + 1))
+    if [ "${kept}" -le "${KEEP_UNTAGGED}" ]; then
+      echo "KEEP untagged ${digest} (${pkg}#${id}, created ${created}): within the ${KEEP_UNTAGGED} most recently created untagged version(s)"
       continue
     fi
-    delete_version "${pkg}" "${id}" "untagged ${digest}"
-  done < <(jq -r '.[] | select((.metadata.container.tags | length) == 0) | [.id, .name] | @tsv' <<< "${versions_json}")
+    delete_version "${pkg}" "${id}" "untagged ${digest}, created ${created}"
+  done <<< "${deletable_untagged}"
 
   # --- Old manual-N groups beyond the KEEP_MANUAL most recent run numbers -
   manual_numbers="$(jq -r '.[].metadata.container.tags[]?' <<< "${versions_json}" \

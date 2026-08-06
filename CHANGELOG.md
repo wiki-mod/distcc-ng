@@ -42,7 +42,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `master` promotion because `workflow_dispatch` only fires from a workflow
   file that already exists on the default branch. See the full changelog
   entry on `current_dev` (PR #425) for the complete rationale; this is the
-  same one-off-exception copy, not a separate feature.
+  same one-off-exception copy, not a separate feature. Now keeps the 3
+  most recently created untagged versions per package as a rollback
+  fallback instead of deleting all of them -- the first real run against
+  `distcc-ng-nightly` deleted all 21 untagged versions with no retention
+  at all, which would have left no fallback if the newest nightly build
+  had turned out broken.
 
 ### Security
 
