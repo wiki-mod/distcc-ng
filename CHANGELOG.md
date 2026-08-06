@@ -198,6 +198,35 @@ See `doc/release-versioning.md` for the full versioning and release process.
   not meant to become a standing/recurring test with a permanent new CI
   dependency footprint. Skips cleanly (`NotRunError`) wherever `sshd`/
   `ssh-keygen`/`ssh` aren't installed, which is every CI runner today.
+- **`test/testdistcc.py`**: `AssemblyIncludeLocalOnly_Case` and
+  `ServerKilledMidJob_Case` (issue #275), the last two originally-open
+  header-block `TODO`s.
+  - `AssemblyIncludeLocalOnly_Case`: proves a `.s` file's `.include` is
+    always resolved locally, never mis-resolved server-side.
+    `src/filename.c`'s own top-of-file comment states the design ("As of
+    0.10, .s and .S files are never distributed, because they might
+    contain '.include' pseudo-operations"), and `dcc_is_source()`/
+    `dcc_is_preprocessed()` confirm it's still true: both gate `.s`/`.S`
+    recognition behind `ENABLE_REMOTE_ASSEMBLE`, a macro never defined
+    anywhere in this project's build. Proven the same way
+    `RecursionSafeguard_Case` proves "never touches the network":
+    `DISTCC_HOSTS` points at nothing listening, `DISTCC_FALLBACK=0`, and
+    the compile still succeeds.
+  - `ServerKilledMidJob_Case`: kills the daemon (not the client) mid-job
+    via `SIGKILL` and confirms the client falls back locally by default
+    -- the mirror image of the existing `ClientDisconnectKillsServerChild_Case`.
+    Deliberately built on a `--no-fork` daemon: in the default preforked
+    model, the pidfile's pid is only the accept()-dispatching parent, not
+    the worker process actually holding an already-accepted connection,
+    so killing it wouldn't touch an in-flight job at all. Exercises a
+    fallback trigger point (`dcc_compile_remote()` failing after the job
+    was already dispatched) that `NoServer_Case`/`BackoffFromDownedHost_Case`
+    never reach, since those only ever fail at `connect()` time. Two real
+    bugs found live before this passed: using `.c` instead of an
+    already-preprocessed `.i` source stalled the client's own upload for
+    the fake sleeping compiler's full sleep window (`dcc_cpp_maybe()` runs
+    it locally as `-E` first); the fake compiler never created any output
+    file, so the local-fallback re-run left no object file behind either.
 - **`.github/actions/harden-runner/`**: new composite action consolidating
   17 verbatim copies of the Harden Runner step (issue #362 item 1) across
   `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
