@@ -65,36 +65,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - id: diff
+        uses: $/.github/actions/changed-files
       - id: filter
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
+          FORCED: ${{ steps.diff.outputs.forced }}
+          CHANGED: ${{ steps.diff.outputs.changed_files }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "schedule" ]; then
+          if [ "$FORCED" = "true" ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "forced by $EVENT_NAME -- always runs the full build"
             exit 0
           fi
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            from="$BASE_SHA"
-          else
-            from="$BEFORE_SHA"
-          fi
-          # A missing/all-zero `before` (e.g. a branch's first push) can't
-          # be diffed -- fail open (relevant=true) rather than silently
-          # skipping required checks on an un-diffable event.
-          if [ -z "$from" ] || [ "$from" = "0000000000000000000000000000000000000000" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "no diffable base ($from) -- failing open"
-            exit 0
-          fi
-          changed="$(git diff --name-only "$from" "$HEAD_SHA")"
-          echo "changed files:"
-          echo "$changed"
-          if printf '%s\n' "$changed" | grep -qvE '\.md$|^doc/'; then
+          if printf '%s\n' "$CHANGED" | grep -qvE '\.md$|^doc/'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"

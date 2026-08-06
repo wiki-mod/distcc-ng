@@ -29,6 +29,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   genuinely unpinned action elsewhere is still caught. The pinned
   `step-security/harden-runner` SHA now only needs bumping in one place
   instead of 17.
+- **`.github/actions/changed-files/`**: new composite action consolidating
+  the duplicated changed-file diff computation shared by `c-build.yml`'s
+  and `codeql.yml`'s own `changes` jobs (issue #362 item 2) -- the same
+  event-type base-SHA selection, the `workflow_dispatch`/`schedule`
+  force-all branch, and the fail-open guard for an un-diffable
+  before/base SHA. Each caller keeps its own, genuinely different
+  classification logic (one relevance boolean vs. three per-language
+  ones, plus `codeql.yml`'s master-ruleset force-all check) layered on
+  top of the shared `forced`/`changed_files` outputs. Uses the `$/`
+  self-repository syntax (see the Harden Runner consolidation, issue
+  #362 item 1, for the full rationale and `actionlint.yaml` suppression
+  this also needs).
 - **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
   new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
   GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
