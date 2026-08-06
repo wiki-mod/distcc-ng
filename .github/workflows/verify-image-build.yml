@@ -348,8 +348,9 @@ jobs:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Log in to GHCR
-        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Build and push distcc-ng-buildtools:latest
         # Rebuilt here rather than re-tagging build_and_selftest's image --

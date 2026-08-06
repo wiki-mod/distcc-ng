@@ -316,10 +316,9 @@ jobs:
             printf 'dockerfile_target=%s\n' "${dockerfile_target}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Log in to GHCR
-        shell: bash
-        run: |
-          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
         shell: bash
@@ -447,10 +446,9 @@ jobs:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
       - uses: $/.github/actions/harden-runner
-      - name: Log in to GHCR
-        shell: bash
-        run: |
-          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Download this run's image digests
         # continue-on-error: true so a rerun where arm64 failed (and never

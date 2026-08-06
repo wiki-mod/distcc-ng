@@ -1,0 +1,23 @@
+name: Log in to GHCR
+description: >-
+  Single source of truth for this repo's `docker login ghcr.io` step
+  (issue #362 item 3), previously duplicated verbatim across 6 call sites.
+  Takes the token as an input rather than hardcoding `github.token`, since
+  not every caller uses the same credential: ghcr-cleanup.yml logs in
+  with GHCR_PACKAGE_DELETE_PAT (a classic PAT with delete:packages, since
+  the default GITHUB_TOKEN cannot delete package versions), every other
+  caller uses the default github.token.
+
+inputs:
+  token:
+    description: "Token or PAT to authenticate docker login with"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GHCR_LOGIN_TOKEN: ${{ inputs.token }}
+        GHCR_LOGIN_ACTOR: ${{ github.actor }}
+      run: printf '%s\n' "${GHCR_LOGIN_TOKEN}" | docker login ghcr.io -u "${GHCR_LOGIN_ACTOR}" --password-stdin

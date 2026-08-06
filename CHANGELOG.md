@@ -41,6 +41,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   self-repository syntax (see the Harden Runner consolidation, issue
   #362 item 1, for the full rationale and `actionlint.yaml` suppression
   this also needs).
+- **`.github/actions/ghcr-login/`**: new composite action consolidating 6
+  verbatim `docker login ghcr.io` steps (issue #362 item 3) across
+  `e2e-image-build.yml`, `ghcr-cleanup.yml`, `nightly-publish.yml`,
+  `package-release.yml` (x2), `verify-image-build.yml`. Takes the token
+  as an input rather than hardcoding `github.token`, since
+  `ghcr-cleanup.yml` logs in with `GHCR_PACKAGE_DELETE_PAT` (a classic
+  PAT with `delete:packages`) while every other caller uses the default
+  token. Uses the `$/` self-repository syntax (see issue #362 item 1 for
+  the full rationale and `actionlint.yaml` suppression this also needs).
 - **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
   new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
   GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
