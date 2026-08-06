@@ -1,0 +1,37 @@
+name: Detect changed files (fail-open)
+description: >-
+  Computes the list of files changed since the appropriate base for the
+  current event (PR base SHA on pull_request, before-SHA on push).
+  workflow_dispatch/schedule and any event with no diffable base (e.g. a
+  branch's first push) report forced=true instead of a file list, since
+  there is nothing meaningful to diff and the caller should treat
+  everything as relevant rather than silently skip required checks.
+  Requires the caller to have already run actions/checkout with
+  fetch-depth: 0 -- this action only computes the diff, it does not check
+  out the repository itself.
+
+outputs:
+  changed_files:
+    description: >-
+      Newline-separated list of changed file paths. Empty when forced is
+      "true" -- the caller must check forced first, not treat an empty
+      list as "nothing changed".
+    value: ${{ steps.diff.outputs.changed_files }}
+  forced:
+    description: >-
+      "true" if this event has no meaningful diff (workflow_dispatch,
+      schedule, or an un-diffable before/base SHA) and the caller should
+      treat everything as relevant; "false" otherwise.
+    value: ${{ steps.diff.outputs.forced }}
+
+runs:
+  using: composite
+  steps:
+    - id: diff
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        BEFORE_SHA: ${{ github.event.before }}
+      run: bash "${GITHUB_ACTION_PATH}/diff.sh"
