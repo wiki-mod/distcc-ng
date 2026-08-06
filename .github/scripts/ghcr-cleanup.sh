@@ -29,6 +29,11 @@
 # preinstalled there).
 #
 # DRY_RUN=true (default) only lists what would be deleted, no API writes.
+#
+# MASTER-SYNCED FILE: see the header comment in
+# .github/workflows/ghcr-cleanup.yml for why this script also has a verbatim
+# copy on master ahead of the real current_dev->master promotion. Any future
+# edit must be applied to both branches in the same change.
 
 set -euo pipefail
 
