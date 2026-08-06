@@ -250,8 +250,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Log in to GHCR
-        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:

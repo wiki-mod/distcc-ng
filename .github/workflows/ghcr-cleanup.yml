@@ -56,10 +56,9 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Log in to GHCR
-        env:
-          GHCR_PACKAGE_DELETE_PAT: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
-        run: printf '%s\n' "${GHCR_PACKAGE_DELETE_PAT}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
 
       - name: Resolve target packages
         id: packages

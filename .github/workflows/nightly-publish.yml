@@ -126,8 +126,9 @@ jobs:
       - name: Build release packages
         run: ./scripts/build-release-packages.sh
 
-      - name: Log in to GHCR
-        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Build and push the distcc-ng-nightly:latest container image
         env:
