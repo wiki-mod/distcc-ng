@@ -679,28 +679,42 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       not yet fixed as of this writing — see that issue's comment thread
       for the full analysis and fix-direction discussion.
 - [ ] **A local `make check` run inside the mandatory buildtools container
-      never actually exercises pump mode, even when it reports a clean
-      full pass.** `Makefile.in`'s `maintainer-check` lists
-      `distcc-maintainer-check` (plain mode), `include-server-maintainer-
-      check`, and `pump-maintainer-check` as prerequisites in that order;
-      GNU Make's default fail-fast behavior stops at the first prerequisite
-      that fails. The already-known, pre-existing, unrelated
-      `maintainer-check-no-set-path` Docker-host quirk (this checklist's
-      own entries above) is exactly `distcc-maintainer-check`'s own
-      failure inside this container — so `pump-maintainer-check` silently
-      never runs at all, every time, even though every test up to that
-      point still prints OK/FAIL normally and looks like a genuine full
-      run. Found live (issue #275/PR #440, 2026-08-07): two real
-      pump-mode-only bugs (`NonexistentSourceFile_Case`,
-      `CcacheHitThroughDistcc_Case`) were claimed verified by repeated
-      "clean full `make check`" runs in this exact container, then failed
-      on real CI's own pump-mode leg regardless. **Real check**: use `make
-      TESTNAME=<Case> pump-single-test` to verify a specific test under
-      pump mode directly — it is a standalone target, not gated behind the
-      failing prerequisite chain. A local "full `make check` passes
-      cleanly" claim in this repo is plain-mode-only coverage unless
-      pump-mode tests were separately, explicitly run this way; real CI
-      remains the authoritative check for pump-mode behavior either way.
+      can silently skip pump mode entirely, even when it reports a clean
+      full pass — but this is conditional on a host-specific quirk, not a
+      universal property of the container or of `make check` itself.**
+      `Makefile.in`'s `maintainer-check` lists `distcc-maintainer-check`
+      (plain mode), `include-server-maintainer-check`, and
+      `pump-maintainer-check` as prerequisites in that order; GNU Make's
+      default fail-fast behavior stops at the first prerequisite that
+      fails. On a Docker host that hits the already-known, pre-existing,
+      unrelated `maintainer-check-no-set-path` quirk (this checklist's own
+      entries above, `distccd: not found`), that failure is exactly
+      `distcc-maintainer-check`'s own — so `pump-maintainer-check` silently
+      never runs, even though every test up to that point still prints
+      OK/FAIL normally and looks like a genuine full run. Found live
+      (issue #275/PR #440, 2026-08-07): two real pump-mode-only bugs
+      (`NonexistentSourceFile_Case`, `CcacheHitThroughDistcc_Case`) were
+      claimed verified by repeated "clean full `make check`" runs on that
+      host, then failed on real CI's own pump-mode leg regardless.
+      **Corrected (issue #442, 2026-08-07): this does not reproduce on
+      every Docker host.** A `make check` run inside the identical
+      buildtools image on a different SSH-reachable host reached and
+      completed `pump-maintainer-check` in the same invocation (log showed
+      `TESTDISTCC_OPTS="--pump "` and the full real `test/testdistcc.py`
+      suite running a second time under pump mode, 174 OK/26 NOTRUN/0 FAIL
+      combined across both modes) — the `maintainer-check-no-set-path`
+      quirk simply didn't trigger there. **Real check, regardless of
+      host**: use `make TESTNAME=<Case> pump-single-test` to verify a
+      specific test under pump mode directly — it is a standalone target,
+      not gated behind the prerequisite chain, so it gives a real answer
+      on any host without first needing to know whether that host hits the
+      quirk. A local "full `make check` passes cleanly" claim is only
+      confirmed plain-mode-only coverage if `distcc-maintainer-check`'s own
+      tail (the trailing `maintainer-check-no-set-path` re-run, see this
+      checklist's earlier entry) actually failed in that run's own log —
+      check for that specifically rather than assuming it from which host
+      you're on; real CI remains the authoritative check for pump-mode
+      behavior either way.
 
 ## Keeping this checklist current
 
