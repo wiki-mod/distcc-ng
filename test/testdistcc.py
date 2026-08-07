@@ -4017,9 +4017,24 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
         self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
 
     def compileCmd(self):
+        # Absolute path, not the bare relative "testtmp.c" every other
+        # test in this suite uses: root cause found live via the
+        # CCACHE_DEBUG capture above, on real ubuntu-latest CI. GCC's
+        # client-side preprocessing embeds the exact input-file argument
+        # verbatim into the preprocessed output's own "# 1 ..." line
+        # markers; ccache's direct-mode manifest validation later
+        # lstat()s that recorded path to check for staleness. distccd
+        # runs the server-side "ccache <cc> ..." step from its own
+        # separate scratch directory, not the client's -- a relative
+        # "testtmp.c" doesn't resolve there at all ("Failed to lstat
+        # testtmp.c: No such file or directory", ccache's own debug
+        # log), landing every call in ccache's "Errors" bucket instead
+        # of Hit/Miss. An absolute path resolves identically regardless
+        # of which process's cwd does the lookup -- also how virtually
+        # every real build system invokes its compiler in practice.
         return (self.distcc_without_fallback() +
                 "ccache " + self._cc + " -o testtmp.o " + self.compileOpts() +
-                " -c %s" % self.sourceFilename())
+                " -c %s" % os.path.abspath(self.sourceFilename()))
 
     def runtest(self):
         self.compile()   # first compile: cold, populates the cache
