@@ -105,6 +105,132 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`test/testdistcc.py`**: real new test coverage for two more of issue
+  #275's longstanding header-block `TODO`s.
+  - `HostSelectionAlgorithm_Case`: direct test of `src/where.c`'s
+    `dcc_lock_one()`. Read the function in full (the issue's own explicit
+    prerequisite) before concluding anything: it scans slot index 0, then
+    1, ..., trying every configured host in `DISTCC_HOSTS` list order at
+    each index and taking the first with a free slot -- fully
+    deterministic for *sequential* dispatch (concurrent dispatch under
+    real load additionally depends on which process's `flock()` the
+    kernel grants first, which cannot be made deterministic and this test
+    doesn't attempt to cover). Starts two real `distccd` instances with
+    one job slot each and a sleeping fake compiler so the first job's
+    lock stays held while the second is dispatched, confirming via each
+    daemon's own log which one actually served which compile.
+  - `MasqueradeMode_Case`: symlinks "gcc" to the just-built `distcc`
+    binary in a test-local directory, prepends that directory to `PATH`,
+    and invokes "gcc" directly (no "distcc" anywhere in the command
+    line). Confirmed by reading `src/climasq.c`'s
+    `dcc_support_masquerade()` in full: it finds the `PATH` component
+    containing the symlink actually exec'd, strips everything up to and
+    including it, and re-resolves the same basename against what's left
+    of `PATH` -- the real compiler is found instead of looping back into
+    distcc itself.
+- **`test/testdistcc.py`**: real new test coverage for seven of issue #275's
+  longstanding header-block `TODO`s, rather than only re-triaging them.
+  - `NoForkDaemon_Case`: recheck against a `--no-fork` daemon (the
+    header-block TODO's stale "--no-prefork" name for the real flag) --
+    `src/dparent.c`'s `dcc_nofork_parent()` is a genuinely different
+    single-process accept loop from the normal preforked worker-pool
+    model, previously never exercised by any test.
+  - `BackoffFromDownedHost_Case`: lists a real-but-nothing-listening TCP
+    port first and a real daemon second. Confirms `src/backoff.c`'s
+    `dcc_disliked_host()` marks the down host via a timefile (checked in
+    the client's own trace log), the actual cross-invocation backoff
+    persistence mechanism -- distinct from the existing
+    `MixedServerPumpFallback_Case`, which only covers a same-invocation
+    DNS-failure fallback and never touches `backoff.c` at all.
+  - The "Test path stripping" TODO removed as already resolved:
+    `GdbPrefixMap_Case` already exercises `tweak_prefix_map_arguments_for_server()`
+    (`src/serve.c`, landed closing issue #76) end-to-end -- a third
+    instance of the same "feature landed, header comment never removed"
+    pattern already found and fixed twice earlier in this same issue.
+  - `IPv6Compile_Case`: a real compile over `[::1]`, both `distccd --listen`
+    and the client's `[addr]:port` hostspec syntax. Both were already
+    address-family-agnostic (`getaddrinfo()`/`AF_UNSPEC` in `src/srvnet.c`
+    and `src/access.c`; `src/hosts.c`'s `dcc_parse_tcp_host()` already
+    strips the brackets) -- this was purely an untested path, and
+    `src/hosts.c`'s own top-of-file doc comment ("IPv6 literals are not
+    supported yet") was stale and corrected in the same change. Skips
+    cleanly if the host has no IPv6 loopback.
+  - `CppFromStdin_Case`: compiles `gcc -x c -c -o testtmp.o -` with real
+    source piped through stdin. `src/arg.c`'s `dcc_scan_args()` never
+    recognizes a bare `-` as source (`dcc_is_source()` matches only by
+    extension), so this exercises its "no visible input file" local-only
+    path -- a real, deliberate fallback, not a bug, but previously
+    completely untested.
+  - `NonexistentSourceFile_Case`: compiles a source file that was never
+    created and asserts exactly one "no such file" error is reported --
+    the original TODO's concern was a local-fallback retry after the
+    remote failure silently doubling the same error message.
+  - `HostFileDistccDirUnset_Case`: same coverage as `HostFile_Case`, but
+    with `$DISTCC_DIR` itself unset, exercising `src/tempfile.c`'s
+    `dcc_get_top_dir()` `~/.distcc` fallback -- every other test always
+    has `DISTCC_DIR` set via `stripEnvironment()`, so this path was never
+    otherwise reached.
+  - `ScanArgs_Case` gained a case for `gcc -o -output -c foo.c` (an output
+    filename that itself looks like a flag) -- confirmed via `src/arg.c`'s
+    `dcc_scan_args()` that a bare `-o` unconditionally takes the next argv
+    as the output, so this was already handled correctly, just untested.
+  - Declined, with reasoning recorded in the comment: "argument scanning
+    tests should be run with various hostspecs" -- `dcc_scan_args()` takes
+    only the compiler argv, never a hostspec, so the classification cannot
+    vary by hostspec in the current architecture; a hostspec-varying test
+    would be a structural no-op.
+- **`test/testdistcc.py`**: new `SSHMode_Case` (issue #275), the last
+  originally-open TODO with an existing, provably real implementation --
+  `src/ssh.c`'s `dcc_ssh_connect()`/`src/hosts.c`'s `dcc_parse_ssh_host()`
+  (`"@host"` SSH-mode hostspec, `DCC_MODE_SSH`) had zero test coverage
+  beyond `SecureShellCommandEnvironment_Case`'s fake-`ssh`-script argv
+  check, which never actually connects or runs a real `distccd`. This
+  test starts a real, ephemeral, key-only, non-root `sshd` on
+  `127.0.0.1` and distributes a real compile to a real
+  `distccd --inetd` spawned fresh by that `sshd` for the SSH session --
+  the same mechanism a real SSH-mode deployment uses. `distccd` is found
+  purely via the SSH session's own `$PATH`, which a fresh non-login SSH
+  session does not inherit from the test process, so `sshd_config` needs
+  its own `SetEnv PATH=...` pointed at the built binaries' directory.
+  Deliberately not added to any shared CI apt list: `openssh-server`/
+  `openssh-client` were installed by hand on a real host for the initial
+  live verification, so no new CI dependency was introduced on purpose.
+  In practice the test runs for real on every GitHub Actions run anyway
+  -- `sshd`/`ssh-keygen`/`ssh` are already preinstalled on the
+  `ubuntu-latest`/`macOS-latest` runner images this project's CI uses,
+  confirmed live (`SSHMode_Case OK` on both, real `sshd`/`ssh-keygen`
+  file access independently logged by Harden Runner). It only skips
+  cleanly (`NotRunError`) in environments that genuinely lack those
+  tools, such as this project's own local buildtools container.
+- **`test/testdistcc.py`**: `AssemblyIncludeLocalOnly_Case` and
+  `ServerKilledMidJob_Case` (issue #275), the last two originally-open
+  header-block `TODO`s.
+  - `AssemblyIncludeLocalOnly_Case`: proves a `.s` file's `.include` is
+    always resolved locally, never mis-resolved server-side.
+    `src/filename.c`'s own top-of-file comment states the design ("As of
+    0.10, .s and .S files are never distributed, because they might
+    contain '.include' pseudo-operations"), and `dcc_is_source()`/
+    `dcc_is_preprocessed()` confirm it's still true: both gate `.s`/`.S`
+    recognition behind `ENABLE_REMOTE_ASSEMBLE`, a macro never defined
+    anywhere in this project's build. Proven the same way
+    `RecursionSafeguard_Case` proves "never touches the network":
+    `DISTCC_HOSTS` points at nothing listening, `DISTCC_FALLBACK=0`, and
+    the compile still succeeds.
+  - `ServerKilledMidJob_Case`: kills the daemon (not the client) mid-job
+    via `SIGKILL` and confirms the client falls back locally by default
+    -- the mirror image of the existing `ClientDisconnectKillsServerChild_Case`.
+    Deliberately built on a `--no-fork` daemon: in the default preforked
+    model, the pidfile's pid is only the accept()-dispatching parent, not
+    the worker process actually holding an already-accepted connection,
+    so killing it wouldn't touch an in-flight job at all. Exercises a
+    fallback trigger point (`dcc_compile_remote()` failing after the job
+    was already dispatched) that `NoServer_Case`/`BackoffFromDownedHost_Case`
+    never reach, since those only ever fail at `connect()` time. Two real
+    bugs found live before this passed: using `.c` instead of an
+    already-preprocessed `.i` source stalled the client's own upload for
+    the fake sleeping compiler's full sleep window (`dcc_cpp_maybe()` runs
+    it locally as `-E` first); the fake compiler never created any output
+    file, so the local-fallback re-run left no object file behind either.
 - **`.github/actions/harden-runner/`**: new composite action consolidating
   17 verbatim copies of the Harden Runner step (issue #362 item 1) across
   `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
@@ -270,6 +396,27 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`test/testdistcc.py`**: second atomic pass over issue #275's remaining
+  header-block `TODO`s, each checked individually against the live source
+  (not sampled or trusted from a prior pass). Two fully resolved, removed:
+  "Have a little compiler that takes a very long time to run... try
+  interrupting the connection" (`ClientDisconnectKillsServerChild_Case`,
+  landed via PR #417, already covers this exact scenario -- the comment
+  was never removed at the time); "Test lzo is parsed properly"
+  (`CompressedCompile_Case` already does a real functional round-trip
+  compile through `,lzo`, plus `--lzo` runs the entire suite under lzo
+  compression and several hostspec-parsing tests already exercise `,lzo`
+  tokens). Two narrowed rather than removed, since only half of what they
+  describe is actually covered: the daemon-output-redirect TODO (every
+  daemon-based test already redirects to a file via `--log-file` and polls
+  it with `waitForLogPattern()`, and `BadLogFile_Case` covers the failure
+  case -- only the "also OK through syslogd" half remains open); the
+  `DISTCC_DIR` TODO (`HostFile_Case` already covers the *set* case --
+  every test's `stripEnvironment()` sets it unconditionally -- but no test
+  ever exercises it *unset*). Also removed the `TMPDIR`/`DISTCC_SAVE_TEMPS`
+  TODO, flagged as stale-and-removable back on 2026-07-21 but never
+  actually removed until now -- caught only by going back and re-checking
+  the *already-triaged* items too, not just the ones still marked open.
 - **`test/testdistcc.py`**: removed three stale header-block `TODO`s
   (issue #275) confirmed already covered by current code, re-verified
   against the live source rather than trusted from an earlier pass:
