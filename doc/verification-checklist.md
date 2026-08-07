@@ -678,6 +678,29 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       the daemon pipeline. Found evaluating Alpine support (issue #398);
       not yet fixed as of this writing — see that issue's comment thread
       for the full analysis and fix-direction discussion.
+- [ ] **A local `make check` run inside the mandatory buildtools container
+      never actually exercises pump mode, even when it reports a clean
+      full pass.** `Makefile.in`'s `maintainer-check` lists
+      `distcc-maintainer-check` (plain mode), `include-server-maintainer-
+      check`, and `pump-maintainer-check` as prerequisites in that order;
+      GNU Make's default fail-fast behavior stops at the first prerequisite
+      that fails. The already-known, pre-existing, unrelated
+      `maintainer-check-no-set-path` Docker-host quirk (this checklist's
+      own entries above) is exactly `distcc-maintainer-check`'s own
+      failure inside this container — so `pump-maintainer-check` silently
+      never runs at all, every time, even though every test up to that
+      point still prints OK/FAIL normally and looks like a genuine full
+      run. Found live (issue #275/PR #440, 2026-08-07): two real
+      pump-mode-only bugs (`NonexistentSourceFile_Case`,
+      `CcacheHitThroughDistcc_Case`) were claimed verified by repeated
+      "clean full `make check`" runs in this exact container, then failed
+      on real CI's own pump-mode leg regardless. **Real check**: use `make
+      TESTNAME=<Case> pump-single-test` to verify a specific test under
+      pump mode directly — it is a standalone target, not gated behind the
+      failing prerequisite chain. A local "full `make check` passes
+      cleanly" claim in this repo is plain-mode-only coverage unless
+      pump-mode tests were separately, explicitly run this way; real CI
+      remains the authoritative check for pump-mode behavior either way.
 
 ## Keeping this checklist current
 
