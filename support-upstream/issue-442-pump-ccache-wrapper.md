@@ -53,9 +53,15 @@ evidence for:
   # normal, distributable command -- src/arg.c's dcc_scan_args() already
   # classifies it as such on the C client side (ScanArgs_Case). Skip the
   # wrapper here too, so `compiler` is the real compiler and its argv
-  # isn't misparsed as an extra file name (issue #442: two file_names
-  # instead of one made ParseCommandArgs raise NotCoveredError below).
-  if len(args) > 2 and os.path.basename(compiler) == 'ccache':
+  # isn't misparsed as an extra file name -- without this, args[1] would
+  # land in parse_state.file_names alongside the real source file, and
+  # the two-file_names check below would raise NotCoveredError. The
+  # args[1][0] != '-' check mirrors dcc_scan_args()'s own "argv[0]
+  # should always be a compiler name" sanity check -- without it, a
+  # ccache-specific flag before the real compiler (e.g. "ccache -C gcc
+  # ...") would be misidentified as the compiler instead.
+  if (len(args) > 2 and os.path.basename(compiler) == 'ccache'
+      and args[1][0] != '-'):
     compiler = args[1]
     i = 2
 
