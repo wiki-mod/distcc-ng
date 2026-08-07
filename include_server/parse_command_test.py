@@ -197,4 +197,24 @@ class ParseCommandUnitTest(unittest.TestCase):
         'third_party/zlib'),
        'third_party/libxml/threads.c'))
 
+  def test_ParseCommandArgs_CcacheWrapper(self):
+    # issue #442: "ccache <cc> ..." must resolve to the real compiler
+    # (self.mock_compiler below), not "ccache" itself -- Mock_SetSystem-
+    # DirsDefaults (setUp) raises if the wrong string is passed as
+    # `compiler`, so this fails loudly if the wrapper isn't skipped.
+    quote_dirs, angle_dirs, include_files, filepath, _incl_clos_f, _d_opts = (
+      parse_command.ParseCommandArgs(
+        parse_command.ParseCommandLine(
+          "ccache " + self.mock_compiler
+          + " --sysroot=" + self.mock_sysroot
+          + " -Imice a.c -o a.o"),
+          os.getcwd(),
+          self.includepath_map,
+          self.directory_map,
+          self.compiler_defaults))
+
+    self.assertEqual(
+      (self._RetrieveDirectoriesExceptSys(angle_dirs), filepath),
+      (('mice',), 'a.c'))
+
 unittest.main()

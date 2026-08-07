@@ -379,8 +379,18 @@ def ParseCommandArgs(args, current_dir, includepath_map, dir_map,
     raise NotCoveredError("Command line: too few arguments.")
 
   compiler = args[0]
-
   i = 1
+
+  # A leading "ccache" wrapper (e.g. "ccache /usr/bin/gcc -c foo.c") is a
+  # normal, distributable command -- src/arg.c's dcc_scan_args() already
+  # classifies it as such on the C client side (ScanArgs_Case). Skip the
+  # wrapper here too, so `compiler` is the real compiler and its argv
+  # isn't misparsed as an extra file name (issue #442: two file_names
+  # instead of one made ParseCommandArgs raise NotCoveredError below).
+  if len(args) > 2 and os.path.basename(compiler) == 'ccache':
+    compiler = args[1]
+    i = 2
+
   while i < len(args):
     # First, deal with everything that's not a flag-option
     if args[i][0] != '-' or args[i] == '-':     # - is the stdin file
