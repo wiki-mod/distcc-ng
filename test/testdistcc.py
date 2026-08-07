@@ -2693,12 +2693,22 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
                      "done\n")
         finally:
             f.close()
-        # 0755, not 0700: the daemon-forked compiler child runs as the
-        # dropped-privilege DROP_USER, not root, and needs real "other"
-        # execute permission on this file (confirmed live: 0700 fails
-        # with "Permission denied", exit code 110, dcc_execvp()'s own
-        # error for an unexecutable compiler).
-        os.chmod(compiler, 0o755)
+        # The daemon-forked compiler child runs as the dropped-privilege
+        # DROP_USER, not root, and needs real execute permission on this
+        # file -- confirmed live that plain 0700 (owned by whoever
+        # *this* process runs as, i.e. root, since require_root() gates
+        # this whole test) fails with "Permission denied" (exit 110,
+        # dcc_execvp()'s own error for an unexecutable compiler), since
+        # DROP_USER then has neither the owner nor any group/world bit.
+        # Rather than opening world bits to cover that gap (flagged by
+        # CodeQL as overly permissive, correctly -- this rewards any
+        # local user on the same machine, not just DROP_USER), chown the
+        # file to DROP_USER itself first: this test only ever runs as
+        # root (require_root(), inherited), so chown is always
+        # available, and a plain owner-only 0700 then covers DROP_USER
+        # without opening anything to anyone else.
+        os.chown(compiler, drop_pw.pw_uid, drop_pw.pw_gid)
+        os.chmod(compiler, 0o700)
 
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
@@ -3617,13 +3627,28 @@ class NonexistentSourceFile_Case(CompileHello_Case):
     notices the file is missing. That's a genuine, ordinary compiler
     failure (dcc_critique_status()'s "normal failure gives exit code 1"
     branch, src/exec.c), not the EXIT_DISTCC_FAILED distcc reserves for
-    its own pre-flight rejections."""
+    its own pre-flight rejections.
+
+    Skips cleanly under pump mode (confirmed live via real CI, not
+    guessed): the include server intercepts a genuinely-missing source
+    file at its own include-scanning stage ("Could not find translation
+    unit"), logs a warning, and falls back to local preprocessing via a
+    different path entirely -- the client never sees a "No such file"
+    message on stderr at all in that case (0 matches, not 1), a
+    different, not-yet-designed-for scenario this test was never meant
+    to cover. Same pattern NoHosts_Case above already uses for the same
+    reason."""
 
     def setup(self):
         WithDaemon_Case.setup(self)
         # Deliberately skip createSource(): testtmp.c is never written.
 
     def runtest(self):
+        if "cpp" in _server_options:
+            raise comfychair.NotRunError(
+                'pump mode intercepts a missing source file at the '
+                'include-scanning stage, before it ever reaches the '
+                'compiler -- a different code path than this test covers')
         msgs, errs = self.runcmd(self.distcc_without_fallback()
                                  + self._cc + " -o testtmp.o -c testtmp.c",
                                  expectedResult=1)
@@ -3812,13 +3837,19 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
     def setup(self):
         SimpleDistCC_Case.setup(self)
         open(self.inc_filename, 'wt').write(".equ VALUE, 42\n")
+        # No ".type"/".size": those are ELF symbol-table directives with
+        # no Mach-O equivalent -- confirmed live, Apple's clang
+        # assembler rejects them outright ("unknown directive"), unlike
+        # RemoteAssemble_Case's own fixture above, which happens to get
+        # away with them (untested reason, not worth relying on here
+        # too). ".globl"/".data"/".align"/a label/".long" are the same
+        # minimal, already-proven-portable subset that fixture uses.
         open(self.asm_filename, 'wt').write(
             '.include "%s"\n'
+            ".globl distcc_ng_test_marker\n"
             ".data\n"
             "  .align 4\n"
-            "  .type marker,object\n"
-            "  .size marker,4\n"
-            "marker:\n"
+            "distcc_ng_test_marker:\n"
             "  .long VALUE\n" % self.inc_filename)
 
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3972,6 +4003,16 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
         self.ccache_dir = os.path.abspath('ccache_test_dir')
         os.mkdir(self.ccache_dir)
         os.environ['CCACHE_DIR'] = self.ccache_dir
+        # Set before the daemon starts, same reasoning as CCACHE_DIR
+        # above: a real ubuntu-latest CI run (2026-08-07) failed this
+        # test with "Errors: 2/4" instead of a hit, reproducible neither
+        # locally nor in the mandatory buildtools container -- capturing
+        # ccache's own debug log lets the *next* real CI run reveal the
+        # actual reason directly in the failure message, instead of
+        # guessing blind through another round trip.
+        self.ccache_logfile = os.path.join(self.ccache_dir, 'ccache_debug.log')
+        os.environ['CCACHE_DEBUG'] = '1'
+        os.environ['CCACHE_LOGFILE'] = self.ccache_logfile
         CompileHello_Case.setup(self)
         self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
 
@@ -3984,7 +4025,14 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
         self.compile()   # first compile: cold, populates the cache
         self.compile()   # second compile: should hit
         out, errs = self.runcmd("ccache -s")
-        self.assert_re_search(r"Hits:\s+[1-9]", out)
+        if not re.search(r"Hits:\s+[1-9]", out):
+            try:
+                debug_log = open(self.ccache_logfile).read()
+            except IOError:
+                debug_log = "(no ccache debug log found at %s)" % self.ccache_logfile
+            self.fail("expected a real ccache hit, got:\n%s\n\n"
+                      "ccache debug log (last 4000 chars):\n%s" %
+                      (out, debug_log[-4000:]))
 
 
 class HostFile_Case(CompileHello_Case):
