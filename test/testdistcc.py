@@ -1757,7 +1757,15 @@ class ObjectiveC_Case(LanguageSpecific_Case):
 #import <stdio.h>
 #import "testhdr.h"
 
-/* TODO: use objective-c features. */
+/* Real ObjC OOP features (@interface, message dispatch) were
+ * considered and declined (issue #275): they'd need the ObjC
+ * runtime (-lobjc) linked in, a new dependency for a single test
+ * case. This case already runs for real (confirmed live: OK on
+ * macOS-latest CI, cleanly NOTRUN on Linux CI where GNU
+ * Objective-C isn't installed) without it -- LanguageSpecific_Case's
+ * own probe already gates this on plain "gcc/clang -x objective-c"
+ * support, so it's not testing anything platform-specific real ObjC
+ * syntax would add. */
 
 int main(void) {
     puts(MESSAGE);
@@ -1790,7 +1798,10 @@ class ObjectiveCPlusPlus_Case(LanguageSpecific_Case):
 #import <iostream>
 #import "testhdr.h"
 
-/* TODO: use Objective-C features. */
+/* Same reasoning as ObjectiveC_Case above: real ObjC++ OOP features
+ * were declined (issue #275), no new -lobjc dependency needed --
+ * confirmed live on real CI as-is (OK on macOS-latest, clean NOTRUN
+ * on Linux). */
 
 int main(void) {
     std::cout << MESSAGE << std::endl;
