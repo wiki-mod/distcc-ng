@@ -13,6 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`docker/verify/Dockerfile`**: the buildtools verification image now installs
+  `openssh-server`/`openssh-client` (issue #275/#440). `SSHMode_Case`
+  (`test/testdistcc.py`) already runs for real on this project's actual CI
+  (`ubuntu-latest`/`macOS-latest` ship both preinstalled) -- this image was
+  the one environment where it still silently `NOTRUN`-skipped, purely
+  because openssh wasn't installed here, not by deliberate design. A real
+  build-time self-test (start a real ephemeral `sshd`, connect with a real
+  `ssh` client, run a real remote command) proves the same mechanism works
+  in this image too, matching the file's existing "real functional test,
+  not just `--version`" convention for every other tool.
+
 - **`pump.in`**: two `ShutDown()` process-liveness/identity bugs (issue #401,
   split out from PR #400's review).
   - **BSD/macOS `ps` fallback could miss a genuinely alive include
