@@ -3411,8 +3411,13 @@ class SBeatsC_Case(CompileHello_Case):
     """-S overrides -c in gcc.
 
     If both options are given, we have to make sure we imply the
-    output filename in the same way as gcc."""
-    # XXX: Are other compilers the same?
+    output filename in the same way as gcc.
+
+    Stale "XXX: Are other compilers the same?" removed (issue #275):
+    this already runs against whatever self._cc resolves to, and this
+    project's own CI matrix already answers the question -- confirmed
+    live, real gcc (ubuntu-latest) and real clang (macOS-latest) both
+    pass this exact case."""
     def runtest(self):
         self.runcmd(self.distcc() +
                     self._cc + " -c -S testtmp.c")
