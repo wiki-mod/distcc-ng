@@ -152,6 +152,10 @@ Every rule below carries a continuous number (1, 2, 3, ...) running across the w
 
     This rule governs the point of *claiming* completion; it does not apply retroactively to work already declared done before this rule existed, and does not by itself require re-opening or re-reviewing prior PRs.
 
+79. **Resolve a fixed PR review thread, and minimize non-substantive noise comments, from the console rather than leaving either for the maintainer to clean up manually in the web UI.** Both actions are GraphQL-only — the REST API has no endpoint for either, so `gh api` alone cannot do this; use `gh api graphql`.
+    - **Resolving a review thread** (rule 24's "reply then resolve," completed end-to-end): look up the thread's node ID via a `reviewThreads` query (not the individual comment's REST ID), then call the `resolveReviewThread` mutation with that `threadId`. Still reply with what changed before resolving, per rule 24 — this rule only changes the mechanism for the resolve step itself, not the ordering rule 24 already sets.
+    - **Minimizing a comment** (the "..." → "Hide" action, valid on any issue/PR/review/commit comment, not just review threads): look up the comment's node ID, then call the `minimizeComment` mutation with a `classifier` (`OUTDATED`, `DUPLICATE`, `RESOLVED`, `OFF_TOPIC`, `SPAM`, or `ABUSE`) matching why it no longer needs to be visible — e.g. a bot's own "usage limit reached" message once it's clear no review is coming, or a comment superseded by a later one.
+
 ## Project Roles
 
 This section documents `wiki-mod/distcc-ng`'s actual project membership and
