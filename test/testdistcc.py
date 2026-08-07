@@ -52,13 +52,19 @@ Example:
 # abstract superclasses just provide methods that can be called,
 # rather than establishing default behaviour.
 
-# TODO: Do all this with malloc debugging on.
+# Running the suite with malloc debugging on was considered and
+# declined (issue #275): a dev-convenience wishlist item with no
+# automatable coverage gap behind it, not a missing test.
 
-# TODO: Is there a straightforward way to test that daemon output is
-# also OK when sent through syslogd? (Redirecting it to a file is no
-# longer a gap -- startDaemon()/waitForLogPattern() below already do
-# that for every daemon-based test, and BadLogFile_Case covers the
-# failure-to-open-logfile case.)
+# Testing daemon output through syslogd specifically was considered and
+# declined (issue #275). Redirecting it to a file is no longer a gap --
+# startDaemon()/waitForLogPattern() below already do that for every
+# daemon-based test, and BadLogFile_Case covers the failure-to-open-
+# logfile case. The syslogd path itself would need either a real
+# syslog daemon running inside the test container or an LD_PRELOAD
+# shim over libc's syslog() (src/trace.c's rs_logger_syslog() calls it
+# directly, hardcoded to /dev/log, with no supported way to redirect
+# it to a test-local socket) -- disproportionate for one test case.
 
 # Argument scanning tests across various hostspecs was declined (issue
 # #275): dcc_scan_args() (src/arg.c) takes only the compiler argv, never a
@@ -69,8 +75,10 @@ Example:
 
 # Check that without DISTCC_SAVE_TEMPS temporary files are cleaned up.
 
-# TODO: Perhaps redirect stdout, stderr to a temporary file while
-# running?  Use os.open(), os.dup2().
+# Redirecting stdout/stderr to a temporary file while running was
+# considered and declined (issue #275): a dev-convenience wishlist
+# item, not a missing test -- comfychair's own run_captured() already
+# captures both per-command for every test's own log.
 
 # A standalone bulk-transfer (src/bulk.c) test harness was considered and
 # declined (issue #275): unlike src/arg.c/src/strip.c/src/parsemask.c
@@ -84,8 +92,17 @@ Example:
 # distinct untested bulk.c code path was identified beyond what these
 # already cover.
 
-# TODO: Test scheduler.  Perhaps run really slow jobs to make things
-# deterministic, and test that they're dispatched in a reasonable way.
+# Scheduler/host-selection determinism was investigated in full (issue
+# #275): src/where.c's dcc_lock_one() scans slot index 0, then 1, ...,
+# trying every configured host in DISTCC_HOSTS list order at each
+# index and taking the first with a free slot -- fully deterministic
+# for sequential dispatch (concurrent dispatch under real load
+# additionally depends on which process's flock() the kernel grants
+# first, which cannot be made deterministic and isn't attempted here).
+# Implemented as HostSelectionAlgorithm_Case: two real distccd
+# instances, one job slot each, a sleeping fake compiler so the first
+# job's lock stays held while the second is dispatched, confirming via
+# each daemon's own log which one actually served which compile.
 
 # Giving up privilege using --user is now covered, root-only, by
 # AutogroupNicenessPrivilegeDrop_Case below: GitHub Actions runners give
