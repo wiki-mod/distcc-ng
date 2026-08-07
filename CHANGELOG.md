@@ -192,12 +192,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   purely via the SSH session's own `$PATH`, which a fresh non-login SSH
   session does not inherit from the test process, so `sshd_config` needs
   its own `SetEnv PATH=...` pointed at the built binaries' directory.
-  Deliberately not wired into CI: verified once, live, with `openssh-server`/
-  `openssh-client` installed by hand on a real host, not added to any shared
-  CI apt list -- this is a one-time verification that the mechanism works,
-  not meant to become a standing/recurring test with a permanent new CI
-  dependency footprint. Skips cleanly (`NotRunError`) wherever `sshd`/
-  `ssh-keygen`/`ssh` aren't installed, which is every CI runner today.
+  Deliberately not added to any shared CI apt list: `openssh-server`/
+  `openssh-client` were installed by hand on a real host for the initial
+  live verification, so no new CI dependency was introduced on purpose.
+  In practice the test runs for real on every GitHub Actions run anyway
+  -- `sshd`/`ssh-keygen`/`ssh` are already preinstalled on the
+  `ubuntu-latest`/`macOS-latest` runner images this project's CI uses,
+  confirmed live (`SSHMode_Case OK` on both, real `sshd`/`ssh-keygen`
+  file access independently logged by Harden Runner). It only skips
+  cleanly (`NotRunError`) in environments that genuinely lack those
+  tools, such as this project's own local buildtools container.
 - **`test/testdistcc.py`**: `AssemblyIncludeLocalOnly_Case` and
   `ServerKilledMidJob_Case` (issue #275), the last two originally-open
   header-block `TODO`s.
