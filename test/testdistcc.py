@@ -2730,8 +2730,15 @@ class ImplicitCompiler_Case(CompileHello_Case):
         return self.distcc() + "-c testtmp.c"
 
     def linkCmd(self):
-        # FIXME: Mozilla uses something like "distcc testtmp.o -o testtmp",
-        # but that's broken at the moment.
+        # Stale FIXME removed (issue #275): the alternate "distcc testtmp.o
+        # -o testtmp" (object file before -o) argument order this used to
+        # flag as broken was re-verified live -- it produces a real,
+        # byte-identical executable to this method's own "-o testtmp
+        # testtmp.o" order, through the real daemon-backed distribute/link
+        # path (ImplicitCompiler_Case itself, temporarily patched to that
+        # order for the check), not just a local fallback. Whatever bug
+        # this comment described was fixed at some point without the
+        # comment ever being removed.
         return self.distcc() + "-o testtmp testtmp.o "
 
     def runtest(self):
