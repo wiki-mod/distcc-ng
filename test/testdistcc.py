@@ -4022,17 +4022,32 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
     ccache 4.x's real `-s` output never contains at all -- it says
     "Hits:") is what actually reflects a real cache hit.
 
-    Skips cleanly under pump mode (confirmed live via real CI, not
-    guessed): the Python include server's own compiler-argument
-    analysis expects the first argument to be an actual compiler
-    (gcc/clang/etc.), not a wrapper -- fed "ccache /bin/gcc ...", it
-    logs "include server gave up analyzing" and returns zero arguments,
-    which DISTCC_FALLBACK=0 then turns into a hard failure. Teaching
-    the include server to see through a ccache wrapper is a real,
-    separate gap in pump mode itself, well beyond what a single test
-    can fix -- this test was only ever about the plain-mode ccache/
-    distcc interaction ScanArgs_Case's own "distribute" classification
-    implied should work end-to-end, not pump mode's."""
+    Both compile() calls below now also run for real under pump mode
+    (issue #442, fixed): the Python include server's ParseCommandArgs()
+    used to take args[0] literally as "the compiler" -- fed
+    "ccache /bin/gcc ...", it set compiler="ccache" and then parsed the
+    real compiler path as an extra file name, raising NotCoveredError
+    ("Could not locate name of translation unit") and surfacing to the
+    client as "include server gave up analyzing" (a hard failure under
+    DISTCC_FALLBACK=0). Fixed in include_server/parse_command.py by
+    skipping a leading "ccache" wrapper before treating args[0] as the
+    compiler, mirroring how src/arg.c's dcc_scan_args() already treats
+    "ccache <cc> ..." as an ordinary, distributable command on the C
+    client side.
+
+    The actual cache-hit assertion below still only runs outside pump
+    mode: fixing #442 does not make ccache's cache actually hit under
+    pump mode, for a distinct, deeper reason (confirmed live,
+    2026-08-07, buildtools container, CCACHE_DEBUG tracing showed
+    "Result: cache_miss" on *both* compiles, not just the first) --
+    src/serve.c's server-side cpp path reconstructs the client's
+    directory tree under a fresh mkdtemp()'d temp_dir on literally
+    every job ("/var/tmp/distccd-XXXXXX", see the dcc_fix_debug_info()
+    comment in serve.c), so the absolute source path handed to the
+    server-side "ccache <cc> ..." invocation differs between the two
+    compile() calls above, defeating ccache's cache key regardless of
+    the source content being identical. This is a separate, real gap
+    from #442's compiler-misidentification bug, not yet tracked."""
 
     def setup(self):
         self.ccache_dir = os.path.abspath('ccache_test_dir')
@@ -4072,14 +4087,16 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
                 " -c %s" % os.path.abspath(self.sourceFilename()))
 
     def runtest(self):
-        if "cpp" in _server_options:
-            raise comfychair.NotRunError(
-                'the include server does not recognize "ccache <cc>" as '
-                'a compiler invocation -- a pump-mode-specific gap this '
-                'test was never meant to cover')
         self.compile()   # first compile: cold, populates the cache
-        self.compile()   # second compile: should hit
+        self.compile()   # second compile: should hit outside pump mode
         out, errs = self.runcmd("ccache -s")
+        if "cpp" in _server_options:
+            # See the class docstring: both compiles above already prove
+            # issue #442's fix (no crash under pump mode) -- the actual
+            # cache-hit assertion below is a separate, still-open gap
+            # (per-job mkdtemp() temp_dir on the server side varies the
+            # source path ccache hashes on), not part of #442.
+            return
         if not re.search(r"Hits:\s+[1-9]", out):
             try:
                 debug_log = open(self.ccache_logfile).read()

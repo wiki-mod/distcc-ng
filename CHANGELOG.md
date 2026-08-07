@@ -13,6 +13,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`include_server/parse_command.py`**: pump mode's include server can now
+  see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
+  take `args[0]` literally as "the compiler" -- fed `ccache /bin/gcc ...`,
+  it set `compiler="ccache"` and then misparsed the real compiler path as
+  an extra file name, raising `NotCoveredError` ("Could not locate name of
+  translation unit") that surfaced to the client as "include server gave
+  up analyzing" (a hard failure under `DISTCC_FALLBACK=0`). Fixed by
+  skipping a leading `ccache` wrapper before treating `args[0]` as the
+  compiler, mirroring how `src/arg.c`'s `dcc_scan_args()` already treats
+  `ccache <cc> ...` as an ordinary, distributable command on the C client
+  side. `CcacheHitThroughDistcc_Case` (`test/testdistcc.py`) now exercises
+  this for real under pump mode instead of skipping. A real ccache cache
+  *hit* under pump mode remains a separate, still-open gap (distccd's
+  server-side cpp reconstructs the client tree under a fresh
+  `mkdtemp()`'d directory on every job, varying the absolute source path
+  ccache hashes on) -- not part of this fix.
+
 - **`docker/verify/Dockerfile`**: the buildtools verification image now installs
   `openssh-server`/`openssh-client` (issue #275/#440). `SSHMode_Case`
   (`test/testdistcc.py`) already runs for real on this project's actual CI
