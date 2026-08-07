@@ -1,6 +1,6 @@
 # Pump mode's include server can't see through a `ccache` wrapper (`compiler = args[0]`)
 
-**Fork issue:** [wiki-mod/distcc-ng#275](https://github.com/wiki-mod/distcc-ng/issues/275) (originally filed as #442, consolidated per rule 77 -- same PR/mechanism as the rest of #275's findings)
+**Fork issue:** [wiki-mod/distcc-ng#442](https://github.com/wiki-mod/distcc-ng/issues/442) (briefly consolidated into #275 and closed, then reopened: #275 was a test-coverage sweep, not a fix-tracking issue, and closing it silently buried this still-real, unfixed bug with no live tracker -- #442 is the correct standalone home for actually fixing it)
 **Fixed by:** not yet implemented
 **Upstream location:** `include_server/parse_command.py`, function `ParseCommandArgs`
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-08-07)
