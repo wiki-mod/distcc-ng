@@ -19,7 +19,7 @@ closed unmerged) and again as
 [distcc/distcc#236](https://github.com/distcc/distcc/pull/236) ("protocol
 version 4: zstd compression support, -gsplit-dwarf support", opened 2020,
 still open/unmerged as of the check above) — this fork's `DCC_VER_4`
-(recovered per `CLAUDE.md`'s Key Design Decisions) is this fork's own
+(recovered per `CONTRIBUTING.md`'s design notes) is this fork's own
 adoption of that same unmerged work.
 
 Since zstd doesn't exist upstream at all, the *combination* this entry is

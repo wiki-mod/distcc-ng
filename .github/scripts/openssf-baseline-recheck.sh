@@ -227,9 +227,12 @@ check_br05_do06() {
 }
 
 # OSPS-GV-01.01 / OSPS-GV-01.02: AGENTS.md still documents actual project
-# membership/roles.
+# membership/roles. This used to live in a "## Project Roles" prose
+# section; it's now rules 81/82 (numbered rule content, not a separate
+# header) since AGENTS.md is rule-content-only -- check for the actual
+# maintainer-identity rule text instead of a header that no longer exists.
 check_gv01() {
-  if grep -q "## Project Roles" AGENTS.md 2>/dev/null; then
+  if grep -q "only human maintainer is GitHub handle" AGENTS.md 2>/dev/null; then
     echo "Met"
   else
     echo "NotMet"

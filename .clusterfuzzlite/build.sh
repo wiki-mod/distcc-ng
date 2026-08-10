@@ -9,7 +9,7 @@
 # --disable-pump-mode: the fuzz target only exercises src/rpc.c's wire-
 # protocol parsing, not the Python include-server -- skips a real Python
 # C-extension build this target doesn't need, reducing build surface.
-# PYTHON=python3 matches this repo's own documented convention (CLAUDE.md).
+# PYTHON=python3 matches this repo's own documented convention (CONTRIBUTING.md).
 # --with-auth: this build compiles every non-main src/*.c file together
 # (see below), which includes src/auth_common.c -- but that file is only
 # ever compiled by the real Makefile.in when --with-auth was given

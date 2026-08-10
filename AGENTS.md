@@ -1,7 +1,7 @@
 # distcc-ng — Repository Governance
 
 **Project**: 
-  - distcc-ng — a maintained fork of [distcc/distcc](https://github.com/distcc/distcc), the distributed C/C++ compiler.
+  - distcc-ng — a maintained fork of [distcc/distcc](https://github.com/distcc/distcc), the distributed C/C++ compiler: `distccd` runs as a network daemon accepting compile jobs from other machines, `distcc`/`pump` decide what gets sent over the wire and how, and `include_server/` (the Python include-server) backs pump mode's server-side header analysis. The monitoring tools (`distccmon-text`, `distccmon-gnome`, `lsdistcc`) round out the toolset.
   - Maintained separately because upstream [does not accept AI-assisted contributions](https://github.com/distcc/distcc/discussions/598);
   - this fork does, under the discipline in `wiki-mod/distcc-ng/AGENTS.md` (this file). You as a agent or any Sub agent has to respect this at any time.
   - Before you start any Jobs, you have to re-read `wiki-mod/distcc-ng/AGENTS.md` in full to check for changes and submit them to your subagents by the Phrease: "You need to accept and aswell also read with no shortcuts (meaning no grep, no tail) the entire `wiki-mod/distcc-ng/AGENTS.md`, `wiki-mod/distcc-ng/CLAUDE.md`, and `wiki-mod/distcc-ng/.github/AGENTS.md` — not any other repository's or nested copy of a same-named file"
@@ -10,7 +10,7 @@
   - https://github.com/wiki-mod/distcc-ng
     
 **See also**:
-- `wiki-mod/distcc-ng`'s own `CLAUDE.md` (Claude Code project instructions, auto-loaded every session) for architecture and workflow specifics;
+- `wiki-mod/distcc-ng`'s own `CLAUDE.md` (auto-loaded every session) exists only to point Claude Code at this file — it carries no governance, architecture, or workflow content of its own (see rule 68); this file is the single source of truth for all of that.
 - `doc/release-versioning.md` for the release process;
 - `doc/release-checklist.md` for what must actually be true before a release ships, gathered in one place;
 - `doc/compatibility-policy.md` for the old-hardware/old-toolchain policy;
@@ -128,7 +128,7 @@ Every rule below carries a continuous number (1, 2, 3, ...) running across the w
 
     **Allowed types**: `feat`, `fix`, `security`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `style`, `revert` (`security` is a first-class type here, same as in `lancache-ng` — this project's own history already uses `security:`-prefixed titles/commits deliberately, e.g. the CodeQL-remediation series in `#143`).
 
-    **Allowed scopes** (optional, lowercase, drawn from this repository's real architecture per `CLAUDE.md`'s "Architecture" section plus areas already in real use): `distcc`, `distccd`, `pump`, `protocol`, `seccomp`, `zstd`, `config`, `packaging`, `docker`, `ci`, `docs`, `scripts`, `tests`, `governance`, `support-upstream`. A scope outside this list fails the check with a pointer here. Extending the list requires updating both this rule and `scripts/check-pr-title-convention.sh`'s `allowed_scopes` array together.
+    **Allowed scopes** (optional, lowercase, drawn from this repository's real architecture per this file's own "Architecture" section plus areas already in real use): `distcc`, `distccd`, `pump`, `protocol`, `seccomp`, `zstd`, `config`, `packaging`, `docker`, `ci`, `docs`, `scripts`, `tests`, `governance`, `support-upstream`. A scope outside this list fails the check with a pointer here. Extending the list requires updating both this rule and `scripts/check-pr-title-convention.sh`'s `allowed_scopes` array together.
 
     A `!` immediately after the type (or scope) — e.g. `feat!:` or `fix(pump)!:` — or a `BREAKING CHANGE:` footer in the PR body marks a breaking change. This project has no automated version-bump tooling (`doc/release-versioning.md`'s manual-decision policy is unchanged by this rule) and versions independently of SemVer already (continuing upstream distcc's own numbering plus a `-NG` suffix), so a `!` marker here is purely informational for now — a human signal for the maintainer's manual version decision, not an automation trigger.
 
@@ -158,29 +158,7 @@ Every rule below carries a continuous number (1, 2, 3, ...) running across the w
 
 80. **Protocol-version numbering policy** (`enum dcc_protover` in `src/distcc.h`, per issue #304): versions 0-3999 are reserved exclusively for whatever upstream `distcc/distcc` itself ever defines (currently `DCC_VER_1`/`2`/`3`, upstream verified to go no higher than 3 as of this decision) — this fork must never assign its own meaning to a number in that range, even one upstream hasn't used yet. Every fork-specific protocol extension instead gets its own number starting at 4000+, with spacing between distinct extensions (zstd's variants live in this range: `DCC_VER_4000` for client-side-cpp zstd, `DCC_VER_5000` for zstd with server-side cpp/pump mode). This is a general, standing policy for the numbering *of* any future fork protocol extension — it does not by itself mean every future feature needs a new protocol version. Whether a given feature (e.g. the native TLS transport tracked in #248) actually requires one at all is a separate, feature-specific architecture question, decided on that feature's own evidence (see its own design document) — do not assume a new `DCC_VER_*` is needed just because a new feature is being built. (Live correction, 2026-08-10: an earlier note in `wiki-mod/distcc-ng/CLAUDE.md`'s "Key Design Decisions" section stated the native TLS transport would "explicitly" use this numbering, presupposing that TLS needs a new protocol version before that question had actually been analyzed — `doc/tls-transport-design.md`'s v2 revision explicitly reopened and deferred that question instead. The stale claim has been removed from `wiki-mod/distcc-ng/CLAUDE.md`; this rule is now the only place this policy lives.)
 
-## Project Roles
+81. **`wiki-mod/distcc-ng`'s only human maintainer is GitHub handle `djdomi`, and there is currently no other contributor or maintainer role** — no additional maintainers, no separate triage/review team (raised by issue #267's OpenSSF Baseline review, criteria `OSPS-GV-01.01`/`OSPS-GV-01.02`). If that changes, this rule should be updated to name the real membership rather than left describing a stale one.
 
-This section documents `wiki-mod/distcc-ng`'s actual project membership and
-roles (raised by issue #267's OpenSSF Baseline review, criteria
-`OSPS-GV-01.01`/`OSPS-GV-01.02`) — kept short and factual, describing the
-project as it actually operates rather than inventing a role structure it
-doesn't have.
+82. **Repository admin settings, GitHub Secrets, and the repository ruleset are maintainer-exclusive.** No AI coding agent (Claude Code or any subagent it delegates to) has, or should ever be granted, standing access to any of them, regardless of task. This is in addition to, not a replacement for, rules 21/50-52's existing merge-approval and write-scope restrictions: those govern what gets written where and when (e.g. a `master` merge always needs the maintainer's explicit, per-PR approval, per rule 21/52 — no other person or role can grant it); this rule governs standing access to the sensitive resources themselves.
 
-- **Maintainer**: GitHub handle `djdomi` is the sole human maintainer of
-  `wiki-mod/distcc-ng`. Only the maintainer has access to sensitive
-  resources: repository admin settings, GitHub Secrets, the repository
-  ruleset, and merge approval into `master` (see rule 21/52 above — a
-  `master` merge requires the maintainer's explicit, per-PR approval;
-  there is no other person or role that can grant it).
-- **AI coding agents**: Claude Code (and any subagent it delegates to)
-  performs investigation, implementation, and PR work under the governance
-  in this file (`wiki-mod/distcc-ng/AGENTS.md`) and `wiki-mod/distcc-ng/CLAUDE.md`.
-  Agents have no standing write access beyond what a given task explicitly
-  delegates — no repository admin rights, no access to secrets, and no
-  authority to merge into `master` or bypass the review gates above. Every
-  write action (a push, a PR, an issue comment, a merge) is scoped to the
-  current task and repository per rules 50/51.
-- There is currently no other contributor role (no additional maintainers,
-  no separate triage/review team) — if that changes, this section should be
-  updated to reflect the real membership at that time rather than left
-  describing a stale structure.
