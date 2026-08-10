@@ -238,7 +238,7 @@ jobs:
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
       - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: /tmp/attest-subjects/*
 
