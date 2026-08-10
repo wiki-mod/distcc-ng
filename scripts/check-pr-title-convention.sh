@@ -89,8 +89,9 @@ title="$(printf '%s' "$title" | sed 's/[[:space:]]*$//')"
 allowed_types=(feat fix docs refactor perf test build ci chore style revert security)
 
 # Allowed scopes: optional, lowercase, drawn from this repo's real
-# architecture (CLAUDE.md's "Architecture" section) plus non-component
-# project areas already in real use (governance, support-upstream).
+# architecture (CONTRIBUTING.md's "Project scope" section) plus
+# non-component project areas already in real use (governance,
+# support-upstream).
 allowed_scopes=(distcc distccd pump protocol seccomp zstd config packaging docker ci docs scripts tests governance support-upstream)
 
 array_contains() {
