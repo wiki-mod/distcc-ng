@@ -138,7 +138,7 @@ jobs:
       # cover network calls made by steps that already ran.
       - name: Harden Runner
         if: needs.changes.outputs.relevant == 'true'
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
       - if: needs.changes.outputs.relevant == 'true'
@@ -256,7 +256,7 @@ jobs:
           mkdir -p /tmp/attest-subjects
           cp distcc distccd /tmp/attest-subjects/
       - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: /tmp/attest-subjects/*
 
@@ -426,7 +426,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -625,7 +625,7 @@ jobs:
       # Trial run (#58): audit-only egress monitoring, see the make_check
       # job's identical first step for the full rationale.
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
