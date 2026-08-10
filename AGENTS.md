@@ -1,8 +1,14 @@
 # distcc-ng — Repository Governance
 
+**Before you start, the single most important rule in this file is rule 83, quoted here verbatim so it's the first thing read, not just the 83rd:**
+
+> **Read `wiki-mod/distcc-ng/AGENTS.md` out of `current_dev`, entire, start to finish, before doing anything else** — not a summary, not just the section that looks relevant to the task at hand. This applies to every session and every delegated subagent, with no exceptions. (Full text with the `current_dev`-authority rationale: rule 83, below.)
+
+After that, continue reading the rest of this file normally.
+
 **Project**: 
   - distcc-ng — a maintained fork of [distcc/distcc](https://github.com/distcc/distcc), the distributed C/C++ compiler (see `CONTRIBUTING.md`'s "Project scope" section for the full description and directory map);
-  - Maintained separately because upstream [does not accept AI-assisted contributions](https://github.com/distcc/distcc/discussions/598); this fork does, under the discipline in `wiki-mod/distcc-ng/AGENTS.md` (this file) — see rules 83/84 for what that discipline requires of every agent and subagent.
+  - Maintained separately because upstream [does not accept AI-assisted contributions](https://github.com/distcc/distcc/discussions/598); this fork does, under the discipline in `wiki-mod/distcc-ng/AGENTS.md` (this file) — see rules 83-85 for what that discipline requires of every agent and subagent.
   
 **Repository**:
   - https://github.com/wiki-mod/distcc-ng
@@ -160,7 +166,9 @@ Every rule below carries a continuous number (1, 2, 3, ...) running across the w
 
 82. **Repository admin settings, GitHub Secrets, and the repository ruleset are maintainer-exclusive.** No AI coding agent (Claude Code or any subagent it delegates to) has, or should ever be granted, standing access to any of them, regardless of task. This is in addition to, not a replacement for, rules 21/50-52's existing merge-approval and write-scope restrictions: those govern what gets written where and when (e.g. a `master` merge always needs the maintainer's explicit, per-PR approval, per rule 21/52 — no other person or role can grant it); this rule governs standing access to the sensitive resources themselves.
 
-83. **Before starting any work in this repository — a new session, or resuming one after `AGENTS.md` has changed (e.g. after a `git pull`/merge) — read this entire file start to finish, with no shortcuts (no `grep`, no `tail`, no reading only the section that looks relevant to the task at hand), before doing anything else.** This applies identically to the top-level session and every delegated subagent working in `wiki-mod/distcc-ng`, with no exceptions — delegating a task to a subagent does not exempt that subagent from this rule, and does not exempt the delegating agent from making sure it happens (see rule 84).
+83. **Read `wiki-mod/distcc-ng/AGENTS.md` out of `current_dev`, entire, start to finish, before doing anything else** — not a summary, not just the section that looks relevant to the task at hand. `current_dev` is the authoritative copy (see rule 70): `master` only picks up governance changes when a release is cut and can lag behind, and a `release/X.Y.Z-NG` branch is a frozen snapshot by design — if the branch/worktree you're actually working in isn't `current_dev` itself, fetch and read the `current_dev` copy (e.g. `git show origin/current_dev:AGENTS.md`) rather than trusting whatever copy your current branch happens to have. This applies to every session and every delegated subagent, with no exceptions.
 
-84. **When delegating any task in this repository to a subagent, the delegating agent must relay rule 83's full-read requirement to that subagent explicitly and verbatim, not summarized or assumed** — a subagent has no other way to know this file exists or applies to it. Use this phrasing, or an equivalent that preserves its full meaning: "You need to accept and also read with no shortcuts (meaning no grep, no tail) the entire `wiki-mod/distcc-ng/AGENTS.md`, `wiki-mod/distcc-ng/CLAUDE.md`, and `wiki-mod/distcc-ng/.github/AGENTS.md` — not any other repository's or nested copy of a same-named file."
+84. **Before starting any new job or task within an already-running session, re-read `wiki-mod/distcc-ng/AGENTS.md` in full to check whether it changed since it was last read** (e.g. after a `git pull` or merge on `current_dev`) — do not rely on an earlier read staying valid for the rest of a long session; a stale in-memory copy is treated the same as never having read it.
+
+85. **When delegating any task in this repository to a subagent, the delegating agent must relay rules 83/84's full-read requirement to that subagent explicitly and verbatim, not summarized or assumed** — a subagent has no other way to know this file exists or applies to it. Use this phrasing, or an equivalent that preserves its full meaning: "You need to accept and also read with no shortcuts (meaning no grep, no tail) the entire `wiki-mod/distcc-ng/AGENTS.md`, `wiki-mod/distcc-ng/CLAUDE.md`, and `wiki-mod/distcc-ng/.github/AGENTS.md` — not any other repository's or nested copy of a same-named file."
 
