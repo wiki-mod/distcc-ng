@@ -67,7 +67,7 @@ ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28
 # docker/verify's base images (.github/dependabot.yml) so the pinned
 # digest still gets refreshed weekly instead of freezing at whatever Go
 # release happened to be current on the day this was pinned.
-FROM golang@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS actionlint-builder
+FROM golang@sha256:2005724102f45917a63e9d092fc0e4ea56ea575048ce147caad5f5f61502c365 AS actionlint-builder
 ARG ACTIONLINT_VERSION=1.7.12
 # This stage has no SHELL override, so RUN executes via Docker's default
 # /bin/sh -- dash on this Debian-based golang image, which rejects the
