@@ -232,7 +232,7 @@ check_br05_do06() {
 # header) since AGENTS.md is rule-content-only -- check for the actual
 # maintainer-identity rule text instead of a header that no longer exists.
 check_gv01() {
-  if grep -q "only human maintainer is GitHub handle" AGENTS.md 2>/dev/null; then
+  if grep -q "may grant any maintainer-level approval this file requires" AGENTS.md 2>/dev/null; then
     echo "Met"
   else
     echo "NotMet"
@@ -362,7 +362,7 @@ main() {
   l2_lines="- AC-04.01 (workflow permissions spot-check): ${ac04}
 - BR-06.01 (build provenance attestation step present): ${br06}
 - BR-05.01/DO-06.01 (dependabot.yml + dependency policy doc): ${br05_do06}
-- GV-01.01/01.02 (AGENTS.md Project Roles section): ${gv01}
+- GV-01.01/01.02 (AGENTS.md rule 81, maintainer identity): ${gv01}
 - VM-01.01/03.01 (SECURITY.md documents GH Security Advisories): ${vm01_vm03}"
 
   # --- Level 3 proposal URL / summary -----------------------------------
