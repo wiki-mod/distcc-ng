@@ -4,7 +4,7 @@ The canonical release requirements live in doc/release-checklist.md.
 This PR body records execution state and evidence for one concrete release.
 -->
 
-> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every checked item still requires the evidence required by `AGENTS.md`, especially rules 62 and 87.
+> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every completed item still requires the evidence required by `AGENTS.md`, especially rules 62 and 87.
 
 ## Release Identity
 
@@ -24,39 +24,38 @@ All repository-content-dependent verification evidence in this PR is bound to th
 
 If the Candidate SHA changes for any reason, every previously completed PRETAG or ARTIFACT verification that depends on repository content becomes stale and must be reset and re-verified against the new Candidate SHA. Evidence from an older Candidate SHA may only be retained when the corresponding canonical checklist item is demonstrably independent of repository content.
 
-## Live checklist - source of truth
+## Live Release Checklist - Source Of Truth
 
-This PR body is the current release status. Findings may be discussed in comments, but the authoritative status must be reflected back here so it does not disappear into comment history.
+This table is the single status-bearing execution record for this release. Findings may be discussed in comments, but the authoritative state must be reflected here so it does not disappear into comment history.
 
 Canonical release requirements:
 `doc/release-checklist.md`
 
-This template does not redefine those requirements. It records their execution for this release.
+Do not rewrite or independently redefine canonical checks in this PR. Reference the applicable checklist section/item and record only this release's execution state and evidence.
 
-### Release-process status
+Allowed status values are `Pending`, `Passed`, `Failed`, and `N/A`. Every `N/A` needs a concrete rationale.
 
-- [ ] Release identity above is complete.
-- [ ] Candidate SHA still matches the intended release candidate.
-- [ ] Applicable PRETAG requirements from `doc/release-checklist.md` are complete.
-- [ ] Normal pull-request CI for this release PR is complete for the current Candidate SHA.
-- [ ] Required manual pre-tag package/artifact verification is complete for the current Candidate SHA.
-- [ ] Real tag-triggered package/release workflow has completed for the final tag.
-- [ ] Applicable artifact-verification requirements from `doc/release-checklist.md` are complete.
-- [ ] No unresolved release blocker remains.
-- [ ] Final AGENTS.md compliance review is complete.
-- [ ] Explicit maintainer approval for promotion to `master` has been recorded.
+| Checklist / control reference | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
+| --- | --- | --- | --- | --- |
+| `doc/release-checklist.md`: <section / item> | Pending | | | |
+| Release control: Candidate SHA still matches the intended release candidate | Pending | | | |
+| Release control: no unresolved release blocker remains | Pending | | | |
+| Release control: final AGENTS.md compliance review | Pending | | | |
+| Release control: explicit maintainer approval for promotion to `master` per rule 81 | Pending | | | |
 
-The maintainer-approval checkbox above may only be checked after explicit approval from the maintainer identity authorized by `AGENTS.md` rule 81. An agent must never infer, grant, or mark this approval on the maintainer's behalf.
+The maintainer-approval row may only be marked `Passed` after explicit approval from the maintainer identity authorized by `AGENTS.md` rule 81. An agent must never infer, grant, or record that approval on the maintainer's behalf.
 
-## CI / Release Pipeline Status
+## CI / Release Pipeline Evidence
 
 Opening this release PR triggers the repository's normal `pull_request` CI. It does **not** by itself trigger `.github/workflows/package-release.yml`.
 
-| Pipeline | Trigger | Candidate SHA / tag | Status | Evidence |
-| --- | --- | --- | --- | --- |
-| Normal PR CI (`c-build.yml` and other PR workflows) | Release PR | | Pending | |
-| Pre-tag package/artifact verification (`package-release.yml`) | Manual `workflow_dispatch` | | Pending | |
-| Real release pipeline (`package-release.yml`) | `v*` tag push | | Pending | |
+This table records evidence only. Completion state belongs in the single Live Release Checklist above.
+
+| Pipeline | Trigger | Candidate SHA / tag | Evidence |
+| --- | --- | --- | --- |
+| Normal PR CI (`c-build.yml` and other PR workflows) | Release PR | | |
+| Pre-tag package/artifact verification (`package-release.yml`) | Manual `workflow_dispatch` | | |
+| Real release pipeline (`package-release.yml`) | `v*` tag push | | |
 
 A green normal PR CI run is not evidence that RPM, DEB, source archives, SBOM, attestations, or release containers from `package-release.yml` were already built or verified.
 
@@ -76,26 +75,17 @@ Use `publish_container=true` only when the applicable release checks require the
 Candidate SHA:
 Workflow run:
 `publish_container` value:
-Result:
-
-## Release Checklist Execution
-
-Use the exact current items from `doc/release-checklist.md`. Do not copy their definitions into this PR and then maintain an independent version here.
-
-Allowed status values are `Pending`, `Passed`, `Failed`, and `N/A`. Every `N/A` needs a concrete rationale.
-
-| Canonical checklist section / item | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
-| --- | --- | --- | --- | --- |
-| | Pending | | | |
+Observed result:
 
 ## PRETAG Evidence
+
+This section carries supporting evidence only. Set `Passed`, `Failed`, or `N/A` only in the Live Release Checklist.
 
 Candidate SHA:
 Previous release tag:
 
-| Check | Result | Evidence |
+| Evidence subject | Bound Candidate SHA / reference | Evidence |
 | --- | --- | --- |
-| Canonical PRETAG checklist coverage | | |
 | Previous-tag to Candidate-SHA change review | | |
 | Normal pull-request CI | | |
 | Manual package-release verification | | |
@@ -106,7 +96,7 @@ Previous release tag:
 
 ### Release Branch Integrity
 
-Negative claims such as "the release branch contains no release-only fixes" or "there is no unreviewed branch drift" require an explicit reproducible check. Do not mark them complete from assumption or visual familiarity.
+Negative claims such as "the release branch contains no release-only fixes" or "there is no unreviewed branch drift" require an explicit reproducible check. Do not treat them as proven from assumption or visual familiarity.
 
 Expected relationship:
 
@@ -138,14 +128,15 @@ Candidate SHA:
 
 ## ARTIFACT Evidence
 
+This section carries supporting evidence only. Set release-check completion state only in the Live Release Checklist.
+
 Expected release tag:
 Actual release tag:
 Tag SHA:
 Candidate SHA:
 
-| Artifact / verification | Result | Evidence |
+| Artifact / verification | Bound tag / artifact | Evidence |
 | --- | --- | --- |
-| Canonical artifact checklist coverage | | |
 | Tagged package-release workflow | | |
 | Source artifact | | |
 | DEB | | |
@@ -161,9 +152,9 @@ A manual pre-tag `workflow_dispatch` result is not proof that the later tag-trig
 
 The current repository workflow has no independent manual pre-publication gate between pushing a real release tag and the publication path in `package-release.yml`.
 
-This section therefore documents the observed publication state. It is **not** a technical pre-publication gate.
+This section documents observed publication evidence only. It is **not** a technical pre-publication gate and carries no independent completion status.
 
-Publication status:
+Publication state observed:
 Tagged workflow run:
 Published release:
 
@@ -171,21 +162,21 @@ A real pre-publication gate requires a separate workflow change and is outside t
 
 ## Promotion To `master`
 
-- [ ] All applicable canonical release checks are complete.
-- [ ] All evidence refers to the current Candidate SHA or the corresponding final tagged artifact.
-- [ ] Normal PR CI is complete for the current Candidate SHA.
-- [ ] Required package/artifact verification is complete.
-- [ ] No unresolved release blocker remains.
-- [ ] Final AGENTS.md compliance review completed.
-- [ ] Explicit maintainer approval for this promotion to `master` recorded.
+Promotion readiness is determined by the single Live Release Checklist above. Do not duplicate CI, artifact, blocker, or governance completion state here.
 
 Maintainer approval is governed by `AGENTS.md` rule 81 and is never inferred from a previous release, another PR, silence, or a generic request to work through this checklist.
 
+Approval reference:
+Approved Candidate SHA / tag:
+Promotion PR / reference:
+
 ## Open Findings / Blockers
 
-| Status | Finding | Required action | Reference / evidence |
-| --- | --- | --- | --- |
-| | | | |
+| Finding | Required action | Reference / evidence |
+| --- | --- | --- |
+| | | |
+
+Any unresolved blocker must keep the corresponding Live Release Checklist control row from being marked `Passed`.
 
 ## Checklist Maintenance
 
@@ -201,7 +192,7 @@ During this release, did verification discover a gap in the canonical release co
 
 Required `doc/release-checklist.md` update / reference:
 
-If a gap is discovered, update the canonical checklist so future releases inherit the lesson. Do not fix only this PR body's local checklist text.
+If a gap is discovered, update the canonical checklist so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
 
 ## Final Release Record
 
