@@ -38,14 +38,52 @@ automatically from commit messages or PR titles.
 
 ## Cutting A Release (Manual, Maintainer-Driven)
 
-**Before starting this process**, work through `doc/release-checklist.md` in
-full — this section covers the tagging/branching mechanics, not what must
-actually be true about the release's content before it ships.
+Use `doc/release-checklist.md` as the canonical release-readiness checklist
+throughout this process. Complete every applicable pre-tag requirement before
+creating the release tag in step 4. This section covers the tagging/branching
+mechanics, not what must actually be true about the release's content before
+it ships.
 
 1. The maintainer decides the next version number (`X.Y.Z-NG`), informed by
    `CHANGELOG.md`'s `[Unreleased]` section — not derived from it automatically.
 2. Cut `release/X.Y.Z-NG` from `current_dev` (via the standard throwaway-branch
    promotion flow — `current_dev` itself is never a PR head/base).
+
+   **2a. Open the release pull request.** Immediately after cutting the release
+   branch, open a Draft PR from `release/X.Y.Z-NG` to `master` using the
+   dedicated release template:
+
+   ```bash
+   gh pr create \
+     --repo wiki-mod/distcc-ng \
+     --base master \
+     --head release/X.Y.Z-NG \
+     --draft \
+     --title "chore(release): prepare X.Y.Z-NG" \
+     --body-file .github/PULL_REQUEST_TEMPLATE/create_and_publish_release.md
+   ```
+
+   Fill in the previous release tag, Candidate SHA, release branch, and expected
+   tag before treating any release evidence as current. Opening this PR triggers
+   the repository's normal `pull_request` CI, but it does not trigger
+   `.github/workflows/package-release.yml` by itself. A green PR run therefore
+   is not evidence that the release RPM, DEB, source archives, SBOM,
+   attestations, or release containers have been built or verified.
+
+   When pre-tag package/artifact evidence is required by
+   `doc/release-checklist.md`, dispatch the release workflow explicitly against
+   the release branch and record the resulting run in the release PR:
+
+   ```bash
+   gh workflow run package-release.yml \
+     --repo wiki-mod/distcc-ng \
+     --ref release/X.Y.Z-NG \
+     -f publish_container=false
+   ```
+
+   Set `publish_container=true` only when the applicable release checks require
+   the container build/push path. Keep the release PR body current as the
+   Candidate SHA or verification evidence changes.
 3. Run the release guardrail script (`scripts/check-release-version.sh`) — it
    fails closed if the version is already tagged, or if `configure.ac`
    disagrees with the tag about to be created.
