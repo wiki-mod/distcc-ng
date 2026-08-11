@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.5-NG] - 2026-08-11
+
 ### Fixed
 
 - **`include_server/parse_command.py`**: pump mode's include server can now
@@ -599,7 +601,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `test/e2e/Dockerfile`, and `test/e2e-full/Dockerfile` already had
   `libseccomp-dev`; `package-release.yml`'s `apt` list (used to build the real
   `.rpm`/`.deb` release packages via `scripts/build-release-packages.sh`) did
-  not and is fixed in the same change.
+  not and is fixed in the same change. **This means every previously
+  published `distcc-ng`/`distcc-ng-pump` container image up to and including
+  `3.6.4-NG` -- and the `:latest` tag, which pointed at `3.6.4-NG` until this
+  release -- ran without the seccomp sandbox for remote compiler processes,
+  confirmed live** (`docker pull ghcr.io/wiki-mod/distcc-ng:3.6.4-NG` still
+  logs `Warning: built without libseccomp support...` as of this release).
+  `3.6.5-NG` is the first published release where every real `distccd`
+  artifact actually has the sandbox compiled in and enforcing -- verified
+  with a real negative test against the actual published `3.6.5-NG` image
+  (a `ptrace()`-calling marker binary installed as the server-side compiler
+  returns `EPERM`, not a startup log line alone).
 
 ### Fixed
 
