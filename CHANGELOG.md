@@ -41,6 +41,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   in this image too, matching the file's existing "real functional test,
   not just `--version`" convention for every other tool.
 
+- **`docker/verify/Dockerfile`**: the buildtools verification image now
+  installs `libelf-dev` (issue #398). The image previously carried only
+  libelf's runtime library (`libelf1t64`), no development headers at all --
+  found missing when issue #398's libelf feasibility spike (evaluating
+  `libelf` as a replacement for `dcc_fix_debug_info()`'s raw ELF byte
+  search-and-replace, which cannot handle `SHF_COMPRESSED` debug sections)
+  failed to compile in this image. A real build-time self-test compiles
+  against `libelf.h`/`gelf.h`, links `-lelf`, and reads a real ELF header
+  from the image's own already-built test binary via `elf_begin()`/
+  `gelf_getehdr()`, matching this file's existing per-tool self-test
+  convention.
+
 - **`pump.in`**: two `ShutDown()` process-liveness/identity bugs (issue #401,
   split out from PR #400's review).
   - **BSD/macOS `ps` fallback could miss a genuinely alive include
