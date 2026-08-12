@@ -467,6 +467,30 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       container-internal path (`/tmp/...`) created by `mkdir -p` run as
       part of the container's own command, never a host path assumed to
       be visible inside the container without an explicit bind mount.
+      **A second, real companion requirement, found later: a resolvable
+      `/etc/passwd` entry, not just `$HOME`.** The "no synthesized passwd
+      entry for a numeric `--user`" gotcha above doesn't only break
+      `$HOME` — any tool that calls `getpwuid(getuid())` directly fails
+      outright when that call returns `NULL`, regardless of `$HOME`.
+      OpenSSH's `ssh-keygen` is the concrete case that surfaced this: it
+      calls `getpwuid(getuid())` unconditionally early in `main()` (needed
+      for the default key comment and tilde-expansion, even though `-f` is
+      always given), and `fatal()`s with `"No user exists for uid <uid>"`
+      when it can't resolve one — confirmed live in CI once openssh was
+      added to the image (`test/testdistcc.py`'s `SSHMode_Case`, which
+      calls `ssh-keygen` in its `setup()`, started failing `make check`'s
+      `distcc-maintainer-check` target with exactly that message). Fixed
+      the same way as `$HOME`: no `chown`/`su`/root, just give the numeric
+      uid a name. Read the image's own real `/etc/passwd` and `/etc/group`,
+      append one synthetic entry for `$(id -u)`/`$(id -g)`, and bind-mount
+      the result over `/etc/passwd`/`/etc/group` (read-only) in the
+      `docker run` invocation — see
+      `.github/workflows/verify-image-build.yml`'s "Prepare a resolvable
+      passwd/group entry for the runner's own uid" step for the current,
+      real implementation. The same fix applies to a manual `docker run
+      --user "$(id -u):$(id -g)"` invocation against this image (see
+      `CONTRIBUTING.md`'s "Using the verification/buildtools container"
+      section) — not only CI's own copy of the recipe.
       **Rootless Docker/user-namespace remapping (the issue's third
       proposed alternative) has since been empirically tested too** (issue
       #286 follow-up, since `--user` alone answers the immediate `chown`
