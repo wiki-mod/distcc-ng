@@ -13,6 +13,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/testdistcc.py`**: swept the rest of the file for the unclosed-file
+  pattern beyond the 10 sites a Copilot review flagged and PR #466 already
+  fixed (issue #460 Finding 3, whole-file sweep per AGENTS.md rule 73).
+  Twenty-eight further `open(...)` call sites never explicitly closed their
+  file handle: some are pure reads/writes with no correctness risk (now a
+  plain `with` block); eleven write a fixture file that an external
+  `distcc`/compiler/assembler subprocess reads back immediately afterward,
+  relying on CPython's prompt refcounting to flush the write first (now an
+  explicit `with` block, same fix shape as #466's five equivalent sites).
+  Sites already closed on every path via `try`/`finally` were left
+  unchanged -- not the flagged class, no behavior to fix.
+
 - **`include_server/parse_command.py`**: pump mode's include server can now
   see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
   take `args[0]` literally as "the compiler" -- fed `ccache /bin/gcc ...`,
