@@ -517,7 +517,7 @@ jobs:
     # artifact). contents: write is kept as the honest floor for what a
     # github.token-authenticated call here would need, but the actual
     # publish step below no longer runs as github.token at all -- see its
-    # own env comment (issue #460 Finding 2).
+    # own env comment.
     permissions:
       contents: write
     steps:
@@ -543,9 +543,9 @@ jobs:
           # introduced (v3.6.0-NG through v3.6.4-NG) was in fact created
           # by this step using github.token, so
           # changelog-update-on-release.yml's release:released trigger
-          # had never once fired for a real release (issue #460 Finding
-          # 2). Publishing as a real PAT identity instead is the fix for
-          # that specific mechanism.
+          # had never once fired for a real release. Publishing as a
+          # real PAT identity instead is the fix for that specific
+          # mechanism.
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
           PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
