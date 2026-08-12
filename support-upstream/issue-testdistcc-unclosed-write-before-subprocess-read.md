@@ -1,4 +1,4 @@
-# Test-fixture file write is never closed before a subprocess reads it back
+# Test-fixture file write is not explicitly closed before the next test step
 
 **Fork issue:** none filed separately (Issue #460 Finding 3)
 **Fixed by:** [wiki-mod/distcc-ng#466](https://github.com/wiki-mod/distcc-ng/pull/466)
@@ -11,19 +11,19 @@
 Both `BinFalse_Case.createSource()` and `BinTrue_Case.createSource()` write
 the shared `.i` fixture file with a bare, unassigned `open(...).write(...)`
 expression and never explicitly close it. `runtest()` (the very next method
-comfychair calls) then execs a real subprocess (`distcc false -c testtmp.i`
-or `distcc true -c testtmp.i`) that reads this exact file back.
+comfychair calls) then passes this path through distcc to `false` or `true`.
+Those fake compilers intentionally ignore the input, so these particular
+tests do not make their result depend on the fixture contents.
 
 Relying on the temporary file object being garbage-collected -- and its
 `__del__` closing and flushing it -- before the subprocess opens the same
 path is an implementation detail of CPython's reference-counting GC, not a
 language guarantee. A Python implementation whose garbage collector doesn't
 collect this promptly (e.g. PyPy, which primarily uses a tracing/generational
-collector) could hand the subprocess a file that has been written to but not
-yet flushed to disk, making the test's actual on-disk content
-non-deterministic. This has not been observed to fail under CPython (the
-only Python implementation upstream's CI actually exercises), which is
-exactly why it can sit unnoticed indefinitely.
+collector) can leave the fixture's on-disk content stale when the next method
+starts. For these cases that is a file-lifetime hygiene defect, not an
+empirically demonstrated test failure: the invoked programs and the test
+assertions do not inspect the source text.
 
 ## Upstream code (unchanged as of the commit above, upstream)
 
@@ -55,11 +55,8 @@ class BinTrue_Case(Compilation_Case):
 
 ## Fixed code (changed code as of the commit from distcc-ng fork)
 
-This fork's equivalent call sites (five total, all sharing this exact
-write-then-subprocess-read shape: `UserPrivilegeDropFunctional_Case`,
-`ZeroByteOutputCompiler_Case`, `NastyCppWritesStdout_Case`,
-`CrashingCompiler_Case`, `ClientDisconnectKillsServerChild_Case`) now use an
-explicit `with` block:
+This fork's applicable call sites, including both upstream-equivalent cases,
+now use an explicit `with` block:
 
 ```python
 def createSource(self):
@@ -67,20 +64,10 @@ def createSource(self):
         f.write("int main() {}")
 ```
 
-**Correction (2026-08-12):** the previous version of this entry stated
-`BinFalse_Case`/`BinTrue_Case` "are upstream-only classes this fork doesn't
-currently carry verbatim under those names." That was wrong: this fork's
-`test/testdistcc.py` carried both classes byte-for-byte identical to
-upstream, `open()` call included -- confirmed via `git show
-upstream/master:test/testdistcc.py`. Both classes' own unclosed-write sites
-are fixed by [wiki-mod/distcc-ng#472](https://github.com/wiki-mod/distcc-ng/pull/472),
-which swept the rest of the file for the same pattern beyond this PR's
-own 10 flagged sites.
-
 ## Empirical verification
 
 Real evidence, not just an assertion, produced in response to review
-question: is this a reproducible failure, or only a theoretical risk?
+question: does the lifetime mechanism differ between implementations?
 `probe_refcount_close_timing.py` ran on real GitHub Actions `ubuntu-latest`
 CI (run [31587298529](https://github.com/wiki-mod/distcc-ng/actions/runs/31587298529)),
 checking two things -- (a) mechanistically, via a `weakref.finalize`
@@ -95,14 +82,10 @@ back, checking the full content round-trips correctly:
 | CPython 3.14.7 | `True` (proven deterministic, not probabilistic) | 5000/5000 passed |
 | PyPy 7.3.19 (3.10) | `False` | **0/5000 passed** -- every subprocess read 0 bytes |
 
-This confirms both halves of the claim with real evidence instead of an
-assertion: under CPython, the fix is provably unnecessary for correctness
-(the object's `__del__` runs synchronously and deterministically before
-control returns to the caller, not merely "hasn't been observed to fail")
--- and under PyPy, the exact same pattern is not just theoretically risky
-but **reliably broken, 100% of the time**, because PyPy's tracing GC does
-not finalize the temporary file object before the next statement runs, so
-the subprocess consistently sees an empty, unflushed file. The `with`-block
-fix is real, verified insurance against a real, verified failure mode --
-just one CPython's own CI (this fork's and upstream's) can never surface on
-its own.
+This proves that the bare expression can leave an unflushed file visible to
+a following process under PyPy. It does **not** prove that the affected
+`BinFalse_Case` or `BinTrue_Case` test path fails: the probe deliberately
+used a reader whose result depends on the file contents, while `false` and
+`true` ignore those contents and the harness asserts only their exit status.
+The `with` block therefore makes file ownership and flush timing explicit
+and portable without claiming a reproduced failure of those tests.
