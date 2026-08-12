@@ -701,10 +701,10 @@ jobs:
   # Files/updates the standing nightly-broken issue when the scheduled
   # (nightly, 03:00 UTC) run of this workflow fails, closes it on success --
   # reuses the same composite action nightly-publish.yml and
-  # master-heartbeat.yml already use for the exact same purpose (issue #81),
-  # rather than adding a second, parallel reporting mechanism (AGENTS.md
-  # rule 69). Scoped to the schedule event only: push/pull_request failures
-  # are already visible through the normal PR/commit check UI and should not
+  # master-heartbeat.yml already use for the exact same purpose, rather than
+  # adding a second, parallel reporting mechanism (AGENTS.md rule 69).
+  # Scoped to the schedule event only: push/pull_request failures are
+  # already visible through the normal PR/commit check UI and should not
   # also file/comment on the standing nightly-broken issue every time a PR
   # happens to fail.
   #
@@ -730,7 +730,16 @@ jobs:
       issues: write
     steps:
       - uses: $/.github/actions/harden-runner
+      # ref: current_dev -- on `schedule`, an unpinned checkout resolves to
+      # this repo's default branch (master), not current_dev, same reason
+      # the other jobs in this file and nightly-publish.yml's own `report`
+      # job pin it explicitly. This matters here specifically because
+      # `uses: ./.github/actions/nightly-status` below is a local-path
+      # action reference -- whichever branch gets checked out is the
+      # version of that action's code that actually runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
