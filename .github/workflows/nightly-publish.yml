@@ -61,22 +61,14 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/build-and-check
         with:
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-nightly-${{ github.run_id }}
-          restore-keys: |
-            ccache-nightly-
-      - run: ./autogen.sh
-      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
-      - run: make
-      - run: make check
+          cache-key-prefix: ccache-nightly
+          autoconf-cache-key-prefix: autoconf-nightly
 
   # --- Gate 2: real distributed-compile e2e (reuses the committed harness) --
   distributed_e2e:
@@ -87,11 +79,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - name: Run distributed-compile end-to-end test
-        run: bash test/e2e/run-e2e.sh
+      - uses: $/.github/actions/distributed-e2e-test
 
   # --- Publish, only if BOTH gates passed -----------------------------------
   publish:
@@ -106,15 +98,14 @@ jobs:
       contents: write
       packages: write
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
           # Full history so the nightly tag can be force-moved onto this commit.
           fetch-depth: 0
 
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
-        with:
-          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+      - uses: $/.github/actions/install-packaging-deps
 
       - name: Resolve the built commit
         # Under schedule/workflow_dispatch the workflow is evaluated from the
@@ -126,8 +117,9 @@ jobs:
       - name: Build release packages
         run: ./scripts/build-release-packages.sh
 
-      - name: Log in to GHCR
-        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Build and push the distcc-ng-nightly:latest container image
         env:
@@ -224,10 +216,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # No explicit ref: this job is workflow_dispatch-only, so
         # github.sha/github.ref is always whatever the dispatcher actually
@@ -260,6 +249,7 @@ jobs:
       contents: read
       issues: write
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev

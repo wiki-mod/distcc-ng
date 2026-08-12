@@ -59,28 +59,32 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       actions: ${{ steps.filter.outputs.actions }}
     steps:
+      # Same "cheap checkout + git diff" shape as c-build.yml's own `changes`
+      # job (issue #361's "if cheap" cost/benefit call) -- added here too for
+      # consistency rather than leaving an identical job pattern half-covered.
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - id: diff
+        uses: $/.github/actions/changed-files
       - id: filter
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
+          FORCED: ${{ steps.diff.outputs.forced }}
+          CHANGED: ${{ steps.diff.outputs.changed_files }}
           # PR base branch for pull_request events, current branch name for
           # push events -- either way, "what branch is this commit landing
           # on".
           TARGET_BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "schedule" ]; then
+          if [ "$FORCED" = "true" ]; then
             {
               echo "c_cpp=true"
               echo "python=true"
               echo "actions=true"
             } >> "$GITHUB_OUTPUT"
-            echo "forced by $EVENT_NAME -- always runs the full scan"
+            echo "forced (workflow_dispatch/schedule/no diffable base) -- always runs the full scan"
             exit 0
           fi
           # master's own ruleset has a native "Require code scanning
@@ -109,40 +113,23 @@ jobs:
             echo "targeting master -- its ruleset requires real CodeQL results for every language on every commit, never skip"
             exit 0
           fi
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            from="$BASE_SHA"
-          else
-            from="$BEFORE_SHA"
-          fi
-          if [ -z "$from" ] || [ "$from" = "0000000000000000000000000000000000000000" ]; then
-            {
-              echo "c_cpp=true"
-              echo "python=true"
-              echo "actions=true"
-            } >> "$GITHUB_OUTPUT"
-            echo "no diffable base ($from) -- failing open"
-            exit 0
-          fi
-          changed="$(git diff --name-only "$from" "$HEAD_SHA")"
-          echo "changed files:"
-          echo "$changed"
           # c-cpp: anything CodeQL's manual C build step below actually
           # compiles or that configure/make read to produce it.
-          if printf '%s\n' "$changed" | grep -qE '^(src|lzo|popt|include_server/c_extensions|test/fuzz|m4)/|^(configure\.ac|Makefile\.in|autogen\.sh)$|\.(c|h|cc|cpp)$'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(src|lzo|popt|include_server/c_extensions|test/fuzz|m4)/|^(configure\.ac|Makefile\.in|autogen\.sh)$|\.(c|h|cc|cpp)$'; then
             echo "c_cpp=true" >> "$GITHUB_OUTPUT"
           else
             echo "c_cpp=false" >> "$GITHUB_OUTPUT"
           fi
           # python: the include-server and its tests, plus any stray .py
           # elsewhere (e.g. scripts/) as a catch-all.
-          if printf '%s\n' "$changed" | grep -qE '^(include_server|test)/|\.py$'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(include_server|test)/|\.py$'; then
             echo "python=true" >> "$GITHUB_OUTPUT"
           else
             echo "python=false" >> "$GITHUB_OUTPUT"
           fi
           # actions: workflow YAML plus this repo's one composite action
           # (.github/actions/nightly-status).
-          if printf '%s\n' "$changed" | grep -qE '^\.github/(workflows|actions)/'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^\.github/(workflows|actions)/'; then
             echo "actions=true" >> "$GITHUB_OUTPUT"
           else
             echo "actions=false" >> "$GITHUB_OUTPUT"
@@ -153,6 +140,8 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Deliberately excluded from issue #361's fix (caveat 3): a real
+    # cost/benefit call left to the maintainer, not bundled into this pass.
     # actions: read lets codeql-action/init resolve this workflow's own run
     # context (needed on some repo configurations); security-events: write
     # is what actually lets codeql-action/analyze upload SARIF results to
