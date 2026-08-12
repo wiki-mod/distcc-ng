@@ -13,6 +13,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`test/testdistcc.py`**: closed the 10 file handles flagged by PR #461's
+  Copilot code-quality review (issue #460 Finding 3). Five write the `.i`
+  fixture file a subprocess compiles in the very next statement -- given
+  an explicit `with` block, since relying on CPython's prompt refcounting
+  to flush the write before the subprocess reads it back is an
+  implementation detail, not a language guarantee. The other five are
+  pure reads with no such ordering risk, converted for style/portability
+  only. Three other, unflagged call sites with the identical
+  `open("testtmp.i", "wt").write(...)` pattern and one other unflagged
+  `open(os.environ['DISTCC_LOG']).read()` are deliberately left
+  untouched -- out of scope for this issue's specific 10 flagged sites.
+
 - **`include_server/parse_command.py`**: pump mode's include server can now
   see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
   take `args[0]` literally as "the compiler" -- fed `ccache /bin/gcc ...`,
