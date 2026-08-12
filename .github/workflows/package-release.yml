@@ -514,10 +514,10 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # No checkout in this job (it only downloads the already-built package
-    # artifact); contents: write is what the `gh release create/upload/edit`
-    # calls below actually need -- this job never pushes to GHCR or mints an
-    # attestation, so it gets neither packages: write nor id-token/
-    # attestations: write.
+    # artifact). contents: write is kept as the honest floor for what a
+    # github.token-authenticated call here would need, but the actual
+    # publish step below no longer runs as github.token at all -- see its
+    # own env comment (issue #460 Finding 2).
     permissions:
       contents: write
     steps:
@@ -531,7 +531,22 @@ jobs:
       - name: Publish GitHub release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GHCR_PACKAGE_DELETE_PAT (a real, long-lived repo-scoped PAT,
+          # already used the same way in ghcr-cleanup.yml and
+          # openssf-baseline-recheck.yml -- see those files' own comments)
+          # instead of github.token: GitHub does not deliver downstream
+          # workflow events (including release:released, confirmed via
+          # `gh run list --event release`: zero runs, ever, across every
+          # workflow in this repo) for anything created by the default
+          # GITHUB_TOKEN, as a deliberate anti-recursion measure. Every
+          # real release since this repo's automated changelog chain was
+          # introduced (v3.6.0-NG through v3.6.4-NG) was in fact created
+          # by this step using github.token, so
+          # changelog-update-on-release.yml's release:released trigger
+          # had never once fired for a real release (issue #460 Finding
+          # 2). Publishing as a real PAT identity instead is the fix for
+          # that specific mechanism.
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
           PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
           RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
