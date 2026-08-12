@@ -1043,9 +1043,8 @@ foo_bar""",
               time.sleep(0.1)
           # Create .d file now, so that it appears to be no older than
           # time_ref.
-          dotd_fd = open("dotd", "w")
-          dotd_fd.write(dotd_contents)
-          dotd_fd.close()
+          with open("dotd", "w") as dotd_fd:
+              dotd_fd.write(dotd_contents)
           # Check: no fresh files here!
           out, err = self.runcmd(
               "h_compile dcc_fresh_dependency_exists dotd '%s' %i" %
@@ -1216,14 +1215,13 @@ class Compilation_Case(WithDaemon_Case):
         self.checkBuiltProgram()
 
     def createSource(self):
+        """Close both fixtures before the distcc client uploads them."""
         filename = self.sourceFilename()
-        f = open(filename, 'w')
-        f.write(self.source())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.source())
         filename = self.headerFilename()
-        f = open(filename, 'w')
-        f.write(self.headerSource())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.headerSource())
 
     def sourceFilename(self):
         return "testtmp.c"              # default
@@ -1948,9 +1946,8 @@ class Gdb_Case(CompileHello_Case):
         # and run them via gdb --command.  (The alternative, to specify
         # the gdb commands directly on the commandline using gdb --ex,
         # is not as portable since only newer gdb's support it.)
-        f = open('gdb_commands', 'w')
-        f.write(self.gdbCommands())
-        f.close()
+        with open('gdb_commands', 'w') as f:
+            f.write(self.gdbCommands())
         out, errs = self.runcmd("gdb -nh --batch --command=gdb_commands "
                                 "link/%s </dev/null" % testtmp_exe)
         # Normally we expect the stderr output to be empty.
@@ -2733,9 +2730,11 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
         os.environ['DISTCC_VERBOSE'] = '1'
         # Explicit close (not just CPython's prompt refcounting) before
-        # runcmd() below execs a real compiler subprocess that reads this
-        # file back -- an implementation that defers the close (PyPy) could
-        # otherwise hand the subprocess a not-yet-flushed file.
+        # runcmd() below execs the distcc client, which itself reads and
+        # uploads this file (src/remote.c's dcc_x_file()) -- the fake
+        # compiler never opens it at all. An implementation that defers
+        # the close (PyPy) could otherwise hand the client a not-yet-
+        # flushed file.
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
@@ -3211,18 +3210,16 @@ class BigAssFile_Case(Compilation_Case):
 
     This will take a while to run"""
     def createSource(self):
-        """Create source file"""
-        f = open("testtmp.c", 'wt')
-
+        """Close the fixture once fully written, not just on the happy path."""
         # We want a file of many, which will be a few megabytes of
         # source.  Picking the size is kind of hard -- something that
         # will properly exercise distcc may be too big for small/old
         # machines.
 
-        f.write("int main() {}\n")
-        for i in range(200000):
-            f.write("int i%06d = %d;\n" % (i, i))
-        f.close()
+        with open("testtmp.c", 'wt') as f:
+            f.write("int main() {}\n")
+            for i in range(200000):
+                f.write("int i%06d = %d;\n" % (i, i))
 
     def runtest(self):
         self.runcmd(self.distcc() + self._cc + " -c %s" % "testtmp.c")
@@ -3248,10 +3245,10 @@ class ZeroByteOutputCompiler_Case(Compilation_Case):
     file) instead of actually compiling anything."""
 
     def createSource(self):
-        """Close the fixture before the output-touching compiler receives it."""
-        # Explicit close before the compile reads this file back -- see
-        # UserPrivilegeDropFunctional_Case.runtest()'s identical comment
-        # for why this can't rely on CPython-only prompt refcounting.
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the output-touching compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
@@ -3282,9 +3279,10 @@ class NastyCppWritesStdout_Case(Compilation_Case):
     handled by design, not a distcc bug, just never actually tested."""
 
     def createSource(self):
-        """Close the fixture before the stdout-writing compiler receives it."""
-        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
-        # this needs an explicit close before the compile reads it back.
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the stdout-writing compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
@@ -3370,9 +3368,10 @@ class CrashingCompiler_Case(Compilation_Case):
     reliably kill themselves with a specific signal on all platforms."""
 
     def createSource(self):
-        """Close the fixture before the crashing compiler receives its path."""
-        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
-        # this needs an explicit close before the compile reads it back.
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the crashing compiler, is what reads this
+        # file, so it can't rely on CPython-only prompt refcounting.
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
@@ -3410,8 +3409,9 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
 
     def runtest(self):
         """Exec the client directly so killing it really closes the socket."""
-        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
-        # this needs an explicit close before the compile reads it back.
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the slow-sleeping compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
