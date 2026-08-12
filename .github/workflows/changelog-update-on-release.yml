@@ -24,8 +24,16 @@ on:
         description: "Release notes body to insert (same content GitHub shows on the release page)"
         required: true
         type: string
+  # `published` fires for every draft->public transition regardless of how
+  # the release was originally created; `released` is a real GitHub quirk
+  # documented as unreliable specifically when the release started life as
+  # a draft (github/community#26954) -- which is always true here, since
+  # package-release.yml's publish_github_release job promotes an existing
+  # release-drafter draft rather than creating a release directly. Using
+  # `released` left this workflow unable to fire even after the PAT fix
+  # (issue #460).
   release:
-    types: [released]
+    types: [published]
 
 permissions:
   contents: read
@@ -35,6 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # nightly-publish.yml also publishes a real GitHub release (its
+    # `nightly` pre-release channel) -- exclude it here so a prerelease
+    # publish never inserts a nightly build into CHANGELOG.md, which only
+    # tracks real vX.Y.Z-NG releases.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
