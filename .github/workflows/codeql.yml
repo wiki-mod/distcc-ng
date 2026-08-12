@@ -9,7 +9,7 @@ on:
   push:
     branches: [current_dev, master]
   # See c-build.yml's pull_request block for why ready_for_review is
-  # listed explicitly (issue #460 Finding 4).
+  # listed explicitly.
   pull_request:
     branches: [current_dev, master]
     types: [opened, synchronize, reopened, ready_for_review]

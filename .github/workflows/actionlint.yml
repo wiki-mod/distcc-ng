@@ -29,7 +29,7 @@ on:
   # buildtools image), so running them unconditionally on every PR/push
   # costs little and keeps every required check genuinely present.
   # See c-build.yml's pull_request block for why ready_for_review is
-  # listed explicitly (issue #460 Finding 4).
+  # listed explicitly.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
