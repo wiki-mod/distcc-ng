@@ -59,6 +59,22 @@ See `doc/release-versioning.md` for the full versioning and release process.
     lookup -- confirmed neither the REST `releases/tags/{tag}` endpoint
     nor the GraphQL `release(tagName:)` field can resolve a draft-only
     release at all.
+  - Also: the draft-listing lookup now pipes each page's `--jq`-filtered
+    output through `jq -s` (slurp) instead of wrapping it in `[...]`
+    inside the `--jq` expression itself -- `gh api --paginate` runs the
+    filter once per page, so wrapping per-page would have produced one
+    JSON array per page once this repo's release count crosses a page
+    boundary, which the surrounding `<<<` here-string could not have
+    parsed as a single document. Verified via a real multi-page
+    simulation (this bug had not yet triggered against the repo's
+    current, single-page release count).
+  - Also: the "already published" rerun-detection lookup now captures
+    `gh release view`'s stderr instead of discarding it, and only treats
+    the tag as "not yet published" when that stderr is the specific
+    "release not found" message (confirmed live against a real
+    nonexistent tag) -- a real failure (an expired/misconfigured PAT, a
+    transient API error) now aborts the job instead of silently falling
+    through into draft-promotion.
 
 - **`.github/workflows/changelog-update-on-release.yml`**: trigger changed
   from `release: types: [released]` to `types: [published]` (issue #460
@@ -75,6 +91,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   workflow fire. Guarded with `github.event.release.prerelease == false`
   so `nightly-publish.yml`'s separate `nightly` pre-release channel can
   never insert a nightly build into this changelog.
+  - Also: added a `heading-text` input (this repo's `X.Y.Z-NG` convention,
+    no `v`) alongside the existing `latest-version` input (kept as the
+    real `vX.Y.Z-NG` tag, which `stefanzweifel/changelog-updater-action`
+    also needs to build correct `.../compare/vX...vY` URLs). Without
+    `heading-text`, the action's own documented default is to reuse
+    `latest-version` verbatim as the heading, which would have written
+    `## [vX.Y.Z-NG]` the first time this dormant automation actually
+    fired -- never caught before now because it had never fired for a
+    real release.
 
 ## [3.6.5-NG] - 2026-08-11
 

@@ -577,13 +577,27 @@ jobs:
           # short-circuit past the draft-promotion logic below on a
           # brand-new tag whose only matching release object is still a
           # draft.
+          # `2>` is captured to a file, not discarded, so a real failure
+          # (an expired/misconfigured GHCR_PACKAGE_DELETE_PAT, a transient
+          # API error) can be told apart from the one error this lookup is
+          # actually meant to tolerate -- "release not found" (confirmed
+          # live, this repo, a nonexistent tag: `gh release view` prints
+          # exactly that string to stderr and exits 1). Anything else is a
+          # real problem this step must not silently treat the same as
+          # "tag not tagged yet" and fall through into draft-promotion.
           existing_json="$(mktemp)"
+          existing_err="$(mktemp)"
           if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" \
-            --json isDraft > "${existing_json}" 2>/dev/null \
-            && [ "$(jq -r '.isDraft' "${existing_json}")" = "false" ]; then
-            echo "already published: uploading assets to the existing release for ${TAG_NAME} only"
-            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
-            exit 0
+            --json isDraft > "${existing_json}" 2>"${existing_err}"; then
+            if [ "$(jq -r '.isDraft' "${existing_json}")" = "false" ]; then
+              echo "already published: uploading assets to the existing release for ${TAG_NAME} only"
+              gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
+              exit 0
+            fi
+          elif ! grep -q "release not found" "${existing_err}"; then
+            echo "::error::gh release view failed for ${TAG_NAME} for a reason other than the release not existing yet -- refusing to proceed into draft-promotion blindly:"
+            cat "${existing_err}" >&2
+            exit 1
           fi
 
           # Not yet published -- find release-drafter's rolling draft.
@@ -604,8 +618,16 @@ jobs:
           # (.github/release-drafter.yml) -- there should be exactly one
           # open draft, whatever its tag_name says, and this step retargets
           # it to the real ${TAG_NAME} below.
+          # `--jq` runs once per page under `--paginate`, each page emitting
+          # its own separate JSON value -- wrapping in `[...]` here would
+          # produce one array per page (multiple top-level JSON values once
+          # this repo's release count crosses a page boundary), which the
+          # `<<<` here-string below could not parse as a single document.
+          # Emit each matching draft as its own stream item instead, and
+          # `jq -s` (slurp) after piping combines the whole multi-page
+          # stream into one flat array regardless of page count.
           drafts_json="$(gh api "repos/${{ github.repository }}/releases" --paginate \
-            --jq '[.[] | select(.draft == true)]')"
+            --jq '.[] | select(.draft == true)' | jq -s '.')"
           draft_count="$(jq 'length' <<<"${drafts_json}")"
           if [ "${draft_count}" -eq 0 ]; then
             echo "::error::No release-drafter draft release found; refusing to publish incomplete release notes."
@@ -648,8 +670,7 @@ jobs:
           # notes meant to become this release's notes -- not a second,
           # separately-authored text) over the short hand-rolled summary
           # this step used to always write on its own (maintainer decision,
-          # 2026-08-12: use release-drafter's content, see issue #460
-          # Finding 2).
+          # 2026-08-12).
           notes_file="$(mktemp)"
           jq -r '.[0].body' <<<"${drafts_json}" > "${notes_file}"
           printf '\n' >> "${notes_file}"

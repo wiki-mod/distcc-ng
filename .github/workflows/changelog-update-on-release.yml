@@ -30,8 +30,8 @@ on:
   # a draft (github/community#26954) -- which is always true here, since
   # package-release.yml's publish_github_release job promotes an existing
   # release-drafter draft rather than creating a release directly. Using
-  # `released` left this workflow unable to fire even after the PAT fix
-  # (issue #460).
+  # `released` would have left this workflow unable to fire even after
+  # switching off the default GITHUB_TOKEN.
   release:
     types: [published]
 
@@ -54,10 +54,28 @@ jobs:
         with:
           ref: current_dev
 
+      # `latest-version` keeps its real vX.Y.Z-NG tag (with the `v`), since
+      # the action also uses it to build its `release_compare_url`/
+      # `unreleased_compare_url` outputs, which need the real git tag to
+      # resolve. `heading-text` is this repo's own X.Y.Z-NG convention
+      # (no `v`, matching every existing `## [X.Y.Z-NG]` CHANGELOG.md
+      # section and doc/release-versioning.md) -- confirmed via the
+      # action's own action.yml that `heading-text` exists specifically to
+      # override the heading independently of `latest-version`, defaulting
+      # to `latest-version` verbatim when unset (which would otherwise
+      # write `## [vX.Y.Z-NG]`, not this repo's real format).
+      - name: Compute the CHANGELOG heading version (no v prefix)
+        id: heading
+        run: |
+          set -euo pipefail
+          raw_tag="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
+          echo "version=${raw_tag#v}" >> "$GITHUB_OUTPUT"
+
       - name: Insert release notes into CHANGELOG.md
         uses: stefanzweifel/changelog-updater-action@a938690fad7edf25368f37e43a1ed1b34303eb36 # v1.12.0
         with:
           latest-version: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
+          heading-text: ${{ steps.heading.outputs.version }}
           release-notes: ${{ github.event.inputs.release_notes || github.event.release.body }}
 
       - name: Commit updated CHANGELOG.md
