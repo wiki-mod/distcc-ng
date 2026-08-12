@@ -1,0 +1,31 @@
+name: Probe - refcount close timing (PR #466 review investigation)
+
+# Throwaway investigation workflow, not part of the fix. Answers PR #466's
+# open review question ("needs deeper investigation imho" on the claim that
+# the unclosed-write-before-subprocess-read pattern isn't reproducibly
+# broken under CPython) with real evidence instead of an assertion. This
+# file lives only on the disposable probe/460-refcount-close-timing branch
+# and is not intended to be merged.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  probe-cpython:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: python3 probe_refcount_close_timing.py 5000
+
+  probe-pypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 'pypy3.10'
+      - run: python3 probe_refcount_close_timing.py 5000
