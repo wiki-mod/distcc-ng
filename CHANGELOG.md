@@ -44,10 +44,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `GITHUB_TOKEN`, so `changelog-update-on-release.yml`'s
   `release:released` trigger had never once fired for any of this
   repo's real releases (confirmed via `gh run list --event release`:
-  zero runs, ever). Known remaining gap, not fixed here: the release
-  notes this step generates are a short stub, not release-drafter's
-  real per-PR notes -- see the issue for the open design question this
-  raises for the next real release.
+  zero runs, ever).
+  - Also: the release now publishes with `release-drafter`'s own rolling
+    draft content (the real, per-PR categorized notes it already
+    maintains on every push to `current_dev`) instead of a short
+    hand-written stub -- maintainer decision, 2026-08-12. The step
+    promotes that existing draft release object (retargeting its tag,
+    setting `draft=false`) rather than creating a second, separate
+    release object, which also keeps `release-drafter`'s own
+    "latest release" lookup correct for computing the version of its
+    *next* rolling draft afterward.
 
 ## [3.6.5-NG] - 2026-08-11
 

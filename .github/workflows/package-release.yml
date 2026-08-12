@@ -551,23 +551,65 @@ jobs:
           PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
           RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
           TAG_NAME: ${{ needs.setup.outputs.tag_name }}
+          REPO: ${{ github.repository }}
         run: |
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb distcc-ng-*.spdx.json)
 
-          notes_file="$(mktemp)"
+          metadata_file="$(mktemp)"
           {
-            printf '%s\n\n' "${RELEASE_TITLE}"
-            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n'
             printf 'Source commit: %s\n' "${GITHUB_SHA}"
             printf 'Tag: %s\n\n' "${TAG_NAME}"
             printf 'Container image: %s\n' "${IMAGE_TAG}"
             printf 'Container image (pump mode, issue #181): %s\n' "${PUMP_IMAGE_TAG}"
-          } > "${notes_file}"
+          } > "${metadata_file}"
 
-          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
-            gh release edit "${TAG_NAME}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          # Prefer release-drafter's own rolling draft (.github/release-drafter.yml's
+          # entire design point: its body is the real, per-PR categorized
+          # notes meant to become this release's notes -- not a second,
+          # separately-authored text) over the short hand-rolled summary
+          # this step used to always write on its own (maintainer decision,
+          # 2026-08-12: use release-drafter's content, see issue #460
+          # Finding 2). release-drafter's own config assumes exactly one
+          # rolling draft exists at a time; `sort_by(.created_at) | last`
+          # is a defensive tie-break if that assumption is ever violated,
+          # not evidence multiple drafts are expected.
+          draft_id="$(gh api "repos/${REPO}/releases" --paginate \
+            --jq '[.[] | select(.draft == true)] | sort_by(.created_at) | last | .id // empty')"
+
+          notes_file="$(mktemp)"
+          if [ -n "${draft_id}" ]; then
+            gh api "repos/${REPO}/releases/${draft_id}" --jq '.body' > "${notes_file}"
+            printf '\n' >> "${notes_file}"
           else
-            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+            # No release-drafter draft found (e.g. it never ran, or was
+            # manually deleted) -- fall back to a minimal notes body
+            # rather than failing the release outright. A missing draft
+            # here is itself a real gap worth investigating separately,
+            # not something to silently paper over.
+            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n' > "${notes_file}"
+            echo "::warning::No release-drafter draft release found; publishing with fallback notes instead of its real content."
+          fi
+          cat "${metadata_file}" >> "${notes_file}"
+
+          if [ -n "${draft_id}" ]; then
+            # Promote the existing draft into the real release for this
+            # tag instead of creating a second, separate release object --
+            # this also keeps release-drafter's own "latest release"
+            # lookup correct when it computes the *next* draft's version
+            # afterward (a second orphaned release object with the same
+            # tag_name was found to confuse that computation).
+            gh api --method PATCH "repos/${REPO}/releases/${draft_id}" \
+              -f tag_name="${TAG_NAME}" \
+              -f name="${RELEASE_TITLE}" \
+              -F draft=false \
+              -F make_latest=true \
+              -f body=@"${notes_file}" \
+              > /dev/null
+            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
+          elif gh release view "${TAG_NAME}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
+            gh release edit "${TAG_NAME}" --repo "${REPO}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
+          else
+            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
           fi
