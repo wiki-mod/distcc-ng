@@ -179,6 +179,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       valgrind \
       # --- Binutils (objdump/readelf/nm/addr2line -- follow-up ask) ---
       binutils \
+      # libelf-dev (libelf.h/gelf.h, elfutils' libelf -- issue #398): needed
+      # to compile against libelf/gelf for the issue #398 investigation into
+      # replacing dcc_fix_debug_info()'s raw ELF byte search-and-replace with
+      # libelf's own compressed-section-aware API. Only the runtime library
+      # (libelf1t64) was present before; this image had no ELF/DWARF
+      # development headers at all, found missing empirically when a real
+      # libelf prototype failed to compile in this container.
+      libelf-dev \
       # --- Search/inspection tools agents commonly reach for ---
       ripgrep \
       grep \
@@ -306,6 +314,33 @@ RUN set -eux; \
     MAIN_ADDR="$(nm ok_dbg | awk '/ T main/ {print $1}')"; \
     addr2line -e ok_dbg -f "${MAIN_ADDR}" | grep -q "main" \
       || { echo "ERROR: addr2line did not resolve main"; exit 1; }; \
+    # --- libelf-dev (issue #398): must actually compile against libelf.h/
+    #     gelf.h, link against -lelf, and read a real ELF header from the
+    #     already-built ok_gcc binary via the actual libelf API -- not just
+    #     confirm the headers exist on disk. ---
+    printf '%s\n' \
+      '#include <fcntl.h>' \
+      '#include <stdio.h>' \
+      '#include <unistd.h>' \
+      '#include <libelf.h>' \
+      '#include <gelf.h>' \
+      'int main(void) {' \
+      '  if (elf_version(EV_CURRENT) == EV_NONE) { fprintf(stderr, "elf_version failed\n"); return 1; }' \
+      '  int fd = open("ok_gcc", O_RDONLY);' \
+      '  if (fd < 0) { perror("open"); return 1; }' \
+      '  Elf *e = elf_begin(fd, ELF_C_READ, NULL);' \
+      '  if (!e || elf_kind(e) != ELF_K_ELF) { fprintf(stderr, "elf_begin/elf_kind failed\n"); return 1; }' \
+      '  GElf_Ehdr ehdr;' \
+      '  if (!gelf_getehdr(e, &ehdr)) { fprintf(stderr, "gelf_getehdr failed\n"); return 1; }' \
+      '  printf("libelf_selftest_ok e_type=%d\n", ehdr.e_type);' \
+      '  elf_end(e); close(fd);' \
+      '  return 0;' \
+      '}' \
+      > libelf_selftest.c; \
+    gcc libelf_selftest.c -lelf -o libelf_selftest; \
+    ./libelf_selftest > libelf_selftest.log 2>&1; \
+    grep -q "libelf_selftest_ok" libelf_selftest.log \
+      || { echo "ERROR: libelf selftest did not report success"; cat libelf_selftest.log; exit 1; }; \
     # --- ripgrep/grep/less: must actually find real content ---
     printf 'needle_marker\nhaystack\n' > rgtest.txt; \
     rg -q needle_marker rgtest.txt; \
