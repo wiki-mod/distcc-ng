@@ -62,6 +62,22 @@ repo="${REPO:?REPO is required (owner/name)}"
 project_number="${PROJECT_NUMBER:-11}"
 project_owner="${PROJECT_OWNER:-wiki-mod}"
 
+# pr_number is later passed into a GraphQL "pr: Int!" variable (and, before
+# this check existed, was interpolated straight into generated Python
+# source -- see the project-board query below). This normally comes from
+# github.event.pull_request.number, which is always an integer, but
+# changelog-check.yml's workflow_dispatch trigger accepts a free-text
+# pr_number input for other jobs in the same file, so validating here
+# guards against that input shape ever reaching this script, now or after
+# a future workflow change -- a non-numeric value should fail with a
+# readable message, not a Python SyntaxError (or worse) downstream.
+case "$pr_number" in
+    ''|*[!0-9]*)
+        echo "::error::PR_NUMBER must be a positive integer, got '$pr_number'" >&2
+        exit 1
+        ;;
+esac
+
 errors=()
 warnings=()
 
@@ -89,12 +105,20 @@ if [ -z "${GH_TOKEN:-}" ]; then
     fi
 else
     repo_name="${repo#*/}"
-    # Single quotes are deliberate here: this is a Python heredoc-style
-    # string with shell variables interpolated only at the specific
-    # '"$var"' break-outs below, not throughout.
+    # The shell values below are passed through the environment rather than
+    # interpolated into the Python source text: os.environ reads them as
+    # data, so nothing a value contains (quotes, parens, arbitrary bytes)
+    # can change what code runs. pr_number is additionally validated as a
+    # positive integer above, but PROJECT_OWNER_V/REPO_NAME_V get no such
+    # guarantee, so they must never land in the source text either.
+    # The single quotes below are still deliberate -- but now only because
+    # the string contains GraphQL's own "$owner"/"$pr"/"$repo" variable
+    # syntax (unrelated to shell), not because of any shell break-out.
     # shellcheck disable=SC2016
-    query=$(python3 -c '
+    query=$(PROJECT_OWNER_V="$project_owner" PR_NUMBER_V="$pr_number" REPO_NAME_V="$repo_name" python3 -c '
 import json
+import os
+
 q = """
 query($owner: String!, $pr: Int!, $repo: String!) {
   repository(owner: $owner, name: $repo) {
@@ -106,7 +130,11 @@ query($owner: String!, $pr: Int!, $repo: String!) {
   }
 }
 """
-print(json.dumps({"query": q, "variables": {"owner": "'"$project_owner"'", "pr": '"$pr_number"', "repo": "'"$repo_name"'"}}))
+print(json.dumps({"query": q, "variables": {
+    "owner": os.environ["PROJECT_OWNER_V"],
+    "pr": int(os.environ["PR_NUMBER_V"]),
+    "repo": os.environ["REPO_NAME_V"],
+}}))
 ')
     response_file="$(mktemp)"
     status=$(curl -sS -o "$response_file" -w '%{http_code}' \
@@ -125,18 +153,22 @@ print(json.dumps({"query": q, "variables": {"owner": "'"$project_owner"'", "pr":
         # invoked Python interpreter can disagree about path translation
         # under Git Bash on Windows -- piping keeps path resolution
         # entirely inside the shell that already wrote the file.
-        project_item_count=$(python3 -c "
-import json, sys
+        project_item_count=$(PROJECT_NUMBER_V="$project_number" python3 -c '
+import json
+import os
+import sys
+
 try:
     d = json.load(sys.stdin)
-    if 'errors' in d:
-        print('TOKEN_ERROR')
+    if "errors" in d:
+        print("TOKEN_ERROR")
     else:
-        nodes = d['data']['repository']['pullRequest']['projectItems']['nodes']
-        print(sum(1 for n in nodes if n['project']['number'] == $project_number))
+        nodes = d["data"]["repository"]["pullRequest"]["projectItems"]["nodes"]
+        target = int(os.environ["PROJECT_NUMBER_V"])
+        print(sum(1 for n in nodes if n["project"]["number"] == target))
 except Exception:
-    print('')
-" < "$response_file")
+    print("")
+' < "$response_file")
         if [ "$project_item_count" = "TOKEN_ERROR" ]; then
             errors+=("Project-board lookup failed: the GraphQL response contained an error (commonly an invalid/expired token or a token missing read:project scope). A token was supplied, so this is a configuration problem -- fix or rotate PROJECT_AUTOMATION_PAT (see AGENTS.md rule 3).")
         elif [ -z "$project_item_count" ]; then

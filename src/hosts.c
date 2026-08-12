@@ -64,10 +64,14 @@
  * The TCP port defaults to 3632 and should not normally need to be
  * overridden.
  *
- * IPv6 literals are not supported yet.  They will need to be
- * surrounded by square brackets because they may contain a colon,
- * which would otherwise be ambiguous.  This is consistent with other
- * URL-like schemes.
+ * IPv6 literals are supported: surround them with square brackets, e.g.
+ * "[::1]:3632", because they may otherwise contain a colon that would be
+ * ambiguous with the port separator. This is consistent with other
+ * URL-like schemes. See dcc_parse_tcp_host() below for the actual
+ * bracket-stripping parse, and test/testdistcc.py's IPv6Compile_Case
+ * (issue #275) for end-to-end coverage -- this comment previously said
+ * "not supported yet", which was stale by the time it was checked against
+ * the parser's real behavior.
  */
 
 

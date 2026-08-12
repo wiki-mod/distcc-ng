@@ -93,6 +93,23 @@ handling, anything touching `src/lock.c`, `src/state.c`, `src/zeroconf.c`,
       supposed to deny (or use `strace`/a minimal test binary that issues
       it) and confirm the sandboxed child is actually killed/blocked, not
       just that the compile happened to work.
+      **Concrete technique** (used for issue #360/PR #408): compile a tiny
+      C "marker" binary that calls a syscall in the built-in denylist
+      (`src/sandbox-seccomp.c`'s `dcc_seccomp_denied_syscalls[]` — `ptrace`
+      is a convenient one, real compilers never call it) and logs the raw
+      return value/`errno` to a sentinel file. Install it on the **server**
+      under the compiler name the client actually sends — not the bare
+      name the user types: `dcc_gcc_rewrite_fqn()` rewrites a bare `gcc`
+      to the target triplet (e.g. `x86_64-linux-gnu-gcc`) client-side
+      before the request ever reaches the server, so a marker placed only
+      at `/usr/bin/gcc` is silently never invoked (confirmed by checking
+      the server's own log for which command name it actually received,
+      after a first attempt missed it entirely this way). Send a real
+      compile job to it and read the sentinel file back from the server
+      afterward — expect `SCMP_ACT_ERRNO(EPERM)`, i.e. the syscall
+      returning `-1`/`errno=EPERM`, not a kill signal (see the filter's
+      actual configured action in `src/sandbox-seccomp.c`, currently
+      `SCMP_ACT_ERRNO`, before assuming the process gets killed).
 - [ ] Check both `fail-open`/`fail-closed` and `require-seccomp` paths if
       touched: a runtime install failure and a `--without-seccomp` build
       are two independent scenarios (see `doc/seccomp-sandbox.md`) — don't
@@ -100,6 +117,26 @@ handling, anything touching `src/lock.c`, `src/state.c`, `src/zeroconf.c`,
 - [ ] Confirm behavior on a host **without** libseccomp/non-Linux is
       unchanged (no new hard dependency introduced silently — see
       `doc/compatibility-policy.md`).
+      **If the change makes `libseccomp-dev` a new mandatory build
+      dependency for a real release artifact** (not just a test/verify
+      image): check the actual built `.rpm`/`.deb`, not just that
+      `configure` detects the library. `ldd $(which distccd)` shows
+      whether the binary itself now dynamically links `libseccomp.so.2`;
+      `rpm -qp --requires <file>.rpm` / `dpkg-deb -I <file>.deb` show
+      whether that new link got auto-declared as a real package
+      dependency (RPM's/`alien`'s own shared-library dependency detection
+      does this automatically from the built binary — don't assume it
+      happened, read the actual built package). A real CI-built artifact
+      can be pulled down for this even without a real tag: `gh workflow
+      run package-release.yml --ref <branch> -f publish_container=false`
+      dispatches the real release-packaging pipeline on any branch without
+      publishing anything (no tag needed, see `doc/release-versioning.md`
+      for why only a real tag may ever drive an actual published release);
+      download the resulting artifact via `gh api
+      repos/<owner>/<repo>/actions/artifacts/<id>/zip` (`gh run download`
+      can fail on an artifact whose zip contains a same-named directory as
+      another entry — fetch the raw zip via `gh api` and unzip it
+      directly instead).
 
 ## 3. Distribution / scheduling behavior changes (`src/arg.c`'s `dcc_scan_args()`, host selection, fallback logic)
 
@@ -156,6 +193,51 @@ other needed the *basename*, not the raw path) in the same review round.
       host or a hand-built fake dispatcher script, not the verification
       container. Note this limitation explicitly rather than silently
       working around it if you hit it again.
+- [ ] **The daemon's compiler-name whitelist rejects an absolute/
+      directory-qualified compiler name outright, before `dcc_execvp()`'s
+      own fallback logic is ever reached, unless `--enable-tcp-insecure`
+      (or `DISTCC_CMDLIST`) is set.** `dcc_check_compiler_whitelist()`
+      (`src/serve.c`) runs first; a test scenario built around an absolute
+      `argv[0]` against a plain `distccd` (no `--enable-tcp-insecure`) gets
+      rejected with `CRITICAL! compiler name <...> cannot be an absolute
+      path` and never touches the exec path at all — a real, separate
+      defense layer, but not evidence about `dcc_execvp()` itself. Found
+      verifying issue #287/PR #406's fix over a real two-container setup:
+      the first attempt (whitelist active) proved the whitelist's own
+      absolute-path rejection is a real, independent safety net, not that
+      the fix worked; only a second run with `--enable-tcp-insecure` (the
+      mode `test/testdistcc.py`'s own `startDaemon()` already uses by
+      default) actually exercised `dcc_execvp()`'s fallback removal.
+      **Test both configurations when a change touches this exec path** —
+      one confirms the whitelist's own defense-in-depth, the other
+      confirms the actual code change.
+- [ ] **Real two-container technique for compiler-identity/substitution
+      bugs**: place a substitute "marker" script under the compiler's
+      *real, already-whitelisted* name (e.g. the container's actual
+      `x86_64-linux-gnu-gcc`) earlier on the **server** container's own
+      `$PATH` than the real compiler (the client's `$PATH` must stay
+      untouched, so only the server-side fallback is exercised). **Use
+      the name the client actually sends, not the name the user typed**:
+      `dcc_gcc_rewrite_fqn()` (`src/compile.c`) rewrites a bare `gcc`
+      invocation to the target triplet (e.g. `x86_64-linux-gnu-gcc`)
+      client-side before the request is ever sent — a marker placed only
+      at a literal `gcc` on the server is silently never invoked (confirm
+      the actual name reaching the server from its own log if a marker
+      appears not to fire; a first attempt at issue #360/PR #408's own
+      negative test missed exactly this way). Have the
+      marker `touch` a sentinel file and exit 0 without compiling anything.
+      From the client, send a directory-qualified compiler path sharing
+      that same basename but existing nowhere on the server. Verify from
+      the **server's own log** (not the client's exit code alone): the
+      real fix's trace line appears, the sentinel file was never created,
+      and no `COMPILE_OK` was logged for that job — then run the identical
+      compile against the compiler's real, existing path as a positive
+      control confirming legitimate compiles still succeed and produce a
+      real `COMPILE_OK`. Used to verify issue #287/PR #406 over `docker
+      network create` + two `docker run` containers (not `docker-compose`
+      — full control over each container's own `$PATH`/env needed a plain
+      `docker run` per side rather than the fixed service definitions in
+      `test/e2e/docker-compose.yml`).
 
 ## 4. External-host / network compatibility changes
 
@@ -319,31 +401,151 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       diagnostic signal to add `--security-opt seccomp=unconfined` (or a
       custom seccomp profile explicitly allowing the denied syscall) rather
       than re-checking the capability flag again.
-- [ ] **A root-owned bind mount breaks `distccd`'s own privilege-drop
-      test.** Running the whole build+test step as container root (often
-      needed to work around a bind-mounted host checkout being owned by a
-      different uid than the image's own non-root user) arms `distccd`'s
-      real `dcc_discard_root()` privilege-drop-to-`uid=65534`/nobody
-      behavior (`test/testdistcc.py`'s `Unicode_Case`, exercised via `make
-      check`'s `maintainer-check-no-set-path` target) — which then fails
-      with a real "Permission denied" writing into the still-root-owned
-      test directory. This is not a bug in the drop behavior itself, only
-      a mismatch between "root in the container" and "a test that
-      deliberately changes uid mid-run." Do not fix this by making the
-      tree world-writable (masks real permission bugs) or skipping the
-      test (loses real coverage). Fix by using root only transiently to
-      `chown` the mounted tree to the image's own non-root user, then
-      actually running the build+test as that non-root user (`su -s
-      /bin/bash <user> -c '...'`) — matching how a real local `docker run`
-      already behaves when the same host user owns both sides of the
-      mount. **This resolves the immediate symptom, but reaching for root
-      at all — even transiently, even for a narrow `chown` — should not
-      become the unquestioned standing convention for every future
-      container-based verification effort just because it was the first
-      thing that worked.** Whether a build-arg matching the host uid,
-      Docker's own `--user` flag, or rootless Docker/user-namespace
-      remapping can avoid needing root here at all is tracked separately in
-      issue #286, not decided here.
+- [ ] **A bind-mounted host checkout owned by a different uid than the
+      image's own non-root user needs `docker run --user`, not root.**
+      When the bind-mounted checkout's owning uid (e.g. a CI runner's own
+      uid, or a local host user) differs from the image's baked-in
+      non-root user's uid, the container can't write into it under that
+      baked-in user at all ("Permission denied", or `autom4te: error:
+      cannot create autom4te.cache in ...: Permission denied"). Reaching
+      for `--user root` plus a transient `chown` to the image's own user,
+      then dropping to that user for the actual build+test (`su -s
+      /bin/bash <user> -c '...'`), was this repo's first working fix
+      (issue #264) — but running the whole step as container root along
+      the way arms `distccd`'s real `dcc_discard_root()` privilege-drop-
+      to-`uid=65534`/nobody behavior (`test/testdistcc.py`'s `Unicode_Case`,
+      exercised via `make check`'s `maintainer-check-no-set-path` target),
+      which then fails with a real "Permission denied" writing into the
+      still-root-owned test directory — not a bug in the drop behavior
+      itself, only a mismatch between "root in the container" and "a test
+      that deliberately changes uid mid-run."
+      **Resolved (issue #286): root is not actually necessary at all.**
+      `docker run --user "$(id -u):$(id -g)"` makes the container process
+      itself run as the *caller's* own uid, so it already owns the
+      bind-mounted checkout with no `chown`/`su`/root step anywhere —
+      confirmed empirically by a real CI run (PR #405) comparing the old
+      root+chown+su pattern against `--user $(id -u):$(id -g)` (and,
+      separately, against a build-arg-parameterized image rebuild matching
+      the host uid) on the exact same `docker/verify/Dockerfile` image and
+      the same real `./autogen.sh && ./configure && make && make check`:
+      all three produced byte-identical `test/testdistcc.py`/comfychair
+      results (138 OK, 16 NOTRUN, 0 FAIL at the time of PR #405, including
+      root-only cases like `Unicode_Case` and
+      `AutogroupNicenessPrivilegeDrop_Case` correctly NOTRUN-skipping
+      identically under all three; that 138 count has since grown to 142
+      as of `caee881d` -- PR #406 added one new test case,
+      `PathQualifiedCompilerNotSubstituted_Case` -- see the rootless-Docker
+      re-comparison below, which repeats this same check on the current
+      commit). `--user` was adopted
+      over the build-arg approach specifically because it needs no image
+      rebuild at all and works directly against the exact, unmodified,
+      already-published image — the build-arg approach would otherwise
+      have reintroduced a local build step for any caller whose own uid
+      doesn't match the image's baked-in default, which is exactly what
+      issue #264's "pull and run, nothing to build" requirement exists to
+      avoid. See `.github/workflows/verify-image-build.yml`'s "Real
+      distcc-ng build+test inside the image" step for the current, real
+      invocation.
+      **One real, empirically-confirmed companion requirement**: pass an
+      explicit `-e HOME=<a plain container-internal path, e.g.
+      /tmp/some-name>` and `mkdir -p "$HOME"` **inside the container's own
+      script**, before anything else runs. Docker does not synthesize an
+      `/etc/passwd` entry for a numeric `--user` uid with no matching name
+      in the image, so without an explicit `HOME`, such a uid gets
+      `$HOME=/`, which it cannot write to — breaking anything that
+      resolves a cache/config dir off `$HOME` (`ccache`'s own local cache
+      dir, in particular). Confirmed twice, once each way: first that the
+      override is necessary at all (the earlier build+test step's `make
+      check` failing without it), and separately that a *host*-side path
+      does not work as the value — an earlier version of the "ccache +
+      Redis remote-storage self-test" job set `-e HOME="$RUNNER_TEMP/some-
+      name"` and `mkdir -p` on that path **on the runner**, without
+      bind-mounting it into the container, so the container saw `$HOME`
+      pointing at a path that simply doesn't exist inside its own
+      filesystem at all — a real `ccache: error: Permission denied` CI
+      failure, not a permission-bits problem. The fix is a plain
+      container-internal path (`/tmp/...`) created by `mkdir -p` run as
+      part of the container's own command, never a host path assumed to
+      be visible inside the container without an explicit bind mount.
+      **Rootless Docker/user-namespace remapping (the issue's third
+      proposed alternative) has since been empirically tested too** (issue
+      #286 follow-up, since `--user` alone answers the immediate `chown`
+      problem but not the broader "should the daemon itself run as root"
+      question):
+      - **Real two-container distributed-compile e2e**, the actual
+        unmodified `test/e2e/run-e2e.sh` + `test/e2e/docker-compose.yml`
+        (the same script CI's `distributed_e2e` job runs), pointed at a
+        rootless Docker context (`DOCKER_CONTEXT=rootless`) instead of the
+        default rootful one: 187 real remote compiles, verified from the
+        server's own independent log, distributed object byte-identical to
+        a local-only build. Confirms rootless Docker's own daemon manages
+        custom bridge networking (IPAM, a fixed `10.88.0.0/24` subnet)
+        correctly from inside its own netns.
+      - **Real `make check` parity**, the exact `docker run` invocation
+        from `verify-image-build.yml`'s build+test step, differing only in
+        which daemon backs it, both at `caee881d`: rootful `--user
+        "$(id -u):$(id -g)"` and rootless `--user 1000:1000` (checkout
+        pre-`chown`ed into the rootless daemon's own subuid range) both
+        produced **142 OK, 16 NOTRUN, 0 FAIL**, `diff`-identical case-result
+        lists line for line, including the `Gdb_Case`/`GdbOpt1-3_Case`/
+        `GdbPrefixMap_Case` family.
+      - **GitHub-hosted-runner feasibility, tested directly** (the earlier
+        claim above that GitHub-hosted runners "don't offer a rootless
+        Docker daemon" was itself never actually tested — it was an
+        assumption): a genuine `ubuntu-latest` runner already has a
+        rootful daemon running, so `dockerd-rootless-setuptool.sh` needs
+        `FORCE_ROOTLESS_INSTALL=1` to install alongside it; separately,
+        Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1`
+        default blocks the unprivileged user-namespace creation rootless
+        Docker relies on, needing `sudo sysctl -w
+        kernel.apparmor_restrict_unprivileged_userns=0` first. With both
+        in place, a real container ran successfully through the resulting
+        rootless daemon on a genuine `ubuntu-latest` runner (job
+        `rootless_docker_ghactions_probe` in run
+        [30935447301](https://github.com/wiki-mod/distcc-ng/actions/runs/30935447301),
+        concluded `success`; the run's own overall status shows
+        `cancelled` because two unrelated jobs in the same throwaway probe
+        workflow were separately cancelled, not because this job failed).
+      - **Conclusion: rootless Docker is feasible, but not adopted.** Both
+        approaches produce byte-identical build/test results, so this is
+        purely a setup-cost/isolation-benefit tradeoff, not a correctness
+        one. Rootless needs two extra `sudo`-requiring setup steps per job
+        that `--user` needs zero equivalent of; that cost is paid on every
+        single job on this repo's actual CI (100% `ubuntu-latest`, no
+        `self-hosted` runner anywhere in `.github/workflows/`), for an
+        isolation benefit that matters far more on a persistent,
+        multi-tenant self-hosted host than on GitHub's ephemeral,
+        single-tenant-per-job runners. `--user` remains the standing
+        approach for this repo's CI; rootless Docker is documented here as
+        a viable option to revisit only if this repo ever adds a
+        persistent self-hosted runner.
+- [ ] **`make check`'s `distcc-maintainer-check`/`maintainer-check-no-
+      set-path` chain can fail with `distccd: not found` on some Docker
+      hosts even though the target's own `PATH="`pwd`:$(RESTRICTED_PATH)"`
+      setup looks correct on read — unresolved, host-specific, not a code
+      defect.** Found running a full `./autogen.sh && ./configure && make
+      && make check` inside the buildtools image on an SSH-reachable Linux
+      host (not GitHub Actions): every real `test/testdistcc.py` case
+      passes cleanly (including a genuinely new one), but the final
+      `maintainer-check-no-set-path` re-run then fails immediately with
+      `/bin/sh: 1: distccd: not found` trying to start the very first
+      daemon. Confirmed this is **not** caused by whatever change is being
+      verified — reproduces identically on a clean, unmodified `current_dev`
+      checkout on the same host — and **not** a general regression, since
+      the identical `make check` invocation passes in this repo's own
+      GitHub Actions `make_check` job for the same commits. Root cause not
+      determined (plausibly something about how this specific host's
+      Docker/shell setup propagates the Makefile-set `PATH` into
+      `test/testdistcc.py`'s own Python subprocess calls, but not
+      confirmed). **Until root-caused: treat a full local `make check`
+      run's real signal as everything up to and including the last
+      `test/testdistcc.py`-driven comfychair case line (`Lsdistcc_Case`
+      through the final real test case) — a failure strictly in the
+      trailing `maintainer-check-no-set-path` re-run, with every real test
+      case already having reported `OK`/`NOTRUN` moments earlier in the
+      same log, is this known host quirk, not a new defect** — but verify
+      that pattern matches exactly (all real cases already passed) before
+      assuming it, don't pattern-match on the target name alone.
 - [ ] **A root-only test needs the specific capability its own syscall
       requires, not just "run as root."** Docker's default root capability
       set is not the same as a real host root's — `AutogroupNicenessPrivilegeDrop_Case`
@@ -399,6 +601,120 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       the zombie tree via `ps auxf`, re-ran clean with `--init` added)
       cutting the 3.6.3-NG release (2026-07-30). See Section 8's matching
       cleanup check.
+- [ ] **A toolchain whose assembler emits compressed ELF debug sections
+      (size-dependent, not a fixed default) breaks
+      `Gdb_Case`/`GdbOpt1-3_Case` in pump mode — a real distccd-side bug,
+      not an environment quirk, and not specific to an old Alpine
+      release.** `src/fix_debug_info.c`'s `dcc_fix_debug_info()` rewrites
+      the server-side compilation directory baked into a compiled
+      object's DWARF debug info (`.debug_info`, `.debug_str`,
+      `.debug_line_str`) back to the client-side path, via a raw byte
+      search-and-replace directly on the mmap'd ELF section contents —
+      which assumes the server-side path string is still present
+      byte-for-byte in the section's raw, uncompressed bytes, not that
+      the section itself is plain text (`.debug_info`/`.debug_line_str`
+      are structured binary DWARF data even when uncompressed;
+      `replace_string()` deliberately does a raw `memcmp`/`memcpy`
+      substring scan over that binary buffer without parsing its
+      structure, confirmed by reading `src/fix_debug_info.c`'s
+      `replace_string()`). On a
+      real, current `alpine:latest` container (Alpine 3.24.1, `gcc
+      (Alpine) 15.2.0`, checked 2026-08-01), `.debug_line_str` carries the
+      ELF `SHF_COMPRESSED` flag (visible as `C` in `readelf -SW`, zlib
+      magic `789c...` visible in the raw section bytes) once the
+      compilation directory string is long enough to cross a
+      compression-worthwhile size threshold. This is not a GCC-internal
+      decision: `gcc -### -gz -g -c t.c -o t.o` (a real source file is
+      required for this trace -- omitting it prints only GCC driver
+      metadata with no `as` invocation at all) shows GCC dispatching to
+      `as --compress-debug-sections=zlib` -- the GNU assembler is what
+      actually decides and performs the compression, not gcc itself.
+      Confirmed this is size-dependent, not a fixed default: a short test
+      path (e.g. `/tmp/check2`) produced an uncompressed section and the
+      test appeared to pass, while a longer, more realistic distccd
+      compile-working-directory path (e.g.
+      `/tmp/distccd_<6-char-mkdtemp-suffix>/<client-cwd>` -- formed by
+      `make_temp_dir_and_chdir_for_cpp()` in `src/serve.c` concatenating
+      `dcc_get_new_tmpdir()`'s directory with the client's cwd; a
+      different function from `dcc_make_tmpnam()`, which only names
+      individual files like the object output, not this working
+      directory, and whose `mkdtemp()` 6-character suffix is not
+      guaranteed to be hex) reliably triggers compression — so a
+      short-path smoke test can miss this bug entirely. The search string
+      is genuine plain text once decompressed (confirmed via
+      `readelf --debug-dump=info`), but never appears in the section's
+      raw compressed bytes, so `update_section()`'s `replace_string()`
+      call finds zero occurrences; this is non-fatal and traced, not
+      silent -- `update_section()` itself still logs
+      `rs_trace("\"%s\" section of file %s has no occurrences of \"%s\"",
+      ...)` (`src/fix_debug_info.c:365`), visible under `distccd
+      --verbose`, but the function still returns success and the rewrite
+      itself never happens. The binary keeps its server-side compilation
+      directory baked in; gdb (client-side) then can't find the source
+      file (`warning: <line>\t<file>: No such file or directory`). A real
+      Debian 13 container (`gcc (Debian 14.2.0-19)`, this repo's own
+      release base image -- a different gcc version on a different
+      distro/container than the Alpine case above, not a controlled
+      same-compiler comparison; Debian 13/trixie's own repos, including
+      trixie-backports, top out at gcc-14, no gcc-15 package exists there
+      as of this writing) produces uncompressed debug sections at the
+      same path lengths — same test passes there. `-gz=none` on the same
+      Alpine gcc removes the `SHF_COMPRESSED` flag entirely (verified via
+      `readelf -SW`), which only shows the assembler flag controls
+      compression -- it does not by itself distinguish a GCC-version
+      effect from Alpine's own GCC build/packaging configuration, since
+      this was not tested with matched GCC versions across both
+      platforms. Describe this as toolchain/distro-configuration-dependent
+      behavior, not attributed to a specific cause, until reproduced with
+      controlled GCC versions. Not related to this repo's own
+      network-level zstd compression work (issue #101/pump-mode transport
+      compression) — this is the toolchain's own debug-info encoding,
+      unrelated code path, confirmed no shared code between them.
+      Isolated independently of `distccd` itself, by building
+      `src/fix_debug_info.c`'s own `TEST` main() standalone and running
+      `dcc_fix_debug_info()` directly against a real compiled `.o` file
+      with a known compilation directory — same failure, confirming the
+      bug is in this file's raw-byte-search design, not somewhere else in
+      the daemon pipeline. Found evaluating Alpine support (issue #398);
+      not yet fixed as of this writing — see that issue's comment thread
+      for the full analysis and fix-direction discussion.
+- [ ] **A local `make check` run inside the mandatory buildtools container
+      can silently skip pump mode entirely, even when it reports a clean
+      full pass — but this is conditional on a host-specific quirk, not a
+      universal property of the container or of `make check` itself.**
+      `Makefile.in`'s `maintainer-check` lists `distcc-maintainer-check`
+      (plain mode), `include-server-maintainer-check`, and
+      `pump-maintainer-check` as prerequisites in that order; GNU Make's
+      default fail-fast behavior stops at the first prerequisite that
+      fails. On a Docker host that hits the already-known, pre-existing,
+      unrelated `maintainer-check-no-set-path` quirk (this checklist's own
+      entries above, `distccd: not found`), that failure is exactly
+      `distcc-maintainer-check`'s own — so `pump-maintainer-check` silently
+      never runs, even though every test up to that point still prints
+      OK/FAIL normally and looks like a genuine full run. Found live
+      (issue #275/PR #440, 2026-08-07): two real pump-mode-only bugs
+      (`NonexistentSourceFile_Case`, `CcacheHitThroughDistcc_Case`) were
+      claimed verified by repeated "clean full `make check`" runs on that
+      host, then failed on real CI's own pump-mode leg regardless.
+      **Corrected (issue #442, 2026-08-07): this does not reproduce on
+      every Docker host.** A `make check` run inside the identical
+      buildtools image on a different SSH-reachable host reached and
+      completed `pump-maintainer-check` in the same invocation (log showed
+      `TESTDISTCC_OPTS="--pump "` and the full real `test/testdistcc.py`
+      suite running a second time under pump mode, 174 OK/26 NOTRUN/0 FAIL
+      combined across both modes) — the `maintainer-check-no-set-path`
+      quirk simply didn't trigger there. **Real check, regardless of
+      host**: use `make TESTNAME=<Case> pump-single-test` to verify a
+      specific test under pump mode directly — it is a standalone target,
+      not gated behind the prerequisite chain, so it gives a real answer
+      on any host without first needing to know whether that host hits the
+      quirk. A local "full `make check` passes cleanly" claim is only
+      confirmed plain-mode-only coverage if `distcc-maintainer-check`'s own
+      tail (the trailing `maintainer-check-no-set-path` re-run, see this
+      checklist's earlier entry) actually failed in that run's own log —
+      check for that specifically rather than assuming it from which host
+      you're on; real CI remains the authoritative check for pump-mode
+      behavior either way.
 
 ## Keeping this checklist current
 

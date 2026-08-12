@@ -1,0 +1,32 @@
+name: Harden Runner (audit-only egress monitoring)
+description: >-
+  Single source of truth for this repo's Harden Runner step (issue #362 item
+  1) -- egress-policy: audit only, does not block any traffic yet (trial
+  run, #58). Previously duplicated verbatim across 17 job steps; each
+  bumped the pinned step-security/harden-runner SHA in lockstep, and #361
+  found it missing from most of the jobs that should have had it. Callers
+  invoke this via the `$/` self-repository syntax (GitHub Changelog,
+  2026-07-30: https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/),
+  e.g. `uses: $/.github/actions/harden-runner` -- NOT the local `./` form,
+  which would require actions/checkout to already have run and defeat the
+  whole point of Harden Runner being the job's genuinely first step. `$/`
+  resolves with no checkout required (confirmed empirically against this
+  repo's own runners, see issue #362's tracking comment), needs runner
+  2.336.0+ (already the case for GitHub-hosted runners as of this change).
+  `.github/actionlint.yaml` suppresses actionlint's current false-positive
+  on `$/` (it doesn't recognize the syntax yet -- upstream tracked at
+  rhysd/actionlint#711).
+  MASTER-SYNCED FILE: schedule/workflow_dispatch-triggered workflows always
+  evaluate from the default branch (master), independent of which ref they
+  later `actions/checkout`, so `$/` resolves against whatever this action
+  looks like on master for those triggers. This file must exist and stay
+  in sync on both master and current_dev, same one-off-exception pattern
+  as ghcr-cleanup.yml/codeql.yml (see PR #426/#428/#429).
+
+runs:
+  using: composite
+  steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+      with:
+        egress-policy: audit

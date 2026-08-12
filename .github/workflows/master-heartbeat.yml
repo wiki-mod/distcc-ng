@@ -46,6 +46,7 @@ jobs:
     # than today's single-attempt job, defeating the point of retrying at all.
     timeout-minutes: 75
     steps:
+      - uses: $/.github/actions/harden-runner
       # No ref override: this validates master, and schedule/dispatch already
       # evaluate from master (the default branch).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,6 +92,7 @@ jobs:
     # this job exists to avoid.
     timeout-minutes: 45
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the e2e image (same toolchain as the heartbeat job)
         run: docker compose -f test/e2e/docker-compose.yml build distccd-server
@@ -127,6 +129,7 @@ jobs:
       contents: read
       issues: write
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/nightly-status
         with:

@@ -1,0 +1,49 @@
+name: Build and make check
+description: >-
+  Real build + full `make check` (issue #362 item 4), shared by
+  nightly-publish.yml's and package-release.yml's own build_check jobs --
+  5 of 7 steps were byte-identical between the two. Checkout (the ref
+  differs -- nightly always pins current_dev, package-release uses
+  whatever ref triggered it) and Harden Runner (package-release.yml has
+  it, nightly-publish.yml doesn't -- both jobs are pure local build/test
+  with no GitHub API or registry write, so this is a per-caller judgment
+  call, not something this action should decide) stay with each caller.
+
+  Resolves a real asymmetry rather than silently picking one side: the
+  autom4te.cache caching that only package-release.yml had is now always
+  applied (same content/rationale as c-build.yml's make_check job -- safe
+  to restore even when stale, autom4te self-invalidates a mismatched
+  macro trace per m4 input, unlike configure's own config.cache which is
+  deliberately never cached since its ac_cv_* dependency-detection
+  results aren't safely invalidated by a configure.ac/m4 hash alone).
+
+inputs:
+  cache-key-prefix:
+    description: "e.g. 'ccache-nightly' or 'ccache-release'"
+    required: true
+  autoconf-cache-key-prefix:
+    description: "e.g. 'autoconf-nightly' or 'autoconf-release'"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: $/.github/actions/install-build-deps
+    - uses: $/.github/actions/ccache-cache
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key-prefix: ${{ inputs.cache-key-prefix }}
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: autom4te.cache
+        key: ${{ inputs.autoconf-cache-key-prefix }}-${{ hashFiles('configure.ac', 'm4/*.m4') }}
+        restore-keys: |
+          ${{ inputs.autoconf-cache-key-prefix }}-
+    - shell: bash
+      run: ./autogen.sh
+    - shell: bash
+      run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
+    - shell: bash
+      run: make
+    - shell: bash
+      run: make check

@@ -164,7 +164,21 @@ CPP_OPTIONS_TWO_WORDS.update(CPP_OPTIONS_ALWAYS_TWO_WORDS)
 # b) always take an argument, and c) have that argument separated from
 # the option by '='.
 CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS = {
-  '--sysroot':     lambda ps, arg: ps.set_sysroot(arg)
+  '--sysroot':     lambda ps, arg: ps.set_sysroot(arg),
+  # GCC/Clang's combined-form force-include flag ("--include=/path/to/hdr.h"),
+  # the same option as '-include' above (CPP_OPTIONS_MAYBE_TWO_WORDS) in its
+  # older two-token form. Without this, a header pulled in only via
+  # "--include=" was never added to include_files, so the include server
+  # never mirrored it to the server at all in pump mode -- found together
+  # with the matching src/serve.c gap (tweak_include_arguments_for_server()'s
+  # include_options[]) while investigating a real -sys crate build failure
+  # (aws-lc-sys/BoringSSL).
+  '--include':     lambda ps, arg: ps.include_files.append(arg),
+  # Same gap, same fix, for '-imacros' (CPP_OPTIONS_MAYBE_TWO_WORDS above):
+  # GCC/Clang also document a "--imacros=file" combined form
+  # (https://gcc.gnu.org/onlinedocs/gcc/Preprocessor-Options.html), which
+  # was missing here just like "--include=" was.
+  '--imacros':     lambda ps, arg: ps.include_files.append(arg),
 }
 
 # These are the cpp options that do not take an argument.
@@ -365,8 +379,24 @@ def ParseCommandArgs(args, current_dir, includepath_map, dir_map,
     raise NotCoveredError("Command line: too few arguments.")
 
   compiler = args[0]
-
   i = 1
+
+  # A leading "ccache" wrapper (e.g. "ccache /usr/bin/gcc -c foo.c") is a
+  # normal, distributable command -- src/arg.c's dcc_scan_args() already
+  # classifies it as such on the C client side (ScanArgs_Case). Skip the
+  # wrapper here too, so `compiler` is the real compiler and its argv
+  # isn't misparsed as an extra file name -- without this, args[1] would
+  # land in parse_state.file_names alongside the real source file, and
+  # the two-file_names check below would raise NotCoveredError. The
+  # args[1][0] != '-' check mirrors dcc_scan_args()'s own "argv[0]
+  # should always be a compiler name" sanity check -- without it, a
+  # ccache-specific flag before the real compiler (e.g. "ccache -C gcc
+  # ...") would be misidentified as the compiler instead.
+  if (len(args) > 2 and os.path.basename(compiler) == 'ccache'
+      and args[1][0] != '-'):
+    compiler = args[1]
+    i = 2
+
   while i < len(args):
     # First, deal with everything that's not a flag-option
     if args[i][0] != '-' or args[i] == '-':     # - is the stdin file

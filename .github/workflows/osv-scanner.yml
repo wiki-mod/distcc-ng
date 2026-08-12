@@ -43,6 +43,11 @@ permissions:
   # pattern (topLevel permission set to 'write'); see #267/#222.
   contents: read
 
+# Both jobs below are deliberately excluded from issue #361's fix (caveat 1):
+# they are `uses:`-only calls to google/osv-scanner-action's own reusable
+# workflows, which have no step list of their own to prepend a Harden Runner
+# step to -- adding one would require restructuring them into normal jobs,
+# a real behavioral change out of scope for a coverage fix.
 jobs:
   # Scan-on-pull-request: fails the check if the PR's branch introduces a
   # new known-vulnerable GitHub Actions dependency versus the target

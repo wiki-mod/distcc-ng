@@ -133,6 +133,9 @@ class ParseCommandUnitTest(unittest.TestCase):
           + " -isystem system -Imice -iquote/and -I/men a.c "
           + " -include included_A.h "
           + " -includeincluded_B.h "
+          + " --include=included_C.h "
+          + " -imacros included_D.h "
+          + " --imacros=included_E.h "
           + " -Wa,macros_A.s "
           + " -Wa,[macros_B.s] "
           + " -Wa,arch/x86/kernel/macros.s -Wa,- "
@@ -150,7 +153,8 @@ class ParseCommandUnitTest(unittest.TestCase):
        filepath),
       (('/and', 'mice', '/men', 'system'),
        ('mice', '/men', 'system'),
-       ["included_A.h", "included_B.h",
+       ["included_A.h", "included_B.h", "included_C.h",
+        "included_D.h", "included_E.h",
         "macros_A.s", "macros_B.s", "arch/x86/kernel/macros.s"],
        'a.c'))
 
@@ -192,5 +196,25 @@ class ParseCommandUnitTest(unittest.TestCase):
        ('obj/gcc-4.1.0-glibc-2.2.2-piii-linux-g0-dbg/genfiles/third_party/libxml/third_party/libxml',
         'third_party/zlib'),
        'third_party/libxml/threads.c'))
+
+  def test_ParseCommandArgs_CcacheWrapper(self):
+    # issue #442: "ccache <cc> ..." must resolve to the real compiler
+    # (self.mock_compiler below), not "ccache" itself -- Mock_SetSystem-
+    # DirsDefaults (setUp) raises if the wrong string is passed as
+    # `compiler`, so this fails loudly if the wrapper isn't skipped.
+    quote_dirs, angle_dirs, include_files, filepath, _incl_clos_f, _d_opts = (
+      parse_command.ParseCommandArgs(
+        parse_command.ParseCommandLine(
+          "ccache " + self.mock_compiler
+          + " --sysroot=" + self.mock_sysroot
+          + " -Imice a.c -o a.o"),
+          os.getcwd(),
+          self.includepath_map,
+          self.directory_map,
+          self.compiler_defaults))
+
+    self.assertEqual(
+      (self._RetrieveDirectoriesExceptSys(angle_dirs), filepath),
+      (('mice',), 'a.c'))
 
 unittest.main()

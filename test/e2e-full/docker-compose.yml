@@ -30,6 +30,19 @@ services:
     networks:
       distccfullnet:
         ipv4_address: 10.89.0.10
+    # A real init as PID 1 (Compose's `init: true` runs tini), not `sleep
+    # infinity` directly. doc/verification-checklist.md section 9's
+    # documented gotcha (PR #375, swept into verify-image-build.yml by
+    # PR #377) applies here too: run-bidirectional-e2e.sh starts and
+    # `pkill`s distccd in place, once per leg, inside this same long-lived
+    # container -- without a real reaper, each leg's distccd (and any
+    # worker child that outlives its own SIGTERM slightly) gets reparented
+    # to whatever is PID 1 and never reaped, accumulating as a
+    # `[distccd] <defunct>` zombie leg after leg. This file predates PR
+    # #375/#377 by a week (merged 2026-07-23 vs. 2026-07-30) and was never
+    # swept afterward -- confirmed live running this test's real Samba
+    # workload (issue #264).
+    init: true
     cap_add:
       # Reused directly from docker/verify/Dockerfile's own hard-won lesson
       # (issue #264, doc/verification-checklist.md section 9): needed if a
@@ -50,6 +63,7 @@ services:
     networks:
       distccfullnet:
         ipv4_address: 10.89.0.20
+    init: true
     cap_add:
       - SYS_PTRACE
     security_opt:

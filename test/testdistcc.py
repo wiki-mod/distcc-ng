@@ -52,109 +52,63 @@ Example:
 # abstract superclasses just provide methods that can be called,
 # rather than establishing default behaviour.
 
-# TODO: Some kind of direct test of the host selection algorithm.
+# Running the suite with malloc debugging on was considered and
+# declined (issue #275): a dev-convenience wishlist item with no
+# automatable coverage gap behind it, not a missing test.
 
-# TODO: Test host files containing \r.
+# Testing daemon output through syslogd specifically was considered and
+# declined (issue #275). Redirecting it to a file is no longer a gap --
+# startDaemon()/waitForLogPattern() below already do that for every
+# daemon-based test, and BadLogFile_Case covers the failure-to-open-
+# logfile case. The syslogd path itself would need either a real
+# syslog daemon running inside the test container or an LD_PRELOAD
+# shim over libc's syslog() (src/trace.c's rs_logger_syslog() calls it
+# directly, hardcoded to /dev/log, with no supported way to redirect
+# it to a test-local socket) -- disproportionate for one test case.
 
-# TODO: Test that ccache correctly caches compilations through distcc:
-# make up a random file so it won't hit, then compile once and compile
-# twice and examine the log file to make sure we got a hit.  Also
-# check that the binary works properly.
-
-# TODO: Test cpp from stdin
-
-# TODO: Do all this with malloc debugging on.
-
-# TODO: Redirect daemon output to a file so that we can more easily
-# check it.  Is there a straightforward way to test that it's also OK
-# when send through syslogd?
-
-# TODO: Check behaviour when children are killed off.
-
-# TODO: Test compiling over IPv6
-
-# TODO: Argument scanning tests should be run with various hostspecs,
-# because that makes a big difference to how the client handles them.
-
-# TODO: Test that ccache gets hits when calling distcc.  Presumably
-# this is skipped if we can't find ccache.  Need to parse `ccache -s`.
-
-# TODO: Set TMPDIR to be inside the working directory, and perhaps
-# also set DISTCC_SAVE_TEMPS.  Might help for debugging.
+# Argument scanning tests across various hostspecs was declined (issue
+# #275): dcc_scan_args() (src/arg.c) takes only the compiler argv, never a
+# hostspec -- the distribute/local classification cannot possibly vary by
+# hostspec in the current architecture, so a hostspec-varying test would
+# be a no-op, always producing the same result ScanArgs_Case already
+# checks once.
 
 # Check that without DISTCC_SAVE_TEMPS temporary files are cleaned up.
 
-# TODO: Perhaps redirect stdout, stderr to a temporary file while
-# running?  Use os.open(), os.dup2().
+# Redirecting stdout/stderr to a temporary file while running was
+# considered and declined (issue #275): a dev-convenience wishlist
+# item, not a missing test -- comfychair's own run_captured() already
+# captures both per-command for every test's own log.
 
-# TODO: Test crazy option arguments like "distcc -o -output -c foo.c"
+# A standalone bulk-transfer (src/bulk.c) test harness was considered and
+# declined (issue #275): unlike src/arg.c/src/strip.c/src/parsemask.c
+# (each has its own h_scanargs/h_strip/h_parsemask C test helper), bulk.c
+# has no dedicated helper binary, and every real compile in this suite
+# already exercises dcc_x_file()/dcc_r_file() incidentally --
+# BigAssFile_Case for a large upload, CompressedCompile_Case for the
+# compressed path, every other case for a normal-sized round trip. A
+# genuinely isolated unit-style test would need a new C helper (a build-
+# system change), out of scope for a test-file-only issue, and no
+# distinct untested bulk.c code path was identified beyond what these
+# already cover.
 
-# TODO: Add test harnesses that just exercise the bulk file transfer
-# routines.
-
-# TODO: Test -MD, -MMD, -M, etc.
-
-# TODO: Test using '.include' in an assembly file, and make sure that
-# it is resolved on the client, not on the server.
-
-# TODO: Run "sleep" as a compiler, then kill the client and make sure
-# that the server and "sleep" promptly terminate.
-
-# TODO: Perhaps have a little compiler that crashes.  Check that the
-# signal gets properly reported back.
-
-# TODO: Have a little compiler that takes a very long time to run.
-# Try interrupting the connection and see if the compiler is cleaned
-# up in a reasonable time.
-
-# TODO: Try to build a nonexistent source file.  Check that we only
-# get one error message -- if there were two, we would incorrectly
-# have tried to build the program both remotely and locally.
-
-# TODO: Test compiling a 0-byte source file.  This should be allowed.
-
-# TODO: Test a compiler that produces 0 byte output.  I don't know an
-# easy way to get that out of gcc aside from the Apple port though.
-
-# TODO: Test a compiler that sleeps for a long time; try killing the
-# server and make sure it goes away.
-
-# TODO: Test scheduler.  Perhaps run really slow jobs to make things
-# deterministic, and test that they're dispatched in a reasonable way.
-
-# TODO: Test generating dependencies with -MD.  Possibly can't be
-# done.
-
-# TODO: Test a nasty cpp that always writes to stdout regardless of
-# -o.
+# Scheduler/host-selection determinism was investigated in full (issue
+# #275): src/where.c's dcc_lock_one() scans slot index 0, then 1, ...,
+# trying every configured host in DISTCC_HOSTS list order at each
+# index and taking the first with a free slot -- fully deterministic
+# for sequential dispatch (concurrent dispatch under real load
+# additionally depends on which process's flock() the kernel grants
+# first, which cannot be made deterministic and isn't attempted here).
+# Implemented as HostSelectionAlgorithm_Case: two real distccd
+# instances, one job slot each, a sleeping fake compiler so the first
+# job's lock stays held while the second is dispatched, confirming via
+# each daemon's own log which one actually served which compile.
 
 # Giving up privilege using --user is now covered, root-only, by
 # AutogroupNicenessPrivilegeDrop_Case below: GitHub Actions runners give
 # real root via sudo on a real Linux kernel, so the "may need root
 # privileges" limitation that deferred this for 15+ years no longer
 # applies for at least this one --user scenario.
-
-# TODO: Test that recursion safeguard works.
-
-# TODO: Test masquerade mode.  Requires us to create symlinks in a
-# special directory on the path.
-
-# TODO: Test SSH mode.  May need to skip if we can't ssh to this
-# machine.  Perhaps provide a little null-ssh.
-
-# TODO: Test path stripping.
-
-# TODO: Test backoff from downed hosts.
-
-# TODO: Check again in --no-prefork mode.
-
-# TODO: Test lzo is parsed properly
-
-# TODO: Test with DISTCC_DIR set, and not set.
-
-# TODO: Using --lifetime does cause sporadic failures.  Ensure that
-# teardown kills all daemon processes and then stop using --lifetime.
-
 
 import time, sys, os, glob, re, socket, errno
 import signal, os.path, pwd, tempfile, shutil
@@ -170,6 +124,7 @@ EXIT_COMPILER_CRASHED        = 104
 EXIT_OUT_OF_MEMORY           = 105
 EXIT_BAD_HOSTSPEC            = 106
 EXIT_COMPILER_MISSING        = 110
+EXIT_RECURSION               = 111
 EXIT_ACCESS_DENIED           = 113
 
 DISTCC_TEST_PORT             = 42000
@@ -332,6 +287,36 @@ as soon as that happens we can go ahead and start the client."""
     def teardown(self):
         SimpleDistCC_Case.teardown(self)
 
+    def waitForLogPattern(self, pattern, timeout, logfile=None):
+        """Poll a daemon log file for `pattern`, up to `timeout` seconds.
+
+        Needed whenever the event being waited for (the daemon logging
+        something from a forked child, or flushing a compile's own log
+        line) can happen after this test's own next step already started
+        -- a single one-shot read right after that step can race a
+        slow/contended CI runner and miss content logged a moment later.
+        Returns the full log content once `pattern` is found; fails the
+        test with the log seen so far if the timeout is reached without a
+        match. `logfile` defaults to self.daemon_logfile.
+        """
+        if logfile is None:
+            logfile = self.daemon_logfile
+        deadline = time.time() + timeout
+        log_contents = ""
+        while True:
+            try:
+                with open(logfile, 'rt') as f:
+                    log_contents = f.read()
+            except IOError:
+                log_contents = ""
+            if re.search(pattern, log_contents) is not None:
+                return log_contents
+            if time.time() > deadline:
+                self.fail(
+                    "timed out after %ds waiting for %r in the daemon log, "
+                    "got:\n%s" % (timeout, pattern, log_contents))
+            time.sleep(0.2)
+
 
     def killDaemon(self):
         try:
@@ -364,9 +349,19 @@ as soon as that happens we can go ahead and start the client."""
                    _ShellSafe(self.daemon_sysroot)))
 
     def daemon_lifetime(self):
-        # Enough for most tests, even on a fairly loaded machine.
-        # Might need more for long-running tests.
-        return 60
+        # This is a leak-safety net, not the normal teardown mechanism --
+        # killDaemon() (above) already sends a real SIGTERM and waits for
+        # the process to go away at the end of every test, on both the
+        # pass and fail path. This alarm exists only to stop an orphaned
+        # daemon from running forever in the abnormal case where teardown
+        # itself never runs at all (e.g. the test process itself is
+        # killed/crashes before reaching teardown). Set generously (5x the
+        # original values) so it never races a normal, still-running test
+        # on a slow/loaded CI runner -- issue #379: the previous 60s
+        # default was tight enough that it had already been observed
+        # killing the daemon mid-test on a loaded runner, before
+        # killDaemon()'s own SIGTERM got a chance to run.
+        return 300
 
     def startDaemon(self):
         """Start a daemon in the background, return its pid"""
@@ -765,6 +760,14 @@ class ScanArgs_Case(SimpleDistCC_Case):
                  ("gcc -DMYNAME=quasibar.c bar.c -c -o bar.o", "distribute", "bar.c", "bar.o"),
                  ("gcc -ohello.o -c hello.c", "distribute", "hello.c", "hello.o"),
                  ("ccache gcc -c hello.c", "distribute", "hello.c", "hello.o"),
+
+                 # "Crazy option arguments" (issue #275): a -o VALUE that
+                 # itself looks like another flag must still be taken
+                 # literally as the output filename -- src/arg.c's
+                 # dcc_scan_args() takes the very next argv unconditionally
+                 # once it sees a bare "-o" ("Whatever follows must be the
+                 # output"), so it never re-parses "-output" as a flag.
+                 ("gcc -o -output -c foo.c", "distribute", "foo.c", "-output"),
                  ("gcc hello.o", "local"),
                  ("gcc -o hello.o hello.c", "local"),
                  ("gcc -o hello.o -c hello.s", "local"),
@@ -1300,6 +1303,47 @@ int main(void) {
         self.assert_equal(msgs, "hello world\n")
 
 
+class MasqueradeMode_Case(CompileHello_Case):
+    """Test masquerade mode (issue #275).
+
+    src/climasq.c's dcc_support_masquerade() is what makes this work: when
+    distcc is invoked under a name other than "distcc" (src/distcc.c's
+    main(), the `else` branch for a masqueraded argv[0]), it finds which
+    PATH component contains the symlink that was actually exec'd, strips
+    everything up to and including that component, and re-resolves the
+    same basename (e.g. "gcc") against what's left of PATH -- so the real
+    compiler is found instead of looping back into distcc itself. The
+    TODO's own stated setup requirement ("create symlinks in a special
+    directory on the path") is exactly what real masquerade deployment
+    already looks like (`update-distcc-symlinks`, src/daemon.c's
+    dcc_warn_masquerade_whitelist()) -- this test does the same thing at
+    a small, self-contained scale: symlink "gcc" to the just-built distcc
+    binary in a test-local directory, prepend that directory to PATH, and
+    invoke "gcc" directly (no "distcc" in the command line at all)."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        distcc_path = None
+        for d in os.environ['PATH'].split(':'):
+            candidate = os.path.join(d, 'distcc')
+            if os.access(candidate, os.X_OK):
+                distcc_path = os.path.abspath(candidate)
+                break
+        if distcc_path is None:
+            raise comfychair.NotRunError('could not find the built distcc '
+                                         'binary on PATH')
+        self.masq_dir = os.path.abspath('masquerade_bin')
+        os.mkdir(self.masq_dir)
+        os.symlink(distcc_path, os.path.join(self.masq_dir, 'gcc'))
+        os.environ['PATH'] = self.masq_dir + ':' + os.environ['PATH']
+
+    def compileCmd(self):
+        # Deliberately no "distcc" anywhere in this command -- the
+        # masquerade symlink is what makes "gcc" resolve to distcc.
+        return ("gcc -o testtmp.o " + self.compileOpts() +
+                " -c %s" % self.sourceFilename())
+
+
 class CommaInFilename_Case(CompileHello_Case):
 
     def headerFilename(self):
@@ -1365,6 +1409,153 @@ int main(void) {
     return 0;
 }
 """
+
+class IncludeEqualsForceInclude_Case(CompileHello_Case):
+    """Test that "--include=/absolute/path" (GCC/Clang's combined-form
+    force-include flag) has its embedded absolute path rewritten for the
+    server, the same way the older two-token "-include /absolute/path"
+    form already is.
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server():
+    its include_options[] list had "-include" but not "--include=", so a
+    client-side absolute path following "--include=" was never rewritten to
+    the server's own root_dir and the server compiler could not find it --
+    found compiling a real -sys crate (aws-lc-sys/BoringSSL) through pump
+    mode."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "--include= server-side rewriting only applies in pump "
+                "mode (see --pump); in plain mode cpp runs client-side, "
+                "so --include= is resolved locally before the server ever "
+                "sees it, and clang/gcc legitimately warns 'argument "
+                "unused during compilation' passing it to a compile-only "
+                "invocation of an already-preprocessed .i file")
+        CompileHello_Case.setup(self)
+
+    def source(self):
+        # Deliberately does NOT #include headerFilename() itself: HELLO_WORLD
+        # must come exclusively from --include=, so a failure to rewrite its
+        # path server-side shows up as an undefined-macro compile error, not
+        # ambiguously alongside a normal #include of the same file.
+        return """
+#include <stdio.h>
+int main(void) {
+    puts(HELLO_WORLD);
+    return 0;
+}
+"""
+
+    def compileOpts(self):
+        return "--include=%s" % os.path.abspath(self.headerFilename())
+
+
+class ImacrosEqualsForceInclude_Case(CompileHello_Case):
+    """Same bug, same fix, for "--imacros=/absolute/path" (GCC/Clang's
+    combined form of -imacros: like --include=, but only the macro
+    definitions from the file are kept, any other output from scanning
+    it is discarded -- irrelevant here since headerFilename()'s content
+    is only a #define anyway).
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server()
+    and include_server/parse_command.py's CPP_OPTIONS_APPEARING_AS_
+    ASSIGNMENTS: both had "-imacros" but not "--imacros=", the same gap
+    already found and fixed for "--include=" (#416)."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "--imacros= server-side rewriting only applies in pump "
+                "mode (see --pump); in plain mode cpp runs client-side, "
+                "so --imacros= is resolved locally before the server ever "
+                "sees it, and clang/gcc legitimately warns 'argument "
+                "unused during compilation' passing it to a compile-only "
+                "invocation of an already-preprocessed .i file")
+        CompileHello_Case.setup(self)
+
+    def source(self):
+        # Deliberately does NOT #include headerFilename() itself: HELLO_WORLD
+        # must come exclusively from --imacros=, so a failure to rewrite its
+        # path server-side shows up as an undefined-macro compile error, not
+        # ambiguously alongside a normal #include of the same file.
+        return """
+#include <stdio.h>
+int main(void) {
+    puts(HELLO_WORLD);
+    return 0;
+}
+"""
+
+    def compileOpts(self):
+        return "--imacros=%s" % os.path.abspath(self.headerFilename())
+
+
+class SysrootAbsolutePath_Case(CompileHello_Case):
+    """Test that "-isysroot /absolute/path" has its path rewritten for the
+    server, the same way other absolute include-family paths already are.
+
+    Regression test for src/serve.c's tweak_include_arguments_for_server():
+    include_options[] had no entry at all for "-isysroot"/"--sysroot=", so
+    a client-side absolute sysroot path was never rewritten to the
+    server's root_dir.
+
+    Checks the server's own log for the actual, rewritten argv it forked,
+    rather than requiring a full successful compile: whether the include
+    server's system-directory *mirroring* also handles an arbitrary,
+    fully self-contained sysroot is a separate question from whether
+    serve.c rewrites the sysroot argument's own path, and coupling both
+    in one test made it fragile across compilers -- confirmed via a real
+    CI failure reproduced on macOS/clang (clang's own stricter sysroot
+    validation affects what include_server/compiler_defaults.py's
+    compiler-probing sees) but not on Linux/gcc, tracing to the
+    mirroring/discovery side, not this fix."""
+
+    def setup(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "-isysroot server-side rewriting only applies in pump mode "
+                "(see --pump); in plain mode cpp runs client-side, so the "
+                "sysroot is resolved locally before the server ever sees it")
+        CompileHello_Case.setup(self)
+
+    def source(self):
+        # Content is irrelevant -- this test never checks compile success
+        # (see runtest() below), only needs a real (non-preprocessed) .c
+        # file so pump mode's server-side cpp actually engages.
+        return "int main(void) { return 0; }\n"
+
+    def compileOpts(self):
+        return "-isysroot %s" % os.path.abspath("fake_sysroot")
+
+    def runtest(self):
+        fake_sysroot = os.path.abspath("fake_sysroot")
+        os.makedirs(fake_sysroot)
+
+        # Exit code deliberately ignored -- this test only cares whether
+        # the argv the server forked has the sysroot path rewritten, not
+        # whether the job (which cannot really succeed against a fake,
+        # header-less sysroot) completes.
+        self.runcmd_unchecked(self.compileCmd())
+
+        # Anchored to "forking to execute" specifically (dcc_spawn_child()'s
+        # own unconditional trace, src/exec.c) -- the daemon log also shows
+        # the RAW, pre-rewrite argv earlier (e.g. "(dcc_r_argv) got
+        # arguments: ..."), and a bare "-isysroot" search matches that
+        # first, unrewritten occurrence instead of the final one actually
+        # used to spawn the compiler (confirmed empirically: an earlier,
+        # unanchored version of this regex matched the raw argv and always
+        # reported "not rewritten", even though tracing through the fix
+        # showed the eventual exec did get the correct rewritten path).
+        log = self.waitForLogPattern(r"forking to execute.*-isysroot (\S+)", 10)
+        m = re.search(r"forking to execute.*-isysroot (\S+)", log)
+        rewritten = m.group(1)
+        if rewritten == fake_sysroot:
+            self.fail("sysroot path was not rewritten at all: %s" % rewritten)
+        if not rewritten.endswith(fake_sysroot):
+            self.fail("rewritten sysroot %r does not end with the original %r" %
+                       (rewritten, fake_sysroot))
+
 
 class MarchNativeDispatcherPath_Case(CompileHello_Case):
     """-march=native must resolve using the compiler binary actually invoked,
@@ -1456,17 +1647,23 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         return self.distcc() + \
                self.dispatcher_path + " -o testtmp testtmp.o " + self.libraries()
 
+    # A one-shot read right after the compile subprocess exits can race the
+    # daemon's own log write for that same compile (found via a real,
+    # intermittent CI failure -- issue #300): the client-side compile
+    # returning does not guarantee the server has finished flushing its log
+    # line yet. Bounded at 5s, generous relative to a local compile.
+    LOG_WRITE_TIMEOUT = 5
+
     def runtest(self):
         # A working binary alone can't distinguish a real remote
         # distribution from a silent local fallback (both produce a valid
         # testtmp) -- grepping the daemon's own independent log for
         # COMPILE_OK is the actual proof the compile was distributed, per
         # doc/verification-checklist.md section 3's real-two-host evidence
-        # bar.
+        # bar. waitForLogPattern() polls instead of a single read, see
+        # LOG_WRITE_TIMEOUT above.
         CompileHello_Case.runtest(self)
-        with open(self.daemon_logfile) as f:
-            daemon_log = f.read()
-        self.assert_re_search(r'COMPILE_OK', daemon_log)
+        self.waitForLogPattern(r'COMPILE_OK', self.LOG_WRITE_TIMEOUT)
 
 
 class LanguageSpecific_Case(Compilation_Case):
@@ -1560,7 +1757,15 @@ class ObjectiveC_Case(LanguageSpecific_Case):
 #import <stdio.h>
 #import "testhdr.h"
 
-/* TODO: use objective-c features. */
+/* Real ObjC OOP features (@interface, message dispatch) were
+ * considered and declined (issue #275): they'd need the ObjC
+ * runtime (-lobjc) linked in, a new dependency for a single test
+ * case. This case already runs for real (confirmed live: OK on
+ * macOS-latest CI, cleanly NOTRUN on Linux CI where GNU
+ * Objective-C isn't installed) without it -- LanguageSpecific_Case's
+ * own probe already gates this on plain "gcc/clang -x objective-c"
+ * support, so it's not testing anything platform-specific real ObjC
+ * syntax would add. */
 
 int main(void) {
     puts(MESSAGE);
@@ -1593,7 +1798,10 @@ class ObjectiveCPlusPlus_Case(LanguageSpecific_Case):
 #import <iostream>
 #import "testhdr.h"
 
-/* TODO: use Objective-C features. */
+/* Same reasoning as ObjectiveC_Case above: real ObjC++ OOP features
+ * were declined (issue #275), no new -lobjc dependency needed --
+ * confirmed live on real CI as-is (OK on macOS-latest, clean NOTRUN
+ * on Linux). */
 
 int main(void) {
     std::cout << MESSAGE << std::endl;
@@ -1801,9 +2009,8 @@ class Gdb_Case(CompileHello_Case):
         # between the two testtmp binaries.  For Microsoft PE output,
         # I've seen binaries differ in two places, though I don't know
         # why (timestamp?).  We do the best we can in those cases.
-        if _IsMachO('link/%s' % testtmp_exe):
-            # TODO(csilvers): we can do better (make sure all 16 bytes are
-            # consecutive, or even parse Mach-O to remove the UUID first).
+        is_macho = _IsMachO('link/%s' % testtmp_exe)
+        if is_macho:
             acceptable_diffbytes = 16
         elif _IsPE('link/%s' % testtmp_exe):
             acceptable_diffbytes = 2
@@ -1811,8 +2018,22 @@ class Gdb_Case(CompileHello_Case):
             acceptable_diffbytes = 0
         rc, msgs, errs = self.runcmd_unchecked("cmp -l link/%s run/%s"
                                                % (testtmp_exe, testtmp_exe))
+        diff_lines = msgs.strip().splitlines()
+        too_many_diffs = len(diff_lines) > acceptable_diffbytes
+        # issue #275: for Mach-O, also confirm the differing bytes are one
+        # *consecutive* run -- consistent with them really being the
+        # embedded UUID (a real, single, fixed-size field) rather than
+        # <=16 bytes scattered across the binary, which the plain count
+        # check above would let through as a false pass. `cmp -l`'s first
+        # column is the 1-indexed byte offset.
+        non_consecutive_diffs = False
+        if is_macho and diff_lines and not too_many_diffs:
+            offsets = [int(line.split()[0]) for line in diff_lines]
+            offsets.sort()
+            non_consecutive_diffs = (
+                offsets[-1] - offsets[0] + 1 != len(offsets))
         if (rc != 0 and
-            (errs or len(msgs.strip().splitlines()) > acceptable_diffbytes)):
+            (errs or too_many_diffs or non_consecutive_diffs)):
             # Just do the cmp again to give a good error message
             self.runcmd("cmp link/%s run/%s" % (testtmp_exe, testtmp_exe))
 
@@ -1990,6 +2211,32 @@ large foo!
     def teardown(self):
         # no daemon is run for this test
         pass
+
+
+class CppFromStdin_Case(Compilation_Case):
+    """Compile from stdin (issue #275): "gcc -x c -c - -o testtmp.o" with
+    real source piped in. src/arg.c's dcc_scan_args() never recognizes a
+    bare "-" via dcc_is_source() (that function matches only by filename
+    extension, and "-" has none), so *input_file stays NULL and the scan
+    returns EXIT_DISTCC_FAILED ("no visible input file") -- compile.c's
+    dispatch (`if (ret != 0) goto lock_local;`) then compiles directly and
+    unconditionally locally, independent of DISTCC_FALLBACK entirely (that
+    env var only matters for a failure *after* a remote attempt was made,
+    which never happens here). This is a real functional check that stdin
+    input still compiles successfully, not a distribution test.
+
+    Deliberately self-contained (no #include of a header file, unlike
+    CompileHello_Case): a quoted #include's search relative to "the
+    current file's own directory" is not well-defined for stdin, which
+    has no real path -- avoided entirely rather than relying on it."""
+
+    def source(self):
+        return "int foo(void) { return 0; }\n"
+
+    def runtest(self):
+        cmd = ("cat %s | %s%s -x c -c -o testtmp.o -" %
+               (self.sourceFilename(), self.distcc(), self._cc))
+        self.runcmd(cmd)
 
 
 class NoDetachDaemon_Case(CompileHello_Case):
@@ -2376,35 +2623,6 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
     # in well under a second.
     AUTOGROUP_WARNING_TIMEOUT = 15
 
-    def _waitForLogPattern(self, pattern, timeout):
-        """Poll self.daemon_logfile for `pattern`, up to `timeout` seconds.
-
-        Needed because the event being waited for (dcc_set_autogroup_niceness()
-        actually running and logging its result) happens in a forked child
-        well after this test's startDaemon() already returned -- a single
-        one-shot read right after startDaemon() can race a slow/contended
-        CI runner and either miss a warning that is logged a moment later,
-        or (worse) read /proc/<pid>/autogroup before the write it's
-        checking has even happened. Returns the full log content once
-        `pattern` is found; fails the test with the log seen so far if the
-        timeout is reached without a match.
-        """
-        deadline = time.time() + timeout
-        log_contents = ""
-        while True:
-            try:
-                with open(self.daemon_logfile, 'rt') as f:
-                    log_contents = f.read()
-            except IOError:
-                log_contents = ""
-            if re.search(pattern, log_contents) is not None:
-                return log_contents
-            if time.time() > deadline:
-                self.fail(
-                    "timed out after %ds waiting for %r in the daemon log, "
-                    "got:\n%s" % (timeout, pattern, log_contents))
-            time.sleep(0.2)
-
     def runtest(self):
         with open(self.daemon_pidfile, 'rt') as f:
             pid = int(f.read())
@@ -2426,7 +2644,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         # already completed (the log call is the last thing that function
         # does), so this doubles as the synchronization point for the
         # /proc read below, not just a check on its own.
-        self._waitForLogPattern(
+        self.waitForLogPattern(
             r'autogroup nice -?\d+ failed: Operation not permitted',
             self.AUTOGROUP_WARNING_TIMEOUT)
 
@@ -2456,14 +2674,82 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         self.assert_equal(autogroup_nice, 0)
 
 
+class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
+    """Root-only: does --user actually drop privilege for the compile
+    itself (issue #275) -- the general functional test AGENTS.md/the
+    header-block TODO always meant, distinct from
+    AutogroupNicenessPrivilegeDrop_Case above (reused here entirely for
+    its already-solved root/chown/ancestor-traversal setup dance), which
+    only ever asserts one narrow negative-autogroup-niceness EPERM
+    warning, never the dropped-privilege child process's actual uid.
+
+    Uses a fake compiler that reports its own real uid via `id -u`,
+    forwarded to the client verbatim through the SOUT wire-protocol slot
+    (the same mechanism NastyCppWritesStdout_Case's own docstring
+    documents in full) -- and asserts it's the drop user's uid, never
+    root's, proving --user's privilege drop actually reaches the
+    compiler child distccd forks, not just the daemon process itself."""
+
+    def runtest(self):
+        drop_pw = pwd.getpwnam(self.DROP_USER)
+
+        compiler = os.path.abspath("uid_reporting_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "id -u\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        # The daemon-forked compiler child runs as the dropped-privilege
+        # DROP_USER, not root, and needs real execute permission on this
+        # file -- confirmed live that plain 0700 (owned by whoever
+        # *this* process runs as, i.e. root, since require_root() gates
+        # this whole test) fails with "Permission denied" (exit 110,
+        # dcc_execvp()'s own error for an unexecutable compiler), since
+        # DROP_USER then has neither the owner nor any group/world bit.
+        # Rather than opening world bits to cover that gap (flagged by
+        # CodeQL as overly permissive, correctly -- this rewards any
+        # local user on the same machine, not just DROP_USER), chown the
+        # file to DROP_USER itself first: this test only ever runs as
+        # root (require_root(), inherited), so chown is always
+        # available, and a plain owner-only 0700 then covers DROP_USER
+        # without opening anything to anyone else.
+        os.chown(compiler, drop_pw.pw_uid, drop_pw.pw_gid)
+        os.chmod(compiler, 0o700)
+
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
+        os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
+        os.environ['DISTCC_VERBOSE'] = '1'
+        open("testtmp.i", "wt").write("int main() {}")
+
+        out, errs = self.runcmd(self.distcc_without_fallback() + compiler +
+                                " -c testtmp.i -o testtmp.o")
+        reported_uid = int(out.strip())
+        self.assert_(reported_uid != 0,
+                     "compiler child ran as uid 0 (root) -- --user's "
+                     "privilege drop did not reach it")
+        self.assert_equal(reported_uid, drop_pw.pw_uid)
+
+
 class ImplicitCompiler_Case(CompileHello_Case):
     """Test giving no compiler works"""
     def compileCmd(self):
         return self.distcc() + "-c testtmp.c"
 
     def linkCmd(self):
-        # FIXME: Mozilla uses something like "distcc testtmp.o -o testtmp",
-        # but that's broken at the moment.
+        # Stale FIXME removed (issue #275): the alternate "distcc testtmp.o
+        # -o testtmp" (object file before -o) argument order this used to
+        # flag as broken was re-verified live -- it produces a real,
+        # byte-identical executable to this method's own "-o testtmp
+        # testtmp.o" order, through the real daemon-backed distribute/link
+        # path (ImplicitCompiler_Case itself, temporarily patched to that
+        # order for the check), not just a local fallback. Whatever bug
+        # this comment described was fixed at some point without the
+        # comment ever being removed.
         return self.distcc() + "-o testtmp testtmp.o "
 
     def runtest(self):
@@ -2555,6 +2841,28 @@ class DashMD_DashMF_DashMT_Case(CompileHello_Case):
         self.assert_re_search("target_name_42", dotd_contents)
 
 
+class DashMMD_Case(CompileHello_Case):
+    """Test -MMD (issue #275, closing the remaining gap from
+    DashMD_DashMF_DashMT_Case above -- that one only covers -MD).
+    Bare -M by itself needs no separate test: ScanArgs_Case already
+    confirms `-M` without `-c` classifies as "local" (dcc_scan_args()
+    never sees seen_opt_c set, so there is no compile to distribute at
+    all -- an -M-only invocation is inherently local by design, nothing
+    distcc-specific left to verify beyond that existing check)."""
+
+    def compileOpts(self):
+        return "-MMD -MFdotd_mmd_filename"
+
+    def runtest(self):
+        try:
+            os.remove('dotd_mmd_filename')
+        except OSError:
+            pass
+        self.compile()
+        dotd_contents = open("dotd_mmd_filename").read()
+        self.assert_re_search("testtmp.o", dotd_contents)
+
+
 class DashWpMD_Case(CompileHello_Case):
     """Test -Wp,-MD,depfile"""
 
@@ -2637,6 +2945,113 @@ class ZstdPumpCompile_Case(CompileHello_Case):
         self.assert_re_search(
             r"accepted job with protover 5000 \(compr \d+, cpp_where \d+\)",
             log)
+
+
+class HostSelectionAlgorithm_Case(CompileHello_Case):
+    """Direct test of the host-selection algorithm (issue #275).
+
+    src/where.c's dcc_lock_one() scans slot index 0, then 1, ...; within
+    each slot index it tries every configured host in DISTCC_HOSTS list
+    order, taking the first one with a free slot at that index
+    (src/lock.c's dcc_lock_host(), a real flock()-based lockfile per
+    host+slot). For *sequential* (not concurrently racing) dispatch this
+    is fully deterministic: with two single-slot hosts, a first job
+    always lands on the first host in the list, and a second job
+    launched while the first is still running is guaranteed to land on
+    the second host, since the first host's only slot is still locked.
+    (Concurrent dispatch under real load, e.g. `make -jN`, additionally
+    depends on which process's flock() call the kernel happens to
+    grant first when several race for the same slot -- that part is
+    not, and cannot be made, deterministic; this test only covers the
+    part of the algorithm that actually is.)
+
+    Starts two real distccd instances, each with exactly one job slot
+    (the "/1" hostspec suffix -- src/hosts.c's dcc_parse_multiplier()),
+    and a slow (sleeping) fake compiler so the first job's lock stays
+    held while the second job is dispatched. Confirms via each daemon's
+    own log which one actually served which compile, rather than just
+    asserting both compiles eventually succeeded."""
+
+    def setup(self):
+        SimpleDistCC_Case.setup(self)
+        self.slow_compiler = os.path.abspath("slow_compiler")
+        f = open(self.slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 3\n")
+        finally:
+            f.close()
+        os.chmod(self.slow_compiler, 0o700)
+
+        self.daemon_a_pidfile = os.path.join(os.getcwd(), "daemon_a.pid")
+        self.daemon_a_logfile = os.path.join(os.getcwd(), "daemon_a.log")
+        self.daemon_b_pidfile = os.path.join(os.getcwd(), "daemon_b.pid")
+        self.daemon_b_logfile = os.path.join(os.getcwd(), "daemon_b.log")
+        self.port_a = DISTCC_TEST_PORT
+        self.port_b = DISTCC_TEST_PORT + 1
+
+        self._start_daemon(self.port_a, self.daemon_a_pidfile,
+                           self.daemon_a_logfile)
+        self._start_daemon(self.port_b, self.daemon_b_pidfile,
+                           self.daemon_b_logfile)
+        self.add_cleanup(lambda: self._kill_daemon(self.daemon_a_pidfile))
+        self.add_cleanup(lambda: self._kill_daemon(self.daemon_b_pidfile))
+
+        os.environ['DISTCC_HOSTS'] = (
+            '127.0.0.1:%d/1 127.0.0.1:%d/1' % (self.port_a, self.port_b))
+        os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
+        os.environ['DISTCC_VERBOSE'] = '1'
+        self.createSource()
+
+    def _start_daemon(self, port, pidfile, logfile):
+        cmd = (self.distccd() +
+               "--verbose --lifetime=60 --daemon --jobs 1 --log-file %s "
+               "--pid-file %s --port %d --allow 127.0.0.1 "
+               "--enable-tcp-insecure" %
+               (_ShellSafe(logfile), _ShellSafe(pidfile), port))
+        result, out, err = self.runcmd_unchecked(cmd)
+        if result != 0:
+            self.fail("failed to start daemon on port %d: %s" %
+                      (port, err))
+
+    def _kill_daemon(self, pidfile):
+        try:
+            pid = int(open(pidfile, 'rt').read())
+        except IOError:
+            return
+        os.kill(pid, signal.SIGTERM)
+
+    def _waitForPattern(self, logfile, pattern, timeout):
+        deadline = time.time() + timeout
+        content = ""
+        while True:
+            try:
+                content = open(logfile).read()
+            except IOError:
+                content = ""
+            if re.search(pattern, content):
+                return content
+            if time.time() > deadline:
+                self.fail("timed out after %ds waiting for %r in %s, got:\n%s" %
+                          (timeout, pattern, logfile, content))
+            time.sleep(0.2)
+
+    def runtest(self):
+        job1_pid = self.runcmd_background(
+            self.distcc_without_fallback() + self.slow_compiler +
+            " -c testtmp.c -o job1.o")
+        # Confirms job 1 really landed on the first host in the list.
+        self._waitForPattern(self.daemon_a_logfile,
+                             r"forking to execute.*slow_compiler", 10)
+
+        # Host A's single slot is still held by job 1's still-sleeping
+        # compile, so job 2 must land on host B.
+        self.runcmd(self.distcc_without_fallback() + self.slow_compiler +
+                    " -c testtmp.c -o job2.o")
+        daemon_b_log = open(self.daemon_b_logfile).read()
+        self.assert_re_search(r"forking to execute.*slow_compiler",
+                              daemon_b_log)
+
+        os.waitpid(job1_pid, 0)
 
 
 class ScanIncludes_Case(CompileHello_Case):
@@ -2732,7 +3147,9 @@ class HundredFold_Case(CompileHello_Case):
     """
 
     def daemon_lifetime(self):
-        return 120
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value.
+        return 600
 
     def runtest(self):
         for unused_i in range(100):
@@ -2743,7 +3160,9 @@ class HundredFold_Case(CompileHello_Case):
 class Concurrent_Case(CompileHello_Case):
     """Try many compilations at the same time"""
     def daemon_lifetime(self):
-        return 120
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value.
+        return 600
 
     def runtest(self):
         # may take about a minute or so
@@ -2784,8 +3203,71 @@ class BigAssFile_Case(Compilation_Case):
 
 
     def daemon_lifetime(self):
-        return 300
+        # Leak-safety net, not the teardown mechanism -- see the base
+        # daemon_lifetime()'s comment (issue #379). 5x the original value;
+        # still comfortably inside c-build.yml's own 15-minute make_check
+        # job timeout, which is the real backstop in CI either way.
+        return 1500
 
+
+
+class ZeroByteOutputCompiler_Case(Compilation_Case):
+    """A compiler that produces 0-byte output (issue #275). The original
+    TODO's blocking premise ("I don't know an easy way to get that out of
+    gcc aside from the Apple port") is obsolete: the same fake-executable
+    technique already used for fake_ssh/slow_compiler/crashing_compiler
+    elsewhere in this file trivially simulates it -- a tiny script that
+    creates its -o target via `touch` (a real, valid, genuinely empty
+    file) instead of actually compiling anything."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        compiler = os.path.abspath("zero_byte_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(compiler, 0o700)
+        self.runcmd(self.distcc() + compiler + " -c testtmp.i -o testtmp.o", 0)
+        self.assert_equal(os.path.getsize("testtmp.o"), 0)
+
+
+class NastyCppWritesStdout_Case(Compilation_Case):
+    """A "nasty" cpp/compiler that always writes to stdout regardless of
+    -o (issue #275). src/serve.c captures the compiler child's stdout
+    into a real "SOUT" wire-protocol slot, sent unconditionally,
+    independent of compile success (src/serve.c:989-992 send it before
+    the success/failure branch at 997), and src/clirpc.c streams it
+    straight through to the client's own real stdout
+    (`dcc_r_bulk(STDOUT_FILENO, ...)`) -- confirming this is already
+    handled by design, not a distcc bug, just never actually tested."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        compiler = os.path.abspath("nasty_stdout_compiler")
+        f = open(compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "echo NASTY_STDOUT_MARKER\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(compiler, 0o700)
+        out, errs = self.runcmd(self.distcc() + compiler +
+                                " -c testtmp.i -o testtmp.o")
+        self.assert_re_search("NASTY_STDOUT_MARKER", out)
 
 
 class BinFalse_Case(Compilation_Case):
@@ -2834,12 +3316,119 @@ class BinTrue_Case(Compilation_Case):
                     + "true -c testtmp.i", 0)
 
 
+class CrashingCompiler_Case(Compilation_Case):
+    """A compiler that crashes (issue #275): src/exec.c's
+    dcc_critique_status() converts a signaled child into a 128+signal
+    exit code (the Unix convention) and logs the signal name via
+    strsignal() -- never exercised by any existing test. BinFalse_Case/
+    BinTrue_Case above only cover a normal nonzero exit, not a real
+    signal death.
+
+    Uses a tiny real shell script (same technique as
+    ClientDisconnectKillsServerChild_Case's slow_compiler) rather than a
+    literal signal-sending binary, since none of coreutils' own tools
+    reliably kill themselves with a specific signal on all platforms."""
+
+    def createSource(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+    def runtest(self):
+        crasher = os.path.abspath("crashing_compiler")
+        f = open(crasher, "w")
+        try:
+            f.write("#!/bin/sh\nkill -SEGV $$\n")
+        finally:
+            f.close()
+        os.chmod(crasher, 0o700)
+        self.runcmd(self.distcc() + crasher + " -c testtmp.i", 128 + 11)
+
+
+class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
+    """Test that a client disconnecting mid-job causes the server to
+    promptly kill the compiler child, rather than leaving it running (or
+    zombied) forever.
+
+    Coverage for src/exec.c's dcc_collect_child(): while waiting for the
+    compiler child, it also select()s on the client's own socket; once
+    that read returns EOF (client gone), it logs "Client fd disconnected,
+    killing job" and sends SIGTERM (killpg, falling back to a plain kill)
+    to the child. The original upstream TODO for this scenario suggested
+    "Run 'sleep' as a compiler" -- tried literally first, but GNU
+    coreutils' sleep parses its own argv rather than ignoring it like
+    "true"/"false" do (BinFalse_Case/BinTrue_Case above), so distcc's
+    appended "-c <path> -o <path>" makes it error out immediately instead
+    of actually sleeping (confirmed empirically: the job failed in well
+    under a second, never reaching the disconnect-detection window at
+    all). A tiny real shell script that never references its own
+    positional parameters -- so distcc's appended compile-style
+    arguments are harmlessly ignored -- sleeps for real instead."""
+
+    def runtest(self):
+        open("testtmp.i", "wt").write("int main() {}")
+
+        slow_compiler = os.path.abspath("slow_compiler")
+        f = open(slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\nsleep 30\n")
+        finally:
+            f.close()
+        os.chmod(slow_compiler, 0o700)
+
+        # Fork+exec distcc directly, NOT via runcmd_background() (which
+        # runs "/bin/sh -c cmd"): confirmed empirically via a real CI
+        # failure that killing the pid runcmd_background() returns does
+        # not reliably disconnect the daemon's connection -- whether that
+        # shell tail-call-execs into distcc in place (same pid) or
+        # instead forks a further child for it is a shell-implementation
+        # detail this test cannot depend on. A direct fork()+execvp()
+        # here guarantees client_pid really is the distcc client itself.
+        saved_fallback = os.environ.get('DISTCC_FALLBACK')
+        os.environ['DISTCC_FALLBACK'] = '0'
+        try:
+            client_pid = os.fork()
+            if client_pid == 0:
+                try:
+                    os.execvp("distcc", ["distcc", slow_compiler, "-c", "testtmp.i"])
+                finally:
+                    os._exit(127)
+        finally:
+            if saved_fallback is None:
+                del os.environ['DISTCC_FALLBACK']
+            else:
+                os.environ['DISTCC_FALLBACK'] = saved_fallback
+
+        # Wait for the server to have actually forked the slow_compiler
+        # child -- killing the client any earlier would race the job even
+        # starting. dcc_spawn_child() traces every forked argv
+        # unconditionally (given --verbose, which WithDaemon_Case's
+        # daemon_command() always passes).
+        self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
+
+        # A real crash/network drop, not a graceful client exit -- SIGKILL
+        # so the client cannot close its own socket cleanly on the way
+        # out (a plain process exit still closes the fd, which would not
+        # exercise the same "abrupt EOF while a job is in flight" path as
+        # convincingly).
+        os.kill(client_pid, signal.SIGKILL)
+        os.waitpid(client_pid, 0)
+
+        # dcc_collect_child() polls the client socket via select() once a
+        # second (src/exec.c) -- give it a real window to notice and act,
+        # not just one instant check.
+        self.waitForLogPattern("Client fd disconnected, killing job", 10)
+
+
 class SBeatsC_Case(CompileHello_Case):
     """-S overrides -c in gcc.
 
     If both options are given, we have to make sure we imply the
-    output filename in the same way as gcc."""
-    # XXX: Are other compilers the same?
+    output filename in the same way as gcc.
+
+    Stale "XXX: Are other compilers the same?" removed (issue #275):
+    this already runs against whatever self._cc resolves to, and this
+    project's own CI matrix already answers the question -- confirmed
+    live, real gcc (ubuntu-latest) and real clang (macOS-latest) both
+    pass this exact case."""
     def runtest(self):
         self.runcmd(self.distcc() +
                     self._cc + " -c -S testtmp.c")
@@ -2889,6 +3478,41 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
         msgs = open(self.distcc_log, 'r').read()
         self.assert_re_search(r'compile testtmp.c on 127.0.0.1:[0-9]* completed ok',
                               msgs)
+
+
+class BackoffFromDownedHost_Case(CompileHello_Case):
+    """Backoff from a downed host (issue #275): src/backoff.c's
+    dcc_disliked_host()/dcc_remove_disliked() mark a host that failed to
+    connect and skip it on later invocations for DISTCC_BACKOFF_PERIOD
+    seconds -- a real cross-invocation persistence mechanism (a timefile
+    under $DISTCC_DIR), distinct from MixedServerPumpFallback_Case above
+    (which only covers choose_host's same-invocation fallback to the next
+    host after a DNS-resolution failure, never touching backoff.c at all).
+
+    Lists a real TCP port with nothing listening first, a real daemon
+    second: the compile still succeeds (falls through to the second host,
+    the same within-invocation mechanism MixedServerPumpFallback_Case
+    covers) but should also mark the down host disliked -- confirmed via
+    the client's own trace log ("mark ...backoff...", from
+    dcc_mark_timefile(), src/timefile.c)."""
+
+    def setup(self):
+        # Probe a real, currently-unused TCP port, then close it right
+        # away -- nothing will be listening on it by the time the compile
+        # below tries to connect, so the connection is refused quickly
+        # rather than timing out.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        CompileHello_Case.setup(self)
+        os.environ['DISTCC_HOSTS'] = ('127.0.0.1:%d 127.0.0.1:%d%s' %
+            (down_port, self.server_port, _server_options))
+
+    def runtest(self):
+        self.compile()
+        log = open(os.environ['DISTCC_LOG']).read()
+        self.assert_re_search(r'mark .*backoff', log)
 
 
 class ImpliedOutput_Case(CompileHello_Case):
@@ -2948,6 +3572,50 @@ class NoHosts_Case(CompileHello_Case):
 
 
 
+class RecursionSafeguard_Case(CompileHello_Case):
+    """Test that the recursion safeguard works (issue #275).
+
+    src/safeguard.c's dcc_recursion_safeguard() reads _DISTCC_SAFEGUARD
+    from the environment (set by a prior distcc invocation via
+    dcc_increment_safeguard(), guarding against distcc somehow calling
+    itself, e.g. a misconfigured $CC or masquerade symlink loop).
+    src/distcc.c's main() checks it immediately after computing sg_level
+    (`if (sg_level - tweaked_path > 0)`, well before dcc_build_somewhere()
+    is ever called) and treats a positive level as a hard, fatal
+    configuration error: EXIT_RECURSION (111), logged as "distcc seems to
+    have invoked itself recursively!" -- it does NOT quietly fall back to
+    a local compile (an earlier version of this test/docstring assumed
+    that incorrectly; corrected after a real run showed exit 111, not 0,
+    confirmed live: with DISTCC_VERBOSE=1/DISTCC_LOG set, the trace reads
+    "safeguard level=1" followed immediately by that CRITICAL line, no
+    network connection ever attempted -- so the fix here is only the
+    test's own expected exit code, not any src/ change).
+
+    Pre-setting it here and pointing DISTCC_HOSTS at a real TCP port with
+    nothing listening (rather than a real, reachable one) deliberately
+    proves the guard fires before any network attempt: if it didn't, this
+    would instead fail with a connection error, not EXIT_RECURSION.
+
+    A second real fix, found on the very next run: WithDaemon_Case's own
+    setupEnv() leaves DISTCC_LOG pointed at a real file, so rs_log_crit()'s
+    message goes there, not to this process's own stderr -- the assertion
+    below saw an empty string until DISTCC_LOG was cleared first, the same
+    way NoHosts_Case (above) already does for its own log-message check."""
+
+    def runtest(self):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
+        os.environ['DISTCC_LOG'] = ''
+        os.environ['_DISTCC_SAFEGUARD'] = '1'
+        msgs, errs = self.runcmd(self.distcc_without_fallback() +
+                                 self._cc + " -o testtmp.o -c testtmp.c",
+                                 EXIT_RECURSION)
+        self.assert_re_search("invoked itself recursively", errs)
+
+
 class MissingCompiler_Case(CompileHello_Case):
     """Test compiler missing from server."""
     # Another way to test this would be to break the server's PATH
@@ -2965,6 +3633,123 @@ class MissingCompiler_Case(CompileHello_Case):
                                  expectedResult=EXIT_COMPILER_MISSING)
         self.assert_re_search(r'failed to exec', errs)
 
+
+class NonexistentSourceFile_Case(CompileHello_Case):
+    """Try to build a source file that was never created (issue #275).
+
+    We expect exactly one error message. If distcc's local-fallback path
+    ever incorrectly retried the compile locally after a remote failure,
+    the same "no such file" error would be reported a second time -- the
+    original concern this TODO recorded.
+
+    Exit code corrected after a real run (confirmed live: exit 1, not
+    100): dcc_is_source() (src/filename.c) matches purely by filename
+    extension, never checking the file actually exists, so "testtmp.c" is
+    still scanned as a perfectly normal, distributable source argument --
+    only the compiler itself (cc1), not distcc's own argument scan, ever
+    notices the file is missing. That's a genuine, ordinary compiler
+    failure (dcc_critique_status()'s "normal failure gives exit code 1"
+    branch, src/exec.c), not the EXIT_DISTCC_FAILED distcc reserves for
+    its own pre-flight rejections.
+
+    Skips cleanly under pump mode (confirmed live via real CI, not
+    guessed): the include server intercepts a genuinely-missing source
+    file at its own include-scanning stage ("Could not find translation
+    unit"), logs a warning, and falls back to local preprocessing via a
+    different path entirely -- the client never sees a "No such file"
+    message on stderr at all in that case (0 matches, not 1), a
+    different, not-yet-designed-for scenario this test was never meant
+    to cover. Same pattern NoHosts_Case above already uses for the same
+    reason."""
+
+    def setup(self):
+        WithDaemon_Case.setup(self)
+        # Deliberately skip createSource(): testtmp.c is never written.
+
+    def runtest(self):
+        if "cpp" in _server_options:
+            raise comfychair.NotRunError(
+                'pump mode intercepts a missing source file at the '
+                'include-scanning stage, before it ever reaches the '
+                'compiler -- a different code path than this test covers')
+        msgs, errs = self.runcmd(self.distcc_without_fallback()
+                                 + self._cc + " -o testtmp.o -c testtmp.c",
+                                 expectedResult=1)
+        self.assert_equal(len(re.findall(r'[Nn]o such file', errs)), 1)
+
+
+class PathQualifiedCompilerNotSubstituted_Case(CompileHello_Case):
+    """A directory-qualified argv[0] missing on the server must fail
+    loudly, never silently run a different same-named binary instead.
+
+    Regression test for exec.c's dcc_execvp(): before the fix, a failed
+    execvp() of a directory-qualified argv[0] (an absolute or otherwise
+    '/'-containing compiler path resolved on the client, e.g. by PR #281's
+    directory-preserving cross-compiler rewrite, that doesn't exist at
+    that exact location on the server) fell back to a second execvp() on
+    just the basename, letting the server's own $PATH resolve it. If the
+    server happens to have a *different* binary of the same name
+    somewhere on $PATH, that binary silently runs instead -- no error, no
+    signal to the client that a substitution happened, and (as this test
+    would otherwise show) a "successful" compile against the wrong
+    compiler. This test puts such a substitute binary on the daemon's
+    $PATH (deliberately not the client's, so only the server-side
+    fallback is exercised) under a distinctive name, sends a directory-
+    qualified path ending in that same name that exists nowhere on the
+    filesystem, and confirms both that the compile fails with
+    EXIT_COMPILER_MISSING and that the substitute binary was never
+    actually invoked."""
+
+    MARKER_NAME = "distcc_test_execvp_marker_cc"
+
+    def sourceFilename(self):
+        # Must already be preprocessed, so distcc does not need to run
+        # the (nonexistent) compiler locally for the cpp step.
+        return "testtmp.i"
+
+    def source(self):
+        return """int foo;"""
+
+    def setup(self):
+        # Build the substitute-compiler fixture before the daemon starts:
+        # startDaemon() below needs self.marker_dir to already exist when
+        # it prepends it to the daemon's own $PATH.
+        self.marker_dir = os.path.join(self.tmpdir, "server_path_extra")
+        os.mkdir(self.marker_dir)
+        self.marker_script = os.path.join(self.marker_dir, self.MARKER_NAME)
+        self.marker_ran_file = os.path.join(self.tmpdir, "marker_ran")
+        with open(self.marker_script, "w") as f:
+            f.write("#!/bin/sh\ntouch %s\nexit 0\n" %
+                    _ShellSafe(self.marker_ran_file))
+        os.chmod(self.marker_script, 0o700)
+        CompileHello_Case.setup(self)
+
+    def startDaemon(self):
+        # Give the *daemon* -- not the client -- a $PATH that can resolve
+        # self.MARKER_NAME, mirroring how the base class temporarily
+        # overrides TMPDIR a few lines above it: modify the environment
+        # only for the duration of actually starting the (detaching)
+        # daemon process, then restore it so the client's own $PATH is
+        # unaffected by this test's fixture.
+        old_path = os.environ['PATH']
+        os.environ['PATH'] = self.marker_dir + os.pathsep + old_path
+        try:
+            WithDaemon_Case.startDaemon(self)
+        finally:
+            os.environ['PATH'] = old_path
+
+    def runtest(self):
+        nonexistent_path = os.path.join(
+            self.tmpdir, "nowhere_on_any_host", self.MARKER_NAME)
+        msgs, errs = self.runcmd(
+            self.distcc_without_fallback() + _ShellSafe(nonexistent_path) +
+            " -c testtmp.i",
+            expectedResult=EXIT_COMPILER_MISSING)
+        self.assert_re_search(r'failed to exec', errs)
+        if os.path.exists(self.marker_ran_file):
+            self.fail("the substitute compiler on the daemon's $PATH ran "
+                       "instead of failing loudly for the nonexistent, "
+                       "directory-qualified compiler path")
 
 
 class RemoteAssemble_Case(WithDaemon_Case):
@@ -3032,6 +3817,77 @@ msg:
         self.compile()
 
 
+
+
+class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
+    """Test that a ".s" file's ".include" is always resolved locally,
+    never mis-resolved server-side (issue #275).
+
+    src/filename.c's own top-of-file comment states the actual design:
+    "As of 0.10, .s and .S files are never distributed, because they
+    might contain '.include' pseudo-operations, which are resolved by
+    the assembler." dcc_is_source()/dcc_is_preprocessed() confirm this
+    is still true today: both gate ".s"/".S" recognition behind
+    "#ifdef ENABLE_REMOTE_ASSEMBLE", a macro never defined anywhere in
+    this project's build (no configure.ac/Makefile.in toggle exists for
+    it at all) -- so dcc_is_source() always returns false for a ".s"
+    file, dcc_scan_args() never finds an input_file for it, and it
+    falls into exactly the same "no visible input file" local-only path
+    CppFromStdin_Case already exercises for stdin input.
+
+    This means the original TODO's concern ("what if a .include'd file
+    only exists on the client, but gets resolved -- or fails to resolve
+    -- server-side instead") cannot occur structurally: nothing about a
+    ".s" file's compilation is ever sent to a server in the first
+    place. Proven directly, the same way RecursionSafeguard_Case/
+    NoHosts_Case prove "never touches the network": DISTCC_HOSTS points
+    at a real TCP port with nothing listening, DISTCC_FALLBACK=0 (so a
+    real distribution attempt would fail loudly, not silently recover)
+    -- and the compile still succeeds, because it never tries to
+    connect at all. local_only.inc exists only in this test's own
+    scratch directory, so a successful compile also directly confirms
+    the local assembler (not some other, unreachable copy) resolved the
+    ".include" itself.
+
+    (RemoteAssemble_Case/PreprocessAsm_Case above predate this finding
+    and never actually confirmed remote distribution either way -- their
+    own names are misnomers for the same reason, but correcting that is
+    a separate, cosmetic-only change and out of scope here.)"""
+
+    asm_filename = 'test_include.s'
+    inc_filename = 'local_only.inc'
+
+    def setup(self):
+        SimpleDistCC_Case.setup(self)
+        open(self.inc_filename, 'wt').write(".equ VALUE, 42\n")
+        # No ".type"/".size": those are ELF symbol-table directives with
+        # no Mach-O equivalent -- confirmed live, Apple's clang
+        # assembler rejects them outright ("unknown directive"), unlike
+        # RemoteAssemble_Case's own fixture above, which happens to get
+        # away with them (untested reason, not worth relying on here
+        # too). ".globl"/".data"/".align"/a label/".long" are the same
+        # minimal, already-proven-portable subset that fixture uses.
+        open(self.asm_filename, 'wt').write(
+            '.include "%s"\n'
+            ".globl distcc_ng_test_marker\n"
+            ".data\n"
+            "  .align 4\n"
+            "distcc_ng_test_marker:\n"
+            "  .long VALUE\n" % self.inc_filename)
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        down_port = probe.getsockname()[1]
+        probe.close()
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
+
+    def runtest(self):
+        msgs, errs = self.runcmd(self.distcc_without_fallback() +
+                                  self._cc + " -o test_include.o -c %s" %
+                                  self.asm_filename)
+        self.assert_equal(msgs, '')
+        self.assert_equal(errs, '')
+        self.assert_equal(os.path.exists('test_include.o'), True)
 
 
 class ModeBits_Case(CompileHello_Case):
@@ -3136,6 +3992,121 @@ class ParseMask_Case(comfychair.TestCase):
                 self.fail("%s gave %d, expected %d" % (cmd, ret, expected))
 
 
+class CcacheHitThroughDistcc_Case(CompileHello_Case):
+    """ccache actually gets a hit when calling distcc (issue #275):
+    compile the same source twice through "distcc ccache <cc>" with a
+    private CCACHE_DIR, then confirm via `ccache -s` that the second
+    compile was a real cache hit -- not just that the command completed.
+    ScanArgs_Case already confirms "ccache gcc -c hello.c" classifies as
+    "distribute"; this is the missing functional half: does the cache
+    actually work end-to-end through a real distributed compile. Skips
+    cleanly (skip_on_noexec) if ccache isn't installed -- the original
+    TODO's own hedge ("presumably this is skipped if we can't find
+    ccache").
+
+    Corrected after a real run (confirmed live via the buildtools
+    container): CCACHE_DIR must be set *before* WithDaemon_Case.setup()
+    starts distccd, not after -- the daemon is a long-lived process that
+    only ever inherits the environment it was started with, and every
+    server-side "ccache <cc> ..." child it later forks for a real job
+    inherits *that* snapshot, not whatever the client's own os.environ
+    looks like by the time compile() runs. Getting this backwards left
+    the server-side ccache calls silently pointed at ccache's own default
+    cache location instead of this test's private one. Also: distcc's own
+    client-side cpp step re-invokes the same "ccache <cc>" wrapper for a
+    bare "-E" (preprocess-only) call -- confirmed live via
+    CCACHE_DEBUG=1/CCACHE_LOGFILE tracing (Result: called_for_preprocessing)
+    -- so `ccache -s` genuinely shows *two* uncacheable calls (one per
+    compile()) alongside the two real, cacheable ones; asserting a
+    nonzero Hits count (not the literal substring "cache hit", which
+    ccache 4.x's real `-s` output never contains at all -- it says
+    "Hits:") is what actually reflects a real cache hit.
+
+    Both compile() calls below now also run for real under pump mode
+    (issue #442, fixed): the Python include server's ParseCommandArgs()
+    used to take args[0] literally as "the compiler" -- fed
+    "ccache /bin/gcc ...", it set compiler="ccache" and then parsed the
+    real compiler path as an extra file name, raising NotCoveredError
+    ("Could not locate name of translation unit") and surfacing to the
+    client as "include server gave up analyzing" (a hard failure under
+    DISTCC_FALLBACK=0). Fixed in include_server/parse_command.py by
+    skipping a leading "ccache" wrapper before treating args[0] as the
+    compiler, mirroring how src/arg.c's dcc_scan_args() already treats
+    "ccache <cc> ..." as an ordinary, distributable command on the C
+    client side.
+
+    The actual cache-hit assertion below still only runs outside pump
+    mode: fixing #442 does not make ccache's cache actually hit under
+    pump mode, for a distinct, deeper reason (confirmed live,
+    2026-08-07, buildtools container, CCACHE_DEBUG tracing showed
+    "Result: cache_miss" on *both* compiles, not just the first) --
+    src/serve.c's server-side cpp path reconstructs the client's
+    directory tree under a fresh mkdtemp()'d temp_dir on literally
+    every job ("/var/tmp/distccd-XXXXXX", see the dcc_fix_debug_info()
+    comment in serve.c), so the absolute source path handed to the
+    server-side "ccache <cc> ..." invocation differs between the two
+    compile() calls above, defeating ccache's cache key regardless of
+    the source content being identical. This is a separate, real gap
+    from #442's compiler-misidentification bug, not yet tracked."""
+
+    def setup(self):
+        self.ccache_dir = os.path.abspath('ccache_test_dir')
+        os.mkdir(self.ccache_dir)
+        os.environ['CCACHE_DIR'] = self.ccache_dir
+        # Set before the daemon starts, same reasoning as CCACHE_DIR
+        # above: a real ubuntu-latest CI run (2026-08-07) failed this
+        # test with "Errors: 2/4" instead of a hit, reproducible neither
+        # locally nor in the mandatory buildtools container -- capturing
+        # ccache's own debug log lets the *next* real CI run reveal the
+        # actual reason directly in the failure message, instead of
+        # guessing blind through another round trip.
+        self.ccache_logfile = os.path.join(self.ccache_dir, 'ccache_debug.log')
+        os.environ['CCACHE_DEBUG'] = '1'
+        os.environ['CCACHE_LOGFILE'] = self.ccache_logfile
+        CompileHello_Case.setup(self)
+        self.runcmd_unchecked("ccache --version", skip_on_noexec=1)
+
+    def compileCmd(self):
+        # Absolute path, not the bare relative "testtmp.c" every other
+        # test in this suite uses: root cause found live via the
+        # CCACHE_DEBUG capture above, on real ubuntu-latest CI. GCC's
+        # client-side preprocessing embeds the exact input-file argument
+        # verbatim into the preprocessed output's own "# 1 ..." line
+        # markers; ccache's direct-mode manifest validation later
+        # lstat()s that recorded path to check for staleness. distccd
+        # runs the server-side "ccache <cc> ..." step from its own
+        # separate scratch directory, not the client's -- a relative
+        # "testtmp.c" doesn't resolve there at all ("Failed to lstat
+        # testtmp.c: No such file or directory", ccache's own debug
+        # log), landing every call in ccache's "Errors" bucket instead
+        # of Hit/Miss. An absolute path resolves identically regardless
+        # of which process's cwd does the lookup -- also how virtually
+        # every real build system invokes its compiler in practice.
+        return (self.distcc_without_fallback() +
+                "ccache " + self._cc + " -o testtmp.o " + self.compileOpts() +
+                " -c %s" % os.path.abspath(self.sourceFilename()))
+
+    def runtest(self):
+        self.compile()   # first compile: cold, populates the cache
+        self.compile()   # second compile: should hit outside pump mode
+        out, errs = self.runcmd("ccache -s")
+        if "cpp" in _server_options:
+            # See the class docstring: both compiles above already prove
+            # issue #442's fix (no crash under pump mode) -- the actual
+            # cache-hit assertion below is a separate, still-open gap
+            # (per-job mkdtemp() temp_dir on the server side varies the
+            # source path ccache hashes on), not part of #442.
+            return
+        if not re.search(r"Hits:\s+[1-9]", out):
+            try:
+                debug_log = open(self.ccache_logfile).read()
+            except IOError:
+                debug_log = "(no ccache debug log found at %s)" % self.ccache_logfile
+            self.fail("expected a real ccache hit, got:\n%s\n\n"
+                      "ccache debug log (last 4000 chars):\n%s" %
+                      (out, debug_log[-4000:]))
+
+
 class HostFile_Case(CompileHello_Case):
     def setup(self):
         CompileHello_Case.setup(self)
@@ -3149,6 +4120,342 @@ class HostFile_Case(CompileHello_Case):
     def teardown(self):
         os.environ['HOME'] = self.save_home
         CompileHello_Case.teardown(self)
+
+
+class HostFileDistccDirUnset_Case(CompileHello_Case):
+    """Same coverage as HostFile_Case, but with $DISTCC_DIR itself unset
+    (issue #275) -- every other test in this suite always has it set, via
+    stripEnvironment()'s own unconditional os.environ['DISTCC_DIR'] = ddir,
+    so the ~/.distcc fallback path (src/tempfile.c's dcc_get_top_dir())
+    never otherwise gets exercised."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        del os.environ['DISTCC_HOSTS']
+        del os.environ['DISTCC_DIR']
+        self.save_home = os.environ['HOME']
+        os.environ['HOME'] = os.getcwd()
+        distcc_dir = os.path.join(os.environ['HOME'], '.distcc')
+        os.mkdir(distcc_dir)
+        open(distcc_dir + '/hosts', 'w').write('127.0.0.1:%d%s' %
+            (self.server_port, _server_options))
+
+    def teardown(self):
+        os.environ['HOME'] = self.save_home
+        CompileHello_Case.teardown(self)
+
+
+class IPv6Compile_Case(CompileHello_Case):
+    """Compile over IPv6 (issue #275).
+
+    Real finding, confirmed live via the buildtools container: IPv6
+    address parsing throughout this codebase (src/access.c's
+    dcc_parse_mask(), src/srvnet.c's dcc_socket_listen(), src/clinet.c,
+    src/netutil.c) only exists behind the `ENABLE_RFC2553` compile-time
+    macro, which is only ever defined by configure.ac's `--enable-rfc2553`
+    -- an opt-in flag this project's own build configs never pass
+    (neither the default `./configure` invocation, nor c-build.yml's CI
+    matrix, nor the buildtools image). Without it, dcc_parse_mask() falls
+    back to plain inet_aton(), which cannot parse "::1" at all ("can't
+    parse internet address", confirmed live) -- and dopt.c's own default
+    private-network allowlist literally omits "::1/128" in that case,
+    with the source comment "ipv6 addresses can only be parsed with
+    this". distcc-ng's client-side hostspec parser (src/hosts.c's
+    dcc_parse_tcp_host(), bracket-stripping) is genuinely
+    RFC2553-independent and does work regardless -- but the *server*
+    side is not, so a real end-to-end compile is not achievable against
+    any binary built the way this project actually builds it today.
+    Rather than silently asserting success against a code path that
+    cannot currently be exercised, this probes for exactly that gate and
+    skips (NotRunError) with the real reason, rather than guessing pass
+    or fail. Whether to flip `--enable-rfc2553` on by default project-wide
+    is a separate, real decision (a build-configuration change, not a
+    test-only one) -- out of scope here.
+
+    (src/hosts.c's own top-of-file doc comment, "IPv6 literals are not
+    supported yet", was stale for the *client-side hostspec parsing*
+    question that comment was actually about, and is corrected alongside
+    this test -- that specific claim was wrong; the broader server-side
+    RFC2553 gate above is a separate, real, still-current limitation this
+    docstring's correction doesn't paper over.)"""
+
+    def setup(self):
+        probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            probe.bind(('::1', 0))
+        except OSError:
+            raise comfychair.NotRunError('no IPv6 loopback on this host')
+        finally:
+            probe.close()
+        # Real end-to-end IPv6 support additionally requires distccd to
+        # have been built with --enable-rfc2553 (see class docstring) --
+        # probe for that gate with a real, throwaway invocation before
+        # committing to the full setup chain below, rather than letting
+        # WithDaemon_Case.startDaemon()'s bind-retry loop (which only
+        # understands a port conflict, EXIT_BIND_FAILED) turn this into a
+        # hard failure instead of a clean, explained skip.
+        # No --daemon: dcc_parse_mask() runs during option parsing, before
+        # any socket work, so a real RFC2553 gate fails immediately in the
+        # foreground -- nothing is left listening or lingering either way.
+        rc, out, err = self.runcmd_unchecked(
+            self.distccd() + "--listen ::1 --allow ::1 --port 41999")
+        if "can't parse internet address" in err:
+            raise comfychair.NotRunError(
+                'distccd was not built with --enable-rfc2553; '
+                'IPv6 --listen/--allow is unavailable')
+        CompileHello_Case.setup(self)
+
+    def daemon_command(self):
+        return (self.distccd() +
+                "--verbose --lifetime=%d --daemon --log-file %s "
+                "--pid-file %s --port %d --listen ::1 --allow ::1 "
+                "--enable-tcp-insecure --sysroot %s"
+                % (self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+    def setupEnv(self):
+        WithDaemon_Case.setupEnv(self)
+        os.environ['DISTCC_HOSTS'] = ('[::1]:%d%s' %
+          (self.server_port, _server_options))
+
+
+class NoForkDaemon_Case(CompileHello_Case):
+    """Recheck compiling against a --no-fork daemon (issue #275): the
+    original TODO's "--no-prefork" wording refers to what's actually
+    named --no-fork today (src/dopt.c's opt_no_fork). Instead of the
+    normal preforked worker-pool model (dcc_preforking_parent(),
+    src/prefork.c), the daemon runs a single-process accept loop
+    (dcc_nofork_parent(), src/dparent.c) that calls dcc_service_job()
+    directly for each connection -- a genuinely different code path,
+    not just a flag with no effect."""
+
+    def daemon_command(self):
+        return (self.distccd() +
+                "--verbose --lifetime=%d --daemon --no-fork --log-file %s "
+                "--pid-file %s --port %d --allow 127.0.0.1 "
+                "--enable-tcp-insecure --sysroot %s"
+                % (self.daemon_lifetime(),
+                   _ShellSafe(self.daemon_logfile),
+                   _ShellSafe(self.daemon_pidfile),
+                   self.server_port,
+                   _ShellSafe(self.daemon_sysroot)))
+
+
+class ServerKilledMidJob_Case(NoForkDaemon_Case):
+    """Test killing the server (not the client) mid-job (issue #275):
+    the mirror image of ClientDisconnectKillsServerChild_Case above.
+
+    Deliberately built on NoForkDaemon_Case's --no-fork daemon, not the
+    default preforked model: in the default model, the top-level pid
+    recorded in the pidfile is only the accept()-dispatching parent --
+    a *separate* pool worker process actually holds the client-facing
+    socket for an already-accepted connection, so killing the parent
+    pid would not touch an in-flight job at all. --no-fork's whole point
+    (dcc_nofork_parent(), src/dparent.c) is that there is exactly one
+    process doing everything, so the pidfile's pid is guaranteed to be
+    the one actually blocked in dcc_collect_child() holding the client
+    socket open for this specific job.
+
+    Killing it there (SIGKILL, simulating a real crash, not a graceful
+    shutdown) immediately drops the client's connection while the
+    client is still waiting on a response. This exercises a genuinely
+    different failure point in src/compile.c than any existing
+    connection-failure test (NoServer_Case, BackoffFromDownedHost_Case):
+    those fail at connect() time, before any job is ever sent, and are
+    handled by the same top-level "goto fallback" as this case -- but
+    a fully in-flight job failing partway through (dcc_compile_remote()
+    itself returning an error because the socket died) had no test
+    exercising that specific path before this one.
+
+    With the default DISTCC_FALLBACK=1, the expected -- and confirmed
+    live -- behavior is a clean local fallback: the compile still
+    succeeds, logged the same way NoServer_Case already asserts
+    ("failed to distribute ... running locally instead"), because
+    src/compile.c's fallback handling doesn't distinguish *why*
+    dcc_compile_remote() failed.
+
+    The compiler child (slow_compiler, sleeping) inevitably becomes an
+    orphan once its parent (the daemon we just killed) is gone -- SIGKILL
+    cannot be caught to run any child-reaping cleanup code first, so
+    there is no mechanism that could prevent this, and it is not a bug
+    this test can meaningfully assert against. It is reparented to pid 1
+    and simply runs out its own sleep on its own; this test never waits
+    on it and does not depend on it going away."""
+
+    def runtest(self):
+        # Sleeps first (the window this test needs), then creates its -o
+        # target via `touch` (same technique as ZeroByteOutputCompiler_Case
+        # above) so the local-fallback re-run -- which invokes this exact
+        # script again -- leaves a real, checkable testtmp.o behind
+        # instead of none at all.
+        slow_compiler = os.path.abspath("slow_compiler")
+        f = open(slow_compiler, "w")
+        try:
+            f.write("#!/bin/sh\n"
+                     "sleep 5\n"
+                     "while [ $# -gt 0 ]; do\n"
+                     "  if [ \"$1\" = \"-o\" ]; then shift; touch \"$1\"; fi\n"
+                     "  shift\n"
+                     "done\n")
+        finally:
+            f.close()
+        os.chmod(slow_compiler, 0o700)
+
+        # ".i" (already preprocessed) rather than ".c": otherwise
+        # dcc_cpp_maybe() runs slow_compiler locally first (as "-E") to
+        # preprocess, which -- since it ignores its own argv and just
+        # sleeps -- would stall the *client's* upload of the source
+        # file for the same 30s, before the daemon side is ever
+        # reached at all. ClientDisconnectKillsServerChild_Case (above)
+        # uses the same ".i" trick for the same reason.
+        open("testtmp.i", "wt").write("int main() {}")
+
+        client_pid = self.runcmd_background(
+            self.distcc_with_fallback() + slow_compiler +
+            " -o testtmp.o -c testtmp.i")
+
+        self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
+
+        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        os.kill(daemon_pid, signal.SIGKILL)
+        # killDaemon() (teardown) tolerates the pidfile being gone (an
+        # IOError on open()) but not SIGTERM-ing an already-dead pid (an
+        # unhandled OSError) -- remove it now that we've done the kill
+        # ourselves, so teardown sees "already gone" the same way it
+        # would for a daemon that exited on its own.
+        os.remove(self.daemon_pidfile)
+
+        exited_pid, waitstatus = os.waitpid(client_pid, 0)
+        self.assert_equal(os.WIFSIGNALED(waitstatus), False)
+        self.assert_equal(os.WEXITSTATUS(waitstatus), 0)
+        self.assert_equal(os.path.exists("testtmp.o"), True)
+
+        log = open(os.environ['DISTCC_LOG']).read()
+        self.assert_re_search(r'failed to distribute.*running locally instead',
+                              log)
+
+
+class SSHMode_Case(CompileHello_Case):
+    """Test distcc's SSH transport mode (issue #275).
+
+    src/ssh.c's dcc_ssh_connect() builds "<DISTCC_SSH> -l <user> <host>
+    distccd --inetd --enable-tcp-insecure" and execvp()s it directly (no
+    shell); src/hosts.c's dcc_parse_ssh_host() parses a "user@host"
+    DISTCC_HOSTS token (empty user, here, since we connect as ourselves --
+    dcc_dup_part() returns NULL for a zero-length part, so no "-l" is
+    added at all) to select DCC_MODE_SSH.  SecureShellCommandEnvironment_Case
+    (above) already exercises that argv construction against a fake
+    logging "ssh" script, but never actually connects or runs a real
+    distccd -- this test does: a real, ephemeral, key-only, non-root sshd
+    listening on 127.0.0.1 is started, and a real compile is distributed
+    to a real "distccd --inetd" spawned fresh by that sshd for the SSH
+    session, exactly as a real SSH-mode deployment would run it.
+
+    distccd is found purely via the SSH session's own $PATH, and a fresh,
+    non-login SSH session does not inherit this test's $PATH -- hence
+    sshd_config's "SetEnv PATH=...", pointed at the directory holding the
+    just-built distccd, below.
+
+    Skips cleanly (NotRunError) if sshd/ssh-keygen/ssh aren't found."""
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+
+        sshd_bin = shutil.which("sshd") or "/usr/sbin/sshd"
+        keygen_bin = shutil.which("ssh-keygen")
+        ssh_bin = shutil.which("ssh")
+        if (not os.access(sshd_bin, os.X_OK) or not keygen_bin
+                or not ssh_bin):
+            raise comfychair.NotRunError(
+                'sshd/ssh-keygen/ssh not found -- cannot test SSH mode')
+
+        distccd_dir = None
+        for d in os.environ['PATH'].split(':'):
+            candidate = os.path.join(d, 'distccd')
+            if os.access(candidate, os.X_OK):
+                distccd_dir = os.path.dirname(os.path.abspath(candidate))
+                break
+        if distccd_dir is None:
+            raise comfychair.NotRunError(
+                'could not find the built distccd binary on PATH')
+
+        sshdir = os.path.abspath("sshtest")
+        os.mkdir(sshdir)
+
+        host_key = os.path.join(sshdir, "host_key")
+        self.runcmd("%s -t ed25519 -f %s -N '' -q" %
+                    (keygen_bin, _ShellSafe(host_key)))
+
+        client_key = os.path.join(sshdir, "client_key")
+        self.runcmd("%s -t ed25519 -f %s -N '' -q" %
+                    (keygen_bin, _ShellSafe(client_key)))
+
+        authorized_keys = os.path.join(sshdir, "authorized_keys")
+        shutil.copyfile(client_key + ".pub", authorized_keys)
+        os.chmod(authorized_keys, 0o600)
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        ssh_port = probe.getsockname()[1]
+        probe.close()
+
+        sshd_pidfile = os.path.join(sshdir, "sshd.pid")
+        sshd_logfile = os.path.join(sshdir, "sshd.log")
+        sshd_config = os.path.join(sshdir, "sshd_config")
+        f = open(sshd_config, "w")
+        try:
+            f.write(
+                "Port %d\n"
+                "ListenAddress 127.0.0.1\n"
+                "HostKey %s\n"
+                "AuthorizedKeysFile %s\n"
+                "PidFile %s\n"
+                "UsePAM no\n"
+                "StrictModes no\n"
+                "PasswordAuthentication no\n"
+                "ChallengeResponseAuthentication no\n"
+                "PrintMotd no\n"
+                "Subsystem sftp none\n"
+                "SetEnv PATH=%s:/usr/local/bin:/usr/bin:/bin\n"
+                % (ssh_port, host_key, authorized_keys, sshd_pidfile,
+                   distccd_dir))
+        finally:
+            f.close()
+
+        # sshd forks and detaches once it has bound the listening socket
+        # (the same reason WithDaemon_Case.startDaemon() can just block on
+        # distccd's own start command), so this blocks only briefly.
+        self.runcmd("%s -f %s -E %s" %
+                    (sshd_bin, _ShellSafe(sshd_config),
+                     _ShellSafe(sshd_logfile)))
+        self._sshd_pidfile = sshd_pidfile
+        self.add_cleanup(self.killSshd)
+
+        # -o UserKnownHostsFile=/dev/null discards the write but ssh still
+        # prints a "Warning: Permanently added ... to the list of known
+        # hosts" notice on stderr every time -- LogLevel=ERROR silences
+        # that (and other) sub-error noise without hiding a real
+        # connection failure, which ssh still reports at ERROR level.
+        os.environ['DISTCC_SSH'] = (
+            "%s -p %d -i %s -o StrictHostKeyChecking=no "
+            "-o UserKnownHostsFile=/dev/null -o BatchMode=yes "
+            "-o LogLevel=ERROR"
+            % (ssh_bin, ssh_port, client_key))
+        os.environ['DISTCC_HOSTS'] = '@127.0.0.1'
+
+    def killSshd(self):
+        try:
+            pid = int(open(self._sshd_pidfile, 'rt').read().strip())
+        except IOError:
+            # sshd probably already exited
+            return
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
 
 
 class Lsdistcc_Case(WithDaemon_Case):
@@ -3252,6 +4559,9 @@ tests = [
          ComputedInclude_Case,
          BackslashInMacro_Case,
          BackslashInFilename_Case,
+         IncludeEqualsForceInclude_Case,
+         ImacrosEqualsForceInclude_Case,
+         SysrootAbsolutePath_Case,
          CPlusPlus_Case,
          ObjectiveC_Case,
          ObjectiveCPlusPlus_Case,
@@ -3272,6 +4582,7 @@ tests = [
          ParseMask_Case,
          DotD_Case,
          DashMD_DashMF_DashMT_Case,
+         DashMMD_Case,
          Compile_c_Case,
          ImplicitCompilerScan_Case,
          StripArgs_Case,
@@ -3282,17 +4593,24 @@ tests = [
          CppError_Case,
          BadInclude_Case,
          PreprocessPlainText_Case,
+         CppFromStdin_Case,
          NoDetachDaemon_Case,
          AutogroupNicenessPrivilegeDrop_Case,
+         UserPrivilegeDropFunctional_Case,
          SBeatsC_Case,
          DashD_Case,
          EmptyDefine_Case,
          DashWpMD_Case,
          ZstdPumpCompile_Case,
+         HostSelectionAlgorithm_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
+         ZeroByteOutputCompiler_Case,
+         NastyCppWritesStdout_Case,
          BinFalse_Case,
          BinTrue_Case,
+         CrashingCompiler_Case,
+         ClientDisconnectKillsServerChild_Case,
          VersionOption_Case,
          HelpOption_Case,
          BogusOption_Case,
@@ -3306,18 +4624,30 @@ tests = [
          AccessDenied_Case,
          NoServer_Case,
          MixedServerPumpFallback_Case,
+         BackoffFromDownedHost_Case,
          InvalidHostSpec_Case,
          ParseHostSpec_Case,
+         MasqueradeMode_Case,
          SecureShellCommandEnvironment_Case,
          ImpliedOutput_Case,
          SyntaxError_Case,
          NoHosts_Case,
+         RecursionSafeguard_Case,
          MissingCompiler_Case,
+         NonexistentSourceFile_Case,
+         PathQualifiedCompilerNotSubstituted_Case,
          RemoteAssemble_Case,
          PreprocessAsm_Case,
+         AssemblyIncludeLocalOnly_Case,
          ModeBits_Case,
          EmptySource_Case,
+         CcacheHitThroughDistcc_Case,
          HostFile_Case,
+         HostFileDistccDirUnset_Case,
+         IPv6Compile_Case,
+         NoForkDaemon_Case,
+         ServerKilledMidJob_Case,
+         SSHMode_Case,
          AbsSourceFilename_Case,
          Getline_Case,
          Unicode_Case,

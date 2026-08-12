@@ -91,18 +91,45 @@ check_ac03() {
 }
 
 # OSPS-BR-01.01 / OSPS-BR-01.03: no workflow uses the dangerous
-# pull_request_target trigger, and no workflow interpolates untrusted
-# PR/issue/comment title or body text directly (this is a conservative,
+# pull_request_target trigger *in its actually-dangerous shape*, and no
+# workflow interpolates untrusted PR/issue/comment title or body text
+# directly.
+#
+# pull_request_target itself is not the risk -- it is safe (and a normal,
+# recommended pattern) for a workflow that only reads metadata (labels,
+# issue/PR numbers) via trusted, official actions, which is what both of
+# this repo's two users of it do (labeler.yml, add-to-project.yml: no
+# checkout, no execution of anything from the fork). The real OSPS-BR-01
+# concern is a workflow that ALSO checks out and runs the PR's own
+# (attacker-controlled) head commit while running with pull_request_target's
+# elevated, secret-bearing permissions -- confirmed by re-reading both files
+# directly against real repo state (2026-08-05) rather than trusting a bare
+# "does the string appear" grep, which flagged both as NotMet even though
+# neither is actually risky.
+#
+# So: only count a pull_request_target hit as risky if the SAME file also
+# references the PR's own head ref/sha (the standard way a workflow would
+# check out untrusted fork code) -- this is still a conservative,
 # over-inclusive grep across the whole file rather than a real YAML/shell
-# parse of run: step bodies -- it will flag a file that merely mentions the
-# pattern in a comment too, which is the safe direction for a recheck).
+# parse of run: step bodies, which is the safe direction for a recheck.
 check_br01() {
   local hits=0
-  if grep -rl "pull_request_target" .github/workflows/*.yml >/dev/null 2>&1; then
-    hits=1
-  fi
-  if grep -rE 'github\.event\.(pull_request|issue|comment)\.(title|body)' \
-      .github/workflows/*.yml >/dev/null 2>&1; then
+  local f
+  for f in .github/workflows/*.yml; do
+    if grep -q "pull_request_target" "${f}" 2>/dev/null \
+        && grep -qE 'pull_request\.head\.(sha|ref)' "${f}" 2>/dev/null; then
+      hits=1
+    fi
+  done
+  # A pure comment line (e.g. explaining *why* some other line reads this
+  # field) is not a real interpolation -- confirmed by a real false
+  # positive on changelog-check.yml, which only mentions
+  # github.event.pull_request.title inside a "# ..." explanatory comment,
+  # never actually uses it in a run: step. Strip whole-line comments
+  # before searching; a real inline interpolation never starts a line
+  # with "#" after leading whitespace, so this cannot mask an actual hit.
+  if grep -v '^[[:space:]]*#' .github/workflows/*.yml 2>/dev/null \
+      | grep -qE 'github\.event\.(pull_request|issue|comment)\.(title|body)'; then
     hits=1
   fi
   if [ "${hits}" -eq 0 ]; then
@@ -200,9 +227,12 @@ check_br05_do06() {
 }
 
 # OSPS-GV-01.01 / OSPS-GV-01.02: AGENTS.md still documents actual project
-# membership/roles.
+# membership/roles. This used to live in a "## Project Roles" prose
+# section; it's now rules 81/82 (numbered rule content, not a separate
+# header) since AGENTS.md is rule-content-only -- check for the actual
+# maintainer-identity rule text instead of a header that no longer exists.
 check_gv01() {
-  if grep -q "## Project Roles" AGENTS.md 2>/dev/null; then
+  if grep -q "may grant any maintainer-level approval this file requires" AGENTS.md 2>/dev/null; then
     echo "Met"
   else
     echo "NotMet"
@@ -332,7 +362,7 @@ main() {
   l2_lines="- AC-04.01 (workflow permissions spot-check): ${ac04}
 - BR-06.01 (build provenance attestation step present): ${br06}
 - BR-05.01/DO-06.01 (dependabot.yml + dependency policy doc): ${br05_do06}
-- GV-01.01/01.02 (AGENTS.md Project Roles section): ${gv01}
+- GV-01.01/01.02 (AGENTS.md rule 81, maintainer identity): ${gv01}
 - VM-01.01/03.01 (SECURITY.md documents GH Security Advisories): ${vm01_vm03}"
 
   # --- Level 3 proposal URL / summary -----------------------------------

@@ -33,6 +33,8 @@ on:
 permissions:
   contents: read
 
+# Both jobs below are deliberately excluded from issue #361's fix (caveat 3):
+# a real cost/benefit call left to the maintainer, not bundled into this pass.
 jobs:
   update_release_draft:
     # workflow_dispatch included: manually refreshing the draft release is

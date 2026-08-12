@@ -205,7 +205,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # Debian's packaged version is fine here. jq has no compiled runtime
       # embedding concern either (plain C).
       shellcheck \
-      jq && \
+      jq \
+      # openssh-server/openssh-client (issue #275/#440's SSHMode_Case):
+      # this test verifies distcc's SSH transport mode by starting a
+      # real, ephemeral, non-root sshd and connecting to it with a real
+      # ssh client -- confirmed live that GitHub's own ubuntu-latest/
+      # macOS-latest runner images already ship both, so the test
+      # already runs for real there; this image was the one place it
+      # was still silently NOTRUN-skipping, purely because openssh
+      # wasn't installed here, not because of any deliberate design
+      # choice to keep it out.
+      openssh-server \
+      openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
 # actionlint built from source in the actionlint-builder stage above (see
@@ -335,6 +346,53 @@ RUN set -eux; \
       || { echo "ERROR: dig did not resolve deb.debian.org to an IPv4 address"; dig deb.debian.org; exit 1; }; \
     nslookup deb.debian.org | grep -qi "Address" \
       || { echo "ERROR: nslookup did not resolve deb.debian.org"; nslookup deb.debian.org; exit 1; }; \
+    # --- openssh: must actually start a real sshd, connect with a real
+    #     ssh client, and run a real remote command over that connection
+    #     -- the same mechanism issue #275/#440's SSHMode_Case exercises
+    #     via a real "distccd --inetd" session over SSH. Runs here as
+    #     root (this RUN block's own context, before `USER verify`
+    #     below) since privilege-dropping semantics are SSHMode_Case's
+    #     own concern at container runtime, not what this build-time
+    #     self-test needs to prove -- only that real key exchange and
+    #     remote command execution actually work in this image. Neither
+    #     needs ptrace, so (like ss/dig above) this can be a real
+    #     functional test at build time rather than deferred to the
+    #     runtime selftest script. ---
+    ssh-keygen -q -t ed25519 -f ssh_host_key -N ''; \
+    ssh-keygen -q -t ed25519 -f ssh_client_key -N ''; \
+    cp ssh_client_key.pub ssh_authorized_keys; \
+    printf '%s\n' \
+      'Port 2222' \
+      'ListenAddress 127.0.0.1' \
+      'HostKey /tmp/verify-selftest/ssh_host_key' \
+      'AuthorizedKeysFile /tmp/verify-selftest/ssh_authorized_keys' \
+      'UsePAM no' \
+      'StrictModes no' \
+      'PasswordAuthentication no' \
+      'PrintMotd no' \
+      'Subsystem sftp none' \
+      > sshd_selftest_config; \
+    # Debian's sshd expects its privilege-separation directory to
+    # already exist (normally created by the openssh-server package's
+    # own postinst/init-script, neither of which runs in a plain
+    # Dockerfile RUN) -- without it, sshd fails to start at all with
+    # "Missing privilege separation directory: /run/sshd". ---
+    mkdir -p /run/sshd; \
+    /usr/sbin/sshd -f /tmp/verify-selftest/sshd_selftest_config \
+      -E /tmp/verify-selftest/sshd_selftest.log; \
+    SSH_OK=0; \
+    for _ in 1 2 3 4 5; do \
+      if ssh -p 2222 -i ssh_client_key -o StrictHostKeyChecking=no \
+           -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+           -o ConnectTimeout=2 -o LogLevel=ERROR \
+           127.0.0.1 'echo ssh_selftest_marker' > ssh_selftest_out.log 2>&1; then \
+        SSH_OK=1; break; \
+      fi; \
+      sleep 1; \
+    done; \
+    [ "${SSH_OK}" = "1" ] && grep -q "ssh_selftest_marker" ssh_selftest_out.log \
+      || { echo "ERROR: ssh did not receive the expected remote command output"; \
+           cat ssh_selftest_out.log; cat /tmp/verify-selftest/sshd_selftest.log; exit 1; }; \
     # --- jq: must actually parse and query real JSON, not just print a
     #     --version banner ---
     echo '{"tool":"jq","ok":true}' | jq -e '.ok == true' >/dev/null \
@@ -360,6 +418,18 @@ RUN set -eux; \
 # Non-root by default (matches docker/release/Dockerfile's convention);
 # a real distributed-compile verification run needs to bind a port and
 # read/write the mounted worktree, both of which work as a non-root user.
+#
+# Deliberately no build-arg-parameterized uid/gid here (issue #286
+# considered this -- "approach 1", a HOST_UID/HOST_GID build-arg matching
+# the caller's own host uid -- and confirmed empirically via this image's
+# own CI that it works cleanly). Not adopted: it would require rebuilding
+# this image locally with a matching build-arg any time the caller's own
+# uid differs from this image's baked-in 1000, which reintroduces exactly
+# the local build step issue #264's "pull and run, nothing to build"
+# requirement exists to avoid. `docker run --user $(id -u):$(id -g)`
+# (see doc/verification-checklist.md section 9) solves the same
+# bind-mount-ownership problem against this exact, unmodified,
+# already-published image instead, with no rebuild ever needed.
 RUN useradd --create-home --shell /bin/bash verify
 USER verify
 WORKDIR /home/verify
