@@ -100,10 +100,7 @@ jobs:
       # keeps pointing at the real bytes.
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # schedule always evaluates from the default branch (master); this
@@ -235,10 +232,7 @@ jobs:
       group: e2e-image-build-publish
       cancel-in-progress: false
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
 
       # Needed only for the ancestry check in the final "Move :latest" step
       # below (git merge-base --is-ancestor), not for the Docker build itself
@@ -256,8 +250,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Log in to GHCR
-        run: printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -510,6 +505,7 @@ jobs:
       contents: read
       issues: write
     steps:
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev

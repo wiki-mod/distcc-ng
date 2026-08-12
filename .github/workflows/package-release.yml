@@ -39,14 +39,52 @@ jobs:
       image_base: ${{ steps.meta.outputs.image_base }}
       pump_image_base: ${{ steps.meta.outputs.pump_image_base }}
       do_container: ${{ steps.meta.outputs.do_container }}
+      # Resolved once here rather than let build_container and
+      # publish_manifest each re-evaluate github.run_attempt in their own
+      # job context -- see issue #363. build_container is a matrix job
+      # (variant x platform), so giving IT a run_attempt output would hit a
+      # separate GitHub Actions sharp edge: a matrix job's own `outputs:`
+      # get overwritten by whichever leg finishes last, not merged. That
+      # overwrite would actually be harmless here (every leg would write the
+      # identical attempt number), but resolving it once in this
+      # non-matrixed job -- which is already a `needs:` of both
+      # build_container and publish_manifest -- avoids relying on that
+      # reasoning at all, which is the more honest fix per issue #363.
+      #
+      # Empirically confirmed (issue #363) that this is safe across a
+      # "Re-run failed jobs" retry, using a scratch probe workflow
+      # (PR #423, closed unmerged) with two jobs A->B: A always succeeds, B
+      # deliberately fails on attempt 1 then is rerun. Attempt 2's run
+      # https://github.com/wiki-mod/distcc-ng/actions/runs/31043025532
+      # (attempt 2) showed job B, running fresh with its own
+      # github.run_attempt == '2', reading needs.A.outputs.producer_attempt
+      # == '1' -- the value A set while it actually ran, in attempt 1, even
+      # though A itself was NOT re-run. So a job's outputs from a
+      # not-re-run attempt genuinely survive into later attempts via the
+      # `needs` context; reading needs.setup.outputs.run_attempt from both
+      # build_container and publish_manifest below is exactly this
+      # property, applied to setup instead of build_container. This also
+      # resolves the same open question PR #354's 7207b01 left unverified
+      # for e2e-image-build.yml.
+      #
+      # This value only ever changes if setup itself is re-run, which
+      # "Re-run failed jobs" never does once setup has succeeded (it almost
+      # always does, being pure string handling with no external
+      # dependency). GitHub's job-rerun API docs state that re-running a job
+      # also re-runs the jobs that depend on it -- not independently tested
+      # here, only relied on by inference -- so a deliberate, out-of-band
+      # rerun of just this job would be expected to cascade to
+      # build_container and publish_manifest too, keeping all three in
+      # step; see the "Upload this run's digest" step below for the one
+      # narrower rerun shape (a single already-succeeded matrix leg,
+      # forced in isolation) that neither this fix nor the prior code
+      # actually covers.
+      run_attempt: ${{ steps.meta.outputs.run_attempt }}
     steps:
       # Trial run (#58): audit-only egress monitoring, does not block any
       # traffic yet. Must be the very first step in every job -- it can't
       # retroactively cover network calls made by steps that already ran.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - name: Derive release metadata
         id: meta
         shell: bash
@@ -70,6 +108,7 @@ jobs:
             printf 'image_base=ghcr.io/%s/distcc-ng:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
             printf 'pump_image_base=ghcr.io/%s/distcc-ng-pump:%s\n' "${GITHUB_REPOSITORY_OWNER}" "${version}"
             printf 'do_container=%s\n' "${do_container}"
+            printf 'run_attempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
           } >> "${GITHUB_OUTPUT}"
 
   # --- Gate 1: real build + full make check before release ------------------
@@ -85,35 +124,12 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/build-and-check
         with:
-          apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-release-${{ github.run_id }}
-          restore-keys: |
-            ccache-release-
-      # Same autom4te.cache caching as c-build.yml's make_check job -- see
-      # that job for why restoring a stale entry here is safe, and why
-      # configure's own config.cache is deliberately NOT cached (its cached
-      # dependency-detection results aren't safely invalidated by a
-      # configure.ac/m4 hash alone).
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: autom4te.cache
-          key: autoconf-release-${{ hashFiles('configure.ac', 'm4/*.m4') }}
-          restore-keys: |
-            autoconf-release-
-      - run: ./autogen.sh
-      - run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3)"
-      - run: make
-      - run: make check
+          cache-key-prefix: ccache-release
+          autoconf-cache-key-prefix: autoconf-release
 
   # --- Gate 2: real distributed-compile e2e before release ------------------
   distributed_e2e:
@@ -126,13 +142,9 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Run distributed-compile end-to-end test
-        run: bash test/e2e/run-e2e.sh
+      - uses: $/.github/actions/distributed-e2e-test
 
   build_packages:
     needs: [setup, build_check, distributed_e2e]
@@ -150,15 +162,10 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
-        with:
-          apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+      - uses: $/.github/actions/install-packaging-deps
 
       - name: Build release packages
         shell: bash
@@ -263,10 +270,7 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve this leg's image tag and Dockerfile target
@@ -289,10 +293,9 @@ jobs:
             printf 'dockerfile_target=%s\n' "${dockerfile_target}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Log in to GHCR
-        shell: bash
-        run: |
-          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: $/.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
 
       - name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
         shell: bash
@@ -367,16 +370,39 @@ jobs:
           printf '%s\n' "${digest}" > "digest-${{ matrix.variant }}-${{ matrix.platform }}.txt"
 
       - name: Upload this run's digest
-        # Artifact name includes github.run_attempt: GitHub's v4 artifacts
-        # can be fetched across previous attempts of the same run unless
-        # explicitly scoped, so a fresh arm64 failure on a rerun (retrying
-        # the same workflow run) could otherwise still recover an earlier
-        # attempt's successful arm64 digest artifact -- the exact stale-
-        # pairing risk this digest mechanism exists to prevent, just moved
-        # from the registry tag to the artifact store.
+        # Artifact name includes an attempt discriminator: GitHub's v4
+        # artifacts can be fetched across previous attempts of the same run
+        # unless explicitly scoped, so an unscoped name could resolve a
+        # stale, earlier attempt's digest artifact instead of this run's own
+        # -- the stale-pairing risk this digest mechanism exists to prevent,
+        # just moved from the registry tag to the artifact store.
+        #
+        # Deliberately needs.setup.outputs.run_attempt (issue #363), NOT
+        # this job's own github.run_attempt -- see that job output's comment
+        # for the empirical confirmation that a not-re-run job's output
+        # really does survive a rerun, and for why this sidesteps a matrix
+        # job's own overwritten-outputs sharp edge.
+        #
+        # Why this still closes the original stale-pairing gap despite the
+        # suffix no longer changing on every attempt: "Re-run failed jobs"
+        # (the actual failure mode in #363) never re-executes a leg whose
+        # own conclusion was already success, and arm64's continue-on-error
+        # above means even a *failing* arm64 build is reported success --
+        # so within one run, each leg's upload step runs at most once across
+        # every attempt, and it always runs before setup could ever have
+        # been forced to produce a second, different run_attempt value.
+        # Every artifact that exists for this run therefore carries the one
+        # value setup resolved, and there is no earlier-attempt duplicate of
+        # the same name to collide with.
+        # Residual sharp edge, not fully closed by either the old or this
+        # scheme: manually force-rerunning one already-succeeded matrix leg
+        # in isolation (GitHub's per-job rerun, not "Re-run failed jobs")
+        # re-executes only that leg -- its sibling legs' artifacts, and
+        # setup's output, are untouched either way, so a maintainer doing
+        # this deliberately should expect to need a full rerun instead.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}-${{ needs.setup.outputs.run_attempt }}
           path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
 
   publish_manifest:
@@ -396,24 +422,33 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+      - uses: $/.github/actions/harden-runner
+      - uses: $/.github/actions/ghcr-login
         with:
-          egress-policy: audit
-      - name: Log in to GHCR
-        shell: bash
-        run: |
-          printf '%s\n' "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          token: ${{ github.token }}
 
       - name: Download this run's image digests
         # continue-on-error: true so a rerun where arm64 failed (and never
         # uploaded its digest artifact, see build_container's "Record this
         # run's pushed digest" step) doesn't fail this job -- amd64-only is
         # the intended degraded outcome, not an error.
+        #
+        # Pattern deliberately reads needs.setup.outputs.run_attempt, NOT
+        # this job's own github.run_attempt (issue #363, fixed the same way
+        # PR #354/7207b01 fixed e2e-image-build.yml): on a "Re-run failed
+        # jobs" where build_container already succeeded and only this job
+        # failed, build_container is not re-run while THIS job's own attempt
+        # number still increments, so re-deriving the pattern from
+        # github.run_attempt here would search for an artifact name no
+        # attempt ever produced, permanently and un-recoverably -- the exact
+        # bug this issue is about. needs.setup.outputs.run_attempt instead
+        # names the attempt setup itself last actually ran in, which is
+        # exactly the same value build_container's upload step used, since
+        # both read it from the same not-re-run job's carried-over output.
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: image-digest-${{ matrix.variant }}-*-${{ github.run_attempt }}
+          pattern: image-digest-${{ matrix.variant }}-*-${{ needs.setup.outputs.run_attempt }}
           path: digests
           merge-multiple: true
 
@@ -452,6 +487,28 @@ jobs:
             --tag "${IMAGE_BASE}" \
             "${tags[@]}"
 
+          # Move the floating `latest` tag to this release too, alongside
+          # the immutable version tag above -- only on a real tag push
+          # (github.ref_type == 'tag'), never on a manual/workflow_dispatch
+          # test build (which would otherwise clobber `latest` with an
+          # untagged, unreleased "manual-N" build). This doesn't relax
+          # doc/release-versioning.md's "no release may ever be untagged"
+          # rule: `latest` is a second, additional pointer at the exact
+          # same already-versioned manifest, not a replacement for the
+          # real <version>-NG tag, which is still what every immutable
+          # reference (the GitHub Release, the SBOM, this job's own digest
+          # pins) actually names. Simplifying assumption: this repo
+          # currently maintains one linear release train (no parallel
+          # maintenance branches releasing older major versions), so "most
+          # recently tagged" and "newest version" are always the same tag
+          # -- revisit this if that ever changes.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            latest_tag="${IMAGE_BASE%:*}:latest"
+            docker buildx imagetools create \
+              --tag "${latest_tag}" \
+              "${tags[@]}"
+          fi
+
   publish_github_release:
     needs: [setup, build_packages, publish_manifest]
     if: github.ref_type == 'tag'
@@ -466,10 +523,7 @@ jobs:
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
-      - name: Harden Runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
-        with:
-          egress-policy: audit
+      - uses: $/.github/actions/harden-runner
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: distcc-release-packages-${{ needs.setup.outputs.version }}

@@ -11,6 +11,608 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.5-NG] - 2026-08-11
+
+### Fixed
+
+- **`include_server/parse_command.py`**: pump mode's include server can now
+  see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
+  take `args[0]` literally as "the compiler" -- fed `ccache /bin/gcc ...`,
+  it set `compiler="ccache"` and then misparsed the real compiler path as
+  an extra file name, raising `NotCoveredError` ("Could not locate name of
+  translation unit") that surfaced to the client as "include server gave
+  up analyzing" (a hard failure under `DISTCC_FALLBACK=0`). Fixed by
+  skipping a leading `ccache` wrapper before treating `args[0]` as the
+  compiler, mirroring how `src/arg.c`'s `dcc_scan_args()` already treats
+  `ccache <cc> ...` as an ordinary, distributable command on the C client
+  side. `CcacheHitThroughDistcc_Case` (`test/testdistcc.py`) now exercises
+  this for real under pump mode instead of skipping. A real ccache cache
+  *hit* under pump mode remains a separate, still-open gap (distccd's
+  server-side cpp reconstructs the client tree under a fresh
+  `mkdtemp()`'d directory on every job, varying the absolute source path
+  ccache hashes on) -- not part of this fix.
+
+- **`docker/verify/Dockerfile`**: the buildtools verification image now installs
+  `openssh-server`/`openssh-client` (issue #275/#440). `SSHMode_Case`
+  (`test/testdistcc.py`) already runs for real on this project's actual CI
+  (`ubuntu-latest`/`macOS-latest` ship both preinstalled) -- this image was
+  the one environment where it still silently `NOTRUN`-skipped, purely
+  because openssh wasn't installed here, not by deliberate design. A real
+  build-time self-test (start a real ephemeral `sshd`, connect with a real
+  `ssh` client, run a real remote command) proves the same mechanism works
+  in this image too, matching the file's existing "real functional test,
+  not just `--version`" convention for every other tool.
+
+- **`pump.in`**: two `ShutDown()` process-liveness/identity bugs (issue #401,
+  split out from PR #400's review).
+  - **BSD/macOS `ps` fallback could miss a genuinely alive include
+    server.** `IncludeServerPidLooksRight()`'s non-`/proc` fallback called
+    plain `ps -o pid,args` with no process-selection flag; on BSD/macOS
+    `ps`, that silently omits a process with no controlling terminal --
+    exactly how the include server is started. Confirmed live on a real
+    `macOS-latest` GitHub Actions runner (not a PTY simulation): a
+    backgrounded, tty-less test child was `NOTFOUND` by the bare call, but
+    found by both `-A` and `-x`. Without this, a perfectly healthy include
+    server could be misreported as "doesn't look right", which callers
+    then read as "already gone, don't signal it" -- leaking it as an
+    unreaped orphan instead of shutting it down. Fixed by trying
+    `ps -A -o pid,args` first; the existing `-o pid,args`/bare `ps`
+    fallbacks stay for a `ps` that rejects `-A`.
+  - **The pre-SIGTERM send had no identity guard, only the SIGKILL
+    escalation did.** `pump --startup`/`pump --shutdown` are two separate
+    process invocations connected only by `$INCLUDE_SERVER_PID` in the
+    environment, so real wall-clock time can pass in which the real
+    include server exits and the OS recycles its pid for an unrelated
+    process before `--shutdown` runs -- and SIGTERM is just as fatal to
+    that unrelated process as SIGKILL. `IncludeServerPidLooksRight()` is
+    now checked before the SIGTERM send too, not just the SIGKILL
+    escalation. New regression test
+    `test/pump_shutdown_pid_identity_test.py` hands `pump --shutdown` the
+    pid of a real, unrelated running process and asserts it survives.
+- **Packaging (issue #412)**: this fork's `.rpm`/`.deb` packages installed
+  under the exact same paths as the real, independently-packaged `distcc`
+  (and, on Fedora/RHEL, the separately-named `distcc-server`), guaranteeing
+  a file collision on install rather than a version-skew warning --
+  co-installing both was never actually possible, just silently broken.
+  - `configure.ac`'s `AC_INIT` package name changed from `distcc` to
+    `distcc-ng`. Binary names (`distcc`, `distccd`, `pump`) are unchanged
+    -- this only renames the *package*, the same pattern as `syslog-ng`
+    shipping a binary still literally called `syslog`.
+    `scripts/check-release-version.sh`'s version-parsing regex updated to
+    match.
+  - `packaging/RedHat/rpm.spec`: added `Conflicts:`/`Obsoletes:` against
+    the real `distcc` (client subpackage) and `distcc-server` (server
+    subpackage, the real Fedora/RHEL name -- confirmed live via
+    `dnf repoquery`) packages, alongside the existing `Provides:` lines.
+    Verified live in a throwaway Fedora container, both install orders:
+    `rpm -U` over an installed real `distcc` cleanly obsoletes it; a plain
+    `rpm -i` of real `distcc` over an installed `distcc-ng` is correctly
+    rejected.
+  - `packaging/deb.sh`: `alien` does not carry `Provides`/`Conflicts`/
+    `Obsoletes` from the source RPM into the generated `.deb`'s control
+    file at all (confirmed by reading `Alien::Package::Deb::prep()` in
+    alien's own source). Added a post-processing step patching
+    `Conflicts: distcc` / `Replaces: distcc` into every `.deb` this script
+    produces -- Debian's real `distcc` package is a single unified
+    client+server package (confirmed live via packages.debian.org), so
+    both this fork's client- and server-derived `.deb`s need to conflict
+    with the same real package name, unlike the RPM side's two distinct
+    names. Also found and fixed the same latent bug in this file's own
+    pre-existing cleanup line while wiring this up: both it and the new
+    patching loop originally tried to match generated `.deb` filenames
+    by embedding `$PACKAGE`/`$VERSION` in a glob, but `alien` rewrites
+    the RPM version string into Debian's own syntax (e.g. `3.7.0-NG` ->
+    `3.7.0-1.NG`), so `$VERSION` never appears as a literal substring of
+    the real filename -- confirmed live (a real CI dispatch of this
+    script failed with `dpkg-deb: error: failed to read archive ...
+    No such file or directory` before this fix). Both now match a bare
+    `*.deb` instead.
+
+- **`.github/workflows/openssf-baseline-recheck.yml`**: `check_br07()`
+  (OSPS-BR-07.01, secret scanning + push protection) reads
+  `repos/{repo}`'s `security_and_analysis` field, which GitHub only
+  returns for a token with admin access to the repo -- `github.token`
+  never qualified regardless of the job's own `permissions:` block
+  (confirmed live, 2026-08-05: the field was absent, not null, from the
+  response for both `github.token` and the existing
+  `PROJECT_AUTOMATION_PAT`). `GHCR_PACKAGE_DELETE_PAT` now also carries
+  `repo` scope for this reason; the whole script (comment posting
+  included) runs as that token instead. `issues: write` dropped from the
+  job's `permissions:` block since it no longer affects anything once
+  `GH_TOKEN` is the PAT (issue #312).
+
+- **`nightly-publish.yml`**: its packaging apt list was missing
+  `libseccomp-dev`, which `package-release.yml`'s own list already had --
+  the two had silently drifted (exactly the risk issue #362 item 6
+  warns about). `libseccomp` is an optional, auto-detected dependency
+  (`configure.ac`'s `--with-seccomp`, `PKG_CHECK_MODULES([SECCOMP],
+  [libseccomp >= 2.4], ...)`), so the gap never failed a build -- it
+  silently built nightly binaries without the seccomp sandbox instead.
+  Fixed by consolidating both workflows onto one shared list (see
+  `.github/actions/install-packaging-deps/`, item 6 below) that includes
+  it; nightly builds now also get the seccomp sandbox. Deliberate
+  behavior change, not incidental to the consolidation.
+
+### Added
+
+- **`test/testdistcc.py`**: real new test coverage for two more of issue
+  #275's longstanding header-block `TODO`s.
+  - `HostSelectionAlgorithm_Case`: direct test of `src/where.c`'s
+    `dcc_lock_one()`. Read the function in full (the issue's own explicit
+    prerequisite) before concluding anything: it scans slot index 0, then
+    1, ..., trying every configured host in `DISTCC_HOSTS` list order at
+    each index and taking the first with a free slot -- fully
+    deterministic for *sequential* dispatch (concurrent dispatch under
+    real load additionally depends on which process's `flock()` the
+    kernel grants first, which cannot be made deterministic and this test
+    doesn't attempt to cover). Starts two real `distccd` instances with
+    one job slot each and a sleeping fake compiler so the first job's
+    lock stays held while the second is dispatched, confirming via each
+    daemon's own log which one actually served which compile.
+  - `MasqueradeMode_Case`: symlinks "gcc" to the just-built `distcc`
+    binary in a test-local directory, prepends that directory to `PATH`,
+    and invokes "gcc" directly (no "distcc" anywhere in the command
+    line). Confirmed by reading `src/climasq.c`'s
+    `dcc_support_masquerade()` in full: it finds the `PATH` component
+    containing the symlink actually exec'd, strips everything up to and
+    including it, and re-resolves the same basename against what's left
+    of `PATH` -- the real compiler is found instead of looping back into
+    distcc itself.
+- **`test/testdistcc.py`**: real new test coverage for seven of issue #275's
+  longstanding header-block `TODO`s, rather than only re-triaging them.
+  - `NoForkDaemon_Case`: recheck against a `--no-fork` daemon (the
+    header-block TODO's stale "--no-prefork" name for the real flag) --
+    `src/dparent.c`'s `dcc_nofork_parent()` is a genuinely different
+    single-process accept loop from the normal preforked worker-pool
+    model, previously never exercised by any test.
+  - `BackoffFromDownedHost_Case`: lists a real-but-nothing-listening TCP
+    port first and a real daemon second. Confirms `src/backoff.c`'s
+    `dcc_disliked_host()` marks the down host via a timefile (checked in
+    the client's own trace log), the actual cross-invocation backoff
+    persistence mechanism -- distinct from the existing
+    `MixedServerPumpFallback_Case`, which only covers a same-invocation
+    DNS-failure fallback and never touches `backoff.c` at all.
+  - The "Test path stripping" TODO removed as already resolved:
+    `GdbPrefixMap_Case` already exercises `tweak_prefix_map_arguments_for_server()`
+    (`src/serve.c`, landed closing issue #76) end-to-end -- a third
+    instance of the same "feature landed, header comment never removed"
+    pattern already found and fixed twice earlier in this same issue.
+  - `IPv6Compile_Case`: a real compile over `[::1]`, both `distccd --listen`
+    and the client's `[addr]:port` hostspec syntax. Both were already
+    address-family-agnostic (`getaddrinfo()`/`AF_UNSPEC` in `src/srvnet.c`
+    and `src/access.c`; `src/hosts.c`'s `dcc_parse_tcp_host()` already
+    strips the brackets) -- this was purely an untested path, and
+    `src/hosts.c`'s own top-of-file doc comment ("IPv6 literals are not
+    supported yet") was stale and corrected in the same change. Skips
+    cleanly if the host has no IPv6 loopback.
+  - `CppFromStdin_Case`: compiles `gcc -x c -c -o testtmp.o -` with real
+    source piped through stdin. `src/arg.c`'s `dcc_scan_args()` never
+    recognizes a bare `-` as source (`dcc_is_source()` matches only by
+    extension), so this exercises its "no visible input file" local-only
+    path -- a real, deliberate fallback, not a bug, but previously
+    completely untested.
+  - `NonexistentSourceFile_Case`: compiles a source file that was never
+    created and asserts exactly one "no such file" error is reported --
+    the original TODO's concern was a local-fallback retry after the
+    remote failure silently doubling the same error message.
+  - `HostFileDistccDirUnset_Case`: same coverage as `HostFile_Case`, but
+    with `$DISTCC_DIR` itself unset, exercising `src/tempfile.c`'s
+    `dcc_get_top_dir()` `~/.distcc` fallback -- every other test always
+    has `DISTCC_DIR` set via `stripEnvironment()`, so this path was never
+    otherwise reached.
+  - `ScanArgs_Case` gained a case for `gcc -o -output -c foo.c` (an output
+    filename that itself looks like a flag) -- confirmed via `src/arg.c`'s
+    `dcc_scan_args()` that a bare `-o` unconditionally takes the next argv
+    as the output, so this was already handled correctly, just untested.
+  - Declined, with reasoning recorded in the comment: "argument scanning
+    tests should be run with various hostspecs" -- `dcc_scan_args()` takes
+    only the compiler argv, never a hostspec, so the classification cannot
+    vary by hostspec in the current architecture; a hostspec-varying test
+    would be a structural no-op.
+- **`test/testdistcc.py`**: new `SSHMode_Case` (issue #275), the last
+  originally-open TODO with an existing, provably real implementation --
+  `src/ssh.c`'s `dcc_ssh_connect()`/`src/hosts.c`'s `dcc_parse_ssh_host()`
+  (`"@host"` SSH-mode hostspec, `DCC_MODE_SSH`) had zero test coverage
+  beyond `SecureShellCommandEnvironment_Case`'s fake-`ssh`-script argv
+  check, which never actually connects or runs a real `distccd`. This
+  test starts a real, ephemeral, key-only, non-root `sshd` on
+  `127.0.0.1` and distributes a real compile to a real
+  `distccd --inetd` spawned fresh by that `sshd` for the SSH session --
+  the same mechanism a real SSH-mode deployment uses. `distccd` is found
+  purely via the SSH session's own `$PATH`, which a fresh non-login SSH
+  session does not inherit from the test process, so `sshd_config` needs
+  its own `SetEnv PATH=...` pointed at the built binaries' directory.
+  Deliberately not added to any shared CI apt list: `openssh-server`/
+  `openssh-client` were installed by hand on a real host for the initial
+  live verification, so no new CI dependency was introduced on purpose.
+  In practice the test runs for real on every GitHub Actions run anyway
+  -- `sshd`/`ssh-keygen`/`ssh` are already preinstalled on the
+  `ubuntu-latest`/`macOS-latest` runner images this project's CI uses,
+  confirmed live (`SSHMode_Case OK` on both, real `sshd`/`ssh-keygen`
+  file access independently logged by Harden Runner). It only skips
+  cleanly (`NotRunError`) in environments that genuinely lack those
+  tools, such as this project's own local buildtools container.
+- **`test/testdistcc.py`**: `AssemblyIncludeLocalOnly_Case` and
+  `ServerKilledMidJob_Case` (issue #275), the last two originally-open
+  header-block `TODO`s.
+  - `AssemblyIncludeLocalOnly_Case`: proves a `.s` file's `.include` is
+    always resolved locally, never mis-resolved server-side.
+    `src/filename.c`'s own top-of-file comment states the design ("As of
+    0.10, .s and .S files are never distributed, because they might
+    contain '.include' pseudo-operations"), and `dcc_is_source()`/
+    `dcc_is_preprocessed()` confirm it's still true: both gate `.s`/`.S`
+    recognition behind `ENABLE_REMOTE_ASSEMBLE`, a macro never defined
+    anywhere in this project's build. Proven the same way
+    `RecursionSafeguard_Case` proves "never touches the network":
+    `DISTCC_HOSTS` points at nothing listening, `DISTCC_FALLBACK=0`, and
+    the compile still succeeds.
+  - `ServerKilledMidJob_Case`: kills the daemon (not the client) mid-job
+    via `SIGKILL` and confirms the client falls back locally by default
+    -- the mirror image of the existing `ClientDisconnectKillsServerChild_Case`.
+    Deliberately built on a `--no-fork` daemon: in the default preforked
+    model, the pidfile's pid is only the accept()-dispatching parent, not
+    the worker process actually holding an already-accepted connection,
+    so killing it wouldn't touch an in-flight job at all. Exercises a
+    fallback trigger point (`dcc_compile_remote()` failing after the job
+    was already dispatched) that `NoServer_Case`/`BackoffFromDownedHost_Case`
+    never reach, since those only ever fail at `connect()` time. Two real
+    bugs found live before this passed: using `.c` instead of an
+    already-preprocessed `.i` source stalled the client's own upload for
+    the fake sleeping compiler's full sleep window (`dcc_cpp_maybe()` runs
+    it locally as `-E` first); the fake compiler never created any output
+    file, so the local-fallback re-run left no object file behind either.
+- **`.github/actions/harden-runner/`**: new composite action consolidating
+  17 verbatim copies of the Harden Runner step (issue #362 item 1) across
+  `c-build.yml`, `e2e-image-build.yml`, `ghcr-cleanup.yml`,
+  `nightly-publish.yml`, `package-release.yml`, `verify-image-build.yml`.
+  Previously thought structurally blocked (a local composite action
+  requires `actions/checkout` to already have run, but Harden Runner must
+  remain the job's genuinely first step) -- unblocked by GitHub's new `$/`
+  self-repository `uses:` syntax (Changelog, 2026-07-30), which resolves
+  with no checkout required. Verified empirically against this repo's own
+  runners before rolling out (see issue #362's tracking comment for the
+  live evidence). New `.github/actionlint.yaml` suppresses actionlint's
+  current false positive on `$/` (not yet recognized upstream, tracked at
+  rhysd/actionlint#711), scoped to only `$/`-prefixed references so a
+  genuinely unpinned action elsewhere is still caught. The pinned
+  `step-security/harden-runner` SHA now only needs bumping in one place
+  instead of 17.
+- **Harden Runner egress audit added to previously-uncovered jobs** (issue
+  #361), a distinct gap from item 1 above: that item only consolidated the
+  17 jobs that already had the step duplicated inline, while a systematic
+  audit found 25 of 41 jobs across 14 workflow files had no Harden Runner
+  step at all, including several holding real write scopes or a long-lived
+  PAT. Added as the first step to: `nightly-publish.yml`'s `build_check`,
+  `distributed_e2e`, `publish`, `report`; `changelog-update-on-release.yml`'s
+  `update_changelog`; all three `master-heartbeat.yml` jobs; `c-build.yml`'s
+  `changes`, `popt_fallback_build`, `popt_vendor_check`; `codeql.yml`'s
+  `changes`; `add-to-project.yml`'s PAT-consuming job;
+  `openssf-baseline-recheck.yml`'s `recheck` (now runs as
+  `GHCR_PACKAGE_DELETE_PAT`, added after this issue's own table was written,
+  same "consumes a real long-lived secret" criterion); and
+  `e2e-image-build.yml`'s `report` (found applying the same fix already
+  made to the other two `report` jobs above, per AGENTS.md rule 73's
+  same-error-class sweep). Caveat 2 (whether the existing, OS-unguarded
+  Harden Runner step silently no-ops or warns on `c-build.yml`'s
+  `make_check (macOS-latest)` leg) resolved with a real run log: it
+  installs a full macOS system extension (network filter, DNS proxy,
+  process monitor) and completes with `outcome=success`, no warning --
+  safe to copy the same unguarded pattern elsewhere. Deliberately excluded,
+  each with its own one-line comment: `osv-scanner.yml`'s two jobs
+  (`uses:`-only reusable-workflow calls, no step list to prepend to --
+  caveat 1) and the remaining lint/label-only jobs across `actionlint.yml`,
+  `changelog-check.yml`, `codeql.yml`'s `analyze`, `release-drafter.yml`,
+  `scorecard.yml`, `clusterfuzzlite-pr.yml`, `labeler.yml` (caveat 3 --
+  short-job runtime roughly doubles for a step that adds little here,
+  left as an explicit maintainer decision rather than bundled in).
+  `egress-policy` stays `audit` everywhere; no move to block mode.
+- **`.github/actions/changed-files/`**: new composite action consolidating
+  the duplicated changed-file diff computation shared by `c-build.yml`'s
+  and `codeql.yml`'s own `changes` jobs (issue #362 item 2) -- the same
+  event-type base-SHA selection, the `workflow_dispatch`/`schedule`
+  force-all branch, and the fail-open guard for an un-diffable
+  before/base SHA. Each caller keeps its own, genuinely different
+  classification logic (one relevance boolean vs. three per-language
+  ones, plus `codeql.yml`'s master-ruleset force-all check) layered on
+  top of the shared `forced`/`changed_files` outputs. Uses the `$/`
+  self-repository syntax (see the Harden Runner consolidation, issue
+  #362 item 1, for the full rationale and `actionlint.yaml` suppression
+  this also needs).
+- **`.github/actions/ghcr-login/`**: new composite action consolidating 6
+  verbatim `docker login ghcr.io` steps (issue #362 item 3) across
+  `e2e-image-build.yml`, `ghcr-cleanup.yml`, `nightly-publish.yml`,
+  `package-release.yml` (x2), `verify-image-build.yml`. Takes the token
+  as an input rather than hardcoding `github.token`, since
+  `ghcr-cleanup.yml` logs in with `GHCR_PACKAGE_DELETE_PAT` (a classic
+  PAT with `delete:packages`) while every other caller uses the default
+  token. Uses the `$/` self-repository syntax (see issue #362 item 1 for
+  the full rationale and `actionlint.yaml` suppression this also needs).
+- **`.github/actions/install-build-deps/`**, **`install-packaging-deps/`**,
+  **`ccache-cache/`**: new composite actions consolidating the duplicated
+  apt package lists and ccache `actions/cache` setup shared by
+  `c-build.yml`, `nightly-publish.yml`, and `package-release.yml`
+  (issue #362 items 6/7). `install-build-deps` takes an optional `brew`
+  input so `c-build.yml`'s matrixed macOS/Linux step (which needs both
+  `apt:` and `brew:` in one call) can still pass its own Homebrew list
+  through unchanged.
+- **`.github/actions/build-and-check/`**: new composite action
+  consolidating the 5-of-7-steps-identical `build_check` job body shared
+  by `nightly-publish.yml` and `package-release.yml` (issue #362 item 4)
+  -- install deps, ccache + autom4te.cache setup, `autogen.sh`,
+  `configure`, `make`, `make check`. Checkout (ref differs per caller)
+  and Harden Runner (presence differs -- both jobs are pure local
+  build/test with no GitHub API or registry write either way, so this is
+  a per-caller call, not something the action should decide) stay with
+  each caller. The autom4te.cache caching that only `package-release.yml`
+  had is now always applied (see the `Fixed` entry for the apt-list
+  asymmetry item 4 also resolves, same principle).
+- **`.github/actions/distributed-e2e-test/`**: new composite action
+  consolidating the identical "checkout, then run
+  `test/e2e/run-e2e.sh`" job shared by `c-build.yml`,
+  `nightly-publish.yml`, and `package-release.yml`'s own
+  `distributed_e2e` jobs (issue #362 item 5). `master-heartbeat.yml`'s
+  own `run-e2e.sh` call is deliberately not touched -- it sets
+  step-level `env:` overrides (`E2E_CLIENT_SCRIPT`, `E2E_MAX_ATTEMPTS`,
+  etc.) that a composite action's internal steps would not inherit.
+- **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
+  new manual (`workflow_dispatch`-only for now) cleanup for this repo's own
+  GHCR container packages (`distcc-ng`, `-pump`, `-nightly`, `-buildtools`,
+  `-e2e`, individually selectable or all at once). Deletes untagged
+  versions beyond the 3 most recently created (kept as a rollback
+  fallback -- `distcc-ng-nightly` moves a single floating `latest` tag
+  daily, so each previous build becomes untagged the moment a new one
+  lands; deleting all of them immediately would leave no fallback if the
+  newest nightly turns out broken) and old disposable `manual-N`
+  test-build tags from `package-release.yml` beyond the two most recent
+  run numbers, guarded by a `dry_run` input (default `true`) that only
+  lists candidates without deleting anything. Before treating a version
+  as safely deletable, the
+  script re-resolves every currently-tagged reference's manifest and skips
+  any digest still referenced as a platform-specific child of a live
+  multi-arch manifest list, rather than trusting that this repo's own
+  pipeline always tags children explicitly (verified true today, but not
+  re-checked here as a standing guarantee). Deleting a package version
+  requires a classic PAT with `delete:packages` (the default `GITHUB_TOKEN`
+  cannot do this regardless of the `packages: write` permission, same
+  constraint already documented for `wiki-mod/lancache-ng`'s own
+  `GHCR_PACKAGE_DELETE_PAT`); this workflow reads that same secret name,
+  which must be created for this repo separately. Motivated by live GHCR
+  state at the time of writing: `distcc-ng-nightly` had 21 of 22 versions
+  untagged, `distcc-ng` had 26 of 91.
+- **`test/testdistcc.py`**: new `ClientDisconnectKillsServerChild_Case`,
+  covering two longstanding TODOs at once (both describe the same
+  underlying mechanism): a client disconnecting mid-job (`src/exec.c`'s
+  `dcc_collect_child()`) now has a real, direct test -- start a job with
+  `sleep` as the "compiler" (distcc doesn't check argv[0] is a real
+  compiler), `SIGKILL` the client mid-compile, and confirm from the
+  server's own log that it noticed the disconnect and killed the
+  compiler child.
+- **`.github/workflows/c-build.yml`**: new opt-in `sanitizer_check` job
+  (ASan/UBSan, `workflow_dispatch`/`schedule` only, never on push/PR) per
+  #266's recommendation -- `ASAN_OPTIONS=detect_leaks=0` so the
+  already-triaged, accepted process-lifetime allocation pattern (PR #352)
+  doesn't get re-reported as noise on every run; catches new memory-safety
+  and UB regressions going forward instead. Also `-fno-sanitize=alignment`:
+  bundled `lzo/minilzo.c`'s own memops macros deliberately do unaligned
+  loads/stores as a real, permanent optimization -- this job's first live
+  run failed `CompressedCompile_Case` purely on 60 UBSan misaligned-access
+  reports there, no other category, so that one check is scoped out rather
+  than disabling UBSan wholesale.
+- **`.github/workflows/package-release.yml`**: `publish_manifest` now also
+  moves a floating `:latest` tag to each release's container images
+  (`ghcr.io/wiki-mod/distcc-ng` and `-pump`), alongside the existing
+  immutable `<version>-NG` tag -- only on a real tag push, never on a
+  manual/`workflow_dispatch` test build. Previously no `:latest` tag
+  existed for the release images at all (maintainer decision, 2026-07-30:
+  this absence was itself an undiscussed choice by an earlier session, not
+  an intentional policy -- `doc/release-versioning.md`'s "no release may
+  ever be untagged" rule governs the GitHub Release/version tag, not
+  whether an *additional* convenience pointer may also exist).
+- **`AGENTS.md`**: added rule 77 -- when multiple findings share the same
+  origin (the same PR review cycle, the same file, the same underlying
+  mechanism), file them as one issue with clearly separated sections
+  instead of splitting them across separate issues, unless they genuinely
+  need independent verification environments or independent fix efforts.
+  Motivated by #401 and #402 having been filed as two separate issues for
+  the same `pump.in` `ShutDown()` PR #400 review cycle; #402 was folded
+  back into #401 and closed.
+- **`doc/release-checklist.md`**: new document gathering what must actually
+  be true before a release ships, distinct from `doc/release-versioning.md`
+  (the tagging/branching mechanics) and `doc/verification-checklist.md`
+  (per-change-category verification). States its own founding principle up
+  front: a green build proves nothing about correctness or safety -- issue
+  #360's own release-artifact seccomp regression shipped silently through
+  a build matrix that was green the entire time.
+
+### Documentation
+
+- **`test/testdistcc.py`**: second atomic pass over issue #275's remaining
+  header-block `TODO`s, each checked individually against the live source
+  (not sampled or trusted from a prior pass). Two fully resolved, removed:
+  "Have a little compiler that takes a very long time to run... try
+  interrupting the connection" (`ClientDisconnectKillsServerChild_Case`,
+  landed via PR #417, already covers this exact scenario -- the comment
+  was never removed at the time); "Test lzo is parsed properly"
+  (`CompressedCompile_Case` already does a real functional round-trip
+  compile through `,lzo`, plus `--lzo` runs the entire suite under lzo
+  compression and several hostspec-parsing tests already exercise `,lzo`
+  tokens). Two narrowed rather than removed, since only half of what they
+  describe is actually covered: the daemon-output-redirect TODO (every
+  daemon-based test already redirects to a file via `--log-file` and polls
+  it with `waitForLogPattern()`, and `BadLogFile_Case` covers the failure
+  case -- only the "also OK through syslogd" half remains open); the
+  `DISTCC_DIR` TODO (`HostFile_Case` already covers the *set* case --
+  every test's `stripEnvironment()` sets it unconditionally -- but no test
+  ever exercises it *unset*). Also removed the `TMPDIR`/`DISTCC_SAVE_TEMPS`
+  TODO, flagged as stale-and-removable back on 2026-07-21 but never
+  actually removed until now -- caught only by going back and re-checking
+  the *already-triaged* items too, not just the ones still marked open.
+- **`test/testdistcc.py`**: removed three stale header-block `TODO`s
+  (issue #275) confirmed already covered by current code, re-verified
+  against the live source rather than trusted from an earlier pass:
+  host files containing `\r` (`src/hosts.c`'s `dcc_dup_part()` calls and
+  its line-reading loop already include `\r` in every delimiter set),
+  compiling a 0-byte source file (`EmptySource_Case`), and dependency
+  generation with `-MD` (`DashMD_DashMF_DashMT_Case`/`DashWpMD_Case`).
+  The broader "-MD, -MMD, -M, etc." TODO is narrowed rather than removed
+  outright: `-MMD` and bare `-M` dependency generation still have no real
+  test coverage (only incidental touches -- an argument-scan
+  classification test and an unrelated `error_rc` workaround test --
+  neither verifies generated `.d` file contents for either flag).
+- **`support-upstream/`**: retroactively added the mandatory upstream-
+  relevance writeups for PRs #415-#419 (missed at the time each PR was
+  opened) -- the `--lifetime` test-daemon timing fix, the `--include=`/
+  `--imacros=`/`-isysroot`/`--sysroot=` server-side pump-mode rewriting
+  gaps, and the `runcmd_background()` shell-exec-vs-fork hazard. All
+  five confirmed present in upstream's own live source at commit
+  `8d569d19`; one (the shell-exec hazard) cross-references upstream's
+  own prior, narrower fix for the same root cause (PR #548).
+- **`doc/verification-checklist.md`**: Section 9's rootless-Docker note
+  corrected -- it previously claimed rootless Docker "was not empirically
+  tested" and that "GitHub-hosted runners don't offer a rootless Docker
+  daemon to test it against anyway," both since found false (#286): a real
+  two-container e2e (187 remote compiles), a real `make check` parity
+  check (142/16/0, `diff`-identical to the existing `--user` approach),
+  and a direct GitHub Actions probe all confirm rootless Docker works,
+  including on `ubuntu-latest`, with two extra `sudo`-requiring setup
+  steps. Conclusion recorded: not adopted for this repo's actual CI (no
+  isolation benefit worth the per-job setup cost on ephemeral,
+  single-tenant runners), kept as a documented option for a future
+  self-hosted runner. Also corrected the stale "138 OK" baseline citation
+  to the current 142/16/0 count (test suite grew by one case, PR #406,
+  since that number was first recorded).
+- **`doc/verification-checklist.md`**: three further findings from real
+  verification of #360/PR #408, added to Section 2 and Section 3a. (1) A
+  concrete technique for a real seccomp negative test: a marker binary
+  calling a denylisted syscall (`ptrace`), installed under the name the
+  client actually sends server-side, not the name the user typed --
+  `dcc_gcc_rewrite_fqn()` rewrites a bare `gcc` to the target triplet
+  before the request is sent, so a marker at the literal typed name is
+  silently never invoked. (2) How to verify a new hard dependency (e.g.
+  `libseccomp`) got correctly auto-declared on a real built `.rpm`/`.deb`,
+  not just detected by `configure` -- `rpm -qp --requires`/`dpkg-deb -I`
+  against a real CI-built artifact, obtainable without a real tag via
+  `gh workflow run package-release.yml -f publish_container=false`. (3) A
+  `gh run download` gotcha when an artifact's zip contains a same-named
+  file/directory collision -- fetch the raw zip via `gh api
+  .../artifacts/<id>/zip` instead.
+- **`doc/verification-checklist.md`**: three findings from real cross-
+  container verification of #287/PR #406 and #286/PR #405, added to
+  Section 3a and Section 9. (1) The daemon's compiler-name whitelist
+  rejects an absolute/directory-qualified compiler name before
+  `dcc_execvp()`'s own fallback is ever reached, unless
+  `--enable-tcp-insecure`/`DISTCC_CMDLIST` is set -- a change touching
+  `dcc_execvp()` needs both configurations tested, not just one. (2) A
+  reusable real two-container technique for compiler-identity bugs: a
+  same-named "marker" substitute compiler placed earlier on the
+  *server's* own `$PATH`, verified via the server's own log plus a
+  sentinel file, not the client's exit code alone. (3) `make check`'s
+  `maintainer-check-no-set-path` re-run can fail with `distccd: not
+  found` on some Docker hosts (confirmed reproducing identically on a
+  clean `current_dev` checkout, not caused by either PR, and not
+  reproducing in this repo's own GitHub Actions `make_check` job) --
+  root cause not determined, documented as a known, unresolved
+  host-specific quirk rather than a code defect.
+- **`README.md`**: added a "Quick start (Docker)" section -- previously had
+  zero mention of the published GHCR images at all, despite this fork
+  publishing three separate images (`distcc-ng`, `distcc-ng-pump`,
+  `distcc-ng-nightly`). References the real `:latest` tag added to the
+  release images by #389.
+- **`doc/docker.md`**: updated its release-image pull examples for #389's
+  new `:latest` tag on `distcc-ng`/`distcc-ng-pump` (current stable
+  release), alongside the existing immutable `<version>-NG` tags.
+- **`doc/verification-checklist.md`**: new Section 9 entry documenting a
+  real `distccd`-side bug found evaluating Alpine support (#398):
+  `src/fix_debug_info.c`'s `dcc_fix_debug_info()` does a raw byte
+  search-and-replace on ELF debug sections to rewrite the server-side
+  compilation directory back to the client-side path, assuming the
+  path string is still present byte-for-byte in the section's raw,
+  uncompressed bytes -- not that the section itself is plain text
+  (`.debug_info`/`.debug_line_str` are structured binary DWARF data
+  even uncompressed; the search-and-replace deliberately scans that
+  binary buffer without parsing it). On a real, current `alpine:latest`
+  (3.24.1, `gcc (Alpine) 15.2.0`), `.debug_line_str` gets the
+  `SHF_COMPRESSED` flag set once the baked-in compilation-directory
+  string is long enough to cross a compression-worthwhile size threshold
+  -- confirmed via `gcc -### -gz -g -c <file>` (a real source file is
+  required for this trace) that GCC dispatches this to
+  `as --compress-debug-sections=zlib`, i.e. the assembler decides and
+  performs the compression, not gcc itself. Confirmed size-dependent -- a
+  short test path can misleadingly appear fine, while a realistic
+  distccd compile-working-directory path (formed by
+  `make_temp_dir_and_chdir_for_cpp()` in `src/serve.c`, not
+  `dcc_make_tmpnam()`, which only names individual files) reliably
+  triggers it. The search string is genuine plain text once decompressed,
+  but never appears in the section's raw compressed bytes, so the rewrite
+  finds zero occurrences -- non-fatal and traced (`rs_trace()` logs it
+  under `distccd --verbose`), not silent -- and
+  `Gdb_Case`/`GdbOpt1-3_Case` fail in pump mode on Alpine as a result. A
+  real, current Debian 13 container (a different gcc version on a
+  different distro/container, not a controlled same-compiler comparison;
+  Debian's own repos, including trixie-backports, top out at gcc-14 --
+  no gcc-15 package exists there as of this writing) produces
+  uncompressed debug sections at the same path lengths instead --
+  `-gz=none` on the same Alpine gcc also removes the compression flag,
+  but this only shows the assembler flag controls compression, not that
+  the GCC version specifically is the cause (not tested with matched GCC
+  versions across platforms); described as toolchain/distro-configuration
+  -dependent rather than attributed to a specific cause. Not yet fixed as
+  of this entry -- documented so the finding isn't rediscovered from
+  scratch; see #398 for the full analysis and fix-direction discussion.
+
+### Security
+
+- **`.github/workflows/verify-image-build.yml`**: the "Real distcc-ng
+  build+test inside the image" and "ccache + Redis remote-storage
+  self-test" steps no longer run any part of `docker/verify`-based
+  verification as root (#286). Previously both ran the actual build+test
+  as container root, `chown -R`'d the bind-mounted checkout to the
+  image's non-root `verify` user, then dropped to that user via `su` --
+  a real, working fix (#264) for a uid mismatch between the runner's
+  checkout and the image's baked-in user, but root access was never
+  actually required for the mismatch itself. Replaced with
+  `docker run --user "$(id -u):$(id -g)"` plus an explicit
+  container-internal `-e HOME=...` -- no root, no `chown`, no `su`,
+  anywhere in this workflow. Confirmed via three real CI runs (baseline
+  root+chown+su vs. a build-arg-uid-match alternative vs. this `--user`
+  approach) that all three produce identical results (138 OK, 16 NOTRUN,
+  0 FAIL, byte-identical NOTRUN sets including root-gated tests like
+  `Unicode_Case` correctly still skipping); `--user` was chosen over the
+  build-arg alternative because it needs no image rebuild and works
+  directly against the already-published `distcc-ng-buildtools:latest`
+  image. `doc/verification-checklist.md` section 9 and `CONTRIBUTING.md`
+  updated to describe the new pattern and its real `HOME` requirement
+  (an early attempt pointed `HOME` at a host path never bind-mounted
+  into the container, producing a real `ccache: error: Permission
+  denied` -- fixed by using a container-internal path instead).
+- **`docker/release/Dockerfile`** and **`.github/workflows/package-release.yml`**:
+  every real, published `distccd` artifact -- the `distcc-ng`/`distcc-ng-pump`/
+  `distcc-ng-nightly` container images and the `.rpm`/`.deb` packages built by
+  the release workflow -- previously built with `HAVE_SECCOMP` never defined,
+  so the seccomp sandbox for remote compiler processes (`src/sandbox-seccomp.c`)
+  compiled out entirely and the daemon logged a warning about it on every
+  startup (#360). Neither `docker/release/Dockerfile`'s build stage nor
+  `package-release.yml`'s own `apt` dependency list ever installed
+  `libseccomp-dev` -- confirmed by a real before/after build+run comparison
+  (baseline logs `Warning: built without libseccomp support...`, fixed build
+  logs `seccomp sandbox enabled for remote compiler processes`) and a real
+  compile through the fixed image. Swept for the same gap across every other
+  release-relevant file per AGENTS.md rule 73: `docker/verify/Dockerfile`,
+  `test/e2e/Dockerfile`, and `test/e2e-full/Dockerfile` already had
+  `libseccomp-dev`; `package-release.yml`'s `apt` list (used to build the real
+  `.rpm`/`.deb` release packages via `scripts/build-release-packages.sh`) did
+  not and is fixed in the same change. **This means every previously
+  published `distcc-ng`/`distcc-ng-pump` container image up to and including
+  `3.6.4-NG` -- and the `:latest` tag, which pointed at `3.6.4-NG` until this
+  release -- ran without the seccomp sandbox for remote compiler processes,
+  confirmed live** (`docker pull ghcr.io/wiki-mod/distcc-ng:3.6.4-NG` still
+  logs `Warning: built without libseccomp support...` as of this release).
+  `3.6.5-NG` is the first published release where every real `distccd`
+  artifact actually has the sandbox compiled in and enforcing -- verified
+  with a real negative test against the actual published `3.6.5-NG` image
+  (a `ptrace()`-calling marker binary installed as the server-side compiler
+  returns `EPERM`, not a startup log line alone).
+
 ### Fixed
 
 - **`.github/workflows/codeql.yml`**: master's branch ruleset has a native
@@ -30,43 +632,153 @@ See `doc/release-versioning.md` for the full versioning and release process.
   green. Fixed by forcing all three languages relevant whenever the
   target branch is `master`, regardless of what actually changed --
   `current_dev` has no such ruleset rule and keeps the real path-filtered
-  optimization. Same fix as PR #427 (`current_dev`), ported directly here
-  ahead of the real promotion so PR #426 can actually merge -- same
-  pattern as PR #337 -> #338.
-
-### Added
-
-- **`.github/workflows/ghcr-cleanup.yml`** + **`.github/scripts/ghcr-cleanup.sh`**:
-  manual (`workflow_dispatch`-only for now) cleanup for this repo's own GHCR
-  container packages, added to master ahead of the real `current_dev` ->
-  `master` promotion because `workflow_dispatch` only fires from a workflow
-  file that already exists on the default branch. See the full changelog
-  entry on `current_dev` (PR #425) for the complete rationale; this is the
-  same one-off-exception copy, not a separate feature. Now keeps the 3
-  most recently created untagged versions per package as a rollback
-  fallback instead of deleting all of them -- the first real run against
-  `distcc-ng-nightly` deleted all 21 untagged versions with no retention
-  at all, which would have left no fallback if the newest nightly build
-  had turned out broken.
-
-### Security
-
-- **Bumped `actions/upload-artifact`** (`.github/workflows/c-build.yml`'s
-  coverage job) from v4.6.2 to v7.0.1 (Dependabot). Reviewed rather than
-  merged on CI-green alone: the new pinned digest
-  (`043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`) is the same one already in
-  use for `package-release.yml`'s and `scorecard.yml`'s own
-  `upload-artifact` steps, so this only brings the coverage job's pin in
-  line with the rest of the repo rather than introducing an unreviewed
-  version. No `with:` usage change needed -- v5/v6/v7's additions
-  (Node.js 24 runtime, direct single-file uploads) are additive and
-  don't affect this step's existing directory-archive usage; Node.js 24
-  is already satisfied by this repo's GitHub-hosted-only runners.
-
-## [3.6.4-NG] - 2026-07-30
-
-### Fixed
-
+  optimization.
+- **`scripts/check-pr-tracking-metadata.sh`**: the project-board GraphQL
+  query (and the response-count check just below it) built a `python3 -c`
+  program by interpolating shell values straight into the Python source
+  text, with `pr_number`/`project_number` landing as bare literals rather
+  than string literals -- a non-numeric value produced a Python
+  `SyntaxError` instead of a clear error, and in the worst case a crafted
+  value would execute as Python. `pr_number` comes from `PR_NUMBER`,
+  which was only ever checked for presence (`:?`), never for shape.
+  Fixed both instances by passing `project_owner`/`pr_number`/`repo_name`/
+  `project_number` through the environment and reading them via
+  `os.environ` inside the Python program instead, which removes the
+  interpolation entirely, and added an explicit `PR_NUMBER`
+  positive-integer validation alongside the existing `:?` presence check
+  so a bad value now fails with a readable `::error::` message naming the
+  variable. Severity is low: `changelog-check.yml`'s `workflow_dispatch`
+  input can set an arbitrary-string `PR_NUMBER` for the `require_changelog`
+  job in the same file, but (verified while fixing this) the
+  `pr_tracking_metadata` job that actually runs this script is gated to
+  `pull_request` events only and always sources `PR_NUMBER` from
+  `github.event.pull_request.number`, which is always an integer -- so
+  this is a hardening fix for a latent footgun and a defense against a
+  future workflow change, not a live path today. (#364)
+- **`.github/workflows/package-release.yml`**: `publish_manifest` derived the
+  digest-artifact pattern it downloads from its own `github.run_attempt`,
+  while `build_container` (a different job) uploaded using ITS OWN
+  `github.run_attempt`. On a real "Re-run failed jobs" -- where
+  `build_container` already succeeded and is therefore not re-run, but
+  `run_attempt` still increments for the jobs that are -- the two numbers
+  diverged and `publish_manifest` could never find the artifacts again,
+  making a real tagged release's manifest step permanently unrecoverable via
+  the normal retry path. Same error class as PR #354's `7207b01` fix for
+  `e2e-image-build.yml`; found by extending that sweep to the rest of the
+  repository (#363). Fix: the attempt number is now resolved once, as a job
+  output of the existing non-matrixed `setup` job (already a `needs:` of
+  both `build_container` and `publish_manifest`), and both producer and
+  consumer read `needs.setup.outputs.run_attempt` instead of re-evaluating
+  `github.run_attempt` in their own job context. Confirmed empirically
+  (scratch probe, PR #423, closed unmerged) that a not-re-run job's outputs
+  do survive into a later attempt via the `needs` context -- see the code
+  comment on `setup`'s `run_attempt` output for the real run URL and log
+  evidence, which resolves the same open question PR #354 had left
+  unverified.
+- **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
+  OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
+  trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
+  out or run anything from the fork, so carry none of the real risk), and a
+  pure explanatory comment in `changelog-check.yml` that only mentions
+  `github.event.pull_request.title`, never actually interpolates it. Now only
+  counts `pull_request_target` as risky when the same file also references
+  the PR's own head ref/sha (the actual dangerous combination), and strips
+  whole-line comments before searching for real interpolation. Re-verified
+  live against this repo's actual state (2026-08-05): now correctly reports
+  Met, and a constructed genuinely-risky pattern still correctly reports
+  NotMet.
+- **`src/serve.c`**: `-isysroot`/`--sysroot=` had no entry at all in
+  `tweak_include_arguments_for_server()`'s `include_options[]` -- the
+  include server already accounts for a client sysroot when deciding
+  which absolute system-include directories to mirror to the server, so
+  header content landed in the right place, but the compile command
+  sent to the server still named the client's own un-mirrored absolute
+  sysroot path, so the server compiler looked for headers there instead
+  of where they actually got mirrored to. Found via the same sweep that
+  found `--imacros=`'s gap, after fixing `--include=` (#416).
+- **`src/serve.c`, `include_server/parse_command.py`**: `--imacros=/path`
+  (GCC/Clang's combined form of `-imacros`) had the exact same gap just
+  fixed for `--include=` -- missing from both `tweak_include_arguments_
+  for_server()`'s `include_options[]` and `parse_command.py`'s
+  `CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS`. Found via a deliberate sweep
+  for the same bug pattern elsewhere after fixing `--include=` (#416).
+- **`src/serve.c`, `include_server/parse_command.py`**: `--include=/path`
+  (GCC/Clang's combined-form force-include flag) was not recognized by
+  either the server-side argument rewriter (`tweak_include_arguments_for_
+  server()`'s `include_options[]` had `-include` but not `--include=`) or
+  the include server's own option parser (`CPP_OPTIONS_APPEARING_AS_
+  ASSIGNMENTS` had `--sysroot` but not `--include`) -- so a header pulled
+  in only via `--include=/absolute/client/path` was never mirrored to the
+  server and its path was never rewritten to the server's root_dir in pump
+  mode, causing a real "file not found" server-side. Found compiling a
+  real `-sys` crate (`aws-lc-sys`/BoringSSL) through pump mode.
+- **`test/testdistcc.py`**: `daemon_lifetime()` (default 60s, up to 300s for
+  `BigAssFile_Case`) is a hard `alarm()`-based cutoff that kills the test
+  daemon once it expires, regardless of whether a test is still using it --
+  a slow/loaded CI runner could outrun it, killing the daemon mid-test
+  before `killDaemon()`'s own `SIGTERM` teardown got a chance to run
+  (#379). Since `killDaemon()` already reliably tears the daemon down via
+  `SIGTERM` at the end of every test, the alarm is only meant as a
+  leak-safety net for the abnormal case where teardown itself never runs --
+  raised 5x across the board (60s/120s/300s -> 300s/600s/1500s) so it no
+  longer races a normal, still-running test.
+- **`test/e2e-full/docker-compose.yml`**: added `init: true` to both
+  `ng-node` and `native-node` services -- neither declared a real init, so
+  PID 1 was `sleep infinity`, which never reaps a reparented child.
+  `run-bidirectional-e2e.sh` starts and `pkill`s `distccd` in place, once
+  per leg, inside the same long-lived container across all four legs
+  (direction A/B x plain/pump) -- the same gotcha `doc/verification-
+  checklist.md` section 9 already documents (originally fixed for
+  `verify-image-build.yml` via PR #375/#377, but this file predates that
+  sweep by a week and was never checked afterward). Confirmed live running
+  the harness's real Samba workload: 4 `[distccd] <defunct>` zombies per
+  container without the fix, 0 with it (#264, #413).
+- **`test/e2e-full/run-bidirectional-e2e.sh`**: `DAEMON_JOBS` default
+  changed from a hardcoded `4` to `$(nproc)`, matching the variable's own
+  doc comment ("distccd --jobs value (default: nproc)"), which the code
+  never actually implemented -- was silently capping the server side below
+  the client's own `$(nproc)`-scoped build parallelism (#264, #413).
+- **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
+  check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
+  not implement at all -- always failing, so `ShutDown()` never sent the
+  include server SIGTERM on any BusyBox-based system. The include server
+  (resident by design) then ran forever as an orphan, holding open
+  whatever stdout/stderr it inherited, hanging any caller reading
+  `pump`'s output through a pipe. Replaced with `kill -0` (POSIX-standard,
+  no `ps` dependency); the SIGKILL-escalation's PID-recycling safety check
+  now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
+  -o args=`, falling back to the previous `ps`-based check on non-Linux
+  platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
+  container comparison (#398). Two further BusyBox-specific gaps in the
+  same code path were found and fixed in the same change: (1) the zombie
+  check in `IncludeServerAlive()` used `ps -o state= -p`, which BusyBox
+  also rejects outright, so a zombied include server was misreported
+  alive for the full SIGTERM/SIGKILL wait timeouts -- fixed by reading
+  the state character from `/proc/$pid/stat` directly (a new `ProcState()`
+  helper) whenever `/proc` is available; (2) `IncludeServerPidLooksRight()`'s
+  non-`/proc` fallback still called `ps -p ... -o args=`, reintroducing the
+  same BusyBox-incompatible pattern -- replaced with `ps -o pid,args` (no
+  `-p`, which BusyBox still rejects) to force full-argv output (needed
+  since the include server's short command name is just its interpreter,
+  e.g. `python3`, not `include_server`), falling back to plain unadorned
+  `ps` only if `-o` itself isn't supported (e.g. Cygwin), grepped for the
+  pid as the leading field; a zero-data-row result from either form is
+  treated as "no identity information available" rather than a genuine
+  rejection, to avoid recreating the original leak on a truly procfs-less
+  system. All reproduced and verified against real Alpine 3.20/BusyBox and
+  Debian 13/GNU-procps containers: a deterministically-created zombie
+  process, a fake include_server-named process to exercise the ps-fallback
+  identity check, a genuinely procfs-less environment (`umount /proc`),
+  and a real python3 process whose comm name lacks "include_server" while
+  its argv contains it.
+- **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
+  log for a `COMPILE_OK` line exactly once, right after the compile
+  subprocess exited -- an intermittent CI failure (#300) showed this can
+  race the daemon's own log write for that same compile. Replaced with a
+  new shared `WithDaemon_Case.waitForLogPattern()` poll helper (moved out
+  of `AutogroupNicenessPrivilegeDrop_Case`'s previously-private copy, no
+  behavior change there), bounded at 5s. Verified with 10 consecutive runs
+  of the affected test, all green.
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
   still called `lcov --list` with the deprecated `lcov_branch_coverage` RC
   name, missed when the job's other three `lcov` invocations were already
@@ -88,10 +800,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   daemon) can then spin forever with nothing to reap the zombie -- a real,
   silent hang in this recurring CI job, not just an ad-hoc local run.
   Added `--init` so a real init (`tini`) reaps those zombies.
-
-## [3.6.3-NG] - 2026-07-30
-
-### Fixed
 
 - **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
   derives directly from `github.event_name`/`github.ref` instead of
@@ -551,6 +1259,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
   `man/distcc.1` zstd documentation) were already done in earlier PRs.
 
+- **`README.md`**: added the OpenSSF Baseline badge alongside the existing
+  Best Practices badge. `master` had picked up a Baseline-only swap during
+  an earlier release cut without going back through `current_dev`; both
+  badges now show on both branches instead of one replacing the other.
+
 ### Security
 
 - **`.github/workflows/osv-scanner.yml`**: dropped the redundant top-level
@@ -561,6 +1274,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
   grant. Top-level floor is now `contents: read` only. Resolves Scorecard's
   `TokenPermissionsID` finding #145 ("topLevel 'security-events' permission
   set to 'write'") — refs #222/#267.
+
+### Security
+
+- **`src/exec.c`**: `dcc_execvp()` no longer silently retries a failed
+  exec of a directory-qualified `argv[0]` (absolute, or relative with a
+  `/`) with a second `execvp()` on just its basename, letting the
+  exec'ing host's own `$PATH` resolve a substitute. This ran identically
+  on `distcc`'s local exec paths and on `distccd`'s exec of a compiler
+  chosen by a remote client; on a server whose toolchain layout differs
+  from wherever `argv[0]` was originally resolved, the fallback could
+  silently run a *different* same-named compiler than the one actually
+  selected, with no error and no signal to the client that a
+  substitution happened -- more likely to be exercised in practice since
+  #281's directory-preserving cross-compile resolution. A bare-basename
+  `argv[0]` is unaffected: POSIX `execvp()` already performs a full
+  `$PATH` search for it in the very first call, so there was never a
+  narrower name left to retry with in that case. Now any exec failure
+  fails loudly (`EXIT_COMPILER_MISSING`), which the client's existing
+  remote-compile-failure handling already turns into a logged warning
+  plus an automatic local retry (`DISTCC_FALLBACK=1`, the default) or a
+  clear hard failure (`DISTCC_FALLBACK=0`) -- never a silent
+  wrong-compiler "success." Refs #287.
 
 ## [3.6.1-NG] - 2026-07-23
 
