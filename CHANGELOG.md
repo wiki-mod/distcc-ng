@@ -11,6 +11,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+## [3.6.5-NG] - 2026-08-11
+
 ### Fixed
 
 - **`include_server/parse_command.py`**: pump mode's include server can now
@@ -130,6 +132,171 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `.github/actions/install-packaging-deps/`, item 6 below) that includes
   it; nightly builds now also get the seccomp sandbox. Deliberate
   behavior change, not incidental to the consolidation.
+
+- **`.github/workflows/codeql.yml`**: master's branch ruleset has a native
+  "Require code scanning results" rule (`code_scanning_tools: CodeQL,
+  alerts_threshold: all`), a second, independent mechanism from the
+  `required_status_checks` list that already required the three
+  `Analyze (c-cpp/python/actions)` check-runs to exist. This job's
+  per-language path filter (added for #267/#336's own reason -- avoid a
+  full C build + scan on doc/workflow-only diffs) satisfies the check-run
+  requirement with a green skip, but a skipped language never calls
+  `codeql-action/analyze`, so it never uploads a SARIF result either --
+  which the native rule treats as unsatisfied regardless of the
+  check-run's own conclusion, blocking merge with "Code scanning is still
+  expecting N results from CodeQL". Confirmed live on PR #426 (a
+  `.github/workflows` + `CHANGELOG.md`-only diff against master):
+  permanently merge-blocked this way even with all three `Analyze` checks
+  green. Fixed by forcing all three languages relevant whenever the
+  target branch is `master`, regardless of what actually changed --
+  `current_dev` has no such ruleset rule and keeps the real path-filtered
+  optimization.
+- **`scripts/check-pr-tracking-metadata.sh`**: the project-board GraphQL
+  query (and the response-count check just below it) built a `python3 -c`
+  program by interpolating shell values straight into the Python source
+  text, with `pr_number`/`project_number` landing as bare literals rather
+  than string literals -- a non-numeric value produced a Python
+  `SyntaxError` instead of a clear error, and in the worst case a crafted
+  value would execute as Python. `pr_number` comes from `PR_NUMBER`,
+  which was only ever checked for presence (`:?`), never for shape.
+  Fixed both instances by passing `project_owner`/`pr_number`/`repo_name`/
+  `project_number` through the environment and reading them via
+  `os.environ` inside the Python program instead, which removes the
+  interpolation entirely, and added an explicit `PR_NUMBER`
+  positive-integer validation alongside the existing `:?` presence check
+  so a bad value now fails with a readable `::error::` message naming the
+  variable. Severity is low: `changelog-check.yml`'s `workflow_dispatch`
+  input can set an arbitrary-string `PR_NUMBER` for the `require_changelog`
+  job in the same file, but (verified while fixing this) the
+  `pr_tracking_metadata` job that actually runs this script is gated to
+  `pull_request` events only and always sources `PR_NUMBER` from
+  `github.event.pull_request.number`, which is always an integer -- so
+  this is a hardening fix for a latent footgun and a defense against a
+  future workflow change, not a live path today. (#364)
+- **`.github/workflows/package-release.yml`**: `publish_manifest` derived the
+  digest-artifact pattern it downloads from its own `github.run_attempt`,
+  while `build_container` (a different job) uploaded using ITS OWN
+  `github.run_attempt`. On a real "Re-run failed jobs" -- where
+  `build_container` already succeeded and is therefore not re-run, but
+  `run_attempt` still increments for the jobs that are -- the two numbers
+  diverged and `publish_manifest` could never find the artifacts again,
+  making a real tagged release's manifest step permanently unrecoverable via
+  the normal retry path. Same error class as PR #354's `7207b01` fix for
+  `e2e-image-build.yml`; found by extending that sweep to the rest of the
+  repository (#363). Fix: the attempt number is now resolved once, as a job
+  output of the existing non-matrixed `setup` job (already a `needs:` of
+  both `build_container` and `publish_manifest`), and both producer and
+  consumer read `needs.setup.outputs.run_attempt` instead of re-evaluating
+  `github.run_attempt` in their own job context. Confirmed empirically
+  (scratch probe, PR #423, closed unmerged) that a not-re-run job's outputs
+  do survive into a later attempt via the `needs` context -- see the code
+  comment on `setup`'s `run_attempt` output for the real run URL and log
+  evidence, which resolves the same open question PR #354 had left
+  unverified.
+- **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
+  OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
+  trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
+  out or run anything from the fork, so carry none of the real risk), and a
+  pure explanatory comment in `changelog-check.yml` that only mentions
+  `github.event.pull_request.title`, never actually interpolates it. Now only
+  counts `pull_request_target` as risky when the same file also references
+  the PR's own head ref/sha (the actual dangerous combination), and strips
+  whole-line comments before searching for real interpolation. Re-verified
+  live against this repo's actual state (2026-08-05): now correctly reports
+  Met, and a constructed genuinely-risky pattern still correctly reports
+  NotMet.
+- **`src/serve.c`**: `-isysroot`/`--sysroot=` had no entry at all in
+  `tweak_include_arguments_for_server()`'s `include_options[]` -- the
+  include server already accounts for a client sysroot when deciding
+  which absolute system-include directories to mirror to the server, so
+  header content landed in the right place, but the compile command
+  sent to the server still named the client's own un-mirrored absolute
+  sysroot path, so the server compiler looked for headers there instead
+  of where they actually got mirrored to. Found via the same sweep that
+  found `--imacros=`'s gap, after fixing `--include=` (#416).
+- **`src/serve.c`, `include_server/parse_command.py`**: `--imacros=/path`
+  (GCC/Clang's combined form of `-imacros`) had the exact same gap just
+  fixed for `--include=` -- missing from both `tweak_include_arguments_
+  for_server()`'s `include_options[]` and `parse_command.py`'s
+  `CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS`. Found via a deliberate sweep
+  for the same bug pattern elsewhere after fixing `--include=` (#416).
+- **`src/serve.c`, `include_server/parse_command.py`**: `--include=/path`
+  (GCC/Clang's combined-form force-include flag) was not recognized by
+  either the server-side argument rewriter (`tweak_include_arguments_for_
+  server()`'s `include_options[]` had `-include` but not `--include=`) or
+  the include server's own option parser (`CPP_OPTIONS_APPEARING_AS_
+  ASSIGNMENTS` had `--sysroot` but not `--include`) -- so a header pulled
+  in only via `--include=/absolute/client/path` was never mirrored to the
+  server and its path was never rewritten to the server's root_dir in pump
+  mode, causing a real "file not found" server-side. Found compiling a
+  real `-sys` crate (`aws-lc-sys`/BoringSSL) through pump mode.
+- **`test/testdistcc.py`**: `daemon_lifetime()` (default 60s, up to 300s for
+  `BigAssFile_Case`) is a hard `alarm()`-based cutoff that kills the test
+  daemon once it expires, regardless of whether a test is still using it --
+  a slow/loaded CI runner could outrun it, killing the daemon mid-test
+  before `killDaemon()`'s own `SIGTERM` teardown got a chance to run
+  (#379). Since `killDaemon()` already reliably tears the daemon down via
+  `SIGTERM` at the end of every test, the alarm is only meant as a
+  leak-safety net for the abnormal case where teardown itself never runs --
+  raised 5x across the board (60s/120s/300s -> 300s/600s/1500s) so it no
+  longer races a normal, still-running test.
+- **`test/e2e-full/docker-compose.yml`**: added `init: true` to both
+  `ng-node` and `native-node` services -- neither declared a real init, so
+  PID 1 was `sleep infinity`, which never reaps a reparented child.
+  `run-bidirectional-e2e.sh` starts and `pkill`s `distccd` in place, once
+  per leg, inside the same long-lived container across all four legs
+  (direction A/B x plain/pump) -- the same gotcha `doc/verification-
+  checklist.md` section 9 already documents (originally fixed for
+  `verify-image-build.yml` via PR #375/#377, but this file predates that
+  sweep by a week and was never checked afterward). Confirmed live running
+  the harness's real Samba workload: 4 `[distccd] <defunct>` zombies per
+  container without the fix, 0 with it (#264, #413).
+- **`test/e2e-full/run-bidirectional-e2e.sh`**: `DAEMON_JOBS` default
+  changed from a hardcoded `4` to `$(nproc)`, matching the variable's own
+  doc comment ("distccd --jobs value (default: nproc)"), which the code
+  never actually implemented -- was silently capping the server side below
+  the client's own `$(nproc)`-scoped build parallelism (#264, #413).
+- **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
+  check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
+  not implement at all -- always failing, so `ShutDown()` never sent the
+  include server SIGTERM on any BusyBox-based system. The include server
+  (resident by design) then ran forever as an orphan, holding open
+  whatever stdout/stderr it inherited, hanging any caller reading
+  `pump`'s output through a pipe. Replaced with `kill -0` (POSIX-standard,
+  no `ps` dependency); the SIGKILL-escalation's PID-recycling safety check
+  now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
+  -o args=`, falling back to the previous `ps`-based check on non-Linux
+  platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
+  container comparison (#398). Two further BusyBox-specific gaps in the
+  same code path were found and fixed in the same change: (1) the zombie
+  check in `IncludeServerAlive()` used `ps -o state= -p`, which BusyBox
+  also rejects outright, so a zombied include server was misreported
+  alive for the full SIGTERM/SIGKILL wait timeouts -- fixed by reading
+  the state character from `/proc/$pid/stat` directly (a new `ProcState()`
+  helper) whenever `/proc` is available; (2) `IncludeServerPidLooksRight()`'s
+  non-`/proc` fallback still called `ps -p ... -o args=`, reintroducing the
+  same BusyBox-incompatible pattern -- replaced with `ps -o pid,args` (no
+  `-p`, which BusyBox still rejects) to force full-argv output (needed
+  since the include server's short command name is just its interpreter,
+  e.g. `python3`, not `include_server`), falling back to plain unadorned
+  `ps` only if `-o` itself isn't supported (e.g. Cygwin), grepped for the
+  pid as the leading field; a zero-data-row result from either form is
+  treated as "no identity information available" rather than a genuine
+  rejection, to avoid recreating the original leak on a truly procfs-less
+  system. All reproduced and verified against real Alpine 3.20/BusyBox and
+  Debian 13/GNU-procps containers: a deterministically-created zombie
+  process, a fake include_server-named process to exercise the ps-fallback
+  identity check, a genuinely procfs-less environment (`umount /proc`),
+  and a real python3 process whose comm name lacks "include_server" while
+  its argv contains it.
+- **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
+  log for a `COMPILE_OK` line exactly once, right after the compile
+  subprocess exited -- an intermittent CI failure (#300) showed this can
+  race the daemon's own log write for that same compile. Replaced with a
+  new shared `WithDaemon_Case.waitForLogPattern()` poll helper (moved out
+  of `AutogroupNicenessPrivilegeDrop_Case`'s previously-private copy, no
+  behavior change there), bounded at 5s. Verified with 10 consecutive runs
+  of the affected test, all green.
 
 ### Added
 
@@ -558,6 +725,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   of this entry -- documented so the finding isn't rediscovered from
   scratch; see #398 for the full analysis and fix-direction discussion.
 
+- **`README.md`**: added the OpenSSF Baseline badge alongside the existing
+  Best Practices badge. `master` had picked up a Baseline-only swap during
+  an earlier release cut without going back through `current_dev`; both
+  badges now show on both branches instead of one replacing the other.
+
 ### Security
 
 - **`.github/workflows/verify-image-build.yml`**: the "Real distcc-ng
@@ -601,172 +773,30 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `.rpm`/`.deb` release packages via `scripts/build-release-packages.sh`) did
   not and is fixed in the same change.
 
+- **`src/exec.c`**: `dcc_execvp()` no longer silently retries a failed
+  exec of a directory-qualified `argv[0]` (absolute, or relative with a
+  `/`) with a second `execvp()` on just its basename, letting the
+  exec'ing host's own `$PATH` resolve a substitute. This ran identically
+  on `distcc`'s local exec paths and on `distccd`'s exec of a compiler
+  chosen by a remote client; on a server whose toolchain layout differs
+  from wherever `argv[0]` was originally resolved, the fallback could
+  silently run a *different* same-named compiler than the one actually
+  selected, with no error and no signal to the client that a
+  substitution happened -- more likely to be exercised in practice since
+  #281's directory-preserving cross-compile resolution. A bare-basename
+  `argv[0]` is unaffected: POSIX `execvp()` already performs a full
+  `$PATH` search for it in the very first call, so there was never a
+  narrower name left to retry with in that case. Now any exec failure
+  fails loudly (`EXIT_COMPILER_MISSING`), which the client's existing
+  remote-compile-failure handling already turns into a logged warning
+  plus an automatic local retry (`DISTCC_FALLBACK=1`, the default) or a
+  clear hard failure (`DISTCC_FALLBACK=0`) -- never a silent
+  wrong-compiler "success." Refs #287.
+
+## [3.6.4-NG] - 2026-07-30
+
 ### Fixed
 
-- **`.github/workflows/codeql.yml`**: master's branch ruleset has a native
-  "Require code scanning results" rule (`code_scanning_tools: CodeQL,
-  alerts_threshold: all`), a second, independent mechanism from the
-  `required_status_checks` list that already required the three
-  `Analyze (c-cpp/python/actions)` check-runs to exist. This job's
-  per-language path filter (added for #267/#336's own reason -- avoid a
-  full C build + scan on doc/workflow-only diffs) satisfies the check-run
-  requirement with a green skip, but a skipped language never calls
-  `codeql-action/analyze`, so it never uploads a SARIF result either --
-  which the native rule treats as unsatisfied regardless of the
-  check-run's own conclusion, blocking merge with "Code scanning is still
-  expecting N results from CodeQL". Confirmed live on PR #426 (a
-  `.github/workflows` + `CHANGELOG.md`-only diff against master):
-  permanently merge-blocked this way even with all three `Analyze` checks
-  green. Fixed by forcing all three languages relevant whenever the
-  target branch is `master`, regardless of what actually changed --
-  `current_dev` has no such ruleset rule and keeps the real path-filtered
-  optimization.
-- **`scripts/check-pr-tracking-metadata.sh`**: the project-board GraphQL
-  query (and the response-count check just below it) built a `python3 -c`
-  program by interpolating shell values straight into the Python source
-  text, with `pr_number`/`project_number` landing as bare literals rather
-  than string literals -- a non-numeric value produced a Python
-  `SyntaxError` instead of a clear error, and in the worst case a crafted
-  value would execute as Python. `pr_number` comes from `PR_NUMBER`,
-  which was only ever checked for presence (`:?`), never for shape.
-  Fixed both instances by passing `project_owner`/`pr_number`/`repo_name`/
-  `project_number` through the environment and reading them via
-  `os.environ` inside the Python program instead, which removes the
-  interpolation entirely, and added an explicit `PR_NUMBER`
-  positive-integer validation alongside the existing `:?` presence check
-  so a bad value now fails with a readable `::error::` message naming the
-  variable. Severity is low: `changelog-check.yml`'s `workflow_dispatch`
-  input can set an arbitrary-string `PR_NUMBER` for the `require_changelog`
-  job in the same file, but (verified while fixing this) the
-  `pr_tracking_metadata` job that actually runs this script is gated to
-  `pull_request` events only and always sources `PR_NUMBER` from
-  `github.event.pull_request.number`, which is always an integer -- so
-  this is a hardening fix for a latent footgun and a defense against a
-  future workflow change, not a live path today. (#364)
-- **`.github/workflows/package-release.yml`**: `publish_manifest` derived the
-  digest-artifact pattern it downloads from its own `github.run_attempt`,
-  while `build_container` (a different job) uploaded using ITS OWN
-  `github.run_attempt`. On a real "Re-run failed jobs" -- where
-  `build_container` already succeeded and is therefore not re-run, but
-  `run_attempt` still increments for the jobs that are -- the two numbers
-  diverged and `publish_manifest` could never find the artifacts again,
-  making a real tagged release's manifest step permanently unrecoverable via
-  the normal retry path. Same error class as PR #354's `7207b01` fix for
-  `e2e-image-build.yml`; found by extending that sweep to the rest of the
-  repository (#363). Fix: the attempt number is now resolved once, as a job
-  output of the existing non-matrixed `setup` job (already a `needs:` of
-  both `build_container` and `publish_manifest`), and both producer and
-  consumer read `needs.setup.outputs.run_attempt` instead of re-evaluating
-  `github.run_attempt` in their own job context. Confirmed empirically
-  (scratch probe, PR #423, closed unmerged) that a not-re-run job's outputs
-  do survive into a later attempt via the `needs` context -- see the code
-  comment on `setup`'s `run_attempt` output for the real run URL and log
-  evidence, which resolves the same open question PR #354 had left
-  unverified.
-- **`.github/scripts/openssf-baseline-recheck.sh`**: `check_br01()` flagged
-  OSPS-BR-01 as NotMet on two real false positives -- any `pull_request_target`
-  trigger at all (even `labeler.yml`/`add-to-project.yml`, which never check
-  out or run anything from the fork, so carry none of the real risk), and a
-  pure explanatory comment in `changelog-check.yml` that only mentions
-  `github.event.pull_request.title`, never actually interpolates it. Now only
-  counts `pull_request_target` as risky when the same file also references
-  the PR's own head ref/sha (the actual dangerous combination), and strips
-  whole-line comments before searching for real interpolation. Re-verified
-  live against this repo's actual state (2026-08-05): now correctly reports
-  Met, and a constructed genuinely-risky pattern still correctly reports
-  NotMet.
-- **`src/serve.c`**: `-isysroot`/`--sysroot=` had no entry at all in
-  `tweak_include_arguments_for_server()`'s `include_options[]` -- the
-  include server already accounts for a client sysroot when deciding
-  which absolute system-include directories to mirror to the server, so
-  header content landed in the right place, but the compile command
-  sent to the server still named the client's own un-mirrored absolute
-  sysroot path, so the server compiler looked for headers there instead
-  of where they actually got mirrored to. Found via the same sweep that
-  found `--imacros=`'s gap, after fixing `--include=` (#416).
-- **`src/serve.c`, `include_server/parse_command.py`**: `--imacros=/path`
-  (GCC/Clang's combined form of `-imacros`) had the exact same gap just
-  fixed for `--include=` -- missing from both `tweak_include_arguments_
-  for_server()`'s `include_options[]` and `parse_command.py`'s
-  `CPP_OPTIONS_APPEARING_AS_ASSIGNMENTS`. Found via a deliberate sweep
-  for the same bug pattern elsewhere after fixing `--include=` (#416).
-- **`src/serve.c`, `include_server/parse_command.py`**: `--include=/path`
-  (GCC/Clang's combined-form force-include flag) was not recognized by
-  either the server-side argument rewriter (`tweak_include_arguments_for_
-  server()`'s `include_options[]` had `-include` but not `--include=`) or
-  the include server's own option parser (`CPP_OPTIONS_APPEARING_AS_
-  ASSIGNMENTS` had `--sysroot` but not `--include`) -- so a header pulled
-  in only via `--include=/absolute/client/path` was never mirrored to the
-  server and its path was never rewritten to the server's root_dir in pump
-  mode, causing a real "file not found" server-side. Found compiling a
-  real `-sys` crate (`aws-lc-sys`/BoringSSL) through pump mode.
-- **`test/testdistcc.py`**: `daemon_lifetime()` (default 60s, up to 300s for
-  `BigAssFile_Case`) is a hard `alarm()`-based cutoff that kills the test
-  daemon once it expires, regardless of whether a test is still using it --
-  a slow/loaded CI runner could outrun it, killing the daemon mid-test
-  before `killDaemon()`'s own `SIGTERM` teardown got a chance to run
-  (#379). Since `killDaemon()` already reliably tears the daemon down via
-  `SIGTERM` at the end of every test, the alarm is only meant as a
-  leak-safety net for the abnormal case where teardown itself never runs --
-  raised 5x across the board (60s/120s/300s -> 300s/600s/1500s) so it no
-  longer races a normal, still-running test.
-- **`test/e2e-full/docker-compose.yml`**: added `init: true` to both
-  `ng-node` and `native-node` services -- neither declared a real init, so
-  PID 1 was `sleep infinity`, which never reaps a reparented child.
-  `run-bidirectional-e2e.sh` starts and `pkill`s `distccd` in place, once
-  per leg, inside the same long-lived container across all four legs
-  (direction A/B x plain/pump) -- the same gotcha `doc/verification-
-  checklist.md` section 9 already documents (originally fixed for
-  `verify-image-build.yml` via PR #375/#377, but this file predates that
-  sweep by a week and was never checked afterward). Confirmed live running
-  the harness's real Samba workload: 4 `[distccd] <defunct>` zombies per
-  container without the fix, 0 with it (#264, #413).
-- **`test/e2e-full/run-bidirectional-e2e.sh`**: `DAEMON_JOBS` default
-  changed from a hardcoded `4` to `$(nproc)`, matching the variable's own
-  doc comment ("distccd --jobs value (default: nproc)"), which the code
-  never actually implemented -- was silently capping the server side below
-  the client's own `$(nproc)`-scoped build parallelism (#264, #413).
-- **`pump.in`**: `IncludeServerAlive()` used `ps -p PID` as its liveness
-  check, which BusyBox's `ps` (Alpine's default `/bin/sh` userland) does
-  not implement at all -- always failing, so `ShutDown()` never sent the
-  include server SIGTERM on any BusyBox-based system. The include server
-  (resident by design) then ran forever as an orphan, holding open
-  whatever stdout/stderr it inherited, hanging any caller reading
-  `pump`'s output through a pipe. Replaced with `kill -0` (POSIX-standard,
-  no `ps` dependency); the SIGKILL-escalation's PID-recycling safety check
-  now reads `/proc/$pid/cmdline` directly on Linux instead of `ps -p ...
-  -o args=`, falling back to the previous `ps`-based check on non-Linux
-  platforms. Found and verified via a real Alpine 3.20 vs. Debian 13
-  container comparison (#398). Two further BusyBox-specific gaps in the
-  same code path were found and fixed in the same change: (1) the zombie
-  check in `IncludeServerAlive()` used `ps -o state= -p`, which BusyBox
-  also rejects outright, so a zombied include server was misreported
-  alive for the full SIGTERM/SIGKILL wait timeouts -- fixed by reading
-  the state character from `/proc/$pid/stat` directly (a new `ProcState()`
-  helper) whenever `/proc` is available; (2) `IncludeServerPidLooksRight()`'s
-  non-`/proc` fallback still called `ps -p ... -o args=`, reintroducing the
-  same BusyBox-incompatible pattern -- replaced with `ps -o pid,args` (no
-  `-p`, which BusyBox still rejects) to force full-argv output (needed
-  since the include server's short command name is just its interpreter,
-  e.g. `python3`, not `include_server`), falling back to plain unadorned
-  `ps` only if `-o` itself isn't supported (e.g. Cygwin), grepped for the
-  pid as the leading field; a zero-data-row result from either form is
-  treated as "no identity information available" rather than a genuine
-  rejection, to avoid recreating the original leak on a truly procfs-less
-  system. All reproduced and verified against real Alpine 3.20/BusyBox and
-  Debian 13/GNU-procps containers: a deterministically-created zombie
-  process, a fake include_server-named process to exercise the ps-fallback
-  identity check, a genuinely procfs-less environment (`umount /proc`),
-  and a real python3 process whose comm name lacks "include_server" while
-  its argv contains it.
-- **`test/testdistcc.py`**: `MarchNativeDispatcherPath_Case` read the daemon
-  log for a `COMPILE_OK` line exactly once, right after the compile
-  subprocess exited -- an intermittent CI failure (#300) showed this can
-  race the daemon's own log write for that same compile. Replaced with a
-  new shared `WithDaemon_Case.waitForLogPattern()` poll helper (moved out
-  of `AutogroupNicenessPrivilegeDrop_Case`'s previously-private copy, no
-  behavior change there), bounded at 5s. Verified with 10 consecutive runs
-  of the affected test, all green.
 - **`.github/workflows/c-build.yml`**: the coverage job's job-summary step
   still called `lcov --list` with the deprecated `lcov_branch_coverage` RC
   name, missed when the job's other three `lcov` invocations were already
@@ -788,6 +818,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   daemon) can then spin forever with nothing to reap the zombie -- a real,
   silent hang in this recurring CI job, not just an ad-hoc local run.
   Added `--init` so a real init (`tini`) reaps those zombies.
+
+## [3.6.3-NG] - 2026-07-30
+
+### Fixed
 
 - **`.github/workflows/e2e-image-build.yml`**: `report`'s eligibility now
   derives directly from `github.event_name`/`github.ref` instead of
@@ -836,6 +870,81 @@ See `doc/release-versioning.md` for the full versioning and release process.
   which never reach this code path) (#266). Harmless in
   practice (a zero-length copy never dereferences anything), but now
   skipped outright when `cleanups_size == 0` rather than relying on that.
+
+- **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
+  ccache-distributed heartbeat (#263) failed building `argprocessing.cpp`,
+  and (once that was worked around) `core/statistics.cpp` too. Confirmed via
+  a real reproduction on an independent host (not WSL2) that both failures
+  are real GCC 12.2.0 (Debian bookworm) false positives
+  (`-Wmaybe-uninitialized` on a deeply-inlined `tl::expected`/
+  `std::optional<core::Statistic>` chain, then `-Wrestrict` with
+  obviously-impossible offsets) -- reproducing identically with a plain
+  local compile (`control-build.sh`, entirely independent of distcc), so
+  this was never a distcc-ng distribution bug. Root cause: ccache's own
+  CMake build auto-enables "dev mode" (and with it, `-Werror`) whenever it's
+  built from a git checkout -- exactly how both scripts build it. Both
+  scripts now pass two specific, named CMake overrides
+  (`-Wno-error=maybe-uninitialized -Wno-error=restrict`) instead of
+  disabling ccache's `-Werror` wholesale, so this heartbeat still catches a
+  real distcc-specific bug that happened to manifest as some other warning
+  class -- only the two diagnosed false positives are silenced. Verified with a
+  full real run of the two-container heartbeat harness: 75 remote jobs
+  completed successfully.
+
+- **`src/remote.c`, `src/util.c`**: `dcc_check_unsupported_directives()`
+  misreported a misleading `getline failed: Resource temporarily
+  unavailable` warning on plain end-of-file, not just on a genuine read
+  error. `getline()` returns -1 for both cases and does not guarantee
+  `errno` is reset to 0 on the EOF path, so a stale `errno` left over from
+  an unrelated earlier syscall in the same process (e.g. this same
+  client's own non-blocking network I/O) could be misattributed to this
+  read. Root-caused live via issue #263's `ccache_heartbeat` failure and
+  confirmed against the original upstream review (distcc/distcc#461): a v1
+  `errno = 0;` reset was removed in review for stylistic reasons only, no
+  technical justification (see AGENTS.md rule 72). `ferror(cpp_f)` alone
+  is not sufficient: this project's `util.c` compat `getline()` (used when
+  the system lacks its own, `#ifndef HAVE_GETLINE`) can fail via
+  `realloc()` without ever touching the `FILE` stream, so plain EOF and an
+  allocation failure look identical to `ferror()` there. Fixed by (1)
+  resetting `errno = 0` immediately before the loop so any nonzero value
+  seen afterwards is known to be fresh, then checking `ferror(cpp_f) ||
+  errno != 0`, and (2) having `util.c`'s compat `getline()` set
+  `errno = ENOMEM` explicitly on its allocation-failure path instead of
+  relying only on `realloc()`'s own side effect. Verified against glibc's
+  real `getline()` that `errno` stays 0 across a clean EOF on large
+  (multi-MB, multi-refill) files, so the added `errno` check does not
+  reintroduce a false positive. Purely a misleading-log-message fix --
+  `ret` (whether to recompile locally) was unaffected either way, so this
+  never masked or caused a real failure.
+
+- **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
+  doc-only PR (e.g. README.md) could never merge into `master`, because
+  master's branch ruleset requires `make_check (ubuntu-latest/macOS-latest)`,
+  `Bundled popt fallback build`, `Vendored popt/ version and compile check`,
+  `Distributed compile E2E (2-container)`, and `action-lint` to pass -- but
+  those workflows' own `paths-ignore`/`paths` filters meant the check-runs
+  never even started on a docs-only diff, and GitHub blocks a merge on a
+  required check that never ran, not just one that fails. Confirmed live on
+  PR #336. `c-build.yml` gained a cheap `changes` job (plain `git diff
+  --name-only`, no third-party action) that the four heavy jobs now depend
+  on and skip (not: never start) when nothing outside `**/*.md`/`doc/**`
+  changed; `workflow_dispatch`/`schedule` always force a full run.
+  `actionlint.yml` simply dropped its path filter entirely -- both its jobs
+  are cheap enough to just always run.
+
+- **`.github/workflows/c-build.yml`**: the `make_check` fix above (job-level
+  `if:`) turned out to be incomplete -- confirmed live on PR #336 again,
+  after the first fix (#337) had already merged. A matrixed job's `if:` is
+  evaluated *before* the matrix expands, so a false condition collapses
+  both legs into one plain `make_check` check-run instead of the two exact
+  contexts (`make_check (ubuntu-latest)`, `make_check (macOS-latest)`)
+  master's ruleset actually requires -- silently reproducing the "required
+  check never existed" problem one layer deeper. Moved the `if:` from the
+  job down to every individual step instead, which keeps the matrix
+  expansion (and both named check-runs) intact while still skipping all
+  real work on a docs-only diff. The other three gated jobs
+  (`popt_fallback_build`, `popt_vendor_check`, `distributed_e2e`) are not
+  matrixed and were unaffected.
 
 ### Added
 
@@ -988,82 +1097,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   empirical reproduction wherever one is feasible, before being treated as
   confirmed. A `security`-labeled issue is held to this bar strictly.
 
-### Fixed
-
-- **`test/e2e/client-heartbeat.sh`, `test/e2e/control-build.sh`**: the weekly
-  ccache-distributed heartbeat (#263) failed building `argprocessing.cpp`,
-  and (once that was worked around) `core/statistics.cpp` too. Confirmed via
-  a real reproduction on an independent host (not WSL2) that both failures
-  are real GCC 12.2.0 (Debian bookworm) false positives
-  (`-Wmaybe-uninitialized` on a deeply-inlined `tl::expected`/
-  `std::optional<core::Statistic>` chain, then `-Wrestrict` with
-  obviously-impossible offsets) -- reproducing identically with a plain
-  local compile (`control-build.sh`, entirely independent of distcc), so
-  this was never a distcc-ng distribution bug. Root cause: ccache's own
-  CMake build auto-enables "dev mode" (and with it, `-Werror`) whenever it's
-  built from a git checkout -- exactly how both scripts build it. Both
-  scripts now pass two specific, named CMake overrides
-  (`-Wno-error=maybe-uninitialized -Wno-error=restrict`) instead of
-  disabling ccache's `-Werror` wholesale, so this heartbeat still catches a
-  real distcc-specific bug that happened to manifest as some other warning
-  class -- only the two diagnosed false positives are silenced. Verified with a
-  full real run of the two-container heartbeat harness: 75 remote jobs
-  completed successfully.
-
-- **`src/remote.c`, `src/util.c`**: `dcc_check_unsupported_directives()`
-  misreported a misleading `getline failed: Resource temporarily
-  unavailable` warning on plain end-of-file, not just on a genuine read
-  error. `getline()` returns -1 for both cases and does not guarantee
-  `errno` is reset to 0 on the EOF path, so a stale `errno` left over from
-  an unrelated earlier syscall in the same process (e.g. this same
-  client's own non-blocking network I/O) could be misattributed to this
-  read. Root-caused live via issue #263's `ccache_heartbeat` failure and
-  confirmed against the original upstream review (distcc/distcc#461): a v1
-  `errno = 0;` reset was removed in review for stylistic reasons only, no
-  technical justification (see AGENTS.md rule 72). `ferror(cpp_f)` alone
-  is not sufficient: this project's `util.c` compat `getline()` (used when
-  the system lacks its own, `#ifndef HAVE_GETLINE`) can fail via
-  `realloc()` without ever touching the `FILE` stream, so plain EOF and an
-  allocation failure look identical to `ferror()` there. Fixed by (1)
-  resetting `errno = 0` immediately before the loop so any nonzero value
-  seen afterwards is known to be fresh, then checking `ferror(cpp_f) ||
-  errno != 0`, and (2) having `util.c`'s compat `getline()` set
-  `errno = ENOMEM` explicitly on its allocation-failure path instead of
-  relying only on `realloc()`'s own side effect. Verified against glibc's
-  real `getline()` that `errno` stays 0 across a clean EOF on large
-  (multi-MB, multi-refill) files, so the added `errno` check does not
-  reintroduce a false positive. Purely a misleading-log-message fix --
-  `ret` (whether to recompile locally) was unaffected either way, so this
-  never masked or caused a real failure.
-
-- **`.github/workflows/c-build.yml`, `.github/workflows/actionlint.yml`**: a
-  doc-only PR (e.g. README.md) could never merge into `master`, because
-  master's branch ruleset requires `make_check (ubuntu-latest/macOS-latest)`,
-  `Bundled popt fallback build`, `Vendored popt/ version and compile check`,
-  `Distributed compile E2E (2-container)`, and `action-lint` to pass -- but
-  those workflows' own `paths-ignore`/`paths` filters meant the check-runs
-  never even started on a docs-only diff, and GitHub blocks a merge on a
-  required check that never ran, not just one that fails. Confirmed live on
-  PR #336. `c-build.yml` gained a cheap `changes` job (plain `git diff
-  --name-only`, no third-party action) that the four heavy jobs now depend
-  on and skip (not: never start) when nothing outside `**/*.md`/`doc/**`
-  changed; `workflow_dispatch`/`schedule` always force a full run.
-  `actionlint.yml` simply dropped its path filter entirely -- both its jobs
-  are cheap enough to just always run.
-
-- **`.github/workflows/c-build.yml`**: the `make_check` fix above (job-level
-  `if:`) turned out to be incomplete -- confirmed live on PR #336 again,
-  after the first fix (#337) had already merged. A matrixed job's `if:` is
-  evaluated *before* the matrix expands, so a false condition collapses
-  both legs into one plain `make_check` check-run instead of the two exact
-  contexts (`make_check (ubuntu-latest)`, `make_check (macOS-latest)`)
-  master's ruleset actually requires -- silently reproducing the "required
-  check never existed" problem one layer deeper. Moved the `if:` from the
-  job down to every individual step instead, which keeps the matrix
-  expansion (and both named check-runs) intact while still skipping all
-  real work on a docs-only diff. The other three gated jobs
-  (`popt_fallback_build`, `popt_vendor_check`, `distributed_e2e`) are not
-  matrixed and were unaffected.
+- **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
+  `.github/workflows/clusterfuzzlite-pr.yml`): fuzzes `src/rpc.c`'s
+  `dcc_r_argv()` (the untrusted-peer argument-list parser) via libFuzzer
+  on every PR touching `src/**`. Closes Scorecard's `FuzzingID` finding
+  (refs #267). OSS-Fuzz itself was evaluated and rejected -- it requires
+  "a significant user base and/or [being] critical to the global IT
+  infrastructure" to be accepted, which a young fork does not realistically
+  meet; ClusterFuzzLite has no such gate. Scoped to PR-triggered fuzzing
+  only for now -- scheduled/batch continuous fuzzing needs a separate
+  corpus-storage repository, a bigger follow-on decision not bundled here.
 
 ### Changed
 
@@ -1082,19 +1125,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the-matrix pitfall as `make_check`, refs the `Fixed` entry above --
   avoided the same way, by gating steps instead of the job).
   `workflow_dispatch`/`schedule` always force a full scan.
-
-### Added
-
-- **ClusterFuzzLite integration** (`.clusterfuzzlite/`, `test/fuzz/fuzz_rpc_argv.c`,
-  `.github/workflows/clusterfuzzlite-pr.yml`): fuzzes `src/rpc.c`'s
-  `dcc_r_argv()` (the untrusted-peer argument-list parser) via libFuzzer
-  on every PR touching `src/**`. Closes Scorecard's `FuzzingID` finding
-  (refs #267). OSS-Fuzz itself was evaluated and rejected -- it requires
-  "a significant user base and/or [being] critical to the global IT
-  infrastructure" to be accepted, which a young fork does not realistically
-  meet; ClusterFuzzLite has no such gate. Scoped to PR-triggered fuzzing
-  only for now -- scheduled/batch continuous fuzzing needs a separate
-  corpus-storage repository, a bigger follow-on decision not bundled here.
 
 ### Security
 
@@ -1142,6 +1172,65 @@ See `doc/release-versioning.md` for the full versioning and release process.
   published (publish only happens on push to `current_dev`, not on this
   PR itself).
 
+### Documentation
+
+- **`AGENTS.md`**: rule 24 amended -- a deferral (leaving a review-thread
+  finding unresolved with only an explanation, rather than fixed) is not
+  itself a decision. The explanation must be put to the maintainer as an
+  explicit approval question, even when only reporting status, and must
+  keep being surfaced as an outstanding decision until an explicit answer
+  is given -- not presented as already approved, and not left for the
+  maintainer to discover unprompted. Found necessary on PR #354: a
+  delegated agent posted a sound deferral explanation on two review
+  threads and correctly left them unresolved per the rule's letter, but
+  never put the deferral itself to the maintainer as a question -- it was
+  only reported afterward as an already-settled fact.
+
+- **`AGENTS.md`**: added rule 72 -- before proposing a fix for something
+  that looks like a bug in existing code, verify it isn't a deliberate,
+  consistent design choice (check the pattern's history/upstream PR
+  review discussion, and whether it repeats consistently elsewhere in the
+  codebase) before concluding it's a defect. Found necessary while
+  investigating issue #263's `ccache_heartbeat` failure: an `errno`-after-
+  `getline()` check in `src/remote.c` turned out to be a real bug (its
+  original `errno = 0;` reset was removed in distcc/distcc#461's review
+  for stylistic reasons only, no technical justification), but a second
+  suspected issue in the same file (`gettimeofday()`'s warn-and-continue
+  handling) turned out to be a deliberate, project-wide convention used
+  identically in every other `gettimeofday()` call across the codebase.
+- **`AGENTS.md`**: added rule 73 -- when treating a found bug as an error
+  class to sweep for elsewhere, the minimum scope for that sweep is the
+  whole file the bug was found in, not just a `grep` for the identical
+  pattern or line shape. Companion to rule 72: reading the whole
+  `src/remote.c` file end-to-end (not just grepping for the exact
+  `errno`-after-`getline()` shape) is what surfaced the `gettimeofday()`
+  pattern as worth checking in the first place.
+- **`AGENTS.md`**: added rule 74 -- a Dependabot (or any automated)
+  dependency-bump PR must be reviewed before merging, not merged on
+  CI-green alone: verify the new pinned SHA against the upstream repo's
+  own tag refs, keep the `# vX.Y.Z` comment accurate, read the actual
+  release notes for the version range crossed, and explicitly decide
+  whether anything breaking/deprecated requires a change to how this repo
+  uses the dependency. Found necessary reviewing PR #342/#343 (10 bundled
+  GitHub Actions bumps): `github/codeql-action`'s bump was a real v3->v4
+  major-version jump, but the diff's own inline comment still read `# v3`
+  -- fixed directly on both PRs' branches as part of this review.
+
+- **`CLAUDE.md`**: added a "Key Design Decisions" bullet documenting the
+  protocol-version numbering policy from issue #304 -- versions 0-3999
+  reserved exclusively for whatever upstream `distcc/distcc` itself ever
+  defines, every fork-specific protocol extension numbered from 4000+
+  instead, applying to zstd's existing `DCC_VER_4000`/`DCC_VER_5000` and to
+  every future fork protocol extension including the planned native TLS
+  transport (#248). This was the last of #304's six required follow-up
+  actions; the other five (the `DCC_VER_4`/`DCC_VER_5` renumbering itself,
+  the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
+  `man/distcc.1` zstd documentation) were already done in earlier PRs.
+
+## [3.6.2-NG] - 2026-07-23
+
+### Added
+
 - **PR title Conventional-Commit lint**, adapted from `wiki-mod/lancache-ng`'s
   own AG-GH-018/`check-pr-title-convention.sh`. New `pr_title_convention`
   job in `.github/workflows/changelog-check.yml` validates a PR title
@@ -1175,17 +1264,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
-- **`AGENTS.md`**: rule 24 amended -- a deferral (leaving a review-thread
-  finding unresolved with only an explanation, rather than fixed) is not
-  itself a decision. The explanation must be put to the maintainer as an
-  explicit approval question, even when only reporting status, and must
-  keep being surfaced as an outstanding decision until an explicit answer
-  is given -- not presented as already approved, and not left for the
-  maintainer to discover unprompted. Found necessary on PR #354: a
-  delegated agent posted a sound deferral explanation on two review
-  threads and correctly left them unresolved per the rule's letter, but
-  never put the deferral itself to the maintainer as a question -- it was
-  only reported afterward as an already-settled fact.
 - **`AGENTS.md`**: rule 3 rewritten to cover PRs as well as issues (labels,
   Milestone, Project-board — previously issue-only) and to reference the
   new CI enforcement above. Added rule 70 -- a `release/X.Y.Z-NG` branch
@@ -1198,35 +1276,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
 - **`.github/pull_request_template.md`**: relaxed the "Linked Issues"
   section to explicitly say a standalone PR doesn't need an issue,
   matching rule 4's clarification.
-- **`AGENTS.md`**: added rule 72 -- before proposing a fix for something
-  that looks like a bug in existing code, verify it isn't a deliberate,
-  consistent design choice (check the pattern's history/upstream PR
-  review discussion, and whether it repeats consistently elsewhere in the
-  codebase) before concluding it's a defect. Found necessary while
-  investigating issue #263's `ccache_heartbeat` failure: an `errno`-after-
-  `getline()` check in `src/remote.c` turned out to be a real bug (its
-  original `errno = 0;` reset was removed in distcc/distcc#461's review
-  for stylistic reasons only, no technical justification), but a second
-  suspected issue in the same file (`gettimeofday()`'s warn-and-continue
-  handling) turned out to be a deliberate, project-wide convention used
-  identically in every other `gettimeofday()` call across the codebase.
-- **`AGENTS.md`**: added rule 73 -- when treating a found bug as an error
-  class to sweep for elsewhere, the minimum scope for that sweep is the
-  whole file the bug was found in, not just a `grep` for the identical
-  pattern or line shape. Companion to rule 72: reading the whole
-  `src/remote.c` file end-to-end (not just grepping for the exact
-  `errno`-after-`getline()` shape) is what surfaced the `gettimeofday()`
-  pattern as worth checking in the first place.
-- **`AGENTS.md`**: added rule 74 -- a Dependabot (or any automated)
-  dependency-bump PR must be reviewed before merging, not merged on
-  CI-green alone: verify the new pinned SHA against the upstream repo's
-  own tag refs, keep the `# vX.Y.Z` comment accurate, read the actual
-  release notes for the version range crossed, and explicitly decide
-  whether anything breaking/deprecated requires a change to how this repo
-  uses the dependency. Found necessary reviewing PR #342/#343 (10 bundled
-  GitHub Actions bumps): `github/codeql-action`'s bump was a real v3->v4
-  major-version jump, but the diff's own inline comment still read `# v3`
-  -- fixed directly on both PRs' branches as part of this review.
 
 - **`CONTRIBUTING.md`**: added an explicit statement that a behavior-changing
   or bug-fixing PR should add or update an automated test in
@@ -1235,22 +1284,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `OSPS-QA-06.03` (refs #267) — a real gap found while re-verifying Baseline
   Level 3 status against current `master` state rather than trusting an
   earlier recollection.
-
-- **`CLAUDE.md`**: added a "Key Design Decisions" bullet documenting the
-  protocol-version numbering policy from issue #304 -- versions 0-3999
-  reserved exclusively for whatever upstream `distcc/distcc` itself ever
-  defines, every fork-specific protocol extension numbered from 4000+
-  instead, applying to zstd's existing `DCC_VER_4000`/`DCC_VER_5000` and to
-  every future fork protocol extension including the planned native TLS
-  transport (#248). This was the last of #304's six required follow-up
-  actions; the other five (the `DCC_VER_4`/`DCC_VER_5` renumbering itself,
-  the `doc/protocol-4000.txt`/`doc/protocol-5000.txt` renames, and the
-  `man/distcc.1` zstd documentation) were already done in earlier PRs.
-
-- **`README.md`**: added the OpenSSF Baseline badge alongside the existing
-  Best Practices badge. `master` had picked up a Baseline-only swap during
-  an earlier release cut without going back through `current_dev`; both
-  badges now show on both branches instead of one replacing the other.
 
 ### Security
 
@@ -1262,28 +1295,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   grant. Top-level floor is now `contents: read` only. Resolves Scorecard's
   `TokenPermissionsID` finding #145 ("topLevel 'security-events' permission
   set to 'write'") — refs #222/#267.
-
-### Security
-
-- **`src/exec.c`**: `dcc_execvp()` no longer silently retries a failed
-  exec of a directory-qualified `argv[0]` (absolute, or relative with a
-  `/`) with a second `execvp()` on just its basename, letting the
-  exec'ing host's own `$PATH` resolve a substitute. This ran identically
-  on `distcc`'s local exec paths and on `distccd`'s exec of a compiler
-  chosen by a remote client; on a server whose toolchain layout differs
-  from wherever `argv[0]` was originally resolved, the fallback could
-  silently run a *different* same-named compiler than the one actually
-  selected, with no error and no signal to the client that a
-  substitution happened -- more likely to be exercised in practice since
-  #281's directory-preserving cross-compile resolution. A bare-basename
-  `argv[0]` is unaffected: POSIX `execvp()` already performs a full
-  `$PATH` search for it in the very first call, so there was never a
-  narrower name left to retry with in that case. Now any exec failure
-  fails loudly (`EXIT_COMPILER_MISSING`), which the client's existing
-  remote-compile-failure handling already turns into a logged warning
-  plus an automatic local retry (`DISTCC_FALLBACK=1`, the default) or a
-  clear hard failure (`DISTCC_FALLBACK=0`) -- never a silent
-  wrong-compiler "success." Refs #287.
 
 ## [3.6.1-NG] - 2026-07-23
 
