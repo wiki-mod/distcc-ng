@@ -32,35 +32,39 @@ run() {
   fi
 }
 
-# Assign the "Bug" issue type to $1 if it doesn't already have one.
-# `gh issue create` has no --type flag (confirmed against this environment's
-# real `gh issue create --help` -- a prior review finding assumed one exists
-# and was wrong); issue types are GraphQL-only (Issue.issueTypeId via the
-# updateIssue mutation). Called on every failure path (both a freshly
-# created issue and an existing one being commented on), not just at create
-# time: repository governance requires every issue to have a type, and a
-# one-shot best-effort attempt at creation time could otherwise leave a
-# standing issue permanently untyped if that one attempt failed (e.g. no
-# "Bug" type configured yet, or a transient API error) -- retrying here on
-# every subsequent failure self-heals that instead of giving up for good.
-# Not skipped in DRY_RUN for the read-only lookups (safe), only the actual
-# mutation is gated.
+# Assign the "Bug" issue type to $1 if it doesn't already have one. Issue
+# types require a separate GraphQL mutation (Issue.issueTypeId via
+# updateIssue) -- there is no create-time flag for this. Called on every
+# failure path (both a freshly created issue and an existing one being
+# commented on), not just at create time: repository governance requires
+# every issue to have a type, and a one-shot best-effort attempt at
+# creation time could otherwise leave a standing issue permanently untyped
+# if that one attempt failed (e.g. no "Bug" type configured yet, or a
+# transient API error) -- retrying here on every subsequent failure
+# self-heals that instead of giving up for good. Not skipped in DRY_RUN for
+# the read-only lookups (safe), only the actual mutation is gated.
 ensure_bug_type() {
-  local issue_number="$1" owner name issue_node_id current_type bug_type_id
+  local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
   owner="${REPO%%/*}"
   name="${REPO##*/}"
   # The single quotes below are deliberate -- the string contains GraphQL's
   # own "$owner"/"$name"/"$number" variable syntax (unrelated to shell),
   # bound via -F below, same pattern already used in
   # scripts/check-pr-tracking-metadata.sh.
+  # Captured as its own assignment (not fed directly into `read <<<...`) so
+  # a failed gh api call actually trips `set -e` here -- a command
+  # substitution's exit status is lost when it's used as a here-string's
+  # source, which would otherwise let `read` "succeed" against an empty
+  # string and this function wrongly report success.
   # shellcheck disable=SC2016
-  read -r issue_node_id current_type <<<"$(gh api graphql -f query='
+  issue_query_result="$(gh api graphql -f query='
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         issue(number: $number) { id issueType { name } }
       }
     }' -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
     --jq '.data.repository.issue | .id + " " + (.issueType.name // "-")')"
+  read -r issue_node_id current_type <<<"${issue_query_result}"
   if [ "${current_type}" != "-" ]; then
     return 0
   fi
@@ -96,6 +100,12 @@ existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
 
 if [ "${OUTCOME}" = "success" ]; then
   if [ -n "${existing}" ]; then
+    # Ensure the type is set before closing -- otherwise an issue that was
+    # created untyped (e.g. the creation-time mutation failed transiently)
+    # and then never fails again gets closed while still permanently
+    # untyped, with no further failure to retry the assignment on. `set -e`
+    # means a failure here aborts before the close below runs.
+    ensure_bug_type "${existing}"
     echo "success: closing standing ${LABEL} issue #${existing}"
     run gh issue comment "${existing}" --repo "${REPO}" \
       --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
