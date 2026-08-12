@@ -248,8 +248,18 @@ stderr:
         else:
             # parent
             exited_pid, waitstatus = os.waitpid(pid, 0)
-            stdout = open('%d.out' % pid).read()
-            stderr = open('%d.err' % pid).read()
+            # Explicit close (not just CPython's prompt refcounting) --
+            # same file-handle hygiene class as the sweep in
+            # test/testdistcc.py (issue #460 Finding 3); this base class'
+            # own read here has no correctness risk (the child is already
+            # reaped via waitpid() above, so there's no delayed-flush
+            # writer to race), but leaving it as a bare open().read()
+            # would be the one unswept instance of the same pattern on
+            # every single test's own runcmd() call path.
+            with open('%d.out' % pid) as f:
+                stdout = f.read()
+            with open('%d.err' % pid) as f:
+                stderr = f.read()
             return waitstatus, stdout, stderr
 
 

@@ -2739,7 +2739,7 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
         os.environ['DISTCC_VERBOSE'] = '1'
         # Explicit close (not just CPython's prompt refcounting) before
         # runcmd() below execs the distcc client, which itself reads and
-        # uploads this file (src/remote.c's dcc_x_file()) -- the fake
+        # uploads this file (src/bulk.c's dcc_x_file()) -- the fake
         # compiler never opens it at all. An implementation that defers
         # the close (PyPy) could otherwise hand the client a not-yet-
         # flushed file.
