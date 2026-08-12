@@ -11,6 +11,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`c-build.yml`**: a `report` job files/updates the standing `nightly-broken`
+  issue when the scheduled (nightly, 03:00 UTC) run of this workflow fails,
+  and closes it on the next success -- reusing the same `nightly-status`
+  composite action `nightly-publish.yml`/`master-heartbeat.yml` already use
+  for this, rather than a new, parallel mechanism. Previously, a
+  nightly failure (including the opt-in ASan/UBSan sanitizer check, per
+  #266) was only visible in the Actions tab, with no standing tracking issue
+  and no notification unless the viewer had personally enabled GitHub
+  Actions email/web notifications for scheduled workflows.
+
 ### Fixed
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,

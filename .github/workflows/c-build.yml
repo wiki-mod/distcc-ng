@@ -698,3 +698,41 @@ jobs:
       - run: |
           ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 make check
 
+  # Files/updates the standing nightly-broken issue when the scheduled
+  # (nightly, 03:00 UTC) run of this workflow fails, closes it on success --
+  # reuses the same composite action nightly-publish.yml and
+  # master-heartbeat.yml already use for the exact same purpose (issue #81),
+  # rather than adding a second, parallel reporting mechanism (AGENTS.md
+  # rule 69). Scoped to the schedule event only: push/pull_request failures
+  # are already visible through the normal PR/commit check UI and should not
+  # also file/comment on the standing nightly-broken issue every time a PR
+  # happens to fail.
+  #
+  # needs the 6 real jobs (not `changes`, which is just the gate, not a
+  # check in its own right); on `schedule`, changed-files/action.yml's own
+  # forced=true path means every one of these actually runs rather than
+  # legitimately skipping, so a plain success-of-all-6 check is correct here
+  # without needing to treat `skipped` as passing.
+  report:
+    needs:
+      [
+        make_check,
+        popt_fallback_build,
+        popt_vendor_check,
+        coverage,
+        distributed_e2e,
+        sanitizer_check,
+      ]
+    if: ${{ always() && !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/nightly-status
+        with:
+          outcome: ${{ (needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
+          scope: nightly health check (current_dev)
+
