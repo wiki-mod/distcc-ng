@@ -88,8 +88,11 @@ it ships.
    fails closed if the version is already tagged, or if `configure.ac`
    disagrees with the tag about to be created.
 4. Tag `vX.Y.Z-NG` on the release branch's HEAD.
-5. Move `CHANGELOG.md`'s `[Unreleased]` section content into a new, dated
-   `## [X.Y.Z-NG] - YYYY-MM-DD` section.
+5. Let `.github/workflows/changelog-update-on-release.yml` move the published
+   release notes into the dated `CHANGELOG.md` section after the release is
+   published. Verify that workflow succeeds; use its `workflow_dispatch` retry
+   path if the automatic `release: released` run fails. Do not edit the dated
+   section manually, because the release workflow is its single writer.
 6. Bump `current_dev`'s `configure.ac` to the next planned version immediately,
    so `current_dev` never again reports the just-released number.
 7. Promote to `master` only with explicit maintainer approval and thorough

@@ -556,6 +556,15 @@ jobs:
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb distcc-ng-*.spdx.json)
 
+          # A rerun for an already-published tag must never consume the newer
+          # rolling draft that release-drafter may have created in the meantime.
+          # Refresh only the immutable tag's assets and leave its published
+          # notes and the next release's draft untouched.
+          if gh release view "${TAG_NAME}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
+            exit 0
+          fi
+
           metadata_file="$(mktemp)"
           {
             printf 'Source commit: %s\n' "${GITHUB_SHA}"
@@ -577,39 +586,27 @@ jobs:
           draft_id="$(gh api "repos/${REPO}/releases" --paginate \
             --jq '[.[] | select(.draft == true)] | sort_by(.created_at) | last | .id // empty')"
 
-          notes_file="$(mktemp)"
-          if [ -n "${draft_id}" ]; then
-            gh api "repos/${REPO}/releases/${draft_id}" --jq '.body' > "${notes_file}"
-            printf '\n' >> "${notes_file}"
-          else
-            # No release-drafter draft found (e.g. it never ran, or was
-            # manually deleted) -- fall back to a minimal notes body
-            # rather than failing the release outright. A missing draft
-            # here is itself a real gap worth investigating separately,
-            # not something to silently paper over.
-            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n' > "${notes_file}"
-            echo "::warning::No release-drafter draft release found; publishing with fallback notes instead of its real content."
+          if [ -z "${draft_id}" ]; then
+            echo "::error::No release-drafter draft release found; refusing to publish incomplete release notes."
+            exit 1
           fi
+
+          notes_file="$(mktemp)"
+          gh api "repos/${REPO}/releases/${draft_id}" --jq '.body' > "${notes_file}"
+          printf '\n' >> "${notes_file}"
           cat "${metadata_file}" >> "${notes_file}"
 
-          if [ -n "${draft_id}" ]; then
-            # Promote the existing draft into the real release for this
-            # tag instead of creating a second, separate release object --
-            # this also keeps release-drafter's own "latest release"
-            # lookup correct when it computes the *next* draft's version
-            # afterward (a second orphaned release object with the same
-            # tag_name was found to confuse that computation).
-            gh api --method PATCH "repos/${REPO}/releases/${draft_id}" \
-              -f tag_name="${TAG_NAME}" \
-              -f name="${RELEASE_TITLE}" \
-              -F draft=false \
-              -F make_latest=true \
-              -f body=@"${notes_file}" \
-              > /dev/null
-            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
-          elif gh release view "${TAG_NAME}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
-            gh release edit "${TAG_NAME}" --repo "${REPO}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
-          else
-            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
-          fi
+          # Promote the existing draft into the real release for this
+          # tag instead of creating a second, separate release object --
+          # this also keeps release-drafter's own "latest release"
+          # lookup correct when it computes the *next* draft's version
+          # afterward (a second orphaned release object with the same
+          # tag_name was found to confuse that computation).
+          gh api --method PATCH "repos/${REPO}/releases/${draft_id}" \
+            -f tag_name="${TAG_NAME}" \
+            -f name="${RELEASE_TITLE}" \
+            -F draft=false \
+            -F make_latest=true \
+            -f body=@"${notes_file}" \
+            > /dev/null
+          gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${REPO}" --clobber
