@@ -11,23 +11,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
-## [3.6.5-NG] - 2026-08-11
-
 ### Fixed
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
   `clusterfuzzlite-pr.yml`, `e2e-image-build.yml`,
-  `verify-image-build.yml`**: added `ready_for_review` to each
-  `pull_request:`'s `types:` (issue #460 Finding 4). GitHub's default
-  types omit it, so a PR that never gets its initial `opened`-event run
-  (confirmed live on release PR #461, root cause not established --
-  every deterministic hypothesis checked, including draft state,
-  release/* head naming, and a master-base ruleset interaction, was
-  ruled out against real historical counterexamples) had no way to
-  self-heal short of a manual `workflow_dispatch`, unlike
-  `changelog-check.yml`, which already listed this type and was the
-  only workflow that recovered when PR #461 was later marked ready for
-  review.
+  `verify-image-build.yml`, `release-drafter.yml`**: added
+  `ready_for_review` to each `pull_request:`'s `types:` (issue #460
+  Finding 4). GitHub's default types omit it, so a PR that never gets
+  its initial `opened`-event run (confirmed live on release PR #461,
+  root cause not established -- every deterministic hypothesis checked,
+  including draft state, release/* head naming, and a master-base
+  ruleset interaction, was ruled out against real historical
+  counterexamples) had no way to self-heal short of a manual
+  `workflow_dispatch`, unlike `changelog-check.yml`, which already
+  listed this type and was the only workflow that recovered when PR
+  #461 was later marked ready for review. `release-drafter.yml` added
+  per review (its `auto_label` job would otherwise stay permanently
+  skipped in exactly the same scenario, leaving a recovered PR without
+  its category label).
+
+## [3.6.5-NG] - 2026-08-11
+
+### Fixed
 
 - **`include_server/parse_command.py`**: pump mode's include server can now
   see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
