@@ -37,6 +37,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   on CPython's prompt reference-count finalization; reads use deterministic
   ownership too. Added function-level rationale to the modified methods.
 
+- **`.github/workflows/package-release.yml`**: `publish_github_release`
+  now publishes real GitHub Releases as `GHCR_PACKAGE_DELETE_PAT` instead
+  of the default `GITHUB_TOKEN` (issue #460 Finding 2). GitHub does not
+  deliver downstream workflow events for anything created by the default
+  `GITHUB_TOKEN`, so `changelog-update-on-release.yml`'s
+  `release:released` trigger had never once fired for any of this
+  repo's real releases (confirmed via `gh run list --event release`:
+  zero runs, ever). Known remaining gap, not fixed here: the release
+  notes this step generates are a short stub, not release-drafter's
+  real per-PR notes -- see the issue for the open design question this
+  raises for the next real release.
+
 ## [3.6.5-NG] - 2026-08-11
 
 ### Fixed
