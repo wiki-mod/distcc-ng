@@ -62,9 +62,51 @@ if [ -n "${existing}" ]; then
     --body "Still failing: ${detail}."
 else
   echo "failure: opening a new standing ${LABEL} issue"
-  run gh issue create --repo "${REPO}" --label "${LABEL}" \
+  new_issue_url="$(run gh issue create --repo "${REPO}" --label "${LABEL}" \
     --title "[${LABEL}] a scheduled CI run is failing" \
     --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (the nightly publish and the weekly heartbeat both feed it) and closed automatically on the next successful run.
 
-${detail}."
+${detail}.")"
+  # Assign the "Bug" issue type. `gh issue create` has no --type flag
+  # (confirmed against this environment's real `gh issue create --help` --
+  # a prior review finding assumed one exists and was wrong); issue types
+  # are GraphQL-only (Issue.issueTypeId via the updateIssue mutation), so
+  # this is a separate follow-up call rather than a create-time flag.
+  # Skipped entirely in DRY_RUN, since no real issue was created to type.
+  if [ "${DRY_RUN}" != "true" ]; then
+    owner="${REPO%%/*}"
+    name="${REPO##*/}"
+    issue_number="${new_issue_url##*/}"
+    # The single quotes below are deliberate -- the string contains
+    # GraphQL's own "$owner"/"$name"/"$number" variable syntax (unrelated
+    # to shell), bound via -F below, same pattern already used in
+    # scripts/check-pr-tracking-metadata.sh.
+    # shellcheck disable=SC2016
+    issue_node_id="$(gh api graphql -f query='
+      query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          issue(number: $number) { id }
+        }
+      }' -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
+      --jq '.data.repository.issue.id')"
+    # shellcheck disable=SC2016
+    bug_type_id="$(gh api graphql -f query='
+      query($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          issueTypes(first: 20) { nodes { id name } }
+        }
+      }' -F owner="${owner}" -F name="${name}" \
+      --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')"
+    if [ -n "${bug_type_id}" ]; then
+      # shellcheck disable=SC2016
+      gh api graphql -f query='
+        mutation($issueId: ID!, $typeId: ID!) {
+          updateIssue(input: {id: $issueId, issueTypeId: $typeId}) {
+            issue { id }
+          }
+        }' -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
+    else
+      echo "::warning::No 'Bug' issue type configured for ${REPO}; leaving the new standing issue untyped."
+    fi
+  fi
 fi

@@ -271,6 +271,13 @@ jobs:
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # schedule always evaluates using the default branch (master);
+          # redirect the nightly run to current_dev instead, same reason
+          # make_check/coverage/distributed_e2e/sanitizer_check do this --
+          # otherwise this job's result would test master while the new
+          # `report` job labels the aggregated outcome as current_dev.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
@@ -337,6 +344,13 @@ jobs:
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # schedule always evaluates using the default branch (master);
+          # redirect the nightly run to current_dev instead, same reason
+          # make_check/coverage/distributed_e2e/sanitizer_check do this --
+          # otherwise this job's result would test master while the new
+          # `report` job labels the aggregated outcome as current_dev.
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - name: Vendored version marker matches what this repo claims to ship
         run: |
           test "$(cat popt/POPT_VERSION)" = "popt-1.19-release" \
