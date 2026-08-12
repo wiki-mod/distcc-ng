@@ -986,6 +986,10 @@ class Compile_c_Case(SimpleDistCC_Case):
       return m_obj.group(1)
 
   def runtest(self):
+      """Exercise compile.c's dcc_discrepancy_filename() and
+      dcc_fresh_dependency_exists() directly through the h_compile test
+      harness binary, independent of a real distcc client/server round trip.
+      """
 
       # Test dcc_discrepancy_filename
       # ********************************
@@ -1935,6 +1939,10 @@ class Gdb_Case(CompileHello_Case):
         return 'break main\nrun\nnext\n'
 
     def checkBuiltProgram(self):
+        """Run the built test program under gdb and verify it can locate
+        testtmp.c's source, tolerating known-harmless gdb version quirks in
+        its stderr output.
+        """
         # On windows, the binary may be called testtmp.exe.  Check both
         if os.path.exists('link/testtmp.exe'):
             testtmp_exe = 'testtmp.exe'
