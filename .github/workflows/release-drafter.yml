@@ -27,8 +27,10 @@ on:
   push:
     branches:
       - current_dev
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read

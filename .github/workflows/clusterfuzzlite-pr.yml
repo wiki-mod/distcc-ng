@@ -10,7 +10,10 @@ name: ClusterFuzzLite PR fuzzing
 # young fork does not realistically meet.
 
 on:
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'src/**'
       - 'test/fuzz/**'
