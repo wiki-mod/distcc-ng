@@ -35,7 +35,19 @@ problem; nobody had checked what the build actually *produced*.
       the real PR history since the last tag (`git log <last-tag>..HEAD
       --oneline`, cross-checked against the section, not the other way
       around) — every user-visible change represented, nothing merged
-      silently missing an entry.
+      silently missing an entry. **This check must also catch a missing
+      dated section for an intermediate release**, not only missing
+      entries within one: confirm a `## [X.Y.Z-NG] - YYYY-MM-DD` heading
+      actually exists for every tag since the last one this checklist was
+      run against, with real content under it — not just that
+      `[Unreleased]`'s own content looks complete. A release cut that
+      only adds a new dated heading without verifying the previous
+      release's heading is still present and populated can silently lose
+      an entire release's worth of attribution (confirmed live, issue
+      #460: three consecutive releases, v3.6.2-NG/v3.6.3-NG/v3.6.4-NG,
+      never got their own dated section on `current_dev` at all, and
+      their content sat unsplit under `[Unreleased]` across three
+      further release cuts before anyone noticed).
 - [ ] No open, unresolved `security`-labeled issue that should block this
       release, **or** an explicit, dated, documented maintainer decision to
       ship anyway with the reasoning recorded (see issue #266's leak-triage

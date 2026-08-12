@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
   push:
     branches: [current_dev, master]
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
     branches: [current_dev, master]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     # Weekly scan, scheduled for Sunday 05:00 UTC (does not conflict with
     # c-build.yml's 03:00 UTC or nightly-publish.yml's 04:00 UTC schedules).

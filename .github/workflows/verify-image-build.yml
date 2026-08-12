@@ -34,7 +34,10 @@ on:
     paths:
       - 'docker/verify/**'
       - '.github/workflows/verify-image-build.yml'
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'docker/verify/**'
       - '.github/workflows/verify-image-build.yml'
@@ -97,6 +100,42 @@ jobs:
           docker run --rm --cap-add=SYS_PTRACE \
             -v "${{ github.workspace }}/docker/verify:/verify:ro" \
             distcc-ng-verify:ci bash /verify/selftest-ptrace.sh
+
+      - name: Prepare a resolvable passwd/group entry for the runner's own uid
+        # SSHMode_Case (test/testdistcc.py) calls ssh-keygen twice in its
+        # setup(), and OpenSSH's ssh-keygen unconditionally calls
+        # getpwuid(getuid()) early in main() (it needs pw_name/pw_dir for
+        # the default key comment and tilde-expansion, even though -f is
+        # always given here) -- fatal()ing with "No user exists for uid
+        # <uid>" when that lookup returns NULL. The "Real distcc-ng
+        # build+test inside the image" step below runs as
+        # `--user "$(id -u):$(id -g)"` (the runner's own numeric uid, e.g.
+        # 1001), which the image's /etc/passwd has no entry for -- the same
+        # "Docker does not synthesize a passwd entry for a numeric --user"
+        # gotcha that step's own $HOME comment already documents, just
+        # hitting getpwuid() instead of $HOME this time. Confirmed live in
+        # CI: make check's SSHMode_Case failed with exactly this fatal()
+        # message once PR #443 added openssh to this image, since
+        # ssh-keygen is the first tool in this whole step to actually call
+        # getpwuid() on the runner's own uid.
+        #
+        # Fixed by reading the image's own real /etc/passwd and /etc/group
+        # (so every entry the image itself ships -- root, verify, system
+        # accounts -- is preserved), appending one synthetic entry for
+        # $(id -u)/$(id -g), and bind-mounting the result over /etc/passwd
+        # and /etc/group (read-only) for that step's docker run. This keeps
+        # the no-root/no-chown/no-su property issue #286 already
+        # established -- no image rebuild, no new package, no privilege
+        # change, just a resolvable name for a uid that already owns the
+        # bind-mounted workspace.
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/verify-etc"
+          docker run --rm distcc-ng-verify:ci cat /etc/passwd > "${RUNNER_TEMP}/verify-etc/passwd"
+          docker run --rm distcc-ng-verify:ci cat /etc/group > "${RUNNER_TEMP}/verify-etc/group"
+          printf 'ci-runner:x:%s:%s:GitHub Actions runner uid:/tmp/distcc-ng-verify-home:/bin/bash\n' \
+            "$(id -u)" "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/passwd"
+          printf 'ci-runner:x:%s:\n' "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/group"
 
       - name: Real distcc-ng build+test inside the image
         # Proves the image is sufficient for this repo's own toolchain, not
@@ -171,6 +210,8 @@ jobs:
           docker run --rm --user "$(id -u):$(id -g)" --init --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
             -v "${{ github.workspace }}:/work/src:rw" \
+            -v "${RUNNER_TEMP}/verify-etc/passwd:/etc/passwd:ro" \
+            -v "${RUNNER_TEMP}/verify-etc/group:/etc/group:ro" \
             -w /work/src \
             -e HOME=/tmp/distcc-ng-verify-home \
             distcc-ng-verify:ci bash -c '
