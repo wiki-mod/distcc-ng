@@ -24,12 +24,14 @@ was posted on #466 rather than editing its branch directly.
 Per AGENTS.md rule 73 (a found bug's minimum sweep is the whole file it was
 found in), this PR swept the rest of `test/testdistcc.py` for the same
 `open(...).write(...)`/`open(...).read()` pattern beyond #466's 10 flagged
-lines. Of the ~28 additional sites fixed, six exist upstream in the same
-unclosed shape (listed above); the rest (`AssemblyIncludeLocalOnly_Case`,
-`HostFileDistccDirUnset_Case`, `ServerKilledMidJob_Case`, and every pure
-`open(...).read()` site) are either fork-only additions (issue #275's own
-test-coverage work, not present upstream at all) or reads with no
-subprocess-ordering risk, and so are not part of this upstream note.
+lines: 28 additional sites fixed in total, of which 11 share the
+write-then-subprocess-read shape. Of those 11, 7 call sites across the 6
+classes listed above exist upstream in the same unclosed shape. The
+remaining 4 write-then-read sites (`AssemblyIncludeLocalOnly_Case`, 2
+sites; `HostFileDistccDirUnset_Case`; `ServerKilledMidJob_Case`) are
+fork-only additions (issue #275's own test-coverage work, not present
+upstream at all); the other 17 fixed sites are pure reads/writes with no
+subprocess-ordering risk. None of those are part of this upstream note.
 
 ## The problem
 
