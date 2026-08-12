@@ -43,8 +43,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
   deliver downstream workflow events for anything created by the default
   `GITHUB_TOKEN`, so `changelog-update-on-release.yml`'s
   `release:released` trigger had never once fired for any of this
-  repo's real releases (confirmed via `gh run list --event release`:
-  zero runs, ever).
+  repo's real releases (confirmed via `gh run list --repo wiki-mod/distcc-ng
+  --event release`: zero runs, ever).
   - Also: the release now publishes with `release-drafter`'s own rolling
     draft content (the real, per-PR categorized notes it already
     maintains on every push to `current_dev`) instead of a short
@@ -53,7 +53,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
     setting `draft=false`) rather than creating a second, separate
     release object, which also keeps `release-drafter`'s own
     "latest release" lookup correct for computing the version of its
-    *next* rolling draft afterward.
+    *next* rolling draft afterward. The draft is found by listing
+    releases and requiring exactly one open draft to exist (release-
+    drafter's own single-rolling-draft design), never by a tag-based
+    lookup -- confirmed neither the REST `releases/tags/{tag}` endpoint
+    nor the GraphQL `release(tagName:)` field can resolve a draft-only
+    release at all.
 
 ## [3.6.5-NG] - 2026-08-11
 
