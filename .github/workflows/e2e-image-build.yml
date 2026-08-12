@@ -58,7 +58,10 @@ on:
     paths:
       - 'test/e2e/Dockerfile'
       - '.github/workflows/e2e-image-build.yml'
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly (issue #460 Finding 4).
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'test/e2e/Dockerfile'
       - '.github/workflows/e2e-image-build.yml'

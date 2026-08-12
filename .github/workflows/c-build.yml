@@ -28,7 +28,16 @@ on:
     branches:
       - current_dev
       - master
+  # Explicit types (GitHub's default omits ready_for_review) so a PR that
+  # somehow never got an initial pull_request-event run for its `opened`
+  # activity (issue #460 Finding 4: release PR #461's `opened` event
+  # never delivered, root cause not established -- ruled out draft
+  # state, release/* head naming, and a master-base ruleset interaction,
+  # all confirmed still firing normally for other real historical PRs)
+  # gets one real chance to self-heal the moment it's later marked ready
+  # for review, instead of requiring a manual workflow_dispatch forever.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # Lets us check a branch's build health on demand (e.g. current_dev or
   # master) without needing a new commit/PR to trigger CI.
   workflow_dispatch:
