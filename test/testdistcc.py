@@ -320,7 +320,8 @@ as soon as that happens we can go ahead and start the client."""
 
     def killDaemon(self):
         try:
-            pid = int(open(self.daemon_pidfile, 'rt').read())
+            with open(self.daemon_pidfile, 'rt') as f:
+                pid = int(f.read())
         except IOError:
             # the daemon probably already exited, perhaps because of a timeout
             return
@@ -1041,9 +1042,8 @@ foo_bar""",
               time.sleep(0.1)
           # Create .d file now, so that it appears to be no older than
           # time_ref.
-          dotd_fd = open("dotd", "w")
-          dotd_fd.write(dotd_contents)
-          dotd_fd.close()
+          with open("dotd", "w") as dotd_fd:
+              dotd_fd.write(dotd_contents)
           # Check: no fresh files here!
           out, err = self.runcmd(
               "h_compile dcc_fresh_dependency_exists dotd '%s' %i" %
@@ -1215,13 +1215,11 @@ class Compilation_Case(WithDaemon_Case):
 
     def createSource(self):
         filename = self.sourceFilename()
-        f = open(filename, 'w')
-        f.write(self.source())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.source())
         filename = self.headerFilename()
-        f = open(filename, 'w')
-        f.write(self.headerSource())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.headerSource())
 
     def sourceFilename(self):
         return "testtmp.c"              # default
@@ -1946,9 +1944,8 @@ class Gdb_Case(CompileHello_Case):
         # and run them via gdb --command.  (The alternative, to specify
         # the gdb commands directly on the commandline using gdb --ex,
         # is not as portable since only newer gdb's support it.)
-        f = open('gdb_commands', 'w')
-        f.write(self.gdbCommands())
-        f.close()
+        with open('gdb_commands', 'w') as f:
+            f.write(self.gdbCommands())
         out, errs = self.runcmd("gdb -nh --batch --command=gdb_commands "
                                 "link/%s </dev/null" % testtmp_exe)
         # Normally we expect the stderr output to be empty.
@@ -2121,8 +2118,13 @@ class MultipleCompile_Case(Compilation_Case):
     """Test compiling several files from one line"""
     def setup(self):
         WithDaemon_Case.setup(self)
-        open("test1.c", "w").write("const char *msg = \"hello foreigner\";")
-        open("test2.c", "w").write("""#include <stdio.h>
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: runtest() below hands both files
+        # straight to an external distcc/compiler subprocess.
+        with open("test1.c", "w") as f:
+            f.write("const char *msg = \"hello foreigner\";")
+        with open("test2.c", "w") as f:
+            f.write("""#include <stdio.h>
 
 int main(void) {
    extern const char *msg;
@@ -2203,7 +2205,8 @@ large foo!
         # -P means not to emit linemarkers
         self.runcmd(self.distcc()
                     + self._cc + " -E testtmp.c -o testtmp.out")
-        out = open("testtmp.out").read()
+        with open("testtmp.out") as f:
+            out = f.read()
         # It's a bit hard to know the exact value, because different versions of
         # GNU cpp seem to handle the whitespace differently.
         self.assert_re_search("small foo!", out)
@@ -2837,7 +2840,8 @@ class DashMD_DashMF_DashMT_Case(CompileHello_Case):
         except OSError:
           pass
         self.compile();
-        dotd_contents = open("dotd_filename").read()
+        with open("dotd_filename") as f:
+            dotd_contents = f.read()
         self.assert_re_search("target_name_42", dotd_contents)
 
 
@@ -2875,7 +2879,8 @@ class DashWpMD_Case(CompileHello_Case):
         except OSError:
           pass
         self.compile()
-        deps = open('depsfile').read()
+        with open('depsfile') as f:
+            deps = f.read()
         self.assert_re_search(r"testhdr\.h", deps)
         self.assert_re_search(r"stdio\.h", deps)
 
@@ -3078,7 +3083,8 @@ class ScanIncludes_Case(CompileHello_Case):
     def runtest(self):
         cmd = self.compileCmd()
         rc, out, err = self.runcmd_unchecked(cmd)
-        log = open('distcc.log').read()
+        with open('distcc.log') as f:
+            log = f.read()
         pump_mode = _server_options.find('cpp') != -1
         if pump_mode:
           if err != '':
@@ -3185,17 +3191,15 @@ class BigAssFile_Case(Compilation_Case):
     This will take a while to run"""
     def createSource(self):
         """Create source file"""
-        f = open("testtmp.c", 'wt')
-
         # We want a file of many, which will be a few megabytes of
         # source.  Picking the size is kind of hard -- something that
         # will properly exercise distcc may be too big for small/old
         # machines.
 
-        f.write("int main() {}\n")
-        for i in range(200000):
-            f.write("int i%06d = %d;\n" % (i, i))
-        f.close()
+        with open("testtmp.c", 'wt') as f:
+            f.write("int main() {}\n")
+            for i in range(200000):
+                f.write("int i%06d = %d;\n" % (i, i))
 
     def runtest(self):
         self.runcmd(self.distcc() + self._cc + " -c %s" % "testtmp.c")
@@ -3283,7 +3287,13 @@ class BinFalse_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the distcc client subprocess
+        # spawned by runtest() reads and forwards this .i file itself
+        # (src/remote.c's dcc_x_file()), independent of whatever the
+        # substitute "compiler" below does or doesn't read.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         # On Solaris and IRIX 6, 'false' returns exit status 255
@@ -3309,7 +3319,13 @@ class BinTrue_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the distcc client subprocess
+        # spawned by runtest() reads and forwards this .i file itself
+        # (src/remote.c's dcc_x_file()), independent of whatever the
+        # substitute "compiler" below does or doesn't read.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         self.runcmd(self.distcc()
@@ -3451,7 +3467,8 @@ class NoServer_Case(CompileHello_Case):
     def runtest(self):
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
-        msgs = open(self.distcc_log, 'r').read()
+        with open(self.distcc_log, 'r') as f:
+            msgs = f.read()
         self.assert_re_search(r'failed to distribute.*running locally instead',
                               msgs)
 
@@ -3475,7 +3492,8 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
     def runtest(self):
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
-        msgs = open(self.distcc_log, 'r').read()
+        with open(self.distcc_log, 'r') as f:
+            msgs = f.read()
         self.assert_re_search(r'compile testtmp.c on 127.0.0.1:[0-9]* completed ok',
                               msgs)
 
@@ -3777,7 +3795,11 @@ msg:
 
     def setup(self):
         WithDaemon_Case.setup(self)
-        open(self.asm_filename, 'wt').write(self.asm_source)
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: compile() hands this file
+        # straight to an external distcc/assembler subprocess.
+        with open(self.asm_filename, 'wt') as f:
+            f.write(self.asm_source)
 
     def compile(self):
         # Need to build both the C file and the assembly file
@@ -3804,7 +3826,11 @@ msg:
 
     def setup(self):
         WithDaemon_Case.setup(self)
-        open('test2.S', 'wt').write(self.asm_source)
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: compile() hands this file
+        # straight to an external distcc/assembler subprocess.
+        with open('test2.S', 'wt') as f:
+            f.write(self.asm_source)
 
     def compile(self):
         if sys.platform == 'linux2':
@@ -3859,7 +3885,11 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
 
     def setup(self):
         SimpleDistCC_Case.setup(self)
-        open(self.inc_filename, 'wt').write(".equ VALUE, 42\n")
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the local assembler subprocess
+        # spawned by runtest() ".include"s this file back in.
+        with open(self.inc_filename, 'wt') as f:
+            f.write(".equ VALUE, 42\n")
         # No ".type"/".size": those are ELF symbol-table directives with
         # no Mach-O equivalent -- confirmed live, Apple's clang
         # assembler rejects them outright ("unknown directive"), unlike
@@ -3867,13 +3897,17 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
         # away with them (untested reason, not worth relying on here
         # too). ".globl"/".data"/".align"/a label/".long" are the same
         # minimal, already-proven-portable subset that fixture uses.
-        open(self.asm_filename, 'wt').write(
-            '.include "%s"\n'
-            ".globl distcc_ng_test_marker\n"
-            ".data\n"
-            "  .align 4\n"
-            "distcc_ng_test_marker:\n"
-            "  .long VALUE\n" % self.inc_filename)
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the local assembler subprocess
+        # spawned by runtest() reads this file back in.
+        with open(self.asm_filename, 'wt') as f:
+            f.write(
+                '.include "%s"\n'
+                ".globl distcc_ng_test_marker\n"
+                ".data\n"
+                "  .align 4\n"
+                "distcc_ng_test_marker:\n"
+                "  .long VALUE\n" % self.inc_filename)
 
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.bind(('127.0.0.1', 0))
@@ -3963,7 +3997,8 @@ class AccessDenied_Case(CompileHello_Case):
 
     def runtest(self):
         self.compile()
-        errs = open('distcc.log').read()
+        with open('distcc.log') as f:
+            errs = f.read()
         self.assert_re_search(r'failed to distribute', errs)
 
 
@@ -4099,7 +4134,8 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
             return
         if not re.search(r"Hits:\s+[1-9]", out):
             try:
-                debug_log = open(self.ccache_logfile).read()
+                with open(self.ccache_logfile) as f:
+                    debug_log = f.read()
             except IOError:
                 debug_log = "(no ccache debug log found at %s)" % self.ccache_logfile
             self.fail("expected a real ccache hit, got:\n%s\n\n"
@@ -4114,8 +4150,11 @@ class HostFile_Case(CompileHello_Case):
         self.save_home = os.environ['HOME']
         os.environ['HOME'] = os.getcwd()
         # DISTCC_DIR is set to 'distccdir'
-        open(os.environ['DISTCC_DIR'] + '/hosts', 'w').write('127.0.0.1:%d%s' %
-            (self.server_port, _server_options))
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the distcc client subprocess
+        # spawned by the actual test reads this hosts file itself.
+        with open(os.environ['DISTCC_DIR'] + '/hosts', 'w') as f:
+            f.write('127.0.0.1:%d%s' % (self.server_port, _server_options))
 
     def teardown(self):
         os.environ['HOME'] = self.save_home
@@ -4137,8 +4176,11 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
         os.environ['HOME'] = os.getcwd()
         distcc_dir = os.path.join(os.environ['HOME'], '.distcc')
         os.mkdir(distcc_dir)
-        open(distcc_dir + '/hosts', 'w').write('127.0.0.1:%d%s' %
-            (self.server_port, _server_options))
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the distcc client subprocess
+        # spawned by the actual test reads this hosts file itself.
+        with open(distcc_dir + '/hosts', 'w') as f:
+            f.write('127.0.0.1:%d%s' % (self.server_port, _server_options))
 
     def teardown(self):
         os.environ['HOME'] = self.save_home
@@ -4311,7 +4353,11 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
         # file for the same 30s, before the daemon side is ever
         # reached at all. ClientDisconnectKillsServerChild_Case (above)
         # uses the same ".i" trick for the same reason.
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit `with` (not relying on CPython's prompt refcounting to
+        # flush the write) matters here: the distcc client subprocess
+        # started below reads and forwards this .i file itself.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         client_pid = self.runcmd_background(
             self.distcc_with_fallback() + slow_compiler +
@@ -4319,7 +4365,8 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
 
         self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
 
-        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        with open(self.daemon_pidfile, 'rt') as f:
+            daemon_pid = int(f.read())
         os.kill(daemon_pid, signal.SIGKILL)
         # killDaemon() (teardown) tolerates the pidfile being gone (an
         # IOError on open()) but not SIGTERM-ing an already-dead pid (an
@@ -4333,7 +4380,8 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
         self.assert_equal(os.WEXITSTATUS(waitstatus), 0)
         self.assert_equal(os.path.exists("testtmp.o"), True)
 
-        log = open(os.environ['DISTCC_LOG']).read()
+        with open(os.environ['DISTCC_LOG']) as f:
+            log = f.read()
         self.assert_re_search(r'failed to distribute.*running locally instead',
                               log)
 
@@ -4448,7 +4496,8 @@ class SSHMode_Case(CompileHello_Case):
 
     def killSshd(self):
         try:
-            pid = int(open(self._sshd_pidfile, 'rt').read().strip())
+            with open(self._sshd_pidfile, 'rt') as f:
+                pid = int(f.read().strip())
         except IOError:
             # sshd probably already exited
             return
