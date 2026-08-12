@@ -2724,7 +2724,12 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
         os.environ['DISTCC_VERBOSE'] = '1'
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit close (not just CPython's prompt refcounting) before
+        # runcmd() below execs a real compiler subprocess that reads this
+        # file back -- an implementation that defers the close (PyPy) could
+        # otherwise hand the subprocess a not-yet-flushed file.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         out, errs = self.runcmd(self.distcc_without_fallback() + compiler +
                                 " -c testtmp.i -o testtmp.o")
@@ -2859,7 +2864,8 @@ class DashMMD_Case(CompileHello_Case):
         except OSError:
             pass
         self.compile()
-        dotd_contents = open("dotd_mmd_filename").read()
+        with open("dotd_mmd_filename") as f:
+            dotd_contents = f.read()
         self.assert_re_search("testtmp.o", dotd_contents)
 
 
@@ -3015,7 +3021,8 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
 
     def _kill_daemon(self, pidfile):
         try:
-            pid = int(open(pidfile, 'rt').read())
+            with open(pidfile, 'rt') as f:
+                pid = int(f.read())
         except IOError:
             return
         os.kill(pid, signal.SIGTERM)
@@ -3025,7 +3032,8 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
         content = ""
         while True:
             try:
-                content = open(logfile).read()
+                with open(logfile) as f:
+                    content = f.read()
             except IOError:
                 content = ""
             if re.search(pattern, content):
@@ -3047,7 +3055,8 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
         # compile, so job 2 must land on host B.
         self.runcmd(self.distcc_without_fallback() + self.slow_compiler +
                     " -c testtmp.c -o job2.o")
-        daemon_b_log = open(self.daemon_b_logfile).read()
+        with open(self.daemon_b_logfile) as f:
+            daemon_b_log = f.read()
         self.assert_re_search(r"forking to execute.*slow_compiler",
                               daemon_b_log)
 
@@ -3221,7 +3230,11 @@ class ZeroByteOutputCompiler_Case(Compilation_Case):
     file) instead of actually compiling anything."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit close before the compile reads this file back -- see
+        # UserPrivilegeDropFunctional_Case.runtest()'s identical comment
+        # for why this can't rely on CPython-only prompt refcounting.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         compiler = os.path.abspath("zero_byte_compiler")
@@ -3250,7 +3263,10 @@ class NastyCppWritesStdout_Case(Compilation_Case):
     handled by design, not a distcc bug, just never actually tested."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
+        # this needs an explicit close before the compile reads it back.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         compiler = os.path.abspath("nasty_stdout_compiler")
@@ -3330,7 +3346,10 @@ class CrashingCompiler_Case(Compilation_Case):
     reliably kill themselves with a specific signal on all platforms."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
+        # this needs an explicit close before the compile reads it back.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         crasher = os.path.abspath("crashing_compiler")
@@ -3364,7 +3383,10 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
     arguments are harmlessly ignored -- sleeps for real instead."""
 
     def runtest(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment for why
+        # this needs an explicit close before the compile reads it back.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         slow_compiler = os.path.abspath("slow_compiler")
         f = open(slow_compiler, "w")
@@ -3511,7 +3533,8 @@ class BackoffFromDownedHost_Case(CompileHello_Case):
 
     def runtest(self):
         self.compile()
-        log = open(os.environ['DISTCC_LOG']).read()
+        with open(os.environ['DISTCC_LOG']) as f:
+            log = f.read()
         self.assert_re_search(r'mark .*backoff', log)
 
 
