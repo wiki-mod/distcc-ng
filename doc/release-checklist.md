@@ -60,6 +60,17 @@ problem; nobody had checked what the build actually *produced*.
       both its own file and its `support-upstream/README.md` index row
       (AGENTS.md rule 58) — a real, not just a green, `git diff
       <last-tag>..HEAD -- support-upstream/` read.
+- [ ] **`master`'s copy of any `release:`-event-triggered workflow (currently
+      just `changelog-update-on-release.yml`) matches `current_dev`'s.**
+      GitHub evaluates a `release` event's `on:` trigger from the workflow
+      file on the repository's default branch (`master`), not from the
+      tag being created — confirmed live, issue #460/PR #467: `master`
+      lagging `current_dev` here would silently skip the automatic
+      changelog update for the release being cut, with no error anywhere.
+      Diff `master`'s copy against `current_dev`'s before tagging; if they
+      differ, either promote the `.github/workflows/` change to `master`
+      first, or plan to use the workflow's own `workflow_dispatch` retry
+      path for this release.
 
 ## Artifact verification — real behavior, not a build matrix
 
