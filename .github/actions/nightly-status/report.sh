@@ -32,17 +32,18 @@ run() {
   fi
 }
 
-# Assign the "Bug" issue type to $1 if it doesn't already have one. Issue
-# types require a separate GraphQL mutation (Issue.issueTypeId via
-# updateIssue) -- there is no create-time flag for this. Called on every
-# failure path (both a freshly created issue and an existing one being
-# commented on), not just at create time: repository governance requires
-# every issue to have a type, and a one-shot best-effort attempt at
-# creation time could otherwise leave a standing issue permanently untyped
-# if that one attempt failed (e.g. no "Bug" type configured yet, or a
-# transient API error) -- retrying here on every subsequent failure
-# self-heals that instead of giving up for good. Not skipped in DRY_RUN for
-# the read-only lookups (safe), only the actual mutation is gated.
+# Assign the "Bug" issue type to $1 if it doesn't already have one, via a
+# GraphQL mutation (Issue.issueTypeId via updateIssue). A create-time flag
+# for this exists in newer gh versions, but is not sufficient on its own:
+# this is called on every failure path (both a freshly created issue and
+# an existing one being commented on), not just at create time, because
+# repository governance requires every issue to have a type, and a
+# one-shot best-effort attempt at creation time could otherwise leave a
+# standing issue permanently untyped if that one attempt failed (e.g. no
+# "Bug" type configured yet, or a transient API error) -- retrying here on
+# every subsequent failure self-heals that instead of giving up for good.
+# Not skipped in DRY_RUN for the read-only lookups (safe), only the actual
+# mutation is gated.
 ensure_bug_type() {
   local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
   owner="${REPO%%/*}"
