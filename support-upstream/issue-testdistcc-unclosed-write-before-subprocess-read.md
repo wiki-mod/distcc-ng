@@ -67,16 +67,42 @@ def createSource(self):
         f.write("int main() {}")
 ```
 
-`BinFalse_Case`/`BinTrue_Case` themselves are upstream-only classes this
-fork doesn't currently carry verbatim under those names, so this entry
-documents the pattern at its original upstream location rather than a
-byte-identical fork diff; the fix shape is the same regardless of which
-class it's applied to.
+**Correction (2026-08-12):** the previous version of this entry stated
+`BinFalse_Case`/`BinTrue_Case` "are upstream-only classes this fork doesn't
+currently carry verbatim under those names." That was wrong: this fork's
+`test/testdistcc.py` carried both classes byte-for-byte identical to
+upstream, `open()` call included -- confirmed via `git show
+upstream/master:test/testdistcc.py`. Both classes' own unclosed-write sites
+are fixed by [wiki-mod/distcc-ng#472](https://github.com/wiki-mod/distcc-ng/pull/472),
+which swept the rest of the file for the same pattern beyond this PR's
+own 10 flagged sites.
 
 ## Empirical verification
 
-Not included: this is a latent portability risk under a Python
-implementation with deferred garbage collection, not a reproducible failure
-under CPython (the implementation both this fork's and upstream's CI
-actually run) -- there is no CPython-observable behavior difference to
-demonstrate before/after.
+Real evidence, not just an assertion, produced in response to review
+question: is this a reproducible failure, or only a theoretical risk?
+`probe_refcount_close_timing.py` ran on real GitHub Actions `ubuntu-latest`
+CI (run [31587298529](https://github.com/wiki-mod/distcc-ng/actions/runs/31587298529)),
+checking two things -- (a) mechanistically, via a `weakref.finalize`
+tripwire, whether the file object's close-and-flush actually runs before
+the very next statement executes; (b) empirically, 5000 real iterations of
+the exact flagged pattern (`open(...).write(...)`, no `with`, no explicit
+close), each followed by a real separate subprocess reading the same path
+back, checking the full content round-trips correctly:
+
+| Implementation | Finalize before next statement? | Stress test (subprocess round-trip) |
+|---|---|---|
+| CPython 3.14.7 | `True` (proven deterministic, not probabilistic) | 5000/5000 passed |
+| PyPy 7.3.19 (3.10) | `False` | **0/5000 passed** -- every subprocess read 0 bytes |
+
+This confirms both halves of the claim with real evidence instead of an
+assertion: under CPython, the fix is provably unnecessary for correctness
+(the object's `__del__` runs synchronously and deterministically before
+control returns to the caller, not merely "hasn't been observed to fail")
+-- and under PyPy, the exact same pattern is not just theoretically risky
+but **reliably broken, 100% of the time**, because PyPy's tracing GC does
+not finalize the temporary file object before the next statement runs, so
+the subprocess consistently sees an empty, unflushed file. The `with`-block
+fix is real, verified insurance against a real, verified failure mode --
+just one CPython's own CI (this fork's and upstream's) can never surface on
+its own.
