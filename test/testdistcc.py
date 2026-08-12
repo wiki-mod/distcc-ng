@@ -194,10 +194,12 @@ def _Touch(filename):
 class SimpleDistCC_Case(comfychair.TestCase):
     '''Abstract base class for distcc tests'''
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.stripEnvironment()
         self.initCompiler()
 
     def initCompiler(self):
+        # Resolve the compiler once so every command in a case uses the same toolchain.
         self._cc = self._get_compiler()
 
     def stripEnvironment(self):
@@ -215,9 +217,11 @@ class SimpleDistCC_Case(comfychair.TestCase):
         os.environ['DISTCC_DIR'] = ddir
 
     def valgrind(self):
+        # Keep instrumentation optional so the same harness can run with or without Valgrind.
         return _valgrind_command;
 
     def distcc(self):
+        # Construct the client prefix here so pump and non-pump cases share fallback policy.
         if "cpp" not in _server_options:
             return self.valgrind() + "distcc "
         else:
@@ -225,15 +229,19 @@ class SimpleDistCC_Case(comfychair.TestCase):
 
 
     def distccd(self):
+        # Construct the daemon prefix here so instrumentation is applied consistently.
         return self.valgrind() + "distccd "
 
     def distcc_with_fallback(self):
+        # Set fallback explicitly so ambient environment cannot change this scenario.
         return "DISTCC_FALLBACK=1 " + self.distcc()
 
     def distcc_without_fallback(self):
+        # Disable fallback explicitly so remote failures remain observable to the scenario.
         return "DISTCC_FALLBACK=0 " + self.distcc()
 
     def _get_compiler(self):
+        # Prefer the configured compiler family while retaining the harness fallback search.
         cc = self._find_compiler("cc")
         if self.is_clang(cc):
             return self._find_compiler("clang")
@@ -242,6 +250,7 @@ class SimpleDistCC_Case(comfychair.TestCase):
         raise AssertionError("Unknown compiler")
 
     def _find_compiler(self, compiler):
+        # Search PATH explicitly because test environments may not provide a canonical compiler location.
         for path in os.environ['PATH'].split (':'):
             abs_path = os.path.join (path, compiler)
 
@@ -250,12 +259,14 @@ class SimpleDistCC_Case(comfychair.TestCase):
         return None
 
     def is_gcc(self, compiler):
+        # Probe compiler output because executable names alone do not reliably identify GCC.
         out, err = self.runcmd(compiler + " --version")
         if re.search('Free Software Foundation', out):
             return True
         return False
 
     def is_clang(self, compiler):
+        # Probe compiler output because executable names alone do not reliably identify Clang.
         out, err = self.runcmd(compiler + " --version")
         if re.search('clang', out):
             return True
@@ -269,6 +280,7 @@ The daemon doesn't detach until it has bound the network interface, so
 as soon as that happens we can go ahead and start the client."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         SimpleDistCC_Case.setup(self)
         self.daemon_pidfile = os.path.join(os.getcwd(), "daemonpid.tmp")
         self.daemon_logfile = os.path.join(os.getcwd(), "distccd.log")
@@ -278,6 +290,7 @@ as soon as that happens we can go ahead and start the client."""
         self.setupEnv()
 
     def setupEnv(self):
+        # Keep environment changes in the harness hook so they are applied before any subprocess starts.
         os.environ['DISTCC_HOSTS'] = ('127.0.0.1:%d%s' %
           (self.server_port, _server_options))
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
@@ -285,6 +298,7 @@ as soon as that happens we can go ahead and start the client."""
 
 
     def teardown(self):
+        # Restore process-wide state here so this case cannot influence tests that run afterward.
         SimpleDistCC_Case.teardown(self)
 
     def waitForLogPattern(self, pattern, timeout, logfile=None):
@@ -319,6 +333,7 @@ as soon as that happens we can go ahead and start the client."""
 
 
     def killDaemon(self):
+        # Treat an already-exited daemon as normal so teardown does not mask the test result.
         try:
             with open(self.daemon_pidfile, 'rt') as f:
                 pid = int(f.read())
@@ -396,6 +411,7 @@ as soon as that happens we can go ahead and start the client."""
 
 class StartStopDaemon_Case(WithDaemon_Case):
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         pass
 
 
@@ -405,6 +421,7 @@ class VersionOption_Case(SimpleDistCC_Case):
     This is also a good test that the programs were built properly and are
     executable."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         for prog in 'distcc', 'distccd':
             out, err = self.runcmd("%s --version" % prog)
             assert out[-1] == '\n'
@@ -419,6 +436,7 @@ class VersionOption_Case(SimpleDistCC_Case):
 class HelpOption_Case(SimpleDistCC_Case):
     """Test --help is reasonable."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         for prog in 'distcc', 'distccd':
             out, err = self.runcmd(prog + " --help")
             self.assert_re_search("Usage:", out)
@@ -445,6 +463,7 @@ class BogusOption_Case(SimpleDistCC_Case):
 class CompilerOptionsPassed_Case(SimpleDistCC_Case):
     """Test that options following the compiler name are passed to the compiler."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         out, err = self.runcmd("DISTCC_HOSTS=localhost%s " % _server_options
                                + self.distcc()
                                + self._cc + " --help")
@@ -461,6 +480,7 @@ class CompilerOptionsPassed_Case(SimpleDistCC_Case):
 class StripArgs_Case(SimpleDistCC_Case):
     """Test local-only preprocessor arguments are removed"""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cases = (("gcc -c hello.c", "gcc -c hello.c"),
                  ("cc -Dhello hello.c -c", "cc hello.c -c"),
                  ("gcc -g -O2 -W -Wall -Wshadow -Wpointer-arith -Wcast-align -c -o h_strip.o h_strip.c",
@@ -516,6 +536,7 @@ class StripArgs_Case(SimpleDistCC_Case):
 class Stats_Case(SimpleDistCC_Case):
     """Test distccd statistics list maintenance."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         out, err = self.runcmd("h_stats prune-old-head")
         self.assert_equal(out.strip(), "ok")
 
@@ -755,6 +776,7 @@ class SymlinkTraversal_Case(SimpleDistCC_Case):
 class ScanArgs_Case(SimpleDistCC_Case):
     '''Test understanding of gcc command lines.'''
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cases = [("gcc -c hello.c", "distribute", "hello.c", "hello.o"),
                  ("gcc hello.c", "local"),
                  ("gcc -o /tmp/hello.o -c ../src/hello.c", "distribute", "../src/hello.c", "/tmp/hello.o"),
@@ -816,6 +838,7 @@ class ScanArgs_Case(SimpleDistCC_Case):
             self.checkScanArgs(*tup)
 
     def checkScanArgs(self, ccmd, mode, input=None, output=None):
+        # Keep scan-argument assertions together so each table entry uses identical parsing checks.
         o, err = self.runcmd("h_scanargs %s" % ccmd)
         o = o[:-1]                      # trim \n
         os = o.split()
@@ -834,6 +857,7 @@ class ScanArgs_Case(SimpleDistCC_Case):
 class IncludeServerFileOrder_Case(SimpleDistCC_Case):
     """Test deterministic include server file ordering."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         out, err = self.runcmd("h_includesort /tmp/z /tmp/a /tmp/m")
         self.assert_equal(err, "")
         self.assert_equal(out, "/tmp/a /tmp/m /tmp/z\n")
@@ -842,6 +866,7 @@ class IncludeServerFileOrder_Case(SimpleDistCC_Case):
 class StateFileAtomicWrite_Case(SimpleDistCC_Case):
     """Test that state writes remain readable through the monitor."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         out, err = self.runcmd("h_state atomic-write")
         self.assert_equal(out, "")
         self.assert_equal(err, "")
@@ -893,6 +918,7 @@ class DotD_Case(SimpleDistCC_Case):
                         ("foo.cpp -o hello", "*.d", 0, None)])
 
         def _eval(out):
+            # Evaluate the helper output in one place so both expected values use identical conversion semantics.
             map_out = eval(out)
             return (map_out['dotd_fname'],
                     map_out['needs_dotd'],
@@ -905,14 +931,18 @@ class DotD_Case(SimpleDistCC_Case):
             dotd_result = []  # prepare for some imperative style value passing
             class TempCompile_Case(Compilation_Case):
                 def source(self):
+                    # Keep the source inline so the fixture remains independent of files outside its temporary directory.
                       return """
 int main(void) { return 0; }
 """
                 def sourceFilename(self):
+                    # Expose the fixture name through an override so language-specific cases can reuse the compile flow.
                     return args.split()[0]
                 def compileCmd(self):
+                    # Build the command in an override so each case can change policy without duplicating execution logic.
                     return self._cc + " -c " + args
                 def runtest(self):
+                    # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
                     self.compile()
                     glob_result = glob.glob(dep_glob)
                     dotd_result.extend(glob_result)
@@ -1080,6 +1110,7 @@ foo_bar""",
 class ImplicitCompilerScan_Case(ScanArgs_Case):
     '''Test understanding of commands with no compiler'''
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cases = [("-c hello.c",            "distribute", "hello.c", "hello.o"),
                  ("hello.c -c",            "distribute", "hello.c", "hello.o"),
                  ("-o hello.o -c hello.c", "distribute", "hello.c", "hello.o"),
@@ -1177,6 +1208,7 @@ class ParseHostSpec_Case(SimpleDistCC_Case):
 class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
     """Check that DISTCC_SSH options survive repeated Secure Shell connects."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         fake_ssh = os.path.abspath("fake-ssh")
         fake_ssh_log = os.path.abspath("fake-ssh.log")
 
@@ -1205,15 +1237,18 @@ class SecureShellCommandEnvironment_Case(SimpleDistCC_Case):
 class Compilation_Case(WithDaemon_Case):
     '''Test distcc by actually compiling a file'''
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         WithDaemon_Case.setup(self)
         self.createSource()
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
         self.link()
         self.checkBuiltProgram()
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
         filename = self.sourceFilename()
         with open(filename, 'w') as f:
             f.write(self.source())
@@ -1222,15 +1257,19 @@ class Compilation_Case(WithDaemon_Case):
             f.write(self.headerSource())
 
     def sourceFilename(self):
+        # Expose the fixture name through an override so language-specific cases can reuse the compile flow.
         return "testtmp.c"              # default
 
     def headerFilename(self):
+        # Expose the header name through an override so specialized cases can reuse source generation.
         return "testhdr.h"              # default
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return ""                       # default
 
     def compile(self):
+        # Centralize compilation here so setup and assertions exercise the same command path.
         cmd = self.compileCmd()
         out, err = self.runcmd(cmd)
         if out != '':
@@ -1239,6 +1278,7 @@ class Compilation_Case(WithDaemon_Case):
             self.fail("compiler command %s produced error:\n%s" % (repr(cmd), err))
 
     def link(self):
+        # Centralize linking here so cases can share command execution and diagnostics handling.
         cmd = self.linkCmd()
         out, err = self.runcmd(cmd)
         if out != '':
@@ -1266,6 +1306,7 @@ class Compilation_Case(WithDaemon_Case):
         return ""
 
     def checkCompileMsgs(self, msgs):
+        # Keep diagnostic validation overridable because successful compilers differ in incidental output.
         if len(msgs) > 0:
             self.fail("expected no compiler messages, got \"%s\"" % msgs)
 
@@ -1276,6 +1317,7 @@ class Compilation_Case(WithDaemon_Case):
         self.assert_equal(errs, '')
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         pass
 
 
@@ -1283,11 +1325,13 @@ class CompileHello_Case(Compilation_Case):
     """Test the simple case of building a program that works properly"""
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define HELLO_WORLD "hello world"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 #include "%s"
@@ -1298,6 +1342,7 @@ int main(void) {
 """ % self.headerFilename()
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello world\n")
 
 
@@ -1320,6 +1365,7 @@ class MasqueradeMode_Case(CompileHello_Case):
     invoke "gcc" directly (no "distcc" in the command line at all)."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         CompileHello_Case.setup(self)
         distcc_path = None
         for d in os.environ['PATH'].split(':'):
@@ -1345,12 +1391,14 @@ class MasqueradeMode_Case(CompileHello_Case):
 class CommaInFilename_Case(CompileHello_Case):
 
     def headerFilename(self):
+        # Expose the header name through an override so specialized cases can reuse source generation.
       return 'foo1,2.h'
 
 
 class ComputedInclude_Case(CompileHello_Case):
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 #define MAKE_HEADER(header_name) STRINGIZE(header_name.h)
@@ -1366,6 +1414,7 @@ int main(void) {
 
 class BackslashInMacro_Case(ComputedInclude_Case):
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 #if FALSE
@@ -1395,6 +1444,7 @@ class BackslashInFilename_Case(ComputedInclude_Case):
       return 'subdir\\testhdr.h'
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 #define HEADER MAKE_HEADER(testhdr)
@@ -1422,6 +1472,7 @@ class IncludeEqualsForceInclude_Case(CompileHello_Case):
     mode."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         if _server_options.find('cpp') == -1:
             raise comfychair.NotRunError(
                 "--include= server-side rewriting only applies in pump "
@@ -1446,6 +1497,7 @@ int main(void) {
 """
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "--include=%s" % os.path.abspath(self.headerFilename())
 
 
@@ -1462,6 +1514,7 @@ class ImacrosEqualsForceInclude_Case(CompileHello_Case):
     already found and fixed for "--include=" (#416)."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         if _server_options.find('cpp') == -1:
             raise comfychair.NotRunError(
                 "--imacros= server-side rewriting only applies in pump "
@@ -1486,6 +1539,7 @@ int main(void) {
 """
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "--imacros=%s" % os.path.abspath(self.headerFilename())
 
 
@@ -1510,6 +1564,7 @@ class SysrootAbsolutePath_Case(CompileHello_Case):
     mirroring/discovery side, not this fix."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         if _server_options.find('cpp') == -1:
             raise comfychair.NotRunError(
                 "-isysroot server-side rewriting only applies in pump mode "
@@ -1524,9 +1579,11 @@ class SysrootAbsolutePath_Case(CompileHello_Case):
         return "int main(void) { return 0; }\n"
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "-isysroot %s" % os.path.abspath("fake_sysroot")
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         fake_sysroot = os.path.abspath("fake_sysroot")
         os.makedirs(fake_sysroot)
 
@@ -1683,6 +1740,7 @@ class LanguageSpecific_Case(Compilation_Case):
             Compilation_Case.runtest (self)
 
     def sourceFilename(self):
+        # Expose the fixture name through an override so language-specific cases can reuse the compile flow.
       return "testtmp" + self.extension()
 
     def languageGccName(self):
@@ -1702,23 +1760,29 @@ class CPlusPlus_Case(LanguageSpecific_Case):
     """Test building a C++ program."""
 
     def languageName(self):
+        # Describe the language independently of compiler spelling so shared skip diagnostics stay accurate.
       return "C++"
 
     def languageGccName(self):
+        # Keep the compiler language token overridable because driver spellings differ from display names.
       return "c++"
 
     def extension(self):
+        # Select the suffix through an override because compiler language detection depends on the filename.
       return ".cpp"  # Could also use ".cc", ".cxx", etc.
 
     def libraries(self):
+        # Keep language runtime libraries overridable so the common link step remains reusable.
       return "-lstdc++"
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define MESSAGE "hello c++"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <iostream>
 #include "testhdr.h"
@@ -1730,6 +1794,7 @@ int main(void) {
 """
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello c++\n")
 
 
@@ -1737,20 +1802,25 @@ class ObjectiveC_Case(LanguageSpecific_Case):
     """Test building an Objective-C program."""
 
     def languageName(self):
+        # Describe the language independently of compiler spelling so shared skip diagnostics stay accurate.
       return "Objective-C"
 
     def languageGccName(self):
+        # Keep the compiler language token overridable because driver spellings differ from display names.
       return "objective-c"
 
     def extension(self):
+        # Select the suffix through an override because compiler language detection depends on the filename.
       return ".m"
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define MESSAGE "hello objective-c"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #import <stdio.h>
 #import "testhdr.h"
@@ -1775,23 +1845,29 @@ class ObjectiveCPlusPlus_Case(LanguageSpecific_Case):
     """Test building an Objective-C++ program."""
 
     def languageName(self):
+        # Describe the language independently of compiler spelling so shared skip diagnostics stay accurate.
       return "Objective-C++"
 
     def languageGccName(self):
+        # Keep the compiler language token overridable because driver spellings differ from display names.
       return "objective-c++"
 
     def extension(self):
+        # Select the suffix through an override because compiler language detection depends on the filename.
       return ".mm"
 
     def libraries(self):
+        # Keep language runtime libraries overridable so the common link step remains reusable.
       return "-lstdc++"
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define MESSAGE "hello objective-c++"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #import <iostream>
 #import "testhdr.h"
@@ -1808,6 +1884,7 @@ int main(void) {
 """
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello objective-c++\n")
 
 
@@ -1815,6 +1892,7 @@ class SystemIncludeDirectories_Case(Compilation_Case):
     """Test -I/usr/include/sys"""
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         if os.path.exists("/usr/include/sys/types.h"):
           return "-I/usr/include/"
         else:
@@ -1822,11 +1900,13 @@ class SystemIncludeDirectories_Case(Compilation_Case):
               "This test requires /usr/include/sys/types.h")
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define HELLO_WORLD "hello world"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include "sys/types.h"    /* Should resolve to /usr/include/sys/types.h. */
 #include <stdio.h>
@@ -1839,6 +1919,7 @@ int main(void) {
 """
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello world\n")
 
 
@@ -1846,6 +1927,7 @@ class CPlusPlus_SystemIncludeDirectories_Case(CPlusPlus_Case):
     """Test -I/usr/include/sys for a C++ program"""
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         if os.path.exists("/usr/include/sys/types.h"):
           return "-I/usr/include/sys"
         else:
@@ -1853,11 +1935,13 @@ class CPlusPlus_SystemIncludeDirectories_Case(CPlusPlus_Case):
               "This test requires /usr/include/sys/types.h")
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define MESSAGE "hello world"
 """
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include "types.h"    /* Should resolve to /usr/include/sys/types.h. */
 #include "testhdr.h"
@@ -1868,6 +1952,7 @@ int main(void) {
 }
 """
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello world\n")
 
 
@@ -1875,6 +1960,7 @@ class Gdb_Case(CompileHello_Case):
     """Test that distcc generates correct debugging information."""
 
     def sourceFilename(self):
+        # Expose the fixture name through an override so language-specific cases can reuse the compile flow.
         try:
           os.mkdir("src")
         except:
@@ -1930,6 +2016,7 @@ class Gdb_Case(CompileHello_Case):
         CompileHello_Case.runtest (self)
 
     def gdbCommands(self):
+        # Keep debugger commands overridable because each debug-info scenario needs a different lookup path.
         return 'break main\nrun\nnext\n'
 
     def checkBuiltProgram(self):
@@ -2066,6 +2153,7 @@ class GdbPrefixMap_Case(Gdb_Case):
                 " -gno-record-gcc-switches")
 
     def gdbCommands(self):
+        # Keep debugger commands overridable because each debug-info scenario needs a different lookup path.
         return 'directory %s\n' % os.getcwd() + super().gdbCommands()
 
 class CompressedCompile_Case(CompileHello_Case):
@@ -2075,6 +2163,7 @@ class CompressedCompile_Case(CompileHello_Case):
     is turned on."""
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 #include <stdlib.h>
@@ -2087,16 +2176,19 @@ int main(void) {
 """
 
     def setupEnv(self):
+        # Keep environment changes in the harness hook so they are applied before any subprocess starts.
         Compilation_Case.setupEnv(self)
         os.environ['DISTCC_HOSTS'] = (
             '127.0.0.1:%d,lzo' % self.server_port + _server_options)
 
 class DashONoSpace_Case(CompileHello_Case):
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return self.distcc_without_fallback() + \
                self._cc + " -otesttmp.o -c %s" % (self.sourceFilename())
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         if sys.platform == 'sunos5':
             raise comfychair.NotRunError ('Sun assembler wants space after -o')
         elif sys.platform.startswith ('osf1'):
@@ -2107,9 +2199,11 @@ class DashONoSpace_Case(CompileHello_Case):
 
 class WriteDevNull_Case(CompileHello_Case):
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
 
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return self.distcc_without_fallback() + self._cc + \
                " -c -o /dev/null -c %s" % (self.sourceFilename())
 
@@ -2117,6 +2211,7 @@ class WriteDevNull_Case(CompileHello_Case):
 class MultipleCompile_Case(Compilation_Case):
     """Test compiling several files from one line"""
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         WithDaemon_Case.setup(self)
         # Explicit `with` (not relying on CPython's prompt refcounting to
         # flush the write) matters here: runtest() below hands both files
@@ -2134,6 +2229,7 @@ int main(void) {
 """)
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc()
                     + self._cc + " -c test1.c test2.c")
         self.runcmd(self.distcc()
@@ -2144,9 +2240,11 @@ int main(void) {
 class CppError_Case(CompileHello_Case):
     """Test failure of cpp"""
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return '#error "not tonight dear"\n'
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cmd = self.distcc() + self._cc + " -c testtmp.c"
         msgs, errs = self.runcmd(cmd, expectedResult=1)
         self.assert_re_search("not tonight dear", errs)
@@ -2156,10 +2254,12 @@ class CppError_Case(CompileHello_Case):
 class BadInclude_Case(Compilation_Case):
     """Handling of error running cpp"""
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """#include <nosuchfilehere.h>
 """
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         if _server_options.find('cpp') != -1:
             # Annoyingly, different versions of gcc are inconsistent
             # in how they treat a non-existent #include file when
@@ -2182,11 +2282,13 @@ class BadInclude_Case(Compilation_Case):
 class PreprocessPlainText_Case(Compilation_Case):
     """Try using cpp on something that's not C at all"""
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.stripEnvironment()
         self.createSource()
         self.initCompiler()
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """#define FOO 3
 #if FOO < 10
 small foo!
@@ -2234,9 +2336,11 @@ class CppFromStdin_Case(Compilation_Case):
     has no real path -- avoided entirely rather than relying on it."""
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return "int foo(void) { return 0; }\n"
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cmd = ("cat %s | %s%s -x c -c -o testtmp.o -" %
                (self.sourceFilename(), self.distcc(), self._cc))
         self.runcmd(cmd)
@@ -2245,6 +2349,7 @@ class CppFromStdin_Case(Compilation_Case):
 class NoDetachDaemon_Case(CompileHello_Case):
     """Test the --no-detach option."""
     def _readDaemonLog(self):
+        # Tolerate a missing startup log so failure reporting can still include the daemon status.
         try:
             with open(self.daemon_logfile, 'rt') as f:
                 return f.read()
@@ -2252,6 +2357,7 @@ class NoDetachDaemon_Case(CompileHello_Case):
             return "could not read daemon log: %s" % e
 
     def _collectDaemonStartupFailure(self):
+        # Combine process status and logs so startup retries retain actionable diagnostics.
         pid, status = os.waitpid(self.pid, os.WNOHANG)
         if not pid:
             return None
@@ -2270,6 +2376,7 @@ class NoDetachDaemon_Case(CompileHello_Case):
             sock.close()
 
     def startDaemon(self):
+        # Retry startup because an asynchronously chosen port may become unavailable before bind.
         max_start_attempts = 5
         attempts = 0
         while attempts < max_start_attempts:
@@ -2438,6 +2545,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         shutil.rmtree(self.rundir, ignore_errors=True)
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.require_root()
         if not sys.platform.startswith('linux'):
             raise comfychair.NotRunError(
@@ -2627,6 +2735,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
     AUTOGROUP_WARNING_TIMEOUT = 15
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         with open(self.daemon_pidfile, 'rt') as f:
             pid = int(f.read())
 
@@ -2694,6 +2803,7 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
     compiler child distccd forks, not just the daemon process itself."""
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         drop_pw = pwd.getpwnam(self.DROP_USER)
 
         compiler = os.path.abspath("uid_reporting_compiler")
@@ -2741,6 +2851,7 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
 class ImplicitCompiler_Case(CompileHello_Case):
     """Test giving no compiler works"""
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return self.distcc() + "-c testtmp.c"
 
     def linkCmd(self):
@@ -2756,6 +2867,7 @@ class ImplicitCompiler_Case(CompileHello_Case):
         return self.distcc() + "-o testtmp testtmp.o "
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         if sys.platform == 'hp-ux10':
             raise comfychair.NotRunError ('HP-UX bundled C compiler non-ANSI')
         # We can't run if cc is not installed on the system (maybe only gcc is)
@@ -2770,6 +2882,7 @@ class ImplicitCompiler_Case(CompileHello_Case):
 class Unicode_Case(Compilation_Case):
     """Check unicode compression works OK in include_server"""
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 
@@ -2780,12 +2893,14 @@ int main(void) {
 """
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "Unicode is hard! 😭\n")
 
 
 class DashD_Case(Compilation_Case):
     """Test preprocessor arguments"""
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 
@@ -2800,6 +2915,7 @@ int main(void) {
         return "'-DMESSAGE=\"hello DashD\"'"
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello DashD\n")
 
 
@@ -2809,6 +2925,7 @@ class EmptyDefine_Case(Compilation_Case):
     even when they share the same name as a real header.
     """
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """
 #include <stdio.h>
 
@@ -2824,6 +2941,7 @@ int main(void) {
 """
 
     def checkBuiltProgramMsgs(self, msgs):
+        # Keep output validation overridable because each fixture embeds a different expected result.
         self.assert_equal(msgs, "hello world\n")
 
 
@@ -2832,9 +2950,11 @@ class DashMD_DashMF_DashMT_Case(CompileHello_Case):
     """Test -MD -MFfoo -MTbar"""
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "-MD -MFdotd_filename -MTtarget_name_42"
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         try:
           os.remove('dotd_filename')
         except OSError:
@@ -2855,9 +2975,11 @@ class DashMMD_Case(CompileHello_Case):
     distcc-specific left to verify beyond that existing check)."""
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "-MMD -MFdotd_mmd_filename"
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         try:
             os.remove('dotd_mmd_filename')
         except OSError:
@@ -2871,9 +2993,11 @@ class DashWpMD_Case(CompileHello_Case):
     """Test -Wp,-MD,depfile"""
 
     def compileOpts(self):
+        # Keep case-specific flags separate so the shared command builder preserves their exact ordering.
         return "-Wp,-MD,depsfile"
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         try:
           os.remove('depsfile')
         except OSError:
@@ -2911,6 +3035,7 @@ class ZstdPumpCompile_Case(CompileHello_Case):
         return "-MD -MFzstd_pump_test.d"
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         if _server_options.find('cpp') == -1:
             raise comfychair.NotRunError(
                 "zstd+pump (DCC_VER_5000) needs an actual pump-mode test run "
@@ -2920,6 +3045,7 @@ class ZstdPumpCompile_Case(CompileHello_Case):
             '127.0.0.1:%d,zstd,cpp' % self.server_port)
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         out, unused_err = self.runcmd(self.distcc() + "--version")
         if 'Zstd compression support' not in out:
             raise comfychair.NotRunError(
@@ -2978,6 +3104,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
     asserting both compiles eventually succeeded."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         SimpleDistCC_Case.setup(self)
         self.slow_compiler = os.path.abspath("slow_compiler")
         f = open(self.slow_compiler, "w")
@@ -3008,6 +3135,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
         self.createSource()
 
     def _start_daemon(self, port, pidfile, logfile):
+        # Start this auxiliary daemon separately so concurrent-client behavior can be controlled precisely.
         cmd = (self.distccd() +
                "--verbose --lifetime=60 --daemon --jobs 1 --log-file %s "
                "--pid-file %s --port %d --allow 127.0.0.1 "
@@ -3019,6 +3147,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
                       (port, err))
 
     def _kill_daemon(self, pidfile):
+        # Make auxiliary-daemon cleanup idempotent so an early exit does not hide the scenario result.
         try:
             pid = int(open(pidfile, 'rt').read())
         except IOError:
@@ -3026,6 +3155,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
         os.kill(pid, signal.SIGTERM)
 
     def _waitForPattern(self, logfile, pattern, timeout):
+        # Bound log polling so a missing event fails deterministically instead of hanging the suite.
         deadline = time.time() + timeout
         content = ""
         while True:
@@ -3041,6 +3171,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
             time.sleep(0.2)
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         job1_pid = self.runcmd_background(
             self.distcc_without_fallback() + self.slow_compiler +
             " -c testtmp.c -o job1.o")
@@ -3063,6 +3194,7 @@ class ScanIncludes_Case(CompileHello_Case):
     """Test --scan-includes"""
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
       CompileHello_Case.createSource(self)
       self.runcmd("mv testhdr.h test_header.h")
       self.runcmd("ln -s test_header.h testhdr.h")
@@ -3070,17 +3202,20 @@ class ScanIncludes_Case(CompileHello_Case):
       self.runcmd("touch test_another_header.h")
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define HELLO_WORLD "hello world"
 #include "test_subdir/../test_another_header.h"
 """
 
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return self.distcc_without_fallback() + "--scan-includes " + \
                self._cc + " -o testtmp.o " + self.compileOpts() + \
                " -c %s" % (self.sourceFilename())
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         cmd = self.compileCmd()
         rc, out, err = self.runcmd_unchecked(cmd)
         with open('distcc.log') as f:
@@ -3122,6 +3257,7 @@ class ForceDirectory_Case(CompileHello_Case):
     """
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
       CompileHello_Case.createSource(self)
       self.runcmd("mv testhdr.h test_header.h")
       self.runcmd("ln -s test_header.h testhdr.h")
@@ -3129,6 +3265,7 @@ class ForceDirectory_Case(CompileHello_Case):
       self.runcmd("touch test_another_header.h")
 
     def headerSource(self):
+        # Keep header input inline so preprocessing behavior is reproducible in the isolated fixture.
         return """
 #define HELLO_WORLD "hello world"
 #include "test_subdir/../test_another_header.h"
@@ -3138,6 +3275,7 @@ class AbsSourceFilename_Case(CompileHello_Case):
     """Test remote compilation of files with absolute names."""
 
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return (self.distcc()
                 + self._cc
                 + " -c -o testtmp.o %s/testtmp.c"
@@ -3158,6 +3296,7 @@ class HundredFold_Case(CompileHello_Case):
         return 600
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         for unused_i in range(100):
             self.runcmd(self.distcc()
                         + self._cc + " -o testtmp.o -c testtmp.c")
@@ -3202,6 +3341,7 @@ class BigAssFile_Case(Compilation_Case):
                 f.write("int i%06d = %d;\n" % (i, i))
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc() + self._cc + " -c %s" % "testtmp.c")
         self.runcmd(self.distcc() + self._cc + " -o testtmp testtmp.o")
 
@@ -3225,9 +3365,11 @@ class ZeroByteOutputCompiler_Case(Compilation_Case):
     file) instead of actually compiling anything."""
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
         open("testtmp.i", "wt").write("int main() {}")
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         compiler = os.path.abspath("zero_byte_compiler")
         f = open(compiler, "w")
         try:
@@ -3254,9 +3396,11 @@ class NastyCppWritesStdout_Case(Compilation_Case):
     handled by design, not a distcc bug, just never actually tested."""
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
         open("testtmp.i", "wt").write("int main() {}")
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         compiler = os.path.abspath("nasty_stdout_compiler")
         f = open(compiler, "w")
         try:
@@ -3328,6 +3472,7 @@ class BinTrue_Case(Compilation_Case):
             f.write("int main() {}")
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc()
                     + "true -c testtmp.i", 0)
 
@@ -3346,9 +3491,11 @@ class CrashingCompiler_Case(Compilation_Case):
     reliably kill themselves with a specific signal on all platforms."""
 
     def createSource(self):
+        # Keep source generation in this override so the case controls the exact input seen by subprocesses.
         open("testtmp.i", "wt").write("int main() {}")
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         crasher = os.path.abspath("crashing_compiler")
         f = open(crasher, "w")
         try:
@@ -3380,6 +3527,7 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
     arguments are harmlessly ignored -- sleeps for real instead."""
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         open("testtmp.i", "wt").write("int main() {}")
 
         slow_compiler = os.path.abspath("slow_compiler")
@@ -3446,6 +3594,7 @@ class SBeatsC_Case(CompileHello_Case):
     live, real gcc (ubuntu-latest) and real clang (macOS-latest) both
     pass this exact case."""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc() +
                     self._cc + " -c -S testtmp.c")
         if os.path.exists("testtmp.o"):
@@ -3457,6 +3606,7 @@ class SBeatsC_Case(CompileHello_Case):
 class NoServer_Case(CompileHello_Case):
     """Invalid server name"""
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.stripEnvironment()
         os.environ['DISTCC_HOSTS'] = 'no.such.host.here' + _server_options
         self.distcc_log = 'distcc.log'
@@ -3465,6 +3615,7 @@ class NoServer_Case(CompileHello_Case):
         self.initCompiler()
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
         with open(self.distcc_log, 'r') as f:
@@ -3482,6 +3633,7 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
     on exit up to and including v3.4)
     """
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         CompileHello_Case.setup(self)
         os.environ['DISTCC_HOSTS'] = f"no.such.host.here,lzo,cpp 127.0.0.1:{self.server_port}"
         self.distcc_log = 'distcc.log'
@@ -3490,6 +3642,7 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
         self.initCompiler()
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
         with open(self.distcc_log, 'r') as f:
@@ -3528,6 +3681,7 @@ class BackoffFromDownedHost_Case(CompileHello_Case):
             (down_port, self.server_port, _server_options))
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
         log = open(os.environ['DISTCC_LOG']).read()
         self.assert_re_search(r'mark .*backoff', log)
@@ -3536,6 +3690,7 @@ class BackoffFromDownedHost_Case(CompileHello_Case):
 class ImpliedOutput_Case(CompileHello_Case):
     """Test handling absence of -o"""
     def compileCmd(self):
+        # Build the command in an override so each case can change policy without duplicating execution logic.
         return self.distcc() + self._cc + " -c testtmp.c"
 
 
@@ -3543,16 +3698,19 @@ class SyntaxError_Case(Compilation_Case):
     """Test building a program containing syntax errors, so it won't build
     properly."""
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """not C source at all
 """
 
     def compile(self):
+        # Centralize compilation here so setup and assertions exercise the same command path.
         rc, msgs, errs = self.runcmd_unchecked(self.compileCmd())
         self.assert_notequal(rc, 0)
         self.assert_re_search(r'testtmp.c:1:.*error', errs)
         self.assert_equal(msgs, '')
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
 
         if os.path.exists("testtmp") or os.path.exists("testtmp.o"):
@@ -3621,6 +3779,7 @@ class RecursionSafeguard_Case(CompileHello_Case):
     way NoHosts_Case (above) already does for its own log-message check."""
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.bind(('127.0.0.1', 0))
         down_port = probe.getsockname()[1]
@@ -3643,9 +3802,11 @@ class MissingCompiler_Case(CompileHello_Case):
         return "testtmp.i"
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """int foo;"""
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         msgs, errs = self.runcmd(self.distcc_without_fallback()
                                  + "nosuchcc -c testtmp.i",
                                  expectedResult=EXIT_COMPILER_MISSING)
@@ -3681,10 +3842,12 @@ class NonexistentSourceFile_Case(CompileHello_Case):
     reason."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         WithDaemon_Case.setup(self)
         # Deliberately skip createSource(): testtmp.c is never written.
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         if "cpp" in _server_options:
             raise comfychair.NotRunError(
                 'pump mode intercepts a missing source file at the '
@@ -3726,6 +3889,7 @@ class PathQualifiedCompilerNotSubstituted_Case(CompileHello_Case):
         return "testtmp.i"
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return """int foo;"""
 
     def setup(self):
@@ -3757,6 +3921,7 @@ class PathQualifiedCompilerNotSubstituted_Case(CompileHello_Case):
             os.environ['PATH'] = old_path
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         nonexistent_path = os.path.join(
             self.tmpdir, "nowhere_on_any_host", self.MARKER_NAME)
         msgs, errs = self.runcmd(
@@ -3794,6 +3959,7 @@ msg:
     asm_filename = 'test2.s'
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         WithDaemon_Case.setup(self)
         # Explicit `with` (not relying on CPython's prompt refcounting to
         # flush the write) matters here: compile() hands this file
@@ -3825,6 +3991,7 @@ msg:
 """
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         WithDaemon_Case.setup(self)
         # Explicit `with` (not relying on CPython's prompt refcounting to
         # flush the write) matters here: compile() hands this file
@@ -3833,6 +4000,7 @@ msg:
             f.write(self.asm_source)
 
     def compile(self):
+        # Centralize compilation here so setup and assertions exercise the same command path.
         if sys.platform == 'linux2':
             self.runcmd(self.distcc()
                         + "-o test2.o -c test2.S")
@@ -3840,6 +4008,7 @@ msg:
             raise comfychair.NotRunError ('this test is system-specific')
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
 
 
@@ -3884,6 +4053,7 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
     inc_filename = 'local_only.inc'
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         SimpleDistCC_Case.setup(self)
         # Explicit `with` (not relying on CPython's prompt refcounting to
         # flush the write) matters here: the local assembler subprocess
@@ -3916,6 +4086,7 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % down_port
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         msgs, errs = self.runcmd(self.distcc_without_fallback() +
                                   self._cc + " -o test_include.o -c %s" %
                                   self.asm_filename)
@@ -3927,6 +4098,7 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
 class ModeBits_Case(CompileHello_Case):
     """Check distcc obeys umask"""
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd("umask 0; distcc " + self._cc + " -c testtmp.c")
         self.assert_equal(S_IMODE(os.stat("testtmp.o")[ST_MODE]), 0o666)
 
@@ -3934,6 +4106,7 @@ class ModeBits_Case(CompileHello_Case):
 class CheckRoot_Case(SimpleDistCC_Case):
     """Stub case that checks this is run by root.  Not used by default."""
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.require_root()
 
 
@@ -3950,22 +4123,27 @@ class EmptySource_Case(Compilation_Case):
     if gcc gets an ICE."""
 
     def source(self):
+        # Keep the source inline so the fixture remains independent of files outside its temporary directory.
         return ''
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
 
     def compile(self):
+        # Centralize compilation here so setup and assertions exercise the same command path.
         rc, out, errs = self.runcmd_unchecked(self.distcc()
                     + self._cc + " -c %s" % self.sourceFilename())
         if not re.search("internal compiler error", errs):
           self.assert_equal(rc, 0)
 
     def sourceFilename(self):
+        # Expose the fixture name through an override so language-specific cases can reuse the compile flow.
         return "testtmp.i"
 
 class BadLogFile_Case(CompileHello_Case):
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.runcmd("touch distcc.log")
         self.runcmd("chmod 0 distcc.log")
         msgs, errs = self.runcmd("DISTCC_LOG=distcc.log " + \
@@ -3979,6 +4157,7 @@ class AccessDenied_Case(CompileHello_Case):
 
     Make sure that compilation falls back to localhost with a warning."""
     def daemon_command(self):
+        # Keep daemon arguments overridable so transport-specific cases can reuse lifecycle handling.
         return (self.distccd()
                 + "--verbose --lifetime=%d --daemon --log-file %s "
                   "--pid-file %s --port %d --allow 127.0.0.2 --enable-tcp-insecure "
@@ -3996,6 +4175,7 @@ class AccessDenied_Case(CompileHello_Case):
 
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()
         with open('distcc.log') as f:
             errs = f.read()
@@ -4020,6 +4200,7 @@ class ParseMask_Case(comfychair.TestCase):
         ('192.168.1.64/28', '192.168.1.7', EXIT_ACCESS_DENIED),
         ]
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         for mask, client, expected in ParseMask_Case.values:
             cmd = "h_parsemask %s %s" % (mask, client)
             ret, msgs, err = self.runcmd_unchecked(cmd)
@@ -4085,6 +4266,7 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
     from #442's compiler-misidentification bug, not yet tracked."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         self.ccache_dir = os.path.abspath('ccache_test_dir')
         os.mkdir(self.ccache_dir)
         os.environ['CCACHE_DIR'] = self.ccache_dir
@@ -4122,6 +4304,7 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
                 " -c %s" % os.path.abspath(self.sourceFilename()))
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         self.compile()   # first compile: cold, populates the cache
         self.compile()   # second compile: should hit outside pump mode
         out, errs = self.runcmd("ccache -s")
@@ -4145,6 +4328,7 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
 
 class HostFile_Case(CompileHello_Case):
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         CompileHello_Case.setup(self)
         del os.environ['DISTCC_HOSTS']
         self.save_home = os.environ['HOME']
@@ -4157,6 +4341,7 @@ class HostFile_Case(CompileHello_Case):
             f.write('127.0.0.1:%d%s' % (self.server_port, _server_options))
 
     def teardown(self):
+        # Restore process-wide state here so this case cannot influence tests that run afterward.
         os.environ['HOME'] = self.save_home
         CompileHello_Case.teardown(self)
 
@@ -4169,6 +4354,7 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
     never otherwise gets exercised."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         CompileHello_Case.setup(self)
         del os.environ['DISTCC_HOSTS']
         del os.environ['DISTCC_DIR']
@@ -4183,6 +4369,7 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
             f.write('127.0.0.1:%d%s' % (self.server_port, _server_options))
 
     def teardown(self):
+        # Restore process-wide state here so this case cannot influence tests that run afterward.
         os.environ['HOME'] = self.save_home
         CompileHello_Case.teardown(self)
 
@@ -4222,6 +4409,7 @@ class IPv6Compile_Case(CompileHello_Case):
     docstring's correction doesn't paper over.)"""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
         try:
             probe.bind(('::1', 0))
@@ -4248,6 +4436,7 @@ class IPv6Compile_Case(CompileHello_Case):
         CompileHello_Case.setup(self)
 
     def daemon_command(self):
+        # Keep daemon arguments overridable so transport-specific cases can reuse lifecycle handling.
         return (self.distccd() +
                 "--verbose --lifetime=%d --daemon --log-file %s "
                 "--pid-file %s --port %d --listen ::1 --allow ::1 "
@@ -4259,6 +4448,7 @@ class IPv6Compile_Case(CompileHello_Case):
                    _ShellSafe(self.daemon_sysroot)))
 
     def setupEnv(self):
+        # Keep environment changes in the harness hook so they are applied before any subprocess starts.
         WithDaemon_Case.setupEnv(self)
         os.environ['DISTCC_HOSTS'] = ('[::1]:%d%s' %
           (self.server_port, _server_options))
@@ -4275,6 +4465,7 @@ class NoForkDaemon_Case(CompileHello_Case):
     not just a flag with no effect."""
 
     def daemon_command(self):
+        # Keep daemon arguments overridable so transport-specific cases can reuse lifecycle handling.
         return (self.distccd() +
                 "--verbose --lifetime=%d --daemon --no-fork --log-file %s "
                 "--pid-file %s --port %d --allow 127.0.0.1 "
@@ -4410,6 +4601,7 @@ class SSHMode_Case(CompileHello_Case):
     Skips cleanly (NotRunError) if sshd/ssh-keygen/ssh aren't found."""
 
     def setup(self):
+        # Keep this fixture setup local to the case so inherited scenarios retain their default environment.
         CompileHello_Case.setup(self)
 
         sshd_bin = shutil.which("sshd") or "/usr/sbin/sshd"
@@ -4495,6 +4687,7 @@ class SSHMode_Case(CompileHello_Case):
         os.environ['DISTCC_HOSTS'] = '@127.0.0.1'
 
     def killSshd(self):
+        # Treat an already-exited SSH daemon as normal so teardown does not mask the test result.
         try:
             with open(self._sshd_pidfile, 'rt') as f:
                 pid = int(f.read().strip())
@@ -4515,6 +4708,7 @@ class Lsdistcc_Case(WithDaemon_Case):
         return "lsdistcc -r%d" % self.server_port
 
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         lsdistcc = self.lsdistccCmd()
 
         # Test "lsdistcc --help" output is reasonable.
@@ -4581,6 +4775,7 @@ class Getline_Case(comfychair.TestCase):
         ('foo bar\nbaz', 'foo bar\n', 'baz', 8),
         ]
     def runtest(self):
+        # Keep the scenario in the harness entry point so it is discovered and executed as one test case.
         for input, line, rest, retval in Getline_Case.values:
             for bufsize in [None, 0, 1, 2, 3, 4, 64, 10000]:
                 if bufsize:
