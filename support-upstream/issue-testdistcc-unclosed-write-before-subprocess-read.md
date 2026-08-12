@@ -8,7 +8,9 @@
 
 ## The problem
 
-Each of the six call sites above writes a test fixture file with a bare,
+Each of the seven call sites above (across six methods/classes --
+`MultipleCompile_Case.setup()` has two separate `open(...).write(...)`
+expressions, at lines 1467 and 1468) writes a test fixture file with a bare,
 unassigned `open(...).write(...)` expression and never explicitly closes
 it. Relying on the temporary file object being garbage-collected -- and
 its `__del__` closing and flushing it -- before the next statement runs is
@@ -80,8 +82,9 @@ class HostFile_Case(CompileHello_Case):
 
 ## Fixed code (changed code as of the commit from distcc-ng fork)
 
-Every applicable call site in this fork, including both the six
-upstream-shared locations above and this file's other fork-only additions
+Every applicable call site in this fork, including both the seven
+upstream-shared locations above (across six methods/classes) and this
+file's other fork-only additions
 (the full sweep this PR performs, per AGENTS.md rule 73), now uses an
 explicit `with` block:
 

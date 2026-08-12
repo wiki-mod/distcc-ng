@@ -3317,7 +3317,13 @@ class BinFalse_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        """Close the fixture before the fake compiler receives its path."""
+        """Explicit file-handle hygiene, not sequencing.
+
+        'false'/'true' ignore their input entirely, so closing this
+        fixture before the fake compiler runs has no observable effect
+        on the test itself -- see
+        support-upstream/issue-testdistcc-unclosed-write-before-subprocess-read.md.
+        """
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 
@@ -3345,7 +3351,13 @@ class BinTrue_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        """Close the fixture before the fake compiler receives its path."""
+        """Explicit file-handle hygiene, not sequencing.
+
+        'false'/'true' ignore their input entirely, so closing this
+        fixture before the fake compiler runs has no observable effect
+        on the test itself -- see
+        support-upstream/issue-testdistcc-unclosed-write-before-subprocess-read.md.
+        """
         with open("testtmp.i", "wt") as f:
             f.write("int main() {}")
 

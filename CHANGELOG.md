@@ -30,16 +30,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   skipped in exactly the same scenario, leaving a recovered PR without
   its category label).
 
-## [3.6.5-NG] - 2026-08-11
-
-### Fixed
-
 - **`test/testdistcc.py`**: closed every bare `open(...).read()` and
   `open(...).write()` handle in the file, expanding issue #460 Finding 3's
   original 10 reported sites into a complete same-file sweep. Writes now
   finish before later test steps can observe their fixtures, without relying
   on CPython's prompt reference-count finalization; reads use deterministic
   ownership too. Added function-level rationale to the modified methods.
+
+## [3.6.5-NG] - 2026-08-11
+
+### Fixed
 
 - **`include_server/parse_command.py`**: pump mode's include server can now
   see through a `ccache` wrapper (issue #442). `ParseCommandArgs()` used to
