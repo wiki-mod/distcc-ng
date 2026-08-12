@@ -208,10 +208,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # socket inspection.
       dnsutils \
       # shellcheck/jq (CI-lint tools, follow-up ask this session, same
-      # class as actionlint's stale-stdlib gap above): shellcheck is Haskell, not
-      # Go, so it doesn't have actionlint's stale-stdlib problem above --
-      # Debian's packaged version is fine here. jq has no compiled runtime
-      # embedding concern either (plain C).
+      # general class of gap as actionlint's provisioning above):
+      # shellcheck is Haskell, not Go, so it doesn't have actionlint's
+      # stale-stdlib problem above -- Debian's packaged version is fine
+      # here. jq has no compiled runtime embedding concern either (plain
+      # C).
       shellcheck \
       jq \
       # openssh-server/openssh-client (SSHMode_Case):
