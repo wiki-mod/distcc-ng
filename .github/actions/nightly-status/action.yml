@@ -22,27 +22,29 @@ inputs:
       part.
     required: false
     default: ""
-  token:
+  project_pat:
     description: >-
-      Token used for every gh issue mutation. Pass
-      secrets.PROJECT_AUTOMATION_PAT with a github.token fallback -- a
-      composite action has no direct access to the caller's secrets
-      context, so this can't default to that PAT internally and must be
-      passed in explicitly. A real PAT here isn't optional polish: GitHub
-      suppresses downstream workflow events (add-to-project.yml's own
-      issues:opened trigger) for anything created by the default
-      GITHUB_TOKEN, the same anti-recursion behavior already found for
-      release publishing. Without a real PAT, every issue this action
-      creates permanently bypasses the project board.
+      Pass secrets.PROJECT_AUTOMATION_PAT (a classic PAT with only the
+      `project` scope, per add-to-project.yml's own documented setup --
+      NOT sufficient for gh issue create/comment/close, which need
+      repo/issues write access). Used only for a separate, explicit
+      "add to project board" call on a newly created issue, never for the
+      issue mutations themselves, which keep using the default
+      GITHUB_TOKEN as before. A composite action has no direct access to
+      the caller's secrets context, so this can't be read internally and
+      must be passed in explicitly. Left empty (the default), the new
+      issue simply isn't added to the board, matching
+      add-to-project.yml's own graceful-skip-when-unconfigured behavior.
     required: false
-    default: ${{ github.token }}
+    default: ""
 
 runs:
   using: composite
   steps:
     - shell: bash
       env:
-        GH_TOKEN: ${{ inputs.token }}
+        GH_TOKEN: ${{ github.token }}
+        PROJECT_PAT: ${{ inputs.project_pat }}
         REPO: ${{ github.repository }}
         OUTCOME: ${{ inputs.outcome }}
         SCOPE: ${{ inputs.scope }}

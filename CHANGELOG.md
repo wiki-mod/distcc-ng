@@ -30,12 +30,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `GITHUB_TOKEN`, and GitHub suppresses downstream workflow events (here,
   `add-to-project.yml`'s own `issues: opened` trigger) for anything created
   by that token -- the same anti-recursion behavior already found and fixed
-  for release publishing. The composite action now takes a `token` input
-  (a composite action has no direct access to the caller's `secrets`
-  context, so this can't default to a PAT internally); every caller
-  (`c-build.yml`, `e2e-image-build.yml`, `master-heartbeat.yml`,
-  `nightly-publish.yml`) now passes `secrets.PROJECT_AUTOMATION_PAT` with a
-  `github.token` fallback.
+  for release publishing. Fixed with a separate, explicit `gh project
+  item-add` call right after creating a new issue, using a new `project_pat`
+  input -- **not** by switching the existing issue-mutation token, since
+  `PROJECT_AUTOMATION_PAT` is a classic PAT documented (`add-to-project.yml`'s
+  own header) as having only the `project` scope, insufficient for
+  `gh issue create`/`comment`/`close`/`updateIssue`; an earlier revision of
+  this fix did exactly that and would have made every scheduled reporter
+  fail outright wherever this PAT is configured, caught by review before
+  merging. Every caller (`c-build.yml`, `e2e-image-build.yml`,
+  `master-heartbeat.yml`, `nightly-publish.yml`) now passes
+  `secrets.PROJECT_AUTOMATION_PAT` as `project_pat`; issue mutations
+  themselves keep using the default `GITHUB_TOKEN` as before.
   - Also: standing issues/comments now record which specific job(s) failed
     (a new `failed_jobs` input, computed by each multi-job caller from
     `needs.*.result`), not just "the pipeline failed" -- previously the

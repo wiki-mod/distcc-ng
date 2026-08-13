@@ -270,4 +270,4 @@ jobs:
           outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: nightly build+publish (current_dev)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
-          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}
+          project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}

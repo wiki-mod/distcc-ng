@@ -526,4 +526,4 @@ jobs:
           outcome: ${{ (needs.build_and_selftest.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: e2e test image build+publish (distcc-ng-e2e)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
-          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}
+          project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}

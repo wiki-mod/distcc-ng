@@ -772,5 +772,5 @@ jobs:
           outcome: ${{ (needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
           scope: nightly health check (current_dev)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
-          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}
+          project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}
 
