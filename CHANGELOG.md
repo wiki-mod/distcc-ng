@@ -11,6 +11,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`AGENTS.md`**: rule 78(c)'s file-wide self-check requirement allowed
+  "I fixed what was flagged" to pass as "this file is fully compliant."
+  Now requires an actual mechanical pass over every instance with a
+  stated count as evidence, and calls a claim of full compliance without
+  one a rule 62 violation (false factual claim), not a shortcut.
+
 ### Added
 
 - **`AGENTS.md`**: added rule 91 -- the first repository-mutating action
