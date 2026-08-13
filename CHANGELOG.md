@@ -41,7 +41,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   merging. Every caller (`c-build.yml`, `e2e-image-build.yml`,
   `master-heartbeat.yml`, `nightly-publish.yml`) now passes
   `secrets.PROJECT_AUTOMATION_PAT` as `project_pat`; issue mutations
-  themselves keep using the default `GITHUB_TOKEN` as before.
+  themselves keep using the default `GITHUB_TOKEN` as before. The board-add
+  call is also retried on every existing-issue touch (comment or close),
+  not just at creation -- `addProjectV2ItemById` (what `gh project
+  item-add` calls) is idempotent, so re-adding an already-assigned issue
+  is a safe no-op, matching `ensure_bug_type()`'s own established
+  self-healing pattern in this same file for a transient creation-time
+  failure, or an issue that predates this action having either mutation.
   - Also: standing issues/comments now record which specific job(s) failed
     (a new `failed_jobs` input, computed by each multi-job caller from
     `needs.*.result`), not just "the pipeline failed" -- previously the

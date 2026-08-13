@@ -127,12 +127,16 @@ existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
 
 if [ "${OUTCOME}" = "success" ]; then
   if [ -n "${existing}" ]; then
-    # Ensure the type is set before closing -- otherwise an issue that was
-    # created untyped (e.g. the creation-time mutation failed transiently)
-    # and then never fails again gets closed while still permanently
-    # untyped, with no further failure to retry the assignment on. `set -e`
-    # means a failure here aborts before the close below runs.
+    # Ensure the type is set, and the issue is on the project board, before
+    # closing -- otherwise an issue where either mutation failed
+    # transiently at creation time (or predates this action having them at
+    # all) gets closed while still permanently untyped/unassigned, with no
+    # further failure to retry on. `set -e` means a failure here aborts
+    # before the close below runs. addProjectV2ItemById (what `gh project
+    # item-add` calls) is idempotent -- re-adding an already-assigned issue
+    # is a safe no-op, not an error, so this is always safe to call.
     ensure_bug_type "${existing}"
+    add_to_project_board "https://github.com/${REPO}/issues/${existing}"
     echo "success: closing standing ${LABEL} issue #${existing}"
     run gh issue comment "${existing}" --repo "${REPO}" \
       --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
@@ -161,6 +165,7 @@ if [ -n "${existing}" ]; then
   run gh issue comment "${existing}" --repo "${REPO}" \
     --body "Still failing: ${detail}."
   ensure_bug_type "${existing}"
+  add_to_project_board "https://github.com/${REPO}/issues/${existing}"
 else
   echo "failure: opening a new standing ${LABEL} issue"
   new_issue_url="$(run gh issue create --repo "${REPO}" --label "${LABEL}" \
