@@ -26,6 +26,7 @@ ARG ACTIONLINT_VERSION=1.7.12
 # Why: This stage has no SHELL override, so RUN runs under dash, which
 #   rejects the bash-only `pipefail`; no pipe exists here anyway, so `-eu`
 #   gives the same fail-fast guarantee.
+# From: PR #377
 RUN set -eu; \
     GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
     /out/actionlint --version
@@ -82,10 +83,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       #   ships in plain python3.
       python3-dbg \
       # What: Reference toolchain sized to build a real, demanding C project.
-      # Why: Samba's real Debian build-dependency surface (51 packages) is
-      #   far larger than a comparable large project like Apache httpd's
-      #   (20), so matching it proves this image adequate for
-      #   large-C-project work beyond distcc-ng's own needs.
+      # Why: Matches Samba's 51-package Debian build-dependency surface
+      #   (vs. Apache httpd's 20) to prove this image adequate for
+      #   large-C-project work, minus Samba's packaging-only/cross-compile
+      #   deps (debhelper-compat, dh-exec, jdupes, rpcsvc-proto, MinGW),
+      #   which this image's own `./configure && make` target never needs.
       # From: Issue #264
       libkrb5-dev \
       libldap2-dev \
@@ -408,10 +410,10 @@ RUN set -eux; \
     cd / && rm -rf /tmp/verify-selftest
 
 # What: Runs as a fixed non-root `verify` user (uid/gid 1000).
-# Why: A HOST_UID/HOST_GID build-arg (issue #286) was rejected since it
-#   would need a local rebuild per caller uid; `docker run --user
-#   $(id -u):$(id -g)` (doc/verification-checklist.md section 9) solves
-#   the same problem against the unmodified published image.
+# Why: A HOST_UID/HOST_GID build-arg was rejected since it would need a
+#   local rebuild per caller uid; `docker run --user $(id -u):$(id -g)`
+#   (doc/verification-checklist.md section 9) solves the same problem
+#   against the unmodified published image.
 # From: Issue #264, Issue #286
 RUN useradd --create-home --shell /bin/bash verify
 USER verify
