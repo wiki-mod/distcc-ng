@@ -384,23 +384,11 @@ jobs:
       - name: Compute which specific job(s) failed
         id: failed_jobs
         if: always()
-        run: |
-          set -euo pipefail
-          # What: Flags only a job whose result is literally
-          # failure/cancelled, not merely "not success".
-          # Why: `publish` shows "skipped" (not "failure") when
-          # build_and_selftest fails, so a plain "!= success" check would
-          # double-report it as its own failure on top of the real cause.
-          # From: PR #476
-          failed=""
-          add_if_failed() {
-            case "$2" in
-              failure|cancelled) failed="${failed} $1" ;;
-            esac
-          }
-          add_if_failed build_and_selftest "${{ needs.build_and_selftest.result }}"
-          add_if_failed publish "${{ needs.publish.result }}"
-          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/failed-jobs
+        with:
+          jobs: |
+            build_and_selftest=${{ needs.build_and_selftest.result }}
+            publish=${{ needs.publish.result }}
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.build_and_selftest.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}

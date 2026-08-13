@@ -665,29 +665,16 @@ jobs:
       - name: Compute which specific job(s) failed
         id: failed_jobs
         if: always()
-        run: |
-          set -euo pipefail
-          # What: Flags only a job whose result is literally
-          # failure/cancelled, not merely "not success".
-          # Why: If `changes` itself fails, the 6 real jobs below all show
-          # "skipped", not "failure", as a consequence; a plain "!=
-          # success" check would report six unrelated failures with the
-          # actual root cause missing from the list.
-          # From: PR #476
-          failed=""
-          add_if_failed() {
-            case "$2" in
-              failure|cancelled) failed="${failed} $1" ;;
-            esac
-          }
-          add_if_failed changes "${{ needs.changes.result }}"
-          add_if_failed make_check "${{ needs.make_check.result }}"
-          add_if_failed popt_fallback_build "${{ needs.popt_fallback_build.result }}"
-          add_if_failed popt_vendor_check "${{ needs.popt_vendor_check.result }}"
-          add_if_failed coverage "${{ needs.coverage.result }}"
-          add_if_failed distributed_e2e "${{ needs.distributed_e2e.result }}"
-          add_if_failed sanitizer_check "${{ needs.sanitizer_check.result }}"
-          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/failed-jobs
+        with:
+          jobs: |
+            changes=${{ needs.changes.result }}
+            make_check=${{ needs.make_check.result }}
+            popt_fallback_build=${{ needs.popt_fallback_build.result }}
+            popt_vendor_check=${{ needs.popt_vendor_check.result }}
+            coverage=${{ needs.coverage.result }}
+            distributed_e2e=${{ needs.distributed_e2e.result }}
+            sanitizer_check=${{ needs.sanitizer_check.result }}
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.changes.result == 'success' && needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}

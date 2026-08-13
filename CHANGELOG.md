@@ -13,6 +13,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/actions/failed-jobs/`**: new composite action centralizing the
+  `add_if_failed` job-result filter previously duplicated in `c-build.yml`,
+  `nightly-publish.yml`, and `e2e-image-build.yml` (three independent copies
+  that would silently drift on the next change). Each caller now passes its
+  `name=result` pairs as one `jobs` input instead of reimplementing the
+  filter.
+
 - **`c-build.yml`**: a `report` job files/updates the standing `nightly-broken`
   issue when the scheduled (nightly, 03:00 UTC) run of this workflow fails,
   and closes it on the next success -- reusing the same `nightly-status`

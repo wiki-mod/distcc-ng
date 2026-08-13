@@ -245,24 +245,12 @@ jobs:
       - name: Compute which specific job(s) failed
         id: failed_jobs
         if: always()
-        run: |
-          set -euo pipefail
-          # What: Flags only a job whose result is literally
-          # failure/cancelled, not merely "not success".
-          # Why: `publish` shows "skipped" (not "failure") when an
-          # upstream job fails, so a plain "!= success" check would
-          # double-report it as its own failure on top of the real cause.
-          # From: PR #476
-          failed=""
-          add_if_failed() {
-            case "$2" in
-              failure|cancelled) failed="${failed} $1" ;;
-            esac
-          }
-          add_if_failed build_check "${{ needs.build_check.result }}"
-          add_if_failed distributed_e2e "${{ needs.distributed_e2e.result }}"
-          add_if_failed publish "${{ needs.publish.result }}"
-          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/failed-jobs
+        with:
+          jobs: |
+            build_check=${{ needs.build_check.result }}
+            distributed_e2e=${{ needs.distributed_e2e.result }}
+            publish=${{ needs.publish.result }}
       - uses: ./.github/actions/nightly-status
         with:
           # What: Success only if all three jobs succeeded.
