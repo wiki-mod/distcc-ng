@@ -56,9 +56,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
     *next* rolling draft afterward. The draft is found by listing
     releases and requiring exactly one open draft to exist (release-
     drafter's own single-rolling-draft design), never by a tag-based
-    lookup -- confirmed neither the REST `releases/tags/{tag}` endpoint
-    nor the GraphQL `release(tagName:)` field can resolve a draft-only
-    release at all.
+    lookup -- the REST `releases/tags/{tag}` endpoint genuinely can't
+    resolve a draft at all, and while the GraphQL `release(tagName:)`
+    field can (`gh` CLI's own `fetchDraftRelease` relies on this), it
+    fails when a published release already shares that same tag_name
+    (confirmed live against this repo's real `v3.6.5-NG` tag). The
+    actual, decisive reason a tag-based lookup is wrong here regardless:
+    release-drafter's own tag-template only *guesses* the next version
+    from merged-PR labels, never guaranteed to match whatever tag the
+    maintainer actually cuts.
   - Also: the draft-listing lookup now pipes each page's `--jq`-filtered
     output through `jq -s` (slurp) instead of wrapping it in `[...]`
     inside the `--jq` expression itself -- `gh api --paginate` runs the

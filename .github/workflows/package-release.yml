@@ -514,15 +514,14 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # No checkout in this job (it only downloads the already-built package
-    # artifact, which needs no elevated permission). contents: write is a
-    # standing floor for actions/download-artifact and the job's default
-    # GITHUB_TOKEN context; the actual publish step's own `gh` calls all
-    # authenticate as GHCR_PACKAGE_DELETE_PAT via GH_TOKEN instead (see its
-    # own env comment), not github.token, so this permission is not what
-    # authorizes those calls -- not verified whether it can be dropped
-    # entirely without a real test.
+    # artifact, which needs no elevated permission). Every actual `gh`
+    # call in this job's publish step authenticates as
+    # GHCR_PACKAGE_DELETE_PAT via GH_TOKEN, not github.token, so
+    # contents: write was never what authorized any of it. Confirmed
+    # droppable: the publish_manifest job above uses the identical
+    # actions/download-artifact action with only contents: read.
     permissions:
-      contents: write
+      contents: read
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
