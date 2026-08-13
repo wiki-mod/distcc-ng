@@ -58,6 +58,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
     capturing the command's output via `$(...)` for later parsing also
     captured `DRY_RUN`'s own echoed command instead of letting it reach the
     log. Now re-emitted explicitly in that branch.
+  - Also: in `DRY_RUN`, the same captured (non-URL) text was then passed
+    straight into the new project-board-add call, producing a garbled,
+    nested `--url` value; that call is now skipped in `DRY_RUN`, matching
+    `ensure_bug_type()`'s existing gating on the same path.
+  - Also: `nightly-publish.yml`/`e2e-image-build.yml`'s `failed_jobs`
+    computation mislabeled a downstream job as "failed" when it was
+    actually `skipped` as a consequence of its own upstream job failing
+    (`publish` depends on other jobs with no `if:` override) -- now only
+    flags a job whose result is literally `failure`/`cancelled`.
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
   `clusterfuzzlite-pr.yml`, `e2e-image-build.yml`,
