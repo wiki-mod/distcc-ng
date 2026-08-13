@@ -172,7 +172,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libparse-yapp-perl \
       python3-dnspython \
       python3-markdown \
-      # --- Debug tools (maintainer's explicit ask) ---
+      # --- Debug tools: strace/ltrace, for tracing real distccd/include_server
+      #     syscalls and library calls without a debugger attached ---
       strace \
       ltrace \
       # --- Sanitizer/memory-debug toolchain: valgrind, for memory-safety
@@ -182,14 +183,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # --- Binutils: objdump/readelf/nm/addr2line, for inspecting real
       #     distccd/include_server binaries and symbols ---
       binutils \
-      # libelf-dev (libelf.h/gelf.h, elfutils' libelf): needed to compile
-      # against libelf/gelf for the ongoing investigation into replacing
-      # dcc_fix_debug_info()'s raw ELF byte search-and-replace with
-      # libelf's own compressed-section-aware API. The image already had
-      # elf.h (via libc6-dev, pulled in by build-essential) and libelf's
-      # runtime library (libelf1t64), but no libelf programming headers
-      # (libelf.h/gelf.h) to compile against -- found missing empirically
-      # when a real libelf prototype failed to compile in this container.
+      # libelf-dev: libelf.h/gelf.h programming headers for elfutils'
+      # libelf. elf.h (already present via libc6-dev) only defines raw
+      # ELF struct layouts, not the libelf/gelf API needed to safely
+      # read, decompress, and rewrite ELF debug sections.
       libelf-dev \
       # --- Search/inspection tools agents commonly reach for ---
       ripgrep \

@@ -14,17 +14,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 ### Added
 
 - **`docker/verify/Dockerfile`**: the buildtools verification image now
-  installs `libelf-dev` (issue #398). The image previously already had
-  `elf.h` (via `libc6-dev`, pulled in by `build-essential`), but no libelf
-  programming headers (`libelf.h`/`gelf.h`) to compile against, and no
-  development headers for `elfutils`' libelf at all -- found missing when
-  issue #398's libelf feasibility spike (evaluating `libelf` as a
-  replacement for `dcc_fix_debug_info()`'s raw ELF byte search-and-replace,
-  which cannot handle `SHF_COMPRESSED` debug sections) failed to compile in
-  this image. A real build-time self-test compiles against `libelf.h`/
-  `gelf.h`, links `-lelf`, and reads a real ELF header from the image's own
-  already-built test binary via `elf_begin()`/`gelf_getehdr()`, matching
-  this file's existing per-tool self-test convention.
+  installs `libelf-dev` (issue #398), providing `libelf.h`/`gelf.h`
+  programming headers for `elfutils`' libelf -- `elf.h` (already present
+  via `libc6-dev`) only defines raw ELF struct layouts, not the libelf/gelf
+  API. A build-time self-test compiles against `libelf.h`/`gelf.h`, links
+  `-lelf`, and reads a real ELF header from the image's own already-built
+  test binary via `elf_begin()`/`gelf_getehdr()`, matching this file's
+  existing per-tool self-test convention.
 
 ### Fixed
 
