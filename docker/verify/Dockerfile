@@ -184,10 +184,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # --- Binutils: objdump/readelf/nm/addr2line, for inspecting real
       #     distccd/include_server binaries and symbols ---
       binutils \
-      # libelf-dev (issue #398): libelf.h/gelf.h programming headers for
-      # elfutils' libelf. elf.h (already present via libc6-dev) only
-      # defines raw ELF struct layouts, not the libelf/gelf API needed to
-      # safely read, decompress, and rewrite ELF debug sections.
+      # libelf-dev (issue #398): elf.h (already present via libc6-dev)
+      # only defines raw ELF struct layouts -- it has no API for safely
+      # reading, decompressing, or rewriting an ELF section's contents,
+      # which libelf.h/gelf.h provide.
       libelf-dev \
       # --- Search/inspection tools agents commonly reach for ---
       ripgrep \
