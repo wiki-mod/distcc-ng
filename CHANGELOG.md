@@ -48,6 +48,87 @@ See `doc/release-versioning.md` for the full versioning and release process.
   on CPython's prompt reference-count finalization; reads use deterministic
   ownership too. Added function-level rationale to the modified methods.
 
+- **`.github/workflows/package-release.yml`**: `publish_github_release`
+  now publishes real GitHub Releases as `GHCR_PACKAGE_DELETE_PAT` instead
+  of the default `GITHUB_TOKEN` (issue #460 Finding 2). GitHub does not
+  deliver downstream workflow events for anything created by the default
+  `GITHUB_TOKEN`, so `changelog-update-on-release.yml`'s
+  `release:released` trigger had never once fired for any of this
+  repo's real releases (confirmed via `gh run list --repo wiki-mod/distcc-ng
+  --event release`: zero runs, ever).
+  - Also: the release now publishes with `release-drafter`'s own rolling
+    draft content (the real, per-PR categorized notes it already
+    maintains on every push to `current_dev`) instead of a short
+    hand-written stub -- maintainer decision, 2026-08-12. The step
+    promotes that existing draft release object (retargeting its tag,
+    setting `draft=false`) rather than creating a second, separate
+    release object, which also keeps `release-drafter`'s own
+    "latest release" lookup correct for computing the version of its
+    *next* rolling draft afterward. The draft is found by listing
+    releases and requiring exactly one open draft to exist (release-
+    drafter's own single-rolling-draft design), never by a tag-based
+    lookup -- the REST `releases/tags/{tag}` endpoint genuinely can't
+    resolve a draft at all, and while the GraphQL `release(tagName:)`
+    field can (`gh` CLI's own `fetchDraftRelease` relies on this), it
+    fails when a published release already shares that same tag_name
+    (confirmed live against this repo's real `v3.6.5-NG` tag). The
+    actual, decisive reason a tag-based lookup is wrong here regardless:
+    release-drafter's own tag-template only *guesses* the next version
+    from merged-PR labels, never guaranteed to match whatever tag the
+    maintainer actually cuts.
+  - Also: the draft-listing lookup now pipes each page's `--jq`-filtered
+    output through `jq -s` (slurp) instead of wrapping it in `[...]`
+    inside the `--jq` expression itself -- `gh api --paginate` runs the
+    filter once per page, so wrapping per-page would have produced one
+    JSON array per page once this repo's release count crosses a page
+    boundary, which the surrounding `<<<` here-string could not have
+    parsed as a single document. Verified via a real multi-page
+    simulation (this bug had not yet triggered against the repo's
+    current, single-page release count).
+  - Also: the "already published" rerun-detection lookup now captures
+    `gh release view`'s stderr instead of discarding it, and only treats
+    the tag as "not yet published" when that stderr is the specific
+    "release not found" message (confirmed live against a real
+    nonexistent tag) -- a real failure (an expired/misconfigured PAT, a
+    transient API error) now aborts the job instead of silently falling
+    through into draft-promotion.
+
+- **`.github/workflows/changelog-update-on-release.yml`**: trigger changed
+  from `release: types: [released]` to `types: [published]` (issue #460
+  Finding 2, second root cause). `publish_github_release` always promotes
+  an existing `release-drafter` draft rather than creating a release
+  directly. GitHub's own docs directly confirm this unreliability for
+  `prereleased` specifically (`github/docs`'s
+  events-that-trigger-workflows.md: "The `prereleased` type will not
+  trigger for pre-releases published from draft releases, but the
+  `published` type will trigger."); that `released` (its stable-release
+  sibling) has the same real-world limitation for a draft-originated
+  release is confirmed by the maintainer's own direct operational
+  experience on a sibling project (`wiki-mod/lancache-ng`), not by that
+  citation alone. Without this fix, the PAT fix above alone still would not have made this
+  workflow fire. Guarded with `github.event.release.prerelease == false`
+  so `nightly-publish.yml`'s separate `nightly` pre-release channel can
+  never insert a nightly build into this changelog.
+  - Also: added a `heading-text` input (this repo's `X.Y.Z-NG` convention,
+    no `v`) alongside the existing `latest-version` input (kept as the
+    real `vX.Y.Z-NG` tag, which `stefanzweifel/changelog-updater-action`
+    also needs to build correct `.../compare/vX...vY` URLs). Without
+    `heading-text`, the action's own documented default is to reuse
+    `latest-version` verbatim as the heading, which would have written
+    `## [vX.Y.Z-NG]` the first time this dormant automation actually
+    fired -- never caught before now because it had never fired for a
+    real release.
+
+- **`doc/release-versioning.md`, `doc/release-checklist.md`**: step 5
+  (moving `CHANGELOG.md`'s `[Unreleased]` content into a dated section)
+  is no longer a manual step -- it's now what `changelog-update-on-release.yml`
+  does automatically once a release publishes. Added an explicit
+  precondition to step 7/the master-promotion checklist: confirm that
+  automated commit actually landed on `current_dev` before promoting,
+  since promoting too early carries the release's own changes into
+  `master` still sitting under `[Unreleased]`, with no later trigger to
+  move them.
+
 ## [3.6.5-NG] - 2026-08-11
 
 ### Fixed
