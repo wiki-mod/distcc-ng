@@ -13,6 +13,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`AGENTS.md`**: rule 41 required fixing any missing `Why:` unconditionally,
+  with no stated option to remove a comment that genuinely has nothing
+  non-obvious to say. Added that option explicitly, so a real gap still
+  gets a real reason, but a self-evident comment gets removed instead of
+  a contrived one.
 - **`AGENTS.md`**: rule 52 duplicated rule 21's master-push/approval text
   almost verbatim. Merged the one substantive difference ("regardless of
   CI status") into rule 21, and rule 52 now points to it instead of
