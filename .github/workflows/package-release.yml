@@ -608,9 +608,13 @@ jobs:
           # CLI's own fetchDraftRelease relies on exactly this) -- but not
           # when a published release already shares that same tag_name:
           # confirmed empirically against this repo's own real v3.6.5-NG
-          # tag (which has both a published release and an unrelated
-          # orphaned draft sharing that tag_name), both REST and GraphQL
-          # return only the published one there. The real, decisive reason
+          # tag -- one single draft release (release-drafter's own real,
+          # actively-maintained rolling draft, still just displaying its
+          # stale pre-release name/tag_name) and one separate, already-
+          # published release object happen to share that same display
+          # text; both REST and GraphQL return only the published one
+          # there, never the draft, and there is only ever the one draft,
+          # not two. The real, decisive reason
           # a tag-based lookup is still the wrong tool here regardless:
           # release-drafter's own tag-template computes a *guessed* next
           # version from merged-PR labels, not guaranteed to equal whatever
