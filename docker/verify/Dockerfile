@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# distcc-ng verification/debug container.
+# distcc-ng verification/debug container (issue #264).
 #
 # Purpose: give every agent/human doing real build+test verification work on
 # this repo one pre-built, fully self-contained image instead of each session
@@ -16,7 +16,7 @@
 # Sizing rationale: the maintainer asked which of Samba or Apache httpd has
 # the larger/more demanding real-world build-dependency surface, to use as a
 # sizing reference beyond distcc-ng's own (much smaller) needs. A real
-# Debian Build-Depends comparison found
+# Debian Build-Depends comparison (see the issue #264 research comment) found
 # Samba (2:4.22.10+dfsg-0+deb13u1, trixie) has 51 distinct build dependencies
 # -- Kerberos, LDAP, GnuTLS, PAM, systemd, ICU, LMDB, Ceph/RADOS clustering,
 # io_uring, Python bindings, MinGW cross-compilers -- versus Apache httpd
@@ -62,7 +62,7 @@ ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28
 # the only way to get a current, patched stdlib into it -- same approach
 # and same pinned version (v1.7.12, the latest release at pin time) as
 # lancache-ng's own build-tools image. `golang:latest` itself is pinned to
-# a digest (maintainer decision, Scorecard PinnedDependenciesID)
+# a digest (maintainer decision, issue #267, Scorecard PinnedDependenciesID)
 # rather than left as a floating tag; this repo's Dependabot config tracks
 # docker/verify's base images (.github/dependabot.yml) so the pinned
 # digest still gets refreshed weekly instead of freezing at whatever Go
@@ -83,7 +83,7 @@ ARG VCS_REF=unknown
 ARG VERSION=allinkl
 
 LABEL org.opencontainers.image.title="distcc-ng-buildtools" \
-      org.opencontainers.image.description="Pre-built, self-contained build+debug+verification image for distcc-ng: distcc-ng's own toolchain plus a Samba-sized dependency surface, debug tools, sanitizers, and inspection tools." \
+      org.opencontainers.image.description="Pre-built, self-contained build+debug+verification image for distcc-ng (issue #264): distcc-ng's own toolchain plus a Samba-sized dependency surface, debug tools, sanitizers, and inspection tools." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -172,8 +172,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libparse-yapp-perl \
       python3-dnspython \
       python3-markdown \
-      # --- Debug tools: strace/ltrace, for tracing real distccd/include_server
-      #     syscalls and library calls without a debugger attached ---
+      # --- Debug tools (issue #264): strace/ltrace, for tracing real
+      #     distccd/include_server syscalls and library calls without a
+      #     debugger attached ---
       strace \
       ltrace \
       # --- Sanitizer/memory-debug toolchain: valgrind, for memory-safety
@@ -183,10 +184,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # --- Binutils: objdump/readelf/nm/addr2line, for inspecting real
       #     distccd/include_server binaries and symbols ---
       binutils \
-      # libelf-dev: libelf.h/gelf.h programming headers for elfutils'
-      # libelf. elf.h (already present via libc6-dev) only defines raw
-      # ELF struct layouts, not the libelf/gelf API needed to safely
-      # read, decompress, and rewrite ELF debug sections.
+      # libelf-dev (issue #398): libelf.h/gelf.h programming headers for
+      # elfutils' libelf. elf.h (already present via libc6-dev) only
+      # defines raw ELF struct layouts, not the libelf/gelf API needed to
+      # safely read, decompress, and rewrite ELF debug sections.
       libelf-dev \
       # --- Search/inspection tools agents commonly reach for ---
       ripgrep \
@@ -209,14 +210,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # socket inspection.
       dnsutils \
       # shellcheck/jq (CI-lint tools, same general class of gap as
-      # actionlint's provisioning above):
+      # issue #267's actionlint provisioning above):
       # shellcheck is Haskell, not Go, so it doesn't have actionlint's
       # stale-stdlib problem above -- Debian's packaged version is fine
       # here. jq has no compiled runtime embedding concern either (plain
       # C).
       shellcheck \
       jq \
-      # openssh-server/openssh-client (SSHMode_Case):
+      # openssh-server/openssh-client (issue #275/#440's SSHMode_Case):
       # this test verifies distcc's SSH transport mode by starting a
       # real, ephemeral, non-root sshd and connecting to it with a real
       # ssh client -- confirmed live that GitHub's own ubuntu-latest/
@@ -232,7 +233,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # actionlint built from source in the actionlint-builder stage above (see
 # its comment for why) -- not apt-installed, and not fetched via
 # curl|bash at CI runtime (the pattern this addition replaces; see
-# .github/workflows/actionlint.yml and Scorecard's
+# .github/workflows/actionlint.yml and issue #267/Scorecard's
 # PinnedDependenciesID finding).
 COPY --from=actionlint-builder /out/actionlint /usr/local/bin/actionlint
 
@@ -245,8 +246,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # missing or non-functional, rather than deferring discovery to whoever
 # first tries to use the running container. Each check exercises the tool
 # doing the thing it's actually needed for in this repo's verification work
-# (see the AGENTS.md verification-checklist references), not just "the
-# binary exists".
+# (see issue #264 and the AGENTS.md verification-checklist references),
+# not just "the binary exists".
 RUN set -eux; \
     mkdir -p /tmp/verify-selftest && cd /tmp/verify-selftest; \
     # --- gcc/clang basic sanity ---
@@ -316,7 +317,7 @@ RUN set -eux; \
     MAIN_ADDR="$(nm ok_dbg | awk '/ T main/ {print $1}')"; \
     addr2line -e ok_dbg -f "${MAIN_ADDR}" | grep -q "main" \
       || { echo "ERROR: addr2line did not resolve main"; exit 1; }; \
-    # --- libelf-dev: must actually compile against libelf.h/
+    # --- libelf-dev (issue #398): must actually compile against libelf.h/
     #     gelf.h, link against -lelf, and read a real ELF header from the
     #     already-built ok_gcc binary via the actual libelf API -- not just
     #     confirm the headers exist on disk. ---
@@ -385,7 +386,7 @@ RUN set -eux; \
       || { echo "ERROR: nslookup did not resolve deb.debian.org"; nslookup deb.debian.org; exit 1; }; \
     # --- openssh: must actually start a real sshd, connect with a real
     #     ssh client, and run a real remote command over that connection
-    #     -- the same mechanism SSHMode_Case exercises
+    #     -- the same mechanism issue #275/#440's SSHMode_Case exercises
     #     via a real "distccd --inetd" session over SSH. Runs here as
     #     root (this RUN block's own context, before `USER verify`
     #     below) since privilege-dropping semantics are SSHMode_Case's
@@ -456,14 +457,14 @@ RUN set -eux; \
 # a real distributed-compile verification run needs to bind a port and
 # read/write the mounted worktree, both of which work as a non-root user.
 #
-# Deliberately no build-arg-parameterized uid/gid here ("approach 1", a
-# HOST_UID/HOST_GID build-arg matching the caller's own host uid, was
-# considered and confirmed empirically via this image's own CI to work
-# cleanly). Not adopted: it would require rebuilding this image
-# locally with a matching build-arg any time the caller's own uid differs
-# from this image's baked-in 1000, which reintroduces exactly the local
-# build step this image's "pull and run, nothing to build" requirement
-# exists to avoid. `docker run --user $(id -u):$(id -g)`
+# Deliberately no build-arg-parameterized uid/gid here (issue #286
+# considered this -- "approach 1", a HOST_UID/HOST_GID build-arg matching
+# the caller's own host uid -- and confirmed empirically via this image's
+# own CI that it works cleanly). Not adopted: it would require rebuilding
+# this image locally with a matching build-arg any time the caller's own
+# uid differs from this image's baked-in 1000, which reintroduces exactly
+# the local build step issue #264's "pull and run, nothing to build"
+# requirement exists to avoid. `docker run --user $(id -u):$(id -g)`
 # (see doc/verification-checklist.md section 9) solves the same
 # bind-mount-ownership problem against this exact, unmodified,
 # already-published image instead, with no rebuild ever needed.
