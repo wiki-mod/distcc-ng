@@ -86,9 +86,14 @@ see issue #81's history) -- this repo develops on `current_dev` and only
 promotes to `master` via explicit maintainer-approved release PRs.
 `nightly-publish.yml` and `master-heartbeat.yml` both self-document this: their
 `schedule` trigger has no live effect until the next `current_dev`->`master`
-promotion. `c-build.yml`, `codeql.yml`, `scorecard.yml`,
-`openssf-baseline-recheck.yml`, and `osv-scanner.yml` carry no such caveat and
-are treated as already live.
+promotion. `c-build.yml`'s own `schedule` trigger is already live (the
+workflow exists on `master` today), but its new `report` job is not: since
+`report` was added on `current_dev` only, `master`'s copy of `c-build.yml`
+still lacks that job entirely, so the nightly standing-issue reporting this
+table describes for `c-build.yml` has no live effect until the next
+`current_dev`->`master` promotion, same as the two workflows above.
+`codeql.yml`, `scorecard.yml`, `openssf-baseline-recheck.yml`, and
+`osv-scanner.yml` carry no such caveat and are treated as already live.
 
 ## Known follow-ups (not fixed by this doc)
 
