@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
 #
-# Files, updates, or closes a single standing "nightly-broken" tracking issue
-# based on the outcome of a scheduled run. It reuses ONE issue per the
-# nightly-broken label -- commenting on the existing one across consecutive
-# failures instead of opening a new issue every night -- and closes it
-# automatically on the next success.
-#
-# Every scheduled workflow that calls this action feeds this same standing
-# issue by design (issue #81; currently: c-build.yml, e2e-image-build.yml,
-# master-heartbeat.yml, nightly-publish.yml -- see doc/ci-workflows.md's
-# "Callers" list for the current, authoritative set). That means a success
-# in one can close an issue a different one filed; this self-corrects,
-# because the next genuine failure re-files/re-opens the issue. Per-workflow
-# issues were deliberately not used, to match the single-label design.
+# What: Files, updates, or closes one standing "nightly-broken" issue for a
+# scheduled run's outcome, reused across consecutive failures and closed on
+# the next success.
+# Why: Every scheduled workflow (see doc/ci-workflows.md's "Callers" list)
+# shares this one issue by design, so a success in one caller can close what
+# another filed; the next real failure re-files it.
+# From: Issue #81
 
 set -euo pipefail
 
@@ -28,20 +22,14 @@ PROJECT_PAT="${PROJECT_PAT:-}"
 PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
 
-# Adds the standing issue to the distcc-ng project board (AGENTS.md rule
-# 3), using PROJECT_PAT specifically -- GH_TOKEN (the default
-# GITHUB_TOKEN) cannot write org-owned Projects v2 data, and
-# PROJECT_AUTOMATION_PAT's own documented scope (`project` only, see
-# add-to-project.yml) cannot create/comment/close issues, so this is
-# deliberately a separate call with a separate token, not a GH_TOKEN
-# override. Called on every touch (creation, still-failing comment,
-# recovery close), not just at creation -- addProjectV2ItemById (what
-# `gh project item-add` calls) is idempotent, so retrying here self-heals
-# a transient failure or an issue that predates this mechanism, same
-# self-healing shape as ensure_bug_type() above. Matches
-# add-to-project.yml's own graceful-skip-when-unconfigured behavior:
-# silently does nothing when PROJECT_PAT is empty, rather than failing
-# the whole run over an optional board placement.
+# What: Adds the standing issue to the project board via a separate
+# PROJECT_PAT-authenticated call, on every touch (create, comment, close),
+# skipping silently when PROJECT_PAT is unset (AGENTS.md rule 3).
+# Why: GH_TOKEN cannot write Projects v2 data and PROJECT_AUTOMATION_PAT's
+# project-only scope cannot mutate issues, so the two calls need separate
+# tokens; retrying on every touch self-heals a transient board-add failure,
+# since addProjectV2ItemById is idempotent.
+# From: PR #476
 add_to_project_board() {
   local issue_url="$1"
   if [ -z "${PROJECT_PAT}" ]; then
@@ -55,8 +43,9 @@ add_to_project_board() {
     --owner "${PROJECT_OWNER}" --url "${issue_url}" >/dev/null
 }
 
-# Echo mutating actions instead of performing them when DRY_RUN=true, so the
-# branch logic can be exercised locally without touching real issues/labels.
+# What: Echoes a mutating command instead of running it when DRY_RUN=true.
+# Why: Lets the branch logic be exercised locally without touching real
+# issues/labels.
 run() {
   if [ "${DRY_RUN}" = "true" ]; then
     printf 'DRY_RUN would run:'; printf ' %q' "$@"; printf '\n'
@@ -65,31 +54,25 @@ run() {
   fi
 }
 
-# Assign the "Bug" issue type to $1 if it doesn't already have one, via a
-# GraphQL mutation (Issue.issueTypeId via updateIssue). A create-time flag
-# for this exists in newer gh versions, but is not sufficient on its own:
-# this is called on every failure path (both a freshly created issue and
-# an existing one being commented on), not just at create time, because
-# repository governance requires every issue to have a type, and a
-# one-shot best-effort attempt at creation time could otherwise leave a
-# standing issue permanently untyped if that one attempt failed (e.g. no
-# "Bug" type configured yet, or a transient API error) -- retrying here on
-# every subsequent failure self-heals that instead of giving up for good.
-# Not skipped in DRY_RUN for the read-only lookups (safe), only the actual
-# mutation is gated.
+# What: Assigns the "Bug" issue type to $1 via a GraphQL updateIssue
+# mutation if it doesn't already have one; called on every failure path,
+# not just at creation, and only the actual mutation is gated by DRY_RUN.
+# Why: A one-shot best-effort attempt at creation time could otherwise
+# leave an issue permanently untyped if that one attempt failed; retrying
+# on every subsequent failure self-heals it instead of giving up for good.
+# From: PR #476
 ensure_bug_type() {
   local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
   owner="${REPO%%/*}"
   name="${REPO##*/}"
-  # The single quotes below are deliberate -- the string contains GraphQL's
-  # own "$owner"/"$name"/"$number" variable syntax (unrelated to shell),
-  # bound via -F below, same pattern already used in
-  # scripts/check-pr-tracking-metadata.sh.
-  # Captured as its own assignment (not fed directly into `read <<<...`) so
-  # a failed gh api call actually trips `set -e` here -- a command
-  # substitution's exit status is lost when it's used as a here-string's
-  # source, which would otherwise let `read` "succeed" against an empty
-  # string and this function wrongly report success.
+  # What: Single-quoted because the string holds GraphQL's own $owner/$name/
+  # $number syntax bound via -F, not shell variables; captured as its own
+  # assignment rather than fed straight into `read <<<...`.
+  # Why: A command substitution's exit status is lost when used directly as
+  # a here-string source, which would let `read` silently "succeed" on an
+  # empty string if `gh api` failed; capturing it separately lets `set -e`
+  # catch that failure.
+  # From: PR #476
   # shellcheck disable=SC2016
   issue_query_result="$(gh api graphql -f query='
     query($owner: String!, $name: String!, $number: Int!) {
@@ -127,21 +110,20 @@ ensure_bug_type() {
     }' -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
 }
 
-# Oldest open standing issue for this label, if any. --jq yields the number or
-# nothing; no `grep -q` pipe here, to avoid the SIGPIPE-under-pipefail trap.
+# What: Finds the oldest open standing issue for this label, if any.
+# Why: --jq yields the number or nothing directly, avoiding a `grep -q`
+# pipe that would trip the SIGPIPE-under-pipefail trap.
 existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
   --json number --jq 'sort_by(.number) | .[0].number // empty')"
 
 if [ "${OUTCOME}" = "success" ]; then
   if [ -n "${existing}" ]; then
-    # Ensure the type is set, and the issue is on the project board, before
-    # closing -- otherwise an issue where either mutation failed
-    # transiently at creation time (or predates this action having them at
-    # all) gets closed while still permanently untyped/unassigned, with no
-    # further failure to retry on. `set -e` means a failure here aborts
-    # before the close below runs. addProjectV2ItemById (what `gh project
-    # item-add` calls) is idempotent -- re-adding an already-assigned issue
-    # is a safe no-op, not an error, so this is always safe to call.
+    # What: Ensures the type is set and the issue is on the project board
+    # before closing it.
+    # Why: Otherwise an issue where either mutation failed transiently (or
+    # predates this action having them) gets closed with no further
+    # failure to retry on; `set -e` aborts before the close if this fails.
+    # From: PR #476
     ensure_bug_type "${existing}"
     add_to_project_board "https://github.com/${REPO}/issues/${existing}"
     echo "success: closing standing ${LABEL} issue #${existing}"
@@ -154,15 +136,18 @@ if [ "${OUTCOME}" = "success" ]; then
   exit 0
 fi
 
-# OUTCOME is a failure. Ensure the label exists (idempotent: gh errors if it
-# already exists, which is fine -- the label is optional tracking infra), then
-# reuse the standing issue or open one.
+# What: OUTCOME is a failure. Ensures the label exists, then reuses the
+# standing issue or opens one.
+# Why: `gh label create` erroring because the label already exists is
+# harmless and expected, since the label is optional tracking infra.
 run gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
   --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
 
-# Records which specific job(s) failed, not just "the pipeline failed" --
-# otherwise the standing issue has no independently actionable evidence
-# once the linked run log expires or the run is inaccessible.
+# What: Records which specific job(s) failed, not just "the pipeline
+# failed".
+# Why: Otherwise the standing issue has no independently actionable
+# evidence once the linked run log expires or becomes inaccessible.
+# From: PR #476
 detail="${SCOPE} failed in ${RUN_URL}"
 if [ -n "${FAILED_JOBS}" ]; then
   detail="${detail} (failed: ${FAILED_JOBS})"
@@ -180,25 +165,26 @@ else
     --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (every scheduled workflow that feeds it can comment on or close it, not just the one that filed it) and closed automatically on the next successful run.
 
 ${detail}.")"
-  # In DRY_RUN, `run()`'s own echoed command is what got captured above
-  # (there's no real gh call to print it) -- re-emit it here, otherwise
-  # the command substitution silently swallows it and dry-run mode looks
-  # like it did nothing for this specific mutation.
+  # What: Re-emits `run()`'s echoed command in DRY_RUN.
+  # Why: The command substitution above captures that echoed text instead
+  # of printing it, so without this, dry-run would silently look like it
+  # did nothing for this mutation.
+  # From: PR #476
   if [ "${DRY_RUN}" = "true" ]; then
     echo "${new_issue_url}"
   fi
   if [ "${DRY_RUN}" != "true" ]; then
     ensure_bug_type "${new_issue_url##*/}"
-    # gh issue create's own token (GH_TOKEN, the default GITHUB_TOKEN)
-    # never triggers add-to-project.yml's issues:opened handler -- GitHub
-    # suppresses downstream workflow events for anything created by the
-    # default token, the same anti-recursion behavior already found for
-    # release publishing. Add it explicitly instead of relying on that
-    # event. Skipped in DRY_RUN along with ensure_bug_type above --
-    # new_issue_url only holds a real URL when gh issue create actually
-    # ran; in DRY_RUN it holds run()'s own echoed command text instead,
-    # which would otherwise get passed straight through as a garbled
+    # What: Explicitly adds the new issue to the project board instead of
+    # relying on add-to-project.yml's issues:opened handler; skipped in
+    # DRY_RUN, matching ensure_bug_type above.
+    # Why: GitHub suppresses downstream workflow events for content created
+    # by the default GITHUB_TOKEN (the same anti-recursion behavior already
+    # seen for release publishing), so that handler never fires here; in
+    # DRY_RUN, new_issue_url also holds run()'s echoed command text rather
+    # than a real URL, which would otherwise pass through as a garbled
     # --url value.
+    # From: PR #476
     add_to_project_board "${new_issue_url}"
   fi
 fi
