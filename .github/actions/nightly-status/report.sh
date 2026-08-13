@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 #
 # Files, updates, or closes a single standing "nightly-broken" tracking issue
-# based on the outcome of a scheduled run (the nightly publish or the weekly
-# heartbeat). It reuses ONE issue per the nightly-broken label -- commenting on
-# the existing one across consecutive failures instead of opening a new issue
-# every night -- and closes it automatically on the next success.
+# based on the outcome of a scheduled run. It reuses ONE issue per the
+# nightly-broken label -- commenting on the existing one across consecutive
+# failures instead of opening a new issue every night -- and closes it
+# automatically on the next success.
 #
-# Both scheduled workflows feed this same standing issue by design (see #81).
-# That means a success in one can close an issue the other filed; this
-# self-corrects, because the next genuine failure re-files/re-opens the issue.
-# Per-workflow issues were deliberately not used, to match the single-label
-# design.
+# Every scheduled workflow that calls this action feeds this same standing
+# issue by design (currently: c-build.yml, e2e-image-build.yml,
+# master-heartbeat.yml, nightly-publish.yml -- see doc/ci-workflows.md's
+# "Callers" list for the current, authoritative set). That means a success
+# in one can close an issue a different one filed; this self-corrects,
+# because the next genuine failure re-files/re-opens the issue. Per-workflow
+# issues were deliberately not used, to match the single-label design.
 
 set -euo pipefail
 
@@ -175,7 +177,7 @@ else
   echo "failure: opening a new standing ${LABEL} issue"
   new_issue_url="$(run gh issue create --repo "${REPO}" --label "${LABEL}" \
     --title "[${LABEL}] a scheduled CI run is failing" \
-    --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (the nightly publish and the weekly heartbeat both feed it) and closed automatically on the next successful run.
+    --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (every scheduled workflow that feeds it can comment on or close it, not just the one that filed it) and closed automatically on the next successful run.
 
 ${detail}.")"
   # In DRY_RUN, `run()`'s own echoed command is what got captured above

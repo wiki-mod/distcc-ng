@@ -34,7 +34,8 @@ actual YAML before relying on this after a workflow file changes.
 **Shared composite action** -- `.github/actions/nightly-status` files/updates/closes
 one standing `nightly-broken`-labeled issue (issue #81 design: any caller's
 success can close an issue a different caller opened). Callers: `master-heartbeat.yml`,
-`nightly-publish.yml`, `c-build.yml` (its `report` job, schedule-event only).
+`nightly-publish.yml`, `c-build.yml` (its `report` job, schedule-event only),
+`e2e-image-build.yml`.
 
 **GHCR image namespace** -- four separate package names, no tag overlap:
 

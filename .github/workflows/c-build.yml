@@ -722,14 +722,19 @@ jobs:
   # also file/comment on the standing nightly-broken issue every time a PR
   # happens to fail.
   #
-  # needs the 6 real jobs (not `changes`, which is just the gate, not a
-  # check in its own right); on `schedule`, changed-files/action.yml's own
-  # forced=true path means every one of these actually runs rather than
-  # legitimately skipping, so a plain success-of-all-6 check is correct here
-  # without needing to treat `skipped` as passing.
+  # needs the 6 real jobs plus `changes` itself: on `schedule`,
+  # changed-files/action.yml's own forced=true path means the 6 real jobs
+  # always actually run rather than legitimately skipping via `changes`'s
+  # own output -- but `changes` can still genuinely fail on its own (a
+  # checkout error, a script bug in its filter step), independent of that
+  # forced-relevant logic, and if it does, all 6 downstream jobs skip as
+  # a consequence. `changes` has to be in this list for that failure to
+  # be visible at all, rather than reporting six skipped jobs as "failed"
+  # with no mention of the actual root cause.
   report:
     needs:
       [
+        changes,
         make_check,
         popt_fallback_build,
         popt_vendor_check,
@@ -759,17 +764,28 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          # If `changes` itself fails, the 6 real jobs below all show
+          # "skipped" as a consequence, not "failure" -- only flag a job
+          # whose result is literally failure/cancelled, so a `changes`
+          # failure is reported as itself, not as six unrelated failures
+          # with the actual root cause missing from the list.
           failed=""
-          [ "${{ needs.make_check.result }}" = "success" ] || failed="${failed} make_check"
-          [ "${{ needs.popt_fallback_build.result }}" = "success" ] || failed="${failed} popt_fallback_build"
-          [ "${{ needs.popt_vendor_check.result }}" = "success" ] || failed="${failed} popt_vendor_check"
-          [ "${{ needs.coverage.result }}" = "success" ] || failed="${failed} coverage"
-          [ "${{ needs.distributed_e2e.result }}" = "success" ] || failed="${failed} distributed_e2e"
-          [ "${{ needs.sanitizer_check.result }}" = "success" ] || failed="${failed} sanitizer_check"
+          add_if_failed() {
+            case "$2" in
+              failure|cancelled) failed="${failed} $1" ;;
+            esac
+          }
+          add_if_failed changes "${{ needs.changes.result }}"
+          add_if_failed make_check "${{ needs.make_check.result }}"
+          add_if_failed popt_fallback_build "${{ needs.popt_fallback_build.result }}"
+          add_if_failed popt_vendor_check "${{ needs.popt_vendor_check.result }}"
+          add_if_failed coverage "${{ needs.coverage.result }}"
+          add_if_failed distributed_e2e "${{ needs.distributed_e2e.result }}"
+          add_if_failed sanitizer_check "${{ needs.sanitizer_check.result }}"
           echo "list=${failed# }" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nightly-status
         with:
-          outcome: ${{ (needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
+          outcome: ${{ (needs.changes.result == 'success' && needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
           scope: nightly health check (current_dev)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
           project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}
