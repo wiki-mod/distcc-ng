@@ -7,7 +7,7 @@
 # automatically on the next success.
 #
 # Every scheduled workflow that calls this action feeds this same standing
-# issue by design (currently: c-build.yml, e2e-image-build.yml,
+# issue by design (issue #81; currently: c-build.yml, e2e-image-build.yml,
 # master-heartbeat.yml, nightly-publish.yml -- see doc/ci-workflows.md's
 # "Callers" list for the current, authoritative set). That means a success
 # in one can close an issue a different one filed; this self-corrects,
