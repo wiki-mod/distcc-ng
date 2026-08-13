@@ -53,6 +53,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       # What: Core build toolchain (distcc-ng's own configure.ac/Makefile.in).
+      # Why: clang is included alongside gcc/autotools since distcc-ng's
+      #   own code has clang-specific compiler-detection logic
+      #   (dcc_probe_is_clang) that a gcc-only image couldn't exercise.
       build-essential \
       autoconf \
       automake \
@@ -62,6 +65,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       clang \
       # What: distcc-ng's real configure-time dependencies, kept in sync
       #   with c-build.yml's install-package apt list.
+      # Why: A drift between the two lists would let this image build
+      #   successfully against a dependency CI's real matrix no longer
+      #   provides, or vice versa.
       libpopt-dev \
       libavahi-client-dev \
       python3-dev \
@@ -121,14 +127,22 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       python3-markdown \
       # What: strace/ltrace for tracing distccd/include_server syscalls and
       #   library calls without attaching a debugger.
+      # Why: Kept as two separate tools since a syscall-level trace
+      #   (strace) won't show a library-call-level bug (ltrace), or vice
+      #   versa.
       # From: Issue #264
       strace \
       ltrace \
       # What: valgrind for memory-safety debugging without a
       #   sanitizer-instrumented rebuild.
+      # Why: Unlike the ASan/UBSan self-test checks below, valgrind finds
+      #   memory bugs in an already-built binary with no need to recompile
+      #   with -fsanitize.
       valgrind \
       # What: objdump/readelf/nm/addr2line for inspecting distccd/
       #   include_server binaries and symbols.
+      # Why: A crashed or misbehaving binary often needs static inspection
+      #   (symbols, sections, disassembly) without ever being run.
       binutils \
       # What: libelf-dev adds the libelf.h/gelf.h programming API.
       # Why: elf.h (already present via libc6-dev) only defines raw ELF
@@ -137,6 +151,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # From: Issue #398
       libelf-dev \
       # What: search/inspection tools agents commonly reach for.
+      # Why: An agent doing verification work needs to search source/logs
+      #   and fetch packages from inside the container itself, not just
+      #   the host.
       ripgrep \
       grep \
       less \
@@ -189,6 +206,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN set -eux; \
     mkdir -p /tmp/verify-selftest && cd /tmp/verify-selftest; \
     # What: Confirms gcc/clang produce a real, runnable binary.
+    # Why: Every later check in this self-test compiles its own test
+    #   program with gcc, so a broken compiler here would invalidate every
+    #   check that follows.
     echo 'int main(void) { return 0; }' > ok.c; \
     gcc ok.c -o ok_gcc && ./ok_gcc; \
     clang ok.c -o ok_clang && ./ok_clang; \
@@ -216,6 +236,8 @@ RUN set -eux; \
     grep -qi "runtime error" ubsan.log \
       || { echo "ERROR: UBSan build did not report a runtime error"; cat ubsan.log; exit 1; }; \
     # What: Confirms valgrind detects a real memory leak.
+    # Why: A valgrind that reported "no leaks found" on every input would
+    #   look like a passing check while giving zero real coverage.
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { malloc(16); return 0; }' \
@@ -236,6 +258,9 @@ RUN set -eux; \
     ltrace -V | grep -qi "ltrace" \
       || { echo "ERROR: ltrace -V did not report an ltrace banner"; exit 1; }; \
     # What: Confirms objdump/readelf/nm/addr2line all read the real binary.
+    # Why: Each tool parses the ELF format differently, so only exercising
+    #   all four against a real binary catches one that's installed but
+    #   broken.
     objdump -d ok_gcc | grep -q "main>:" \
       || { echo "ERROR: objdump did not disassemble main"; exit 1; }; \
     readelf -h ok_gcc | grep -q "ELF Header" \
@@ -274,11 +299,15 @@ RUN set -eux; \
     grep -q "libelf_selftest_ok" libelf_selftest.log \
       || { echo "ERROR: libelf selftest did not report success"; cat libelf_selftest.log; exit 1; }; \
     # What: Confirms ripgrep/grep/less actually find real content.
+    # Why: A search tool that runs but silently matches nothing would look
+    #   identical to one that works, judging by exit code alone.
     printf 'needle_marker\nhaystack\n' > rgtest.txt; \
     rg -q needle_marker rgtest.txt; \
     grep -q needle_marker rgtest.txt; \
     less --version >/dev/null; \
     # What: Confirms ccache actually caches a compile (second run hits).
+    # Why: A ccache that always misses would silently defeat the entire
+    #   point of including it, while still exiting 0 on every call.
     ccache --zero-stats >/dev/null; \
     ccache gcc -c ok.c -o ok.o; \
     ccache gcc -c ok.c -o ok.o; \
@@ -297,6 +326,8 @@ RUN set -eux; \
     kill "${SS_PID}" 2>/dev/null || true; \
     wait "${SS_PID}" 2>/dev/null || true; \
     # What: Confirms lsof shows a real open file descriptor on this shell.
+    # Why: lsof needs a real, currently-open fd to prove it can actually
+    #   inspect process file descriptors, not just parse its own arguments.
     exec 9< /etc/hostname; \
     lsof -p "$$" | grep -q hostname \
       || { echo "ERROR: lsof did not show the open /etc/hostname file descriptor"; lsof -p "$$"; exit 1; }; \
@@ -350,15 +381,22 @@ RUN set -eux; \
       || { echo "ERROR: ssh did not receive the expected remote command output"; \
            cat ssh_selftest_out.log; cat /tmp/verify-selftest/sshd_selftest.log; exit 1; }; \
     # What: Confirms jq actually parses and queries real JSON.
+    # Why: jq's query engine is the part actually used by CI/scripts; a jq
+    #   binary that starts but mis-parses would still exit 0 on --version.
     echo '{"tool":"jq","ok":true}' | jq -e '.ok == true' >/dev/null \
       || { echo "ERROR: jq did not correctly query the test JSON document"; exit 1; }; \
     # What: Confirms shellcheck flags a real SC2086 (unquoted variable) bug.
+    # Why: A shellcheck that runs but never actually lints (e.g. the wrong
+    #   rule set) would still exit 0 and look installed correctly.
     printf '%s\n' '#!/bin/sh' 'x="a b"' 'echo $x' > shellcheck_bug.sh; \
     shellcheck shellcheck_bug.sh > shellcheck.log 2>&1 && \
       { echo "ERROR: shellcheck did not flag the deliberately broken script"; cat shellcheck.log; exit 1; } \
       || grep -q "SC2086" shellcheck.log \
       || { echo "ERROR: shellcheck did not report the expected SC2086 finding"; cat shellcheck.log; exit 1; }; \
     # What: Confirms actionlint flags a real missing-`runs-on:` bug.
+    # Why: This is the one point that actually exercises the source-built
+    #   binary from the actionlint-builder stage, not just its --version
+    #   output.
     mkdir -p actionlint_test/.github/workflows; \
     printf '%s\n' 'on: push' 'jobs:' '  test:' '    steps:' '      - run: echo hi' \
       > actionlint_test/.github/workflows/broken.yml; \
