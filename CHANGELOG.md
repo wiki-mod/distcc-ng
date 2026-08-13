@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`AGENTS.md`**: added rule 91 -- the first repository-mutating action
+  in a freshly created worktree, after the mandatory rulebook read and
+  before any actual code change, must be an empty marker commit
+  (`git commit --allow-empty`) naming the task/issue it's tied to, so
+  `git log` alone is enough to recover the original intent if work is
+  interrupted with no other record.
+
 ### Documentation
 
 - **`AGENTS.md`**: rule 41 required fixing any missing `Why:` unconditionally,
