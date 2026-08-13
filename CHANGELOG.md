@@ -11,6 +11,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`AGENTS.md`**: rule 52 duplicated rule 21's master-push/approval text
+  almost verbatim. Merged the one substantive difference ("regardless of
+  CI status") into rule 21, and rule 52 now points to it instead of
+  repeating it.
+
 ### Fixed
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
