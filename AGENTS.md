@@ -86,7 +86,14 @@ Every rule below carries a continuous number (1, 2, 3, ...) running across the w
 
 38. This fork's convention differs from a typical "minimal comments" house style: **every function gets a comment**, and touching a file for any reason means bringing its existing comments up to the same standard, not just editing the one function that motivated the change.
 39. Comment the WHY, not the WHAT, once a function-level comment exists: a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader — well-named identifiers already say what the code does.
-40. Do not reference the current task, issue, or PR number in a comment (e.g. "fixed for #123") — that belongs in the PR/commit description, which stays attached to its context; a code comment outlives the change that added it.
+40. **Every comment follows a strict What/Why/From structure, capped at 1-5 sentences total — never a narrative.**
+    - `What:` — always present, what the code does.
+    - `Why:` — the actual reason: a hidden constraint, an invariant, a workaround, something that would surprise a reader. One sentence.
+    - `From:` — **mandatory whenever a PR and/or Issue number is known** for this code (never optional in that case); state all of it (`PR #123`, `Issue #123`, both if both apply) as a bare pointer to where the fuller context lives — never a retelling of that context. This is the one allowed exception to naming a task/issue/PR number in a comment: a pointer *outward*, not a substitute for writing the actual investigation, verification steps, or history in the PR/commit description, which remains the authoritative place for all of that — a code comment outlives the change that added it.
+
+    **The 1-5 sentence cap is a hard ceiling on the actual content, not satisfied by relabeling existing prose.** Prepending `What:`/`Why:`/`From:` tags onto an unshortened paragraph does not comply — the underlying text itself must be cut down. If the `Why:` can't fit in one sentence, either too much context is being explained (move it to the PR/commit) or the code itself needs a clearer name/simpler design instead of a longer explanation.
+
+    Do not write a comment that tells the story of how something was found, discussed, or verified. (Live incident, 2026-08-13: an entire session's worth of fixes across PRs #467/#471/#476 grew comments into multi-sentence, sometimes multi-paragraph narratives — full verification methodology, timestamps, live-incident retellings, primary-source quotes — none of it WHAT or WHY. The maintainer's own calibration: this repo's real, human-written upstream `distcc/distcc` code carries no such narrative anywhere; that's the actual bar, not this session's own drifted style.)
 41. A missing WHY-comment in code you're already touching is a defect to fix as part of that change, not a pre-existing gap to leave alone.
 42. Placeholder/TODO markers must be removed the moment the work they describe is actually done in that same change — a stale TODO next to code that already handles it is worse than no comment.
 
