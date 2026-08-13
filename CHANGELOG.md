@@ -11,6 +11,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`AGENTS.md`**: added rule 91 -- the first action in a freshly created
+  worktree, before any code change, must be an empty marker commit
+  (`git commit --allow-empty`) naming the task/issue it's tied to, so
+  `git log` alone is enough to recover the original intent if work is
+  interrupted with no other record.
+
 ### Fixed
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
