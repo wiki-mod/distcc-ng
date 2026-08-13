@@ -26,15 +26,20 @@ PROJECT_PAT="${PROJECT_PAT:-}"
 PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
 
-# Adds a newly created issue to the distcc-ng project board (AGENTS.md
-# rule 3), using PROJECT_PAT specifically -- GH_TOKEN (the default
+# Adds the standing issue to the distcc-ng project board (AGENTS.md rule
+# 3), using PROJECT_PAT specifically -- GH_TOKEN (the default
 # GITHUB_TOKEN) cannot write org-owned Projects v2 data, and
 # PROJECT_AUTOMATION_PAT's own documented scope (`project` only, see
 # add-to-project.yml) cannot create/comment/close issues, so this is
 # deliberately a separate call with a separate token, not a GH_TOKEN
-# override. Matches add-to-project.yml's own graceful-skip-when-
-# unconfigured behavior: silently does nothing when PROJECT_PAT is empty,
-# rather than failing the whole run over an optional board placement.
+# override. Called on every touch (creation, still-failing comment,
+# recovery close), not just at creation -- addProjectV2ItemById (what
+# `gh project item-add` calls) is idempotent, so retrying here self-heals
+# a transient failure or an issue that predates this mechanism, same
+# self-healing shape as ensure_bug_type() above. Matches
+# add-to-project.yml's own graceful-skip-when-unconfigured behavior:
+# silently does nothing when PROJECT_PAT is empty, rather than failing
+# the whole run over an optional board placement.
 add_to_project_board() {
   local issue_url="$1"
   if [ -z "${PROJECT_PAT}" ]; then
@@ -182,11 +187,16 @@ ${detail}.")"
   fi
   if [ "${DRY_RUN}" != "true" ]; then
     ensure_bug_type "${new_issue_url##*/}"
+    # gh issue create's own token (GH_TOKEN, the default GITHUB_TOKEN)
+    # never triggers add-to-project.yml's issues:opened handler -- GitHub
+    # suppresses downstream workflow events for anything created by the
+    # default token, the same anti-recursion behavior already found for
+    # release publishing. Add it explicitly instead of relying on that
+    # event. Skipped in DRY_RUN along with ensure_bug_type above --
+    # new_issue_url only holds a real URL when gh issue create actually
+    # ran; in DRY_RUN it holds run()'s own echoed command text instead,
+    # which would otherwise get passed straight through as a garbled
+    # --url value.
+    add_to_project_board "${new_issue_url}"
   fi
-  # gh issue create's own token (GH_TOKEN, the default GITHUB_TOKEN) never
-  # triggers add-to-project.yml's issues:opened handler -- GitHub suppresses
-  # downstream workflow events for anything created by the default token,
-  # the same anti-recursion behavior already found for release publishing.
-  # Add it explicitly instead of relying on that event.
-  add_to_project_board "${new_issue_url}"
 fi

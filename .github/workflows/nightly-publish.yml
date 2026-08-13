@@ -258,10 +258,22 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          # `publish` needs [build_check, distributed_e2e] with no `if:`
+          # override, so it shows "skipped" (not "failure") when either
+          # upstream job fails -- a plain "!= success" check would wrongly
+          # list a skipped job as itself having failed. Check for the
+          # literal failure/cancellation states instead, so a downstream
+          # skip caused by an upstream failure isn't double-reported --
+          # the upstream job it skipped because of is already listed.
           failed=""
-          [ "${{ needs.build_check.result }}" = "success" ] || failed="${failed} build_check"
-          [ "${{ needs.distributed_e2e.result }}" = "success" ] || failed="${failed} distributed_e2e"
-          [ "${{ needs.publish.result }}" = "success" ] || failed="${failed} publish"
+          add_if_failed() {
+            case "$2" in
+              failure|cancelled) failed="${failed} $1" ;;
+            esac
+          }
+          add_if_failed build_check "${{ needs.build_check.result }}"
+          add_if_failed distributed_e2e "${{ needs.distributed_e2e.result }}"
+          add_if_failed publish "${{ needs.publish.result }}"
           echo "list=${failed# }" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nightly-status
         with:

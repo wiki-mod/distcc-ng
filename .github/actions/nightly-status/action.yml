@@ -28,13 +28,14 @@ inputs:
       `project` scope, per add-to-project.yml's own documented setup --
       NOT sufficient for gh issue create/comment/close, which need
       repo/issues write access). Used only for a separate, explicit
-      "add to project board" call on a newly created issue, never for the
+      "add to project board" call on every issue touch (creation, a
+      still-failing comment, and the recovery close), never for the
       issue mutations themselves, which keep using the default
       GITHUB_TOKEN as before. A composite action has no direct access to
       the caller's secrets context, so this can't be read internally and
-      must be passed in explicitly. Left empty (the default), the new
-      issue simply isn't added to the board, matching
-      add-to-project.yml's own graceful-skip-when-unconfigured behavior.
+      must be passed in explicitly. Left empty (the default), the issue
+      simply isn't added to the board, matching add-to-project.yml's own
+      graceful-skip-when-unconfigured behavior.
     required: false
     default: ""
 
