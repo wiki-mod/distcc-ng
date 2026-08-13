@@ -253,9 +253,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
+      - name: Compute which specific job(s) failed
+        id: failed_jobs
+        if: always()
+        run: |
+          set -euo pipefail
+          failed=""
+          [ "${{ needs.build_check.result }}" = "success" ] || failed="${failed} build_check"
+          [ "${{ needs.distributed_e2e.result }}" = "success" ] || failed="${failed} distributed_e2e"
+          [ "${{ needs.publish.result }}" = "success" ] || failed="${failed} publish"
+          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nightly-status
         with:
           # Success only if all three jobs succeeded; any failure/skip is a
           # failure to report.
           outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: nightly build+publish (current_dev)
+          failed_jobs: ${{ steps.failed_jobs.outputs.list }}
+          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}

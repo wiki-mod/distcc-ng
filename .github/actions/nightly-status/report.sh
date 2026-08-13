@@ -21,6 +21,7 @@ set -euo pipefail
 : "${RUN_URL:?RUN_URL required}"
 LABEL="${LABEL:-nightly-broken}"
 DRY_RUN="${DRY_RUN:-false}"
+FAILED_JOBS="${FAILED_JOBS:-}"
 
 # Echo mutating actions instead of performing them when DRY_RUN=true, so the
 # branch logic can be exercised locally without touching real issues/labels.
@@ -123,7 +124,13 @@ fi
 run gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
   --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
 
+# Records which specific job(s) failed, not just "the pipeline failed" --
+# otherwise the standing issue has no independently actionable evidence
+# once the linked run log expires or the run is inaccessible.
 detail="${SCOPE} failed in ${RUN_URL}"
+if [ -n "${FAILED_JOBS}" ]; then
+  detail="${detail} (failed: ${FAILED_JOBS})"
+fi
 if [ -n "${existing}" ]; then
   echo "failure: commenting on standing ${LABEL} issue #${existing}"
   run gh issue comment "${existing}" --repo "${REPO}" \
@@ -136,6 +143,13 @@ else
     --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (the nightly publish and the weekly heartbeat both feed it) and closed automatically on the next successful run.
 
 ${detail}.")"
+  # In DRY_RUN, `run()`'s own echoed command is what got captured above
+  # (there's no real gh call to print it) -- re-emit it here, otherwise
+  # the command substitution silently swallows it and dry-run mode looks
+  # like it did nothing for this specific mutation.
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "${new_issue_url}"
+  fi
   if [ "${DRY_RUN}" != "true" ]; then
     ensure_bug_type "${new_issue_url##*/}"
   fi

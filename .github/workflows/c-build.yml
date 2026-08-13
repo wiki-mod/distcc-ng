@@ -754,8 +754,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      - name: Compute which specific job(s) failed
+        id: failed_jobs
+        if: always()
+        run: |
+          set -euo pipefail
+          failed=""
+          [ "${{ needs.make_check.result }}" = "success" ] || failed="${failed} make_check"
+          [ "${{ needs.popt_fallback_build.result }}" = "success" ] || failed="${failed} popt_fallback_build"
+          [ "${{ needs.popt_vendor_check.result }}" = "success" ] || failed="${failed} popt_vendor_check"
+          [ "${{ needs.coverage.result }}" = "success" ] || failed="${failed} coverage"
+          [ "${{ needs.distributed_e2e.result }}" = "success" ] || failed="${failed} distributed_e2e"
+          [ "${{ needs.sanitizer_check.result }}" = "success" ] || failed="${failed} sanitizer_check"
+          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
           scope: nightly health check (current_dev)
+          failed_jobs: ${{ steps.failed_jobs.outputs.list }}
+          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}
 

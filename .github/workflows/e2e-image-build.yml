@@ -512,7 +512,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
+      - name: Compute which specific job(s) failed
+        id: failed_jobs
+        if: always()
+        run: |
+          set -euo pipefail
+          failed=""
+          [ "${{ needs.build_and_selftest.result }}" = "success" ] || failed="${failed} build_and_selftest"
+          [ "${{ needs.publish.result }}" = "success" ] || failed="${failed} publish"
+          echo "list=${failed# }" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.build_and_selftest.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: e2e test image build+publish (distcc-ng-e2e)
+          failed_jobs: ${{ steps.failed_jobs.outputs.list }}
+          token: ${{ secrets.PROJECT_AUTOMATION_PAT || github.token }}

@@ -11,15 +11,41 @@ inputs:
   scope:
     description: "Human label for the pipeline, e.g. 'nightly build+publish (current_dev)'"
     required: true
+  failed_jobs:
+    description: >-
+      Space-separated names of the specific jobs that failed (compute in
+      the caller from needs.*.result; empty string when outcome is
+      success, or when the caller has only one job and the scope label
+      already identifies it). Recorded in the issue body/comments so the
+      standing issue stays independently actionable after the linked run
+      log expires, not just "the pipeline failed" with no detail on which
+      part.
+    required: false
+    default: ""
+  token:
+    description: >-
+      Token used for every gh issue mutation. Pass
+      secrets.PROJECT_AUTOMATION_PAT with a github.token fallback -- a
+      composite action has no direct access to the caller's secrets
+      context, so this can't default to that PAT internally and must be
+      passed in explicitly. A real PAT here isn't optional polish: GitHub
+      suppresses downstream workflow events (add-to-project.yml's own
+      issues:opened trigger) for anything created by the default
+      GITHUB_TOKEN, the same anti-recursion behavior already found for
+      release publishing. Without a real PAT, every issue this action
+      creates permanently bypasses the project board.
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
   steps:
     - shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ inputs.token }}
         REPO: ${{ github.repository }}
         OUTCOME: ${{ inputs.outcome }}
         SCOPE: ${{ inputs.scope }}
+        FAILED_JOBS: ${{ inputs.failed_jobs }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: bash "${GITHUB_ACTION_PATH}/report.sh"

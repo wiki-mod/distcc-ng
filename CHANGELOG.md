@@ -25,6 +25,28 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/actions/nightly-status`**: standing issues this action files now
+  reach the project board. `report.sh`'s `gh issue create` used the default
+  `GITHUB_TOKEN`, and GitHub suppresses downstream workflow events (here,
+  `add-to-project.yml`'s own `issues: opened` trigger) for anything created
+  by that token -- the same anti-recursion behavior already found and fixed
+  for release publishing. The composite action now takes a `token` input
+  (a composite action has no direct access to the caller's `secrets`
+  context, so this can't default to a PAT internally); every caller
+  (`c-build.yml`, `e2e-image-build.yml`, `master-heartbeat.yml`,
+  `nightly-publish.yml`) now passes `secrets.PROJECT_AUTOMATION_PAT` with a
+  `github.token` fallback.
+  - Also: standing issues/comments now record which specific job(s) failed
+    (a new `failed_jobs` input, computed by each multi-job caller from
+    `needs.*.result`), not just "the pipeline failed" -- previously the
+    issue had no independently actionable evidence once the linked run log
+    expired.
+  - Also: `report.sh`'s `DRY_RUN=true` path silently swallowed the
+    simulated `gh issue create` command instead of printing it, since
+    capturing the command's output via `$(...)` for later parsing also
+    captured `DRY_RUN`'s own echoed command instead of letting it reach the
+    log. Now re-emitted explicitly in that branch.
+
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
   `clusterfuzzlite-pr.yml`, `e2e-image-build.yml`,
   `verify-image-build.yml`, `release-drafter.yml`**: added
