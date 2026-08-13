@@ -49,6 +49,7 @@ WORKDIR /work
 # Why: --no-install-recommends keeps only deliberately-chosen packages; a
 #   hard Depends already covers real runtime needs (e.g. sanitizer
 #   runtimes via gcc/g++), verified by the self-test below.
+# From: PR #273, Issue #264
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
@@ -57,6 +58,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # Why: clang is included alongside gcc/autotools since distcc-ng's
       #   own code has clang-specific compiler-detection logic
       #   (dcc_probe_is_clang) that a gcc-only image couldn't exercise.
+      # From: PR #273, Issue #264
       build-essential \
       autoconf \
       automake \
@@ -69,6 +71,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # Why: A drift between the two lists would let this image build
       #   successfully against a dependency CI's real matrix no longer
       #   provides, or vice versa.
+      # From: PR #273, Issue #264
       libpopt-dev \
       libavahi-client-dev \
       python3-dev \
@@ -81,6 +84,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       #   (include_server/c_extensions/), and debugging both together needs
       #   gdb's Python macros; pdb needs nothing extra since it already
       #   ships in plain python3.
+      # From: PR #291, Issue #264
       python3-dbg \
       # What: Reference toolchain sized to build a real, demanding C project.
       # Why: Matches Samba's 51-package Debian build-dependency surface
@@ -140,11 +144,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # Why: Unlike the ASan/UBSan self-test checks below, valgrind finds
       #   memory bugs in an already-built binary with no need to recompile
       #   with -fsanitize.
+      # From: PR #273, Issue #264
       valgrind \
       # What: objdump/readelf/nm/addr2line for inspecting distccd/
       #   include_server binaries and symbols.
       # Why: A crashed or misbehaving binary often needs static inspection
       #   (symbols, sections, disassembly) without ever being run.
+      # From: PR #273, Issue #264
       binutils \
       # What: libelf-dev adds the libelf.h/gelf.h programming API.
       # Why: elf.h (already present via libc6-dev) only defines raw ELF
@@ -156,6 +162,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # Why: An agent doing verification work needs to search source/logs
       #   and fetch packages from inside the container itself, not just
       #   the host.
+      # From: PR #273, Issue #264
       ripgrep \
       grep \
       less \
@@ -166,11 +173,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # What: lsof/iproute2 for network/socket debugging.
       # Why: Diagnosing a distccd that won't bind/accept needs real
       #   open-socket visibility, not just process-level tracing.
+      # From: PR #273, Issue #264
       lsof \
       iproute2 \
       # What: dig/nslookup/host for DNS lookup diagnostics.
       # Why: A distccd host that won't resolve needs real name-resolution
       #   tools, not just IP-level socket inspection.
+      # From: PR #291, Issue #264
       dnsutils \
       # What: shellcheck/jq, apt-installed rather than built from source.
       # Why: Neither is a statically-linked Go binary like actionlint
@@ -198,6 +207,7 @@ COPY --from=actionlint-builder /out/actionlint /usr/local/bin/actionlint
 # What: Switches SHELL to bash for the self-test RUN block below.
 # Why: pipefail is bash-only and this stage's default dash would reject
 #   it, which would let a mid-pipeline tool crash go undetected.
+# From: PR #273, Issue #264
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # What: Build-time self-test exercising every installed tool for real use,
@@ -211,6 +221,7 @@ RUN set -eux; \
     # Why: Every later check in this self-test compiles its own test
     #   program with gcc, so a broken compiler here would invalidate every
     #   check that follows.
+    # From: PR #273, Issue #264
     echo 'int main(void) { return 0; }' > ok.c; \
     gcc ok.c -o ok_gcc && ./ok_gcc; \
     clang ok.c -o ok_clang && ./ok_clang; \
@@ -218,6 +229,7 @@ RUN set -eux; \
     # What: Confirms ASan catches a real heap-overflow at runtime.
     # Why: ASan aborts non-zero on a real catch, which would otherwise trip
     #   this RUN's own `set -e`; the `!` guard lets that expected abort pass.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { char *p = malloc(8); p[8] = 1; return 0; }' \
@@ -229,6 +241,7 @@ RUN set -eux; \
     # What: Confirms UBSan reports a real signed-overflow.
     # Why: UBSan's default trap does not reliably exit non-zero, so only
     #   the log content is checked here.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <limits.h>' \
       'int main(void) { int x = INT_MAX; return x + 1; }' \
@@ -241,6 +254,7 @@ RUN set -eux; \
     # Why: `--error-exitcode=99` on a real leak would otherwise trip this
     #   RUN's own `set -e`; `|| true` deliberately swallows that expected
     #   nonzero exit so the log content, not the exit code, is checked.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { malloc(16); return 0; }' \
@@ -254,6 +268,7 @@ RUN set -eux; \
     #   sandbox denies with no way to add CAP_SYS_PTRACE; the real test
     #   runs later, in docker/verify/selftest-ptrace.sh via `docker run
     #   --cap-add=SYS_PTRACE` (see doc/docker.md).
+    # From: PR #273, Issue #264
     gdb --version | grep -q "GNU gdb" \
       || { echo "ERROR: gdb --version did not report a GNU gdb banner"; exit 1; }; \
     strace -V | grep -qi "strace" \
@@ -264,6 +279,7 @@ RUN set -eux; \
     # Why: addr2line needs the debug-info binary (`ok_dbg`) to resolve an
     #   address to a symbol name; the other three tools work on the plain
     #   `ok_gcc` binary and would not catch a debug-info-specific break.
+    # From: PR #273, Issue #264
     objdump -d ok_gcc | grep -q "main>:" \
       || { echo "ERROR: objdump did not disassemble main"; exit 1; }; \
     readelf -h ok_gcc | grep -q "ELF Header" \
@@ -304,6 +320,7 @@ RUN set -eux; \
     # What: Confirms ripgrep/grep/less actually find real content.
     # Why: A search tool that runs but silently matches nothing would look
     #   identical to one that works, judging by exit code alone.
+    # From: PR #273, Issue #264
     printf 'needle_marker\nhaystack\n' > rgtest.txt; \
     rg -q needle_marker rgtest.txt; \
     grep -q needle_marker rgtest.txt; \
@@ -311,6 +328,7 @@ RUN set -eux; \
     # What: Confirms ccache actually caches a compile (second run hits).
     # Why: A ccache that always misses would silently defeat the entire
     #   point of including it, while still exiting 0 on every call.
+    # From: PR #273, Issue #264
     ccache --zero-stats >/dev/null; \
     ccache gcc -c ok.c -o ok.o; \
     ccache gcc -c ok.c -o ok.o; \
@@ -320,6 +338,7 @@ RUN set -eux; \
     # Why: Binding/listing a loopback socket needs no ptrace, so this runs
     #   as a real test at build time, unlike the gdb/strace/ltrace checks
     #   above.
+    # From: PR #273, Issue #264
     python3 -u -c "import socket,time; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('127.0.0.1',0)); s.listen(1); print(s.getsockname()[1], flush=True); time.sleep(5)" > ss_port.log 2>&1 & \
     SS_PID=$!; \
     for _ in 1 2 3 4 5; do [ -s ss_port.log ] && break; sleep 0.5; done; \
@@ -331,6 +350,7 @@ RUN set -eux; \
     # What: Confirms lsof shows a real open file descriptor on this shell.
     # Why: lsof needs a real, currently-open fd to prove it can actually
     #   inspect process file descriptors, not just parse its own arguments.
+    # From: PR #273, Issue #264
     exec 9< /etc/hostname; \
     lsof -p "$$" | grep -q hostname \
       || { echo "ERROR: lsof did not show the open /etc/hostname file descriptor"; lsof -p "$$"; exit 1; }; \
@@ -339,6 +359,7 @@ RUN set -eux; \
     # Why: DNS resolution needs only network access, available at build
     #   time unlike ptrace, so this is a real test here rather than
     #   deferred.
+    # From: PR #291, Issue #264
     dig +short deb.debian.org | grep -qE '^[0-9]+\.' \
       || { echo "ERROR: dig did not resolve deb.debian.org to an IPv4 address"; dig deb.debian.org; exit 1; }; \
     nslookup deb.debian.org | grep -qi "Address" \
@@ -367,6 +388,7 @@ RUN set -eux; \
     # Why: Debian's sshd expects this directory already created by the
     #   package's own postinst/init-script, neither of which runs in a
     #   plain Dockerfile RUN.
+    # From: PR #443, Issue #275, Issue #440
     mkdir -p /run/sshd; \
     /usr/sbin/sshd -f /tmp/verify-selftest/sshd_selftest_config \
       -E /tmp/verify-selftest/sshd_selftest.log; \
@@ -386,11 +408,13 @@ RUN set -eux; \
     # What: Confirms jq actually parses and queries real JSON.
     # Why: jq's query engine is the part actually used by CI/scripts; a jq
     #   binary that starts but mis-parses would still exit 0 on --version.
+    # From: PR #332, Issue #264
     echo '{"tool":"jq","ok":true}' | jq -e '.ok == true' >/dev/null \
       || { echo "ERROR: jq did not correctly query the test JSON document"; exit 1; }; \
     # What: Confirms shellcheck flags a real SC2086 (unquoted variable) bug.
     # Why: A shellcheck that runs but never actually lints (e.g. the wrong
     #   rule set) would still exit 0 and look installed correctly.
+    # From: PR #332, Issue #264
     printf '%s\n' '#!/bin/sh' 'x="a b"' 'echo $x' > shellcheck_bug.sh; \
     shellcheck shellcheck_bug.sh > shellcheck.log 2>&1 && \
       { echo "ERROR: shellcheck did not flag the deliberately broken script"; cat shellcheck.log; exit 1; } \
@@ -400,6 +424,7 @@ RUN set -eux; \
     # Why: This is the one point that actually exercises the source-built
     #   binary from the actionlint-builder stage, not just its --version
     #   output.
+    # From: PR #332, Issue #264
     mkdir -p actionlint_test/.github/workflows; \
     printf '%s\n' 'on: push' 'jobs:' '  test:' '    steps:' '      - run: echo hi' \
       > actionlint_test/.github/workflows/broken.yml; \
