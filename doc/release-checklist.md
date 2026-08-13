@@ -70,7 +70,14 @@ problem; nobody had checked what the build actually *produced*.
       Diff `master`'s copy against `current_dev`'s before tagging; if they
       differ, either promote the `.github/workflows/` change to `master`
       first, or plan to use the workflow's own `workflow_dispatch` retry
-      path for this release.
+      path for this release -- dispatched explicitly against `current_dev`
+      (`gh workflow run changelog-update-on-release.yml --repo
+      wiki-mod/distcc-ng --ref current_dev -f tag_name=... -f
+      release_notes=...`), never bare. An unqualified `gh workflow run`
+      runs the workflow file version from the repository's default branch
+      (confirmed via `gh workflow run --help`: `--ref` is what selects a
+      different version) -- exactly the stale, pre-fix copy this fallback
+      exists to work around in the first place.
 
 ## Artifact verification — real behavior, not a build matrix
 
@@ -155,11 +162,14 @@ a replacement for it.
       no build from `current_dev` can ever again report the version that
       was just released.
 - [ ] **`changelog-update-on-release.yml`'s automated commit (`doc/release-versioning.md`
-      step 5) actually landed on `current_dev` before promoting.** Check its
-      Actions run history for a success at the tag's timestamp, not just that
-      `CHANGELOG.md` looks right on read — promoting before it lands carries
-      the release's own changes into `master` still sitting under
-      `[Unreleased]`, with no later trigger to move them (issue #460/PR #467).
+      step 5) actually landed on `current_dev`, and its content is
+      explicitly accounted for in this release's actual promotion to
+      `master`** (see `doc/release-versioning.md` step 7's own note on
+      this real, standing gap — the frozen release branch can never
+      receive that commit on its own). Check the workflow's Actions run
+      history for a success at the tag's timestamp, and confirm the
+      chosen resolution for *this* release is recorded here, not just
+      that `CHANGELOG.md` looks right on read.
 
 ## Keeping this checklist current
 

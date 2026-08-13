@@ -25,9 +25,15 @@ on:
         required: true
         type: string
   # `published` fires for every draft->public transition regardless of how
-  # the release was originally created; `released` is a real GitHub quirk
-  # documented as unreliable specifically when the release started life as
-  # a draft (github/community#26954) -- which is always true here, since
+  # the release was originally created. GitHub's own docs directly confirm
+  # this specific unreliability only for `prereleased` ("will not trigger
+  # for pre-releases published from draft releases, but the published
+  # type will trigger") -- they don't make the identical claim in so many
+  # words for `released`, `prereleased`'s stable-release sibling. That
+  # `released` has the same real-world limitation for a draft-originated
+  # release is confirmed instead by the maintainer's own direct
+  # operational experience on a sibling project (wiki-mod/lancache-ng),
+  # not by this citation alone. This always applies here, since
   # package-release.yml's publish_github_release job promotes an existing
   # release-drafter draft rather than creating a release directly. Using
   # `released` would have left this workflow unable to fire even after

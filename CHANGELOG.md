@@ -80,14 +80,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   from `release: types: [released]` to `types: [published]` (issue #460
   Finding 2, second root cause). `publish_github_release` always promotes
   an existing `release-drafter` draft rather than creating a release
-  directly, and GitHub's own docs confirm `released`/`prereleased` are
-  not reliably delivered for a release that started life as a draft --
-  only `published` is (`github/docs`'s events-that-trigger-workflows.md:
-  "The `prereleased` type will not trigger for pre-releases published
-  from draft releases, but the `published` type will trigger. If you
-  want a workflow to run when stable _and_ pre-releases publish,
-  subscribe to `published` instead of `released` and `prereleased`.").
-  Without this, the PAT fix above alone still would not have made this
+  directly. GitHub's own docs directly confirm this unreliability for
+  `prereleased` specifically (`github/docs`'s
+  events-that-trigger-workflows.md: "The `prereleased` type will not
+  trigger for pre-releases published from draft releases, but the
+  `published` type will trigger."); that `released` (its stable-release
+  sibling) has the same real-world limitation for a draft-originated
+  release is confirmed by the maintainer's own direct operational
+  experience on a sibling project (`wiki-mod/lancache-ng`), not by that
+  citation alone. Without this fix, the PAT fix above alone still would not have made this
   workflow fire. Guarded with `github.event.release.prerelease == false`
   so `nightly-publish.yml`'s separate `nightly` pre-release channel can
   never insert a nightly build into this changelog.

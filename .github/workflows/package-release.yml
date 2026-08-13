@@ -601,18 +601,22 @@ jobs:
           fi
 
           # Not yet published -- find release-drafter's rolling draft.
-          # Deliberately not a tag-based lookup: neither the REST
-          # `releases/tags/{tag}` endpoint (GitHub's own docs: "Get a
-          # published release with the specified tag") nor the GraphQL
-          # `repository.release(tagName:)` field can resolve a draft-only
-          # release at all -- confirmed empirically against this repo's own
-          # real v3.6.5-NG tag (which has both a published release and an
-          # unrelated orphaned draft sharing that tag_name): both return
-          # only the published one. Matching by exact tag_name would also be
-          # the wrong invariant even if it worked: release-drafter's own
-          # tag-template computes a *guessed* next version from merged-PR
-          # labels, not guaranteed to equal whatever tag the maintainer
-          # actually cuts (e.g. a manual configure.ac version bump can
+          # Deliberately not a tag-based lookup. The REST `releases/tags/
+          # {tag}` endpoint really can't resolve a draft at all (GitHub's
+          # own docs: "Get a published release with the specified tag").
+          # The GraphQL `repository.release(tagName:)` field genuinely can
+          # resolve a draft-only release by its pending tag name (`gh`
+          # CLI's own fetchDraftRelease relies on exactly this) -- but not
+          # when a published release already shares that same tag_name:
+          # confirmed empirically against this repo's own real v3.6.5-NG
+          # tag (which has both a published release and an unrelated
+          # orphaned draft sharing that tag_name), both REST and GraphQL
+          # return only the published one there. The real, decisive reason
+          # a tag-based lookup is still the wrong tool here regardless:
+          # release-drafter's own tag-template computes a *guessed* next
+          # version from merged-PR labels, not guaranteed to equal whatever
+          # tag the maintainer actually cuts (e.g. a manual configure.ac
+          # version bump can
           # diverge from that guess). The actual invariant this repo relies
           # on is release-drafter's own single-rolling-draft design
           # (.github/release-drafter.yml) -- there should be exactly one
@@ -645,8 +649,8 @@ jobs:
           # this identity-based PATCH (by numeric draft_id, immune to the
           # tag-lookup limitation above) is what makes it findable by that
           # name. This step's actual find-by-tag behavior against a draft
-          # can only be exercised by a real tag push, not this PR's own CI
-          # -- see the PR body's Validation section.
+          # can only be exercised by a real tag push, never by any PR's
+          # own CI.
           gh api --method PATCH "repos/${{ github.repository }}/releases/${draft_id}" \
             -f tag_name="${TAG_NAME}" \
             > /dev/null

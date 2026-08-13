@@ -106,10 +106,16 @@ it ships.
    so `current_dev` never again reports the just-released number.
 7. Promote to `master` only with explicit maintainer approval and thorough
    testing (existing hard rule for this repo) — never automatically.
-   **Confirm step 5's automated commit has actually landed on `current_dev`
-   before promoting** — promoting before it lands carries the release's
-   changes into `master` still sitting under `[Unreleased]`, with no
-   further trigger to move them later.
+   **A real, standing gap in the current design:** step 5's dated-section
+   commit lands on `current_dev`, but the release PR from step 2a has
+   `release/X.Y.Z-NG` as its head, frozen at cut time (rule 70) — it can
+   never receive that later commit, so merging it as-is carries the
+   release into `master` still sitting under `[Unreleased]`. This is not
+   a documented limitation to route around by convention each time; it
+   needs the maintainer's own explicit, justified exception for how a
+   given release resolves it (rule 70's own "release branch is frozen,
+   patch current_dev instead" principle, applied here) — see PR #461/
+   #463 for one real precedent, not a template to repeat automatically.
 
 ## Guardrails (Fail Closed)
 
