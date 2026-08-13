@@ -154,6 +154,12 @@ a replacement for it.
       immediately after tagging (`doc/release-versioning.md` step 6) — so
       no build from `current_dev` can ever again report the version that
       was just released.
+- [ ] **`changelog-update-on-release.yml`'s automated commit (`doc/release-versioning.md`
+      step 5) actually landed on `current_dev` before promoting.** Check its
+      Actions run history for a success at the tag's timestamp, not just that
+      `CHANGELOG.md` looks right on read — promoting before it lands carries
+      the release's own changes into `master` still sitting under
+      `[Unreleased]`, with no later trigger to move them (issue #460/PR #467).
 
 ## Keeping this checklist current
 

@@ -101,6 +101,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
     fired -- never caught before now because it had never fired for a
     real release.
 
+- **`doc/release-versioning.md`, `doc/release-checklist.md`**: step 5
+  (moving `CHANGELOG.md`'s `[Unreleased]` content into a dated section)
+  is no longer a manual step -- it's now what `changelog-update-on-release.yml`
+  does automatically once a release publishes. Added an explicit
+  precondition to step 7/the master-promotion checklist: confirm that
+  automated commit actually landed on `current_dev` before promoting,
+  since promoting too early carries the release's own changes into
+  `master` still sitting under `[Unreleased]`, with no later trigger to
+  move them.
+
 ## [3.6.5-NG] - 2026-08-11
 
 ### Fixed

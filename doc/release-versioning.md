@@ -87,13 +87,29 @@ it ships.
 3. Run the release guardrail script (`scripts/check-release-version.sh`) — it
    fails closed if the version is already tagged, or if `configure.ac`
    disagrees with the tag about to be created.
-4. Tag `vX.Y.Z-NG` on the release branch's HEAD.
-5. Move `CHANGELOG.md`'s `[Unreleased]` section content into a new, dated
-   `## [X.Y.Z-NG] - YYYY-MM-DD` section.
+4. Tag `vX.Y.Z-NG` on the release branch's HEAD. This tag push triggers
+   `package-release.yml`, which builds/publishes the release and, once
+   `publish_github_release` actually publishes it, fires the `release`
+   event that `changelog-update-on-release.yml` listens for.
+5. `changelog-update-on-release.yml` moves `CHANGELOG.md`'s `[Unreleased]`
+   section content into a new, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section
+   automatically, as a new commit on `current_dev` — this is no longer a
+   manual step. Verify that workflow's run actually succeeded (check its
+   Actions history for the tag's timestamp) before proceeding to step 7;
+   if it failed, use its own `workflow_dispatch` retry path (see that
+   workflow's header) rather than editing `CHANGELOG.md` by hand, since a
+   manual edit racing the automated one can conflict. The tagged commit
+   itself never contains this dated section — tags are immutable
+   snapshots created before this reactive commit exists — this is
+   expected, not a defect to fix by reordering tagging itself.
 6. Bump `current_dev`'s `configure.ac` to the next planned version immediately,
    so `current_dev` never again reports the just-released number.
 7. Promote to `master` only with explicit maintainer approval and thorough
    testing (existing hard rule for this repo) — never automatically.
+   **Confirm step 5's automated commit has actually landed on `current_dev`
+   before promoting** — promoting before it lands carries the release's
+   changes into `master` still sitting under `[Unreleased]`, with no
+   further trigger to move them later.
 
 ## Guardrails (Fail Closed)
 
