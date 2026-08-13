@@ -13,11 +13,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **`AGENTS.md`**: added rule 91 -- the first action in a freshly created
-  worktree, before any code change, must be an empty marker commit
+- **`AGENTS.md`**: added rule 91 -- the first repository-mutating action
+  in a freshly created worktree, after the mandatory rulebook read and
+  before any actual code change, must be an empty marker commit
   (`git commit --allow-empty`) naming the task/issue it's tied to, so
   `git log` alone is enough to recover the original intent if work is
   interrupted with no other record.
+
+### Documentation
+
+- **`AGENTS.md`**: rule 41 required fixing any missing `Why:` unconditionally,
+  with no stated option to remove a comment that genuinely has nothing
+  non-obvious to say. Added that option explicitly, so a real gap still
+  gets a real reason, but a self-evident comment gets removed instead of
+  a contrived one.
+- **`AGENTS.md`**: rule 52 duplicated rule 21's master-push/approval text
+  almost verbatim. Merged the one substantive difference ("regardless of
+  CI status") into rule 21, and rule 52 now points to it instead of
+  repeating it.
 
 ### Fixed
 
