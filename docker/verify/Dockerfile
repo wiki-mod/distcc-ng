@@ -236,8 +236,9 @@ RUN set -eux; \
     grep -qi "runtime error" ubsan.log \
       || { echo "ERROR: UBSan build did not report a runtime error"; cat ubsan.log; exit 1; }; \
     # What: Confirms valgrind detects a real memory leak.
-    # Why: A valgrind that reported "no leaks found" on every input would
-    #   look like a passing check while giving zero real coverage.
+    # Why: `--error-exitcode=99` on a real leak would otherwise trip this
+    #   RUN's own `set -e`; `|| true` deliberately swallows that expected
+    #   nonzero exit so the log content, not the exit code, is checked.
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { malloc(16); return 0; }' \
@@ -258,9 +259,9 @@ RUN set -eux; \
     ltrace -V | grep -qi "ltrace" \
       || { echo "ERROR: ltrace -V did not report an ltrace banner"; exit 1; }; \
     # What: Confirms objdump/readelf/nm/addr2line all read the real binary.
-    # Why: Each tool parses the ELF format differently, so only exercising
-    #   all four against a real binary catches one that's installed but
-    #   broken.
+    # Why: addr2line needs the debug-info binary (`ok_dbg`) to resolve an
+    #   address to a symbol name; the other three tools work on the plain
+    #   `ok_gcc` binary and would not catch a debug-info-specific break.
     objdump -d ok_gcc | grep -q "main>:" \
       || { echo "ERROR: objdump did not disassemble main"; exit 1; }; \
     readelf -h ok_gcc | grep -q "ELF Header" \
