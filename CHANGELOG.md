@@ -11,6 +11,21 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`docker/verify/Dockerfile`**: the buildtools verification image now
+  installs `libelf-dev` (issue #398). The image previously already had
+  `elf.h` (via `libc6-dev`, pulled in by `build-essential`), but no libelf
+  programming headers (`libelf.h`/`gelf.h`) to compile against, and no
+  development headers for `elfutils`' libelf at all -- found missing when
+  issue #398's libelf feasibility spike (evaluating `libelf` as a
+  replacement for `dcc_fix_debug_info()`'s raw ELF byte search-and-replace,
+  which cannot handle `SHF_COMPRESSED` debug sections) failed to compile in
+  this image. A real build-time self-test compiles against `libelf.h`/
+  `gelf.h`, links `-lelf`, and reads a real ELF header from the image's own
+  already-built test binary via `elf_begin()`/`gelf_getehdr()`, matching
+  this file's existing per-tool self-test convention.
+
 ### Fixed
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
@@ -36,18 +51,6 @@ See `doc/release-versioning.md` for the full versioning and release process.
   finish before later test steps can observe their fixtures, without relying
   on CPython's prompt reference-count finalization; reads use deterministic
   ownership too. Added function-level rationale to the modified methods.
-
-- **`docker/verify/Dockerfile`**: the buildtools verification image now
-  installs `libelf-dev` (issue #398). The image previously carried only
-  libelf's runtime library (`libelf1t64`), no development headers at all --
-  found missing when issue #398's libelf feasibility spike (evaluating
-  `libelf` as a replacement for `dcc_fix_debug_info()`'s raw ELF byte
-  search-and-replace, which cannot handle `SHF_COMPRESSED` debug sections)
-  failed to compile in this image. A real build-time self-test compiles
-  against `libelf.h`/`gelf.h`, links `-lelf`, and reads a real ELF header
-  from the image's own already-built test binary via `elf_begin()`/
-  `gelf_getehdr()`, matching this file's existing per-tool self-test
-  convention.
 
 ## [3.6.5-NG] - 2026-08-11
 

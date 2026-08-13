@@ -124,9 +124,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       gdb \
       # python3-dbg (debug build + gdb helper macros, e.g. py-bt/py-list):
       # for debugging the include_server itself (a Python program) and its
-      # C extension (include_server/c_extensions/) together under gdb --
-      # follow-up ask this session. pdb (Python's own built-in debugger)
-      # needs nothing extra, it already ships inside plain python3.
+      # C extension (include_server/c_extensions/) together under gdb.
+      # pdb (Python's own built-in debugger) needs nothing extra, it
+      # already ships inside plain python3.
       python3-dbg \
       # --- Samba-sized reference toolchain (see sizing rationale above):
       #     the real library/header surface a project as demanding as Samba
@@ -175,17 +175,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # --- Debug tools (maintainer's explicit ask) ---
       strace \
       ltrace \
-      # --- Sanitizer/memory-debug toolchain (follow-up ask this session) ---
+      # --- Sanitizer/memory-debug toolchain: valgrind, for memory-safety
+      #     debugging of distccd/the include_server without a sanitizer-
+      #     instrumented rebuild ---
       valgrind \
-      # --- Binutils (objdump/readelf/nm/addr2line -- follow-up ask) ---
+      # --- Binutils: objdump/readelf/nm/addr2line, for inspecting real
+      #     distccd/include_server binaries and symbols ---
       binutils \
       # libelf-dev (libelf.h/gelf.h, elfutils' libelf): needed to compile
       # against libelf/gelf for the ongoing investigation into replacing
       # dcc_fix_debug_info()'s raw ELF byte search-and-replace with
-      # libelf's own compressed-section-aware API. Only the runtime library
-      # (libelf1t64) was present before; this image had no ELF/DWARF
-      # development headers at all, found missing empirically when a real
-      # libelf prototype failed to compile in this container.
+      # libelf's own compressed-section-aware API. The image already had
+      # elf.h (via libc6-dev, pulled in by build-essential) and libelf's
+      # runtime library (libelf1t64), but no libelf programming headers
+      # (libelf.h/gelf.h) to compile against -- found missing empirically
+      # when a real libelf prototype failed to compile in this container.
       libelf-dev \
       # --- Search/inspection tools agents commonly reach for ---
       ripgrep \
@@ -195,20 +199,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       ca-certificates \
       wget \
       curl \
-      # Network/socket debugging (follow-up ask this session): same bundle
-      # as strace/gdb/valgrind above -- diagnosing a distccd that won't
+      # Network/socket debugging: same bundle as strace/gdb/valgrind above --
+      # diagnosing a distccd that won't
       # bind/accept, or a hung distributed-compile connection, needs to see
       # real open sockets/file descriptors, not just process-level tracing.
       lsof \
       iproute2 \
-      # DNS lookup tools (dig/nslookup/host -- follow-up ask this session):
-      # diagnosing a distccd host that won't resolve (DISTCC_HOSTS entries,
+      # DNS lookup tools (dig/nslookup/host): diagnosing a distccd host
+      # that won't resolve (DISTCC_HOSTS entries,
       # a misbehaving --allow netrange, or a Redis remote-storage hostname
       # for ccache) needs real name-resolution tools, not just IP-level
       # socket inspection.
       dnsutils \
-      # shellcheck/jq (CI-lint tools, follow-up ask this session, same
-      # general class of gap as actionlint's provisioning above):
+      # shellcheck/jq (CI-lint tools, same general class of gap as
+      # actionlint's provisioning above):
       # shellcheck is Haskell, not Go, so it doesn't have actionlint's
       # stale-stdlib problem above -- Debian's packaged version is fine
       # here. jq has no compiled runtime embedding concern either (plain
@@ -457,8 +461,8 @@ RUN set -eux; \
 #
 # Deliberately no build-arg-parameterized uid/gid here ("approach 1", a
 # HOST_UID/HOST_GID build-arg matching the caller's own host uid, was
-# considered and confirmed empirically via this image's own CI that it
-# works cleanly). Not adopted: it would require rebuilding this image
+# considered and confirmed empirically via this image's own CI to work
+# cleanly). Not adopted: it would require rebuilding this image
 # locally with a matching build-arg any time the caller's own uid differs
 # from this image's baked-in 1000, which reintroduces exactly the local
 # build step this image's "pull and run, nothing to build" requirement
