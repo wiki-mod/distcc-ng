@@ -1,3 +1,9 @@
+# What: Composite action filing, updating, or closing the one shared
+#   standing "nightly-broken" issue for a scheduled run's outcome.
+# Why: Every scheduled workflow needs the same file-or-update-or-close
+#   logic; centralizing it here avoids each caller maintaining its own,
+#   independently-drifting copy.
+# From: Issue #81, PR #89
 name: Report scheduled-CI status
 description: >-
   File, update, or close the single standing "nightly-broken" tracking issue
@@ -11,6 +17,33 @@ inputs:
   scope:
     description: "Human label for the pipeline, e.g. 'nightly build+publish (current_dev)'"
     required: true
+  failed_jobs:
+    description: >-
+      Space-separated names of the specific jobs that failed (compute in
+      the caller from needs.*.result; empty string when outcome is
+      success, or when the caller has only one job and the scope label
+      already identifies it). Recorded in the issue body/comments so the
+      standing issue stays independently actionable after the linked run
+      log expires, not just "the pipeline failed" with no detail on which
+      part.
+    required: false
+    default: ""
+  project_pat:
+    description: >-
+      Pass secrets.PROJECT_AUTOMATION_PAT (a classic PAT with only the
+      `project` scope, per add-to-project.yml's own documented setup --
+      NOT sufficient for gh issue create/comment/close, which need
+      repo/issues write access). Used only for a separate, explicit
+      "add to project board" call on every issue touch (creation, a
+      still-failing comment, and the recovery close), never for the
+      issue mutations themselves, which keep using the default
+      GITHUB_TOKEN as before. A composite action has no direct access to
+      the caller's secrets context, so this can't be read internally and
+      must be passed in explicitly. Left empty (the default), the issue
+      simply isn't added to the board, matching add-to-project.yml's own
+      graceful-skip-when-unconfigured behavior.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -18,8 +51,10 @@ runs:
     - shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PROJECT_PAT: ${{ inputs.project_pat }}
         REPO: ${{ github.repository }}
         OUTCOME: ${{ inputs.outcome }}
         SCOPE: ${{ inputs.scope }}
+        FAILED_JOBS: ${{ inputs.failed_jobs }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: bash "${GITHUB_ACTION_PATH}/report.sh"
