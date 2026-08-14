@@ -48,6 +48,11 @@ jobs:
   # What: Relies on test/e2e/Dockerfile's own embedded self-test RUN step
   # (a real distcc -> distccd compile checked against the daemon's
   # COMPILE_OK log line) to fail this build on any regression.
+  # Why: The self-test runs inside the `docker build` itself, not as a
+  # separate step here, so a regression fails this job the same way any
+  # other RUN step failure would -- there is deliberately no extra
+  # verification step below duplicating what the image already proves.
+  # From: PR #354
   build_and_selftest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
