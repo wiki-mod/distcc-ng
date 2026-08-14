@@ -18,4 +18,13 @@ runs:
   steps:
     - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
       with:
-        apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+        # What: apt's package list includes both elfutils (CLI tools,
+        #   only eu-strip is actually consumed here) and libelf-dev
+        #   (development headers/library).
+        # Why: The two are separate Debian packages -- elfutils alone
+        #   has no libelf.h/gelf.h or link-time .so, so configure's
+        #   --with-libelf probe would silently degrade to the pre-fix
+        #   raw <elf.h> path on every real .rpm/.deb release build
+        #   without libelf-dev too (issue #398).
+        # From: PR #487
+        apt: autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
