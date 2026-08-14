@@ -1,19 +1,14 @@
 name: Nightly build and publish (current_dev)
 
-# Builds, tests, e2e-validates and only then publishes a moving "nightly"
-# channel from current_dev: source/binary packages, a GHCR distcc-ng-nightly
-# image (its own package, separate from the real versioned distcc-ng
-# releases), and a `nightly` GitHub pre-release, all overwritten on every
-# successful run (the
-# Rust/Firefox-nightly pattern). This is intentionally separate from
-# package-release.yml, which owns the real vX.Y.Z-NG tagged-release path --
-# nothing here creates, moves, or depends on a v* tag.
-#
-# schedule and workflow_dispatch are honored only from the workflow file on the
-# default branch (master), so this has no effect until it is promoted there; it
-# activates on the next current_dev->master promotion. Every job checks out
-# current_dev explicitly, because that is the branch this nightly channel
-# tracks regardless of which branch the trigger fires from.
+# What: Builds, tests, e2e-validates, and publishes a moving "nightly"
+# channel from current_dev (packages, the distcc-ng-nightly GHCR image, a
+# nightly GitHub pre-release), overwritten on every successful run; kept
+# separate from package-release.yml's real vX.Y.Z-NG tagged-release path.
+# Why: schedule/workflow_dispatch only fire from the workflow copy on the
+# default branch (master), so this activates only after the next
+# current_dev->master promotion; every job checks out current_dev
+# explicitly regardless of the trigger's branch.
+# From: Issue #81, PR #85
 
 concurrency:
   group: nightly-publish
@@ -22,31 +17,32 @@ concurrency:
 on:
   workflow_dispatch:
   schedule:
-    # One hour after c-build.yml's 03:00 UTC nightly health check.
     - cron: '0 4 * * *'
     # --- DISABLED: full_bidirectional_e2e's own weekly schedule --------------
-    # Issue #264's full bidirectional E2E design calls for a weekly run
-    # (Fridays 02:00 CET = 01:00 UTC, WORKLOAD=apache as the lighter workload)
-    # once this job has been proven out -- but arming it is an explicit,
-    # separate decision not yet made (see the full_bidirectional_e2e job's own
-    # comment below). This entry is deliberately commented out, not deleted,
-    # so the intended cadence is visible in the code rather than only in
-    # issue #264's own history. DO NOT UNCOMMENT without first getting the
-    # maintainer's explicit go-ahead -- a weekly full third-party-project
-    # build is a real, non-trivial CI cost commitment, not a free toggle.
+    # What: A disabled weekly schedule (Fridays 02:00 CET = 01:00 UTC,
+    # WORKLOAD=apache) for full_bidirectional_e2e, kept commented out
+    # rather than deleted so the intended cadence stays visible in code.
+    # Why: Arming it is a separate, not-yet-made decision. DO NOT UNCOMMENT
+    # without the maintainer's explicit go-ahead: a weekly full
+    # third-party-project build is a real, non-trivial CI cost commitment.
+    # From: Issue #264, PR #302
     # - cron: '0 1 * * 5'
 
-# Read-only floor: the actual write scopes (force-moving the nightly tag,
-# creating/replacing its release, pushing the GHCR image) are pushed down to
-# the publish job's own permissions block below, since build_check and
-# distributed_e2e are pure build/test gates that never touch the GitHub API
-# or a registry and shouldn't inherit write access they never use.
+# What: Top-level permissions are read-only; the real write scopes (moving
+# the nightly tag, creating/replacing its release, pushing the GHCR image)
+# live only on the publish job's own block below.
+# Why: build_check and distributed_e2e are pure build/test gates that never
+# touch the GitHub API or a registry and shouldn't inherit write access
+# they never use.
+# From: Issue #267, PR #308
 permissions:
   contents: read
 
 env:
-  # Hardcoded and never derived: the ONLY tag this workflow may force-move, and
-  # one that must never collide with a real vX.Y.Z-NG release tag.
+  # What: Hardcoded, never derived; the only tag this workflow may
+  # force-move.
+  # Why: Must never collide with a real vX.Y.Z-NG release tag.
+  # From: Issue #81, PR #85
   NIGHTLY_TAG: nightly
 
 jobs:
@@ -54,8 +50,9 @@ jobs:
   build_check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # This job only checks out current_dev and runs a local build + test --
-    # no GitHub API or registry write of any kind.
+    # What: Only checks out current_dev and runs a local build+test.
+    # Why: No GitHub API or registry write happens here, hence read-only.
+    # From: Issue #267, PR #308
     permissions:
       contents: read
     env:
@@ -74,8 +71,10 @@ jobs:
   distributed_e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # This job only checks out current_dev and runs the local docker-compose
-    # e2e script -- no GitHub API or registry write of any kind.
+    # What: Only checks out current_dev and runs the local docker-compose
+    # e2e script.
+    # Why: No GitHub API or registry write happens here, hence read-only.
+    # From: Issue #267, PR #308
     permissions:
       contents: read
     steps:
@@ -90,10 +89,13 @@ jobs:
     needs: [build_check, distributed_e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # This job needs both write scopes the top-level block used to grant to
-    # every job: contents: write to force-move the `nightly` tag and
-    # create/replace its GitHub release, packages: write to push the
-    # distcc-ng-nightly:latest image to GHCR.
+    # What: Needs both write scopes the top-level block used to grant every
+    # job: contents:write to force-move the nightly tag and create/replace
+    # its release, packages:write to push distcc-ng-nightly:latest to GHCR.
+    # Why: Per-job least-privilege instead of one top-level grant every job
+    # in this file inherited, even build_check/distributed_e2e which never
+    # write anything (OSSF Scorecard "Token-Permissions" finding).
+    # From: Issue #267, PR #308
     permissions:
       contents: write
       packages: write
@@ -102,16 +104,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-          # Full history so the nightly tag can be force-moved onto this commit.
+          # What: Full history checkout.
+          # Why: So the nightly tag can be force-moved onto this commit.
+          # From: Issue #81, PR #85
           fetch-depth: 0
 
       - uses: $/.github/actions/install-packaging-deps
 
       - name: Resolve the built commit
-        # Under schedule/workflow_dispatch the workflow is evaluated from the
-        # default branch, so github.sha is master's tip -- but we checked out
-        # and build current_dev. Stamp the image and release with the commit
-        # actually built, not master's, so the provenance metadata is honest.
+        # What: Stamps the image/release with the commit actually checked
+        # out and built (current_dev's tip), not github.sha.
+        # Why: Under schedule/workflow_dispatch the workflow evaluates from
+        # the default branch, so github.sha is master's tip even though
+        # current_dev is what gets built; using it would make the
+        # provenance metadata dishonest.
+        # From: Issue #81, PR #91
         run: echo "BUILT_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
 
       - name: Build release packages
@@ -139,7 +146,13 @@ jobs:
           IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
         run: |
           set -euo pipefail
-          # Hard stop if NIGHTLY_TAG was ever mis-set to a real release tag.
+          # What: Hard stop if NIGHTLY_TAG was ever mis-set to a real
+          # release tag.
+          # Why: The `git push -f` below force-moves whatever tag
+          #   NIGHTLY_TAG names; without this guard, a misconfiguration
+          #   here could force-move a real vX.Y.Z-NG release tag instead
+          #   of the intended floating nightly one.
+          # From: Issue #81, PR #85
           case "${NIGHTLY_TAG}" in
             v*) echo "refusing to force-move a v* tag" >&2; exit 1 ;;
           esac
@@ -153,8 +166,9 @@ jobs:
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
 
           notes_file="$(mktemp)"
-          # The backticks are literal Markdown code spans for the release notes,
-          # not command substitution -- silence shellcheck's SC2016 for them.
+          # What: The backticks below are literal Markdown code spans for
+          # the release notes, not command substitution.
+          # Why: Otherwise shellcheck's SC2016 flags them as unintended.
           # shellcheck disable=SC2016
           {
             printf 'Automated nightly build of `current_dev` (%s).\n\n' "${BUILT_SHA}"
@@ -162,8 +176,11 @@ jobs:
             printf 'Container image: %s\n' "${IMAGE_TAG}"
           } > "${notes_file}"
 
-          # Recreate the release each run so its target follows the moved tag;
-          # --latest=false keeps it from ever outranking a real tagged release.
+          # What: Recreates the release each run so its target follows the
+          # moved tag.
+          # Why: --latest=false keeps it from ever outranking a real
+          # tagged release.
+          # From: Issue #81, PR #85
           if gh release view "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng >/dev/null 2>&1; then
             gh release delete "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng --yes
           fi
@@ -176,75 +193,66 @@ jobs:
             --target "${BUILT_SHA}"
 
   # --- Full bidirectional native-compatibility E2E (issue #264) -------------
-  # The "full automated distributed-build E2E test" designed across issue
-  # #264's later comments -- distinct from test/e2e/run-e2e.sh's existing
-  # quick two-container check (that check actually lives in c-build.yml's
-  # `distributed_e2e` job and is unchanged by this addition; an earlier draft
-  # of issue #264's own design comment referred to it as living in
-  # verify-image-build.yml, which does not match this repo's real workflow
-  # layout -- noted here rather than silently perpetuated).
-  #
-  # Placed in THIS file rather than a new workflow file (per AGENTS.md rule
-  # 61) because this file already: targets current_dev explicitly regardless
-  # of which branch/event triggered it, already has workflow_dispatch wired
-  # up, and already builds+validates current_dev fresh before doing anything
-  # heavier with it -- the exact shape issue #264's design calls for (manual
-  # trigger, current_dev target, build fresh in-test). It deliberately does
-  # NOT participate in this file's own concurrency group gate on `publish`
-  # (no `needs:` relationship either way) -- this job is independent
-  # verification, not a nightly-publish release gate, and must never block or
-  # be blocked by the nightly channel's own build/e2e/publish chain.
-  #
-  # workflow_dispatch-only: `if` below skips this job entirely on the
-  # schedule trigger, so the existing daily 04:00 UTC nightly-publish cadence
-  # never silently grows a full Samba build onto it. See this file's `on:`
-  # block above for the disabled weekly schedule this design calls for
-  # (commented out, not armed, pending a separate maintainer decision).
+  # What: The "full automated distributed-build E2E test" from issue #264's
+  # design, distinct from c-build.yml's quick two-container distributed_e2e
+  # check; placed in this file per AGENTS.md rule 61 rather than a new
+  # workflow file, and deliberately outside publish's own concurrency/needs
+  # chain.
+  # Why: This job is independent manual verification, not a release gate,
+  # and must never block or be blocked by the nightly publish chain; the
+  # `if` below restricts it to workflow_dispatch so the daily schedule
+  # never silently grows a full Samba build onto it.
+  # From: Issue #264, PR #302
   full_bidirectional_e2e:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    # A full, unrestricted Samba build across all four legs (direction A/B x
-    # plain/pump) is expected to run long -- this is exactly why issue #264's
-    # design calls for workflow_dispatch only, never a per-PR/per-push gate.
-    # GITHUB_ACTIONS_MAX_JOB_TIMEOUT (360 minutes on GitHub-hosted runners)
-    # is the real ceiling; WAF_TARGETS below scopes this CI leg to a bounded
-    # real subset so a GitHub-hosted run finishes within that ceiling, while
-    # test/e2e-full/README.md documents how to run the full, unrestricted
-    # build on the project's own (non-GitHub-hosted) Docker hosts for the
-    # real full-scale evidence.
+    # What: A full, unrestricted four-leg Samba build is expected to run
+    # long, which is why issue #264's design uses workflow_dispatch only,
+    # never a per-PR/push gate.
+    # Why: GITHUB_ACTIONS_MAX_JOB_TIMEOUT (360 minutes on GitHub-hosted
+    # runners) is the real ceiling; WAF_TARGETS below bounds this CI leg to
+    # fit it, while test/e2e-full/README.md documents running the full
+    # build on the project's own hosts.
+    # From: Issue #264, PR #302
     timeout-minutes: 340
     permissions:
       contents: read
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        # No explicit ref: this job is workflow_dispatch-only, so
-        # github.sha/github.ref is always whatever the dispatcher actually
-        # picked (current_dev in real production use, or a feature branch
-        # when a maintainer/agent needs to prove this job out before it
-        # merges) -- unlike this file's schedule-triggered jobs above, which
-        # must redirect off the default branch explicitly.
+        # What: No explicit ref; github.sha/github.ref is whatever the
+        # dispatcher picked (current_dev in production, or a feature
+        # branch to prove the job out before it merges).
+        # Why: This job is workflow_dispatch-only, unlike this file's
+        # schedule-triggered jobs, which must redirect off the default
+        # branch explicitly.
+        # From: Issue #264, PR #302
       - name: Run the full bidirectional native-compatibility E2E matrix
         env:
           WORKLOAD: samba
-          # Bounded real subset (see test/e2e-full/README.md) so this
-          # GitHub-hosted leg finishes within timeout-minutes above. Only
-          # affects the CI-hosted run -- a manual run on a project host with
-          # WAF_TARGETS unset gets the full, unrestricted build.
+          # What: Bounds this CI leg to a real subset (see
+          # test/e2e-full/README.md) so it finishes within timeout-minutes.
+          # Why: Only affects the CI-hosted run; a manual run on a project
+          # host with WAF_TARGETS unset gets the full, unrestricted build.
+          # From: Issue #264, PR #302
           WAF_TARGETS: "replace,ldb,tdb,talloc,tevent"
         run: bash test/e2e-full/run-bidirectional-e2e.sh
 
   # --- Failure/recovery reporting -------------------------------------------
-  # Separate job with needs: on every other job and if: always(), so it fires
-  # even when a gate failed and `publish` was skipped -- a step inside publish
-  # would never run on the most important failure (build/e2e broke). Files or
-  # updates the standing nightly-broken issue on failure, closes it on success.
+  # What: Separate job with needs: on every other job and if: always();
+  # files or updates the standing nightly-broken issue on failure, closes
+  # it on success.
+  # Why: So it fires even when a gate fails and `publish` is skipped -- a
+  # step inside publish would never run on the most important failure.
+  # From: Issue #81, PR #89
   report:
     needs: [build_check, distributed_e2e, publish]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    # Job-level permissions replace the top-level set: this job only needs to
-    # read the tree (for the composite action) and write issues.
+    # What: Job-level permissions replace the top-level set.
+    # Why: This job only needs to read the tree (for the composite action)
+    # and write issues.
+    # From: Issue #81, PR #89
     permissions:
       contents: read
       issues: write
@@ -253,9 +261,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
+      - name: Compute which specific job(s) failed
+        id: failed_jobs
+        if: always()
+        uses: ./.github/actions/failed-jobs
+        with:
+          jobs: |
+            build_check=${{ needs.build_check.result }}
+            distributed_e2e=${{ needs.distributed_e2e.result }}
+            publish=${{ needs.publish.result }}
       - uses: ./.github/actions/nightly-status
         with:
-          # Success only if all three jobs succeeded; any failure/skip is a
-          # failure to report.
           outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: nightly build+publish (current_dev)
+          failed_jobs: ${{ steps.failed_jobs.outputs.list }}
+          project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}

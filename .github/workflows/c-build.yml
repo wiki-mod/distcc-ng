@@ -5,63 +5,60 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  # Restricted to the two long-lived branches: without this filter, pushing
-  # a commit to an in-repo PR branch (dev/issueNN_...) fired this AND
-  # pull_request's own synchronize event for the same commit, running the
-  # full matrix build + E2E job twice per commit (found via a lancache-ng
-  # CI-cost comparison, 2026-07-16). pull_request stays unfiltered by
-  # branch -- that's the one meant to cover every PR commit.
-  #
-  # No paths-ignore here (removed 2026-07-24, refs #267/#336): every job
-  # below is required by master's branch ruleset, and a required status
-  # check that never runs (because a path filter skipped its whole
-  # workflow) permanently blocks merging any PR that doesn't happen to
-  # touch a matching path -- confirmed live on PR #336, a README-only
-  # change that could never satisfy required checks that simply never
-  # started. The `changes` job below now does that filtering itself, at
-  # the job level, so a doc-only PR still gets a real (skipped, not
-  # missing) check-run for each required job -- GitHub treats a skipped
-  # job's check-run as passing for required-status-check purposes, same
-  # as this workflow's own `scan-scheduled`/`update_release_draft`-style
-  # conditional jobs elsewhere in this repo's CI.
+  # What: push is restricted to the two long-lived branches; pull_request
+  # stays unfiltered by branch to cover every PR commit; no paths-ignore
+  # exists at the workflow level (removed 2026-07-24) -- the `changes` job
+  # below does that filtering itself, at the job level.
+  # Why: Without the branch filter, pushing to an in-repo PR branch fired
+  # this AND pull_request's synchronize event for the same commit, running
+  # the full matrix twice; a workflow-level paths-ignore permanently
+  # blocked merging any PR that didn't touch a matching path, since a
+  # required check that never runs can never pass (confirmed live on PR
+  # #336). A skipped job's check-run counts as passing for required-status
+  # purposes, so per-job filtering keeps every required check-run real.
+  # From: Issue #267, PR #336
   push:
     branches:
       - current_dev
       - master
-  # Explicit types (GitHub's default omits ready_for_review) so a PR that
-  # somehow never got an initial pull_request-event run for its `opened`
-  # activity -- confirmed live on release PR #461, root cause not
-  # established: draft state, release/* head naming, and a master-base
-  # ruleset interaction were all ruled out, each confirmed still firing
-  # normally for other real historical PRs -- gets one real chance to
-  # self-heal the moment it's later marked ready for review, instead of
-  # requiring a manual workflow_dispatch forever.
+  # What: Explicit types (GitHub's default omits ready_for_review).
+  # Why: A PR that never got an initial pull_request-event run for its
+  # `opened` activity (confirmed live on release PR #461, root cause not
+  # established) gets one real chance to self-heal when later marked
+  # ready for review, instead of requiring a manual workflow_dispatch.
+  # From: PR #461
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  # Lets us check a branch's build health on demand (e.g. current_dev or
-  # master) without needing a new commit/PR to trigger CI.
+  # What: Lets a branch's build health be checked on demand.
+  # Why: Without this, checking current_dev/master would need a new
+  # commit or PR to trigger CI.
+  # From: Issue #32, PR #84
   workflow_dispatch:
-  # Nightly health check on current_dev, so a break doesn't sit silently
-  # until the next PR happens to touch that branch.
+  # What: Nightly health check on current_dev.
+  # Why: So a break doesn't sit silently until the next PR touches that
+  # branch.
+  # From: Issue #32, PR #84
   schedule:
     - cron: '0 3 * * *'
 
-# Read-only floor: every job below already declares its own job-level
-# permissions block scoped to what its own steps need (id-token/attestations
-# only on make_check's Linux leg, nothing beyond checkout elsewhere) -- this
-# top-level block only exists so the workflow has an explicit, minimal
-# default instead of silently falling back to the broader legacy
-# GITHUB_TOKEN default if a future job is ever added without its own block.
+# What: Read-only floor; every job below already declares its own
+# job-level permissions block scoped to what its own steps need.
+# Why: So a future job added without its own block falls back to this
+# explicit minimal default instead of the broader legacy GITHUB_TOKEN
+# default.
+# From: Issue #267, PR #308
 permissions:
   contents: read
 
 jobs:
-  # Cheap, always-runs gate that replaces the old workflow-level
-  # paths-ignore (see the `on:` block's comment above) with a per-job one:
-  # every heavy job below depends on this and skips (not: never starts)
-  # when only docs changed. workflow_dispatch/schedule always force a full
-  # run -- those exist specifically to check real build health on demand,
-  # so they must never silently no-op.
+  # What: Cheap, always-runs gate replacing the old workflow-level
+  # paths-ignore (see the `on:` block above) with a per-job one; every
+  # heavy job below depends on this and skips, rather than never starting,
+  # when only docs changed.
+  # Why: workflow_dispatch/schedule always force a full run, since those
+  # exist specifically to check real build health on demand and must
+  # never silently no-op.
+  # From: Issue #267, PR #337
   changes:
     name: Detect relevant (non-docs) changes
     runs-on: ubuntu-latest
@@ -71,10 +68,11 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
-      # Cheap enough (checkout + a git diff, no build/install/network-facing
-      # third-party tooling) that caveat 3's runtime-doubling cost/benefit
-      # call comes out in favor of adding it here too (issue #361's own
-      # "Suggested scope" item 4 flags this job as "if cheap").
+      # What: Harden Runner is added to this job too.
+      # Why: Cheap enough here (checkout + a git diff, no build/install/
+      # network-facing tooling) that the runtime-doubling cost/benefit
+      # call favors adding it.
+      # From: Issue #361
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,16 +97,15 @@ jobs:
 
   make_check:
     needs: changes
-    # No job-level `if:` here (unlike the other three gated jobs below) --
-    # a matrixed job's `if:` is evaluated BEFORE the matrix is expanded, so
-    # a false job-level `if:` collapses both legs into a single check-run
-    # named plain "make_check", not "make_check (ubuntu-latest)"/
-    # "make_check (macOS-latest)" -- the two exact context strings master's
-    # ruleset requires. That means the required checks would go right back
-    # to silently never existing on a docs-only PR, just one layer deeper
-    # (confirmed live on PR #336, after #337/#338 had already "fixed" this
-    # once). Gating every step instead keeps the matrix expansion intact --
-    # both named check-runs always exist, they just skip their real work.
+    # What: No job-level `if:` here, unlike the other gated jobs below;
+    # every step is gated instead, keeping the matrix expansion intact.
+    # Why: A matrixed job's `if:` evaluates before the matrix expands, so
+    # a false job-level `if:` collapses both legs into one check-run
+    # instead of the two named contexts master's ruleset requires,
+    # silently losing the required checks again on a docs-only PR
+    # (confirmed live on PR #336, after PR #337/#338 had already "fixed"
+    # this once).
+    # From: PR #336, PR #337, PR #338
     strategy:
       matrix:
         os:
@@ -117,69 +114,72 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    # id-token/attestations are needed for actions/attest-build-provenance
-    # below (Linux only for now); contents:read is the default we'd
-    # otherwise lose by declaring this block at all.
+    # What: Declares id-token/attestations alongside contents:read.
+    # Why: Needed for actions/attest-build-provenance below (Linux only
+    # for now); contents:read must be restated here or it's lost by
+    # declaring this block at all.
+    # From: Issue #38, PR #39
     permissions:
       contents: read
       id-token: write
       attestations: write
-    # ccache's own default cache_dir differs by platform (~/.cache/ccache
-    # on Linux, ~/Library/Caches/ccache on macOS) -- pin it explicitly so
-    # the actions/cache path below is right on both matrix legs.
+    # What: Pins CCACHE_DIR explicitly.
+    # Why: ccache's own default cache_dir differs by platform
+    # (~/.cache/ccache on Linux, ~/Library/Caches/ccache on macOS); pinning
+    # it keeps the actions/cache path below correct on both matrix legs.
+    # From: Issue #54, PR #61
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
-      # Trial run (#58): audit-only egress monitoring, does not block any
-      # traffic yet. Must be the very first step -- it can't retroactively
-      # cover network calls made by steps that already ran.
+      # What: Trial run, audit-only egress monitoring; must be the very
+      # first step.
+      # Why: It can't retroactively cover network calls made by steps
+      # that already ran.
+      # From: Issue #58
       - if: needs.changes.outputs.relevant == 'true'
         uses: $/.github/actions/harden-runner
       - if: needs.changes.outputs.relevant == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # schedule always evaluates using the default branch (master);
-          # redirect the nightly run to current_dev instead of re-checking
-          # master, which push/pull_request already cover on every change.
+          # What: Redirects a schedule-triggered run to current_dev.
+          # Why: schedule always evaluates using the default branch
+          # (master); push/pull_request already cover master on every
+          # change.
+          # From: Issue #32, PR #84
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - if: needs.changes.outputs.relevant == 'true'
         uses: $/.github/actions/install-build-deps
         with:
-          # Note: aclocal is packaged with automake in Homebrew, so we need it
-          # even though we don't use automake.
-          # Note: no gdb on macOS because it's apparently not supported on arm64
+          # What: Includes automake (for aclocal) but no gdb entry.
+          # Why: Homebrew packages aclocal with automake even though
+          # automake itself isn't used.
+          # From: Issue #362, PR #434
           brew: autoconf automake popt python@3.13 python-setuptools ccache zstd
           # brew-cask: TODO
           # choco: TODO
       - if: needs.changes.outputs.relevant == 'true'
         run: which python3.13 || which python3
-      # Cache ccache's own object cache, not distcc's source -- content-
-      # addressed, so a stale/missing cache never produces wrong results,
-      # only a slower build. Rolling key: always restore the latest for
-      # this OS, always save a new one (actions/cache no-ops a save on an
-      # exact key collision, so bumping github.run_id into the key avoids
-      # that and keeps the cache warm across runs).
+      # What: Caches ccache's own object cache (content-addressed), using
+      # a rolling key that always restores the latest for this OS and
+      # always saves a new one.
+      # Why: A stale/missing cache never produces wrong results, only a
+      # slower build; bumping github.run_id into the key keeps the cache
+      # warm since actions/cache no-ops a save on an exact key collision.
+      # From: Issue #362, PR #434
       - if: needs.changes.outputs.relevant == 'true'
         uses: $/.github/actions/ccache-cache
         with:
           path: ${{ env.CCACHE_DIR }}
           key-prefix: ccache-${{ matrix.os }}
-      # Cache autoconf/aclocal's macro-trace cache (autom4te.cache, produced
-      # by ./autogen.sh's aclocal/autoheader/autoconf calls). Safe to restore
-      # even when stale -- like ccache above, it's content-checked, not
-      # blindly trusted wholesale: autom4te itself invalidates an individual
-      # cached macro trace when the corresponding m4 input changed, so a
-      # stale/mismatched entry only costs re-deriving that one trace, never a
-      # wrong configure script. (Unlike config.cache, which is NOT used here:
-      # its ac_cv_* entries are blindly trusted by ./configure once cached,
-      # and they encode dependency-detection results -- e.g. does libpopt/
-      # libzstd/avahi have a given header/symbol -- that can change when
-      # ConorMacBride/install-package or the runner image bumps a library
-      # version without configure.ac itself changing, which a
-      # configure.ac-only cache key would never invalidate. Caching it would
-      # risk silently reusing wrong dependency-detection results.) Key on the
-      # actual autoconf inputs so a real configure.ac/m4 change still gets a
-      # fresh (initially empty) cache instead of reusing pre-change traces.
+      # What: Caches autom4te.cache (autoconf/aclocal's macro-trace
+      # cache), keyed on the real autoconf inputs; deliberately does not
+      # cache config.cache.
+      # Why: autom4te self-invalidates a stale macro trace when its m4
+      # input changed, so restoring it even when stale is safe; unlike
+      # that, config.cache's ac_cv_* entries are blindly trusted once
+      # cached and can go stale silently when a dependency's availability
+      # changes without configure.ac itself changing.
+      # From: Issue #54, PR #166
       - if: needs.changes.outputs.relevant == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -189,12 +189,13 @@ jobs:
             autoconf-${{ matrix.os }}-
       - if: needs.changes.outputs.relevant == 'true'
         run: ./autogen.sh
-      # python3 on macOS is 3.14, which breaks CI for unknown reasons, so we pin it back
-      # CC must reference ccache by absolute path: `make check`'s
-      # maintainer-check-no-set-path target runs `$(CC) --version` under a
-      # restricted PATH (/usr/local/bin:/bin:/usr/bin, Makefile.in's
-      # RESTRICTED_PATH) that deliberately excludes Homebrew's /opt/homebrew/bin
-      # on the arm64 macOS runner -- a bare "ccache" would fail to resolve there.
+      # What: Pins PYTHON to 3.13 (macOS's default 3.14 breaks CI here for
+      # unknown reasons) and passes CC as ccache's absolute path.
+      # Why: `make check`'s maintainer-check-no-set-path target runs
+      # `$(CC) --version` under a restricted PATH that deliberately
+      # excludes Homebrew's /opt/homebrew/bin, where a bare "ccache" would
+      # fail to resolve.
+      # From: Issue #54, PR #61
       - if: needs.changes.outputs.relevant == 'true'
         run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
       - if: needs.changes.outputs.relevant == 'true'
@@ -203,27 +204,16 @@ jobs:
         run: ccache --show-stats
       - if: needs.changes.outputs.relevant == 'true'
         run: make check
-      # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py) needs real
-      # root to exercise dcc_discard_root()'s privilege drop -- the plain
-      # `make check` above always runs as the unprivileged
-      # runner user, so that one root-only case is silently NOTRUN there
-      # (see test/comfychair.py's require_root()). ubuntu-latest gives real,
-      # working sudo on a genuine Linux kernel (same basis issue #264's
-      # container work already relies on for dcc_discard_root() coverage),
-      # so run just this one case again, this time under sudo, rather than
-      # re-running the whole suite as root (which would change behavior --
-      # umask/permission checks, etc. -- for many unrelated, non-root-aware
-      # cases). Linux-only: autogroups don't exist on macOS, and the case
-      # self-skips there anyway via its own sys.platform check.
-      # `single-test` depends on check_PROGRAMS, already built (non-root) by
-      # `make check` above, so this does not rebuild anything as root.
-      # comfychair treats a NotRunError skip as a plain exit 0, identical to
-      # a real pass -- so if this ever runs on a future runner image that's
-      # missing /proc/sys/kernel/sched_autogroup_enabled (or has it set to
-      # 0), the step would stay green while providing zero actual coverage
-      # of the root/autogroup behavior it exists to check. Capture the
-      # test's own reported line and fail explicitly on a skip, rather than
-      # trusting the process exit code alone.
+      # What: Reruns AutogroupNicenessPrivilegeDrop_Case under sudo,
+      # Linux-only, rather than re-running the whole suite as root; fails
+      # explicitly on NOTRUN or any unexpected result instead of trusting
+      # the process exit code.
+      # Why: The plain `make check` above always runs unprivileged, so
+      # this root-only case would be silently NOTRUN there, and comfychair
+      # treats a skip as a plain exit 0 identical to a real pass -- a
+      # future runner missing autogroup support would stay green while
+      # providing zero real coverage.
+      # From: Issue #264
       - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           set -o pipefail
@@ -234,14 +224,14 @@ jobs:
           fi
           grep -q "AutogroupNicenessPrivilegeDrop_Case OK" autogroup-test.log \
             || { echo "::error::AutogroupNicenessPrivilegeDrop_Case did not report OK or NOTRUN -- unexpected output, treating as a failure."; exit 1; }
-      # Build-provenance attestation for the actual shipped binaries.
-      # Linux-only for now: the OIDC-based attestation API needs the repo's
-      # GitHub Actions identity, which is simplest to exercise from one
-      # runner OS rather than duplicating the attestation per matrix leg.
-      # Skipped on the nightly schedule: that run checks out current_dev while
-      # github.sha (which the attestation records) is master's tip, so a
-      # scheduled attestation would tie current_dev binaries to the wrong
-      # commit. Attestation is meaningful for the push/PR builds anyway.
+      # What: Build-provenance attestation for the shipped binaries,
+      # Linux-only, skipped on the nightly schedule.
+      # Why: The OIDC-based attestation API is simplest to exercise from
+      # one runner OS rather than duplicating it per matrix leg; a
+      # scheduled run checks out current_dev while github.sha (what the
+      # attestation records) is master's tip, which would tie the
+      # attestation to the wrong commit.
+      # From: Issue #38, PR #39, Issue #81, PR #91
       - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         run: |
           mkdir -p /tmp/attest-subjects
@@ -251,35 +241,46 @@ jobs:
         with:
           subject-path: /tmp/attest-subjects/*
 
-  # Proves the bundled-popt fallback (configure.ac, popt/) actually builds and
-  # passes the test suite, not just that it's syntactically present: this
-  # runner deliberately never installs libpopt-dev, so popt.pc is absent and
-  # PKG_CHECK_MODULES(POPT, ...) must fail over to the bundled copy. The
-  # explicit grep on configure's own notice guards against this job silently
-  # turning into a no-op validation if a future base image ships popt.pc by
-  # default.
+  # What: Proves the bundled-popt fallback (configure.ac, popt/) actually
+  # builds and passes the test suite; the explicit grep on configure's own
+  # notice guards against this silently degrading to a no-op if a future
+  # base image ships popt.pc by default.
+  # Why: This runner deliberately never installs libpopt-dev, so popt.pc
+  # is absent and PKG_CHECK_MODULES(POPT, ...) must fail over to the
+  # bundled copy.
+  # From: Issue #63, PR #170
   popt_fallback_build:
     name: Bundled popt fallback build (no system libpopt)
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # This job only checks out and builds the tree, it doesn't need
-    # anything beyond read access to the repository contents.
+    # What: Only checks out and builds the tree.
+    # Why: Doesn't need anything beyond read access to repository
+    # contents.
+    # From: Issue #63, PR #170
     permissions:
       contents: read
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # What: Redirects a schedule-triggered run to current_dev, same
+          # as make_check/coverage/distributed_e2e/sanitizer_check.
+          # Why: schedule always evaluates using the default branch
+          # (master); otherwise this job would test master while the
+          # `report` job labels the aggregated outcome as current_dev.
+          # From: PR #476
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
-          # Deliberately no libpopt-dev/libpopt0 here -- that's the point of
-          # this job. pkg-config *is* installed (unlike libpopt-dev) so this
-          # exercises the realistic case -- pkg-config present, popt.pc
-          # simply absent -- rather than the less representative case of
-          # pkg-config itself being missing. libavahi-client-dev is still
-          # needed so the default zeroconf-enabled build configures the same
-          # as the main matrix.
+          # What: Deliberately excludes libpopt-dev/libpopt0 while
+          # installing pkg-config and libavahi-client-dev.
+          # Why: pkg-config present with popt.pc absent is the realistic
+          # case this job exercises, more representative than pkg-config
+          # itself being missing; libavahi-client-dev keeps the default
+          # zeroconf-enabled build configuring the same as the main matrix.
+          # From: Issue #63, PR #170
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
       - name: configure (must report the bundled-popt fallback)
@@ -289,13 +290,13 @@ jobs:
             || { echo "::error::configure did not report falling back to bundled popt -- is libpopt-dev leaking in from the base image?"; exit 1; }
       - run: make
       - run: make check
-      # Real functional smoke test of the bundled-popt-linked binary, not just
-      # a successful link: --help exercises poptGetContext()/poptGetNextOpt()
-      # end to end, and the option table below is a representative sample of
-      # src/dopt.c's actual options[] (POPT_ARG_STRING, POPT_ARG_INT, and
-      # POPT_ARG_NONE entries), so a real argInfo/argument-parsing regression
-      # in the vendored popt tree would show up as missing/garbled output
-      # here, not just a link failure.
+      # What: Real functional smoke test of the bundled-popt-linked
+      # binary, not just a successful link.
+      # Why: --help exercises poptGetContext()/poptGetNextOpt() end to
+      # end against a representative sample of src/dopt.c's real
+      # options[] entry types, so a real argInfo/parsing regression in
+      # the vendored popt tree shows up as missing/garbled output here.
+      # From: Issue #63, PR #170
       - name: Functional smoke test (distccd --help against bundled popt)
         run: |
           ./distccd --help > distccd-help.log 2>&1
@@ -306,83 +307,88 @@ jobs:
               || { echo "::error::distccd --help (bundled popt build) is missing expected option matching '$opt'"; exit 1; }
           done
 
-  # Popt-directory-specific regression gate (asked for after the bundled
-  # popt/ tree was found to be a 20+-year-old 1.7 snapshot, see #63's
-  # follow-up). This job compiles the *current* vendored popt/*.c directly
-  # with gcc, independent of the full autoconf/make machinery, at this
-  # project's own -Wall -Wextra -Werror plus the same -Wno-unused/
-  # -Wno-unused-parameter exemption Makefile.in's popt_OBJS rule applies in
-  # the real build. That exemption turned out to be load-bearing even for a
-  # correctly-vendored, completely unmodified popt 1.19 tree, not just for
-  # the old 1.7 snapshot: popt/popthelp.c's poptHelpOptions2 callback table
-  # has intentionally-unused parameters by design, and popt/poptint.c's
-  # POPT_fprintf() leaves a variable genuinely unused on the HAVE_VASPRINTF
-  # code path (the normal one on glibc) -- both are inherent to popt's own
-  # source, not something a regression here would introduce or remove. The
-  # real regression detection this job provides is the version marker and
-  # fingerprint check below: it confirms popt/POPT_VERSION and a real,
-  # version-specific API symbol actually match what this repo claims to
-  # ship, catching a stale/wrong vendored copy even if it happens to still
-  # compile cleanly.
+  # What: Compiles the current vendored popt/*.c directly with gcc,
+  # independent of the full autoconf/make machinery, at this project's own
+  # -Wall -Wextra -Werror plus the same -Wno-unused/-Wno-unused-parameter
+  # exemption Makefile.in's popt_OBJS rule applies in the real build.
+  # Why: Requested after the bundled popt/ tree was found to be a
+  # 20+-year-old 1.7 snapshot; the version-marker and fingerprint check
+  # below (not the compile itself, since the unused-parameter exemption is
+  # load-bearing even for a correct, unmodified 1.19 tree) is what
+  # actually catches a stale or wrong vendored copy.
+  # From: Issue #63
   popt_vendor_check:
     name: Vendored popt/ version and compile check
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Same rationale as popt_fallback_build above: read-only checkout and
-    # compile, no need for the default token's write access to anything.
+    # What: Read-only checkout and compile.
+    # Why: Same rationale as popt_fallback_build above; no need for the
+    # default token's write access to anything.
+    # From: Issue #63, PR #170
     permissions:
       contents: read
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # What: Redirects a schedule-triggered run to current_dev, same
+          # as make_check/coverage/distributed_e2e/sanitizer_check.
+          # Why: schedule always evaluates using the default branch
+          # (master); otherwise this job would test master while the
+          # `report` job labels the aggregated outcome as current_dev.
+          # From: PR #476
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - name: Vendored version marker matches what this repo claims to ship
         run: |
           test "$(cat popt/POPT_VERSION)" = "popt-1.19-release" \
             || { echo "::error::popt/POPT_VERSION does not read 'popt-1.19-release' -- has the vendored tree been swapped without updating the marker?"; exit 1; }
-          # poptJlu32lpair only exists in the real popt project's modern
-          # (post-1.7) hash-table implementation (src/poptint.c upstream,
-          # popt/poptint.c here) -- a real, checkable fingerprint that the
-          # vendored tree is genuinely 1.19-era code, not just a renamed
-          # marker file.
+          # What: Checks for poptJlu32lpair in popt/poptint.h.
+          # Why: It only exists in upstream popt's modern (post-1.7)
+          # hash-table implementation, so it's a real, checkable
+          # fingerprint that the vendored tree is genuinely 1.19-era, not
+          # just a renamed marker file.
+          # From: Issue #63, PR #170
           grep -q "poptJlu32lpair" popt/poptint.h \
             || { echo "::error::popt/poptint.h is missing poptJlu32lpair -- vendored tree does not look like popt 1.19"; exit 1; }
-          # findme.c/.h were part of the old 1.7 snapshot and were dropped
-          # when vendoring 1.19 (upstream itself no longer ships them); their
-          # reappearance is a sign of an accidental revert to the stale tree.
+          # What: Checks that findme.c/.h are absent.
+          # Why: They were part of the old 1.7 snapshot and dropped when
+          # vendoring 1.19; their reappearance signals an accidental
+          # revert to the stale tree.
+          # From: Issue #63, PR #170
           if [ -e popt/findme.c ] || [ -e popt/findme.h ]; then
             echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
             exit 1
           fi
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
-          # Same package set as popt_fallback_build (no libpopt-dev, so
-          # config.h ends up with the real BUILD_POPT-triggering macros this
-          # job needs a genuine config.h to reflect).
+          # What: Same package set as popt_fallback_build (no libpopt-dev).
+          # Why: config.h needs to end up with the real
+          # BUILD_POPT-triggering macros this job's compile reflects.
+          # From: Issue #63, PR #170
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
-      # Run the real ./configure (forced onto the bundled path) so config.h
-      # reflects the actual HAVE_* results this job's compile then uses --
-      # a hand-written set of -D flags here could silently drift from what
-      # configure.ac really detects and stop testing the real thing.
+      # What: Runs the real ./configure, forced onto the bundled path.
+      # Why: So config.h reflects the actual HAVE_* results this job's
+      # compile uses; a hand-written set of -D flags could silently drift
+      # from what configure.ac really detects.
+      # From: Issue #63, PR #170
       - run: ./autogen.sh
       - run: ./configure --without-system-popt PYTHON="$(which python3)"
       - name: Compile vendored popt/*.c under this project's own warning flags
         run: |
           set -e
           mkdir -p /tmp/popt-strict-check
-          # -Wno-unused/-Wno-unused-parameter mirror Makefile.in's popt_OBJS
-          # rule exactly -- see the job-level comment above for why even the
-          # real, unmodified popt 1.19 source needs both.
-          # -D_GNU_SOURCE, -DPOPT_SYSCONFDIR and -DPACKAGE mirror the flags
-          # Makefile.in's own CPPFLAGS/popt_OBJS rule feeds every popt object
-          # in the real build: without -D_GNU_SOURCE, glibc hides
-          # secure_getenv()'s prototype (popt/system.h's getenv() macro, used
-          # when HAVE_SECURE_GETENV is detected); POPT_SYSCONFDIR is
-          # poptReadDefaultConfig()'s compiled-in system config directory;
-          # PACKAGE is popt/popthelp.c's gettext translation-domain string,
-          # which this fork's plain-autoconf (non-automake) configure.ac
-          # never defines on its own.
+          # What: Every flag here (-Wno-unused/-Wno-unused-parameter,
+          # -D_GNU_SOURCE, -DPOPT_SYSCONFDIR, -DPACKAGE) mirrors
+          # Makefile.in's own CPPFLAGS/popt_OBJS rule exactly.
+          # Why: Each is load-bearing for the real build: -D_GNU_SOURCE
+          # exposes glibc's secure_getenv() prototype, POPT_SYSCONFDIR and
+          # PACKAGE feed compiled-in values this fork's plain-autoconf
+          # configure.ac never defines on its own, and the warning
+          # exemptions match inherent, unmodified popt 1.19 source (see
+          # the job-level comment above).
+          # From: Issue #63, PR #170
           CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
             echo "::group::gcc ${CFLAGS[*]} -c $f"
@@ -390,118 +396,105 @@ jobs:
             echo "::endgroup::"
           done
 
-  # Statement-coverage measurement for the real test suite (OpenSSF Best
-  # Practices Badge "test_most" criterion). No third-party coverage service
-  # (Codecov et al.) -- GitHub's own native "Code Quality" coverage feature
-  # exists but is Enterprise Cloud/Team only, not available on this org's
-  # Free plan (confirmed live via `gh api orgs/<org>` before writing this),
-  # so the report is instead published entirely within GitHub Actions
-  # itself: a table in the job summary plus the full lcov/coverage-python
-  # report as a build artifact. The OSSF badge's test_most criterion is
-  # met here with a manual justification linking to a CI run rather than
-  # an auto-detected Coveralls/Codecov badge. Separate job, not folded
-  # into make_check: gcov instrumentation (--coverage) changes what's
-  # being measured (unoptimized, extra profiling counters) and this job's
-  # only output is the coverage report, not a build/test result anyone
-  # should treat as a pass/fail gate on its own -- make_check's own real
-  # (uninstrumented) build is still the actual required check.
+  # What: Statement-coverage measurement for the real test suite (OpenSSF
+  # Best Practices Badge "test_most" criterion), published as a job
+  # summary table plus a build artifact rather than via a third-party
+  # service. Kept as a separate job, not folded into make_check.
+  # Why: GitHub's native coverage feature isn't available on this org's
+  # Free plan; gcov instrumentation changes what's being measured
+  # (unoptimized, extra profiling counters), so this job's output is a
+  # coverage report only, never the pass/fail gate -- make_check's own
+  # uninstrumented build remains the actual required check.
+  # From: PR #370
   coverage:
     name: Test coverage (gcov/lcov, job summary + artifact)
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Read-only checkout; the job summary write goes through the
-    # $GITHUB_STEP_SUMMARY file (no permission needed) and the artifact
-    # upload uses actions/upload-artifact's own default token scope --
-    # nothing here needs any elevated permission.
+    # What: Read-only checkout.
+    # Why: The job summary write goes through $GITHUB_STEP_SUMMARY and the
+    # artifact upload uses actions/upload-artifact's own default token
+    # scope; nothing here needs elevated permission.
+    # From: PR #370
     permissions:
       contents: read
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Same schedule redirect as make_check/distributed_e2e above: the
-          # nightly run evaluates from master but must measure current_dev,
-          # since that is where real development happens.
+          # What: Same schedule redirect as make_check/distributed_e2e
+          # above.
+          # Why: The nightly run evaluates from master but must measure
+          # current_dev, since that is where real development happens.
+          # From: PR #370
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
-          # libseccomp-dev is needed so configure's optional seccomp check
-          # actually finds it and defines HAVE_SECCOMP -- otherwise
-          # src/sandbox-seccomp.c compiles only its no-op fallback and the
-          # real sandboxing implementation contributes nothing to coverage.
+          # What: Includes libseccomp-dev.
+          # Why: So configure's optional seccomp check finds it and
+          # defines HAVE_SECCOMP; otherwise src/sandbox-seccomp.c compiles
+          # only its no-op fallback, contributing nothing to coverage.
+          # From: PR #370
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage
       - run: ./autogen.sh
-      # --coverage is gcc/clang shorthand for -fprofile-arcs -ftest-coverage
-      # at compile time plus linking against libgcov; -O0 keeps the
-      # instrumentation's line/branch attribution accurate (optimization can
-      # merge or reorder blocks in ways that make gcov's per-line counts
-      # misleading). PYTHON here stays a plain interpreter deliberately --
-      # $(PYTHON) is also used at build time (include_server/setup.py's
-      # build_ext step, plus configure's own Python-version probe), and
-      # wrapping either of those in a coverage-instrumented invocation
-      # breaks them outright (confirmed live: configure's version probe
-      # fails to parse `coverage run`'s own output as a version string).
-      # --with-seccomp turns a silently-degraded build (no libseccomp-dev
-      # found -> quiet fallback to the no-op sandbox) into a hard configure
-      # failure instead, so a future apt-list regression is caught here
-      # rather than quietly shrinking what this job actually measures.
+      # What: --coverage (-fprofile-arcs -ftest-coverage plus libgcov)
+      # with -O0; PYTHON stays a plain interpreter; --with-seccomp is
+      # passed explicitly.
+      # Why: -O0 keeps gcov's line/branch attribution accurate;
+      # $(PYTHON) is also used at build time and a coverage-instrumented
+      # override breaks those callers outright; --with-seccomp turns a
+      # missing libseccomp-dev into a hard configure failure instead of a
+      # silent fallback that would quietly shrink what this job measures.
+      # From: PR #370
       - run: ./configure PYTHON="$(command -v python3)" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp
       - run: make
-      # Makefile.in passes $(PYTHON) as a single token everywhere (e.g.
-      # test/pump_include_server_path_test.py receives it as sys.argv[2]
-      # and passes it straight to subprocess.check_output() as an
-      # executable name) -- a multiword override such as
-      # "python3-coverage run --append --source=..." is never re-split by
-      # that code path and fails with "no such file or directory" for a
-      # program literally named with spaces (confirmed live). A real,
-      # single-token executable wrapper is required instead.
+      # What: Creates a real, single-token executable wrapper instead of
+      # a multiword PYTHON override.
+      # Why: Makefile.in passes $(PYTHON) as a single token everywhere
+      # (e.g. subprocess.check_output() receives it as an executable
+      # name), so a multiword override is never re-split and fails as a
+      # program literally named with spaces.
+      # From: PR #370
       - name: Create a coverage-recording PYTHON wrapper
         run: |
           set -euo pipefail
           cat > "$GITHUB_WORKSPACE/coverage-python-wrapper" <<EOF
           #!/bin/sh
-          # 'coverage run' doesn't understand -c the way plain python does
-          # (used by pump_include_server_path_test.py's own subprocess
-          # version probe) -- pass those straight through to a real
-          # interpreter, uninstrumented; that one-line probe isn't part of
-          # include_server's own code anyway.
+          # What: Passes a -c invocation straight through to a real,
+          # uninstrumented interpreter.
+          # Why: 'coverage run' doesn't understand -c the way plain
+          # python does, and that one-line version-probe use isn't part
+          # of include_server's own code anyway.
+          # From: PR #370
           if [ "\$1" = "-c" ]; then
             exec "$(command -v python3)" "\$@"
           fi
-          # --source is an absolute path so this wrapper behaves the same
-          # regardless of caller cwd -- Makefile.in's include-server test
-          # loop cd's into include_server/ before invoking \$(PYTHON), and
-          # a relative "--source=include_server" there would resolve
-          # against the already-cd'd cwd and match nothing (confirmed
-          # live: reported near-zero Python coverage before this fix).
+          # What: --source is an absolute path.
+          # Why: Makefile.in's include-server test loop cd's into
+          # include_server/ before invoking the PYTHON override, so a
+          # relative path would resolve against the already-cd'd cwd and
+          # match nothing.
+          # From: PR #370
           exec python3-coverage run --append --source="$GITHUB_WORKSPACE/include_server" "\$@"
           EOF
           chmod +x "$GITHUB_WORKSPACE/coverage-python-wrapper"
-      # PYTHON is overridden here, at test-invocation time only, to run
-      # every $(PYTHON)-invoked test (Makefile.in's check targets) through
-      # the coverage-recording wrapper above -- otherwise
-      # include_server/*.py (a real, substantial production component,
-      # not a peripheral tool) would be silently absent from the coverage
-      # denominator, understating what "most of the code" actually
-      # covers. This override is scoped to the `make check` invocation
-      # alone (not configure/make above), since the extension is already
-      # built by then and re-running its build_ext step is not part of
-      # what `make check` does. --append (inside the wrapper) accumulates
-      # across the many separate test_*.py invocations make check runs
-      # one process at a time; python3-coverage (Debian's apt package,
-      # not pip's coverage.py, since this runner has no pip by default)
-      # is the actual binary name that package installs.
+      # What: Overrides PYTHON only at this `make check` invocation, not
+      # at configure/make above.
+      # Why: Otherwise include_server/*.py, a real production component,
+      # would be silently absent from the coverage denominator; the
+      # extension is already built by this point, so nothing needs its
+      # build_ext step re-run.
+      # From: PR #370
       - run: make check PYTHON="$GITHUB_WORKSPACE/coverage-python-wrapper"
-      # AutogroupNicenessPrivilegeDrop_Case (test/testdistcc.py) needs real
-      # root to exercise dcc_discard_root()'s privilege drop; the plain
-      # `make check` above always runs unprivileged, so that case is
-      # silently NOTRUN there and its coverage-instrumented lines would
-      # never be recorded before lcov captures below. Mirrors make_check's
-      # own sudo single-test rerun above, against the same already-built
-      # (coverage-instrumented) binaries -- fails outright on NOTRUN or
-      # any non-OK result instead of trusting a green exit code alone.
+      # What: Reruns AutogroupNicenessPrivilegeDrop_Case under sudo
+      # against the same already-built, coverage-instrumented binaries,
+      # failing outright on NOTRUN or any non-OK result.
+      # Why: The plain `make check` above runs unprivileged, so this
+      # root-only case (mirroring make_check's own rerun) would otherwise
+      # be silently NOTRUN and its instrumented lines never recorded
+      # before lcov captures below.
+      # From: PR #370
       - name: Run the root-only case against the instrumented binaries
         run: |
           set -o pipefail
@@ -515,37 +508,24 @@ jobs:
       - name: Capture C coverage data with lcov
         run: |
           set -euo pipefail
-          # branch_coverage=1 replaces the deprecated lcov_branch_coverage
-          # RC name; geninfo_unexecuted_blocks=1 resolves lcov's own
-          # "unexecuted block on non-branch line with non-zero hit count"
-          # warning by zeroing that count instead of flagging it (lcov's
-          # own suggested fix). No --ignore-errors: capture on this
-          # project's real coverage data needs neither "mismatch" nor
-          # "negative" suppression (confirmed live -- capture succeeds
-          # clean without them), and blanket-ignoring either would let a
-          # genuinely corrupt report upload silently.
+          # What: branch_coverage=1 replaces the deprecated
+          # lcov_branch_coverage RC name; geninfo_unexecuted_blocks=1
+          # resolves lcov's own unexecuted-block warning; no
+          # --ignore-errors is passed.
+          # Why: This project's real coverage data needs neither
+          # "mismatch" nor "negative" suppression, and blanket-ignoring
+          # either would let a genuinely corrupt report upload silently.
+          # From: PR #370
           lcov --capture --directory . --output-file coverage_raw.info \
             --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
-          # Exclude vendored third-party sources (lzo/) and the
-          # check_PROGRAMS C test drivers (src/h_*.c, built and run by
-          # `make check` but never part of distcc-ng's own shipped code)
-          # -- this criterion is about coverage of this project's own
-          # code, not of code it merely bundles or of the test scaffolding
-          # that does the covering. No popt/, test/, or /usr/* pattern
-          # here: this job's apt list installs libpopt-dev, so configure
-          # always picks up the system library (see configure.ac's popt
-          # auto-detect) and the vendored popt/ tree is never built in
-          # this job; test/ holds only Python test scripts plus
-          # test/fuzz/fuzz_rpc_argv.c, which isn't part of this build at
-          # all (ClusterFuzzLite's own workflow compiles it separately);
-          # and every .gcda this job ever produces corresponds to one of
-          # this project's own compiled .c files (src/, lzo/, the
-          # include_server C extension), never to anything under /usr.
-          # None of the three ever produces a .gcda under its own path,
-          # so each would match nothing -- lcov flags an unmatched
-          # pattern as an error (confirmed live, three times on this
-          # same line) rather than silently accepting it, per AGENTS.md
-          # rule 76.
+          # What: Removes only lzo/ and src/h_*.c, with no popt/, test/,
+          # or /usr/* pattern.
+          # Why: This criterion covers this project's own shipped code
+          # only; the other three paths never produce a .gcda of their
+          # own in this job, so an unmatched removal pattern would be a
+          # real error here (AGENTS.md rule 76), not something to
+          # silently accept.
+          # From: PR #370
           lcov --remove coverage_raw.info \
             '*/lzo/*' '*/src/h_*.c' \
             --output-file coverage.info \
@@ -555,11 +535,11 @@ jobs:
         run: |
           set -euo pipefail
           cd include_server
-          # --append (inside the wrapper above) accumulates every
-          # test_*.py invocation into one single .coverage data file
-          # directly -- unlike --parallel-mode's per-process
-          # .coverage.<host>.<pid> files, there is nothing here for
-          # `coverage combine` to merge.
+          # What: --append (inside the wrapper above) accumulates every
+          # test_*.py invocation into one .coverage data file directly.
+          # Why: Unlike --parallel-mode's per-process files, there is
+          # nothing here for `coverage combine` to merge.
+          # From: PR #370
           python3-coverage xml -o ../coverage-python.xml
           python3-coverage report
       - name: Publish coverage summary to the job summary
@@ -578,10 +558,11 @@ jobs:
             (cd include_server && python3-coverage report)
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # No third-party coverage service: the C (coverage.info) and Python
-      # (coverage-python.xml) reports are kept as a downloadable build
-      # artifact instead, alongside the job summary table above -- both are
-      # native GitHub Actions features, no external account or secret.
+      # What: Keeps the C/Python reports as a downloadable build artifact
+      # alongside the job summary table above, no third-party service.
+      # Why: Both are native GitHub Actions features, needing no external
+      # account or secret.
+      # From: PR #370
       - name: Upload coverage reports as a build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -591,46 +572,52 @@ jobs:
             coverage-python.xml
           retention-days: 90
 
-  # Real distributed-compile validation: distcc-ng's own source tree is built
-  # across two containers (a distccd server + a distcc client) over a bridge
-  # network, in both plain and pump mode, and a distributed compile is checked
-  # byte-for-byte against a local-only one. make check already exercises a
-  # localhost daemon, but only this proves a compile genuinely crosses the
-  # network and is not silently completed by distcc's local-fallback path.
-  # Linux/docker-only, so it is a standalone job rather than a macOS matrix leg.
+  # What: Real distributed-compile validation across two containers (a
+  # distccd server + a distcc client) over a bridge network, in both
+  # plain and pump mode, checked byte-for-byte against a local-only
+  # compile. Linux/docker-only, so it's a standalone job, not a macOS leg.
+  # Why: make check already exercises a localhost daemon, but only this
+  # proves a compile genuinely crosses the network rather than being
+  # silently completed by distcc's local-fallback path.
+  # From: Issue #32, PR #84
   distributed_e2e:
     name: Distributed compile E2E (2-container)
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # This job only checks out the repo and runs a local docker-compose e2e
-    # script -- it reads code and writes nothing back. Its sibling jobs in
-    # this file all declare an explicit job-level block; without one here the
-    # job inherited the default token scope, which CodeQL flagged
-    # (actions/missing-workflow-permissions). Pin it to the minimum it needs.
+    # What: Only checks out the repo and runs a local docker-compose e2e
+    # script, pinned to contents:read.
+    # Why: This job's sibling jobs all declare an explicit job-level
+    # block; without one here it inherited the default token scope, which
+    # CodeQL flagged (actions/missing-workflow-permissions).
+    # From: Issue #222, Issue #251, PR #255
     permissions:
       contents: read
     steps:
-      # Trial run (#58): audit-only egress monitoring, see the make_check
-      # job's identical first step for the full rationale.
+      # What: Trial run, audit-only egress monitoring.
+      # Why: See the make_check job's identical first step for the full
+      # rationale.
+      # From: Issue #58
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Same schedule redirect as make_check: the nightly run evaluates
-          # from master but must validate current_dev.
+          # What: Same schedule redirect as make_check.
+          # Why: The nightly run evaluates from master but must validate
+          # current_dev.
+          # From: Issue #32, PR #84
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      # docker and the compose plugin are preinstalled on ubuntu-latest.
+      # What: No install step for docker/compose.
+      # Why: Both are preinstalled on ubuntu-latest.
+      # From: Issue #362, PR #434
       - uses: $/.github/actions/distributed-e2e-test
 
-  # Opt-in ASan/UBSan sanitizer build, per #266's recommendation. Never runs
-  # on push/pull_request -- unlike make_check's schedule leg, this is not a
-  # per-commit or per-PR gate: it exists to catch new memory-safety/UB
-  # regressions on a relaxed cadence, not to block every change. Same
-  # `changes` gate as the other jobs is kept for consistency, but it always
-  # evaluates true here anyway since the job only ever runs on
-  # workflow_dispatch/schedule (see the `changes` job's own forced-true path
-  # for those two events).
+  # What: Opt-in ASan/UBSan sanitizer build; never runs on
+  # push/pull_request, only workflow_dispatch/schedule.
+  # Why: Unlike make_check's schedule leg, this is not a per-commit gate;
+  # it exists to catch new memory-safety/UB regressions on a relaxed
+  # cadence, not to block every change.
+  # From: Issue #266
   sanitizer_check:
     name: ASan/UBSan sanitizer check (opt-in)
     needs: changes
@@ -643,58 +630,100 @@ jobs:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Same schedule redirect as the other jobs above: the nightly run
-          # evaluates from master but must validate current_dev.
+          # What: Same schedule redirect as the other jobs above.
+          # Why: The nightly run evaluates from master but must validate
+          # current_dev.
+          # From: Issue #266, PR #395
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
-      # --without-seccomp: the sandboxed exec path is orthogonal to what this
-      # job checks (memory-safety/UB in the client/daemon's own code) and
-      # instrumenting a seccomp-filtered child under ASan/UBSan adds
-      # complexity (syscalls the filter itself makes) with no matching
-      # benefit here. -fno-sanitize-recover=address (a real memory-safety
-      # violation is always fatal) paired with -fsanitize-recover=undefined
-      # (UBSan prints and continues, so one UB report doesn't mask the rest
-      # of the same test run). -Wno-stringop-truncation works around a
-      # -Werror false positive in src/util.c's dcc_trim_path() that only
-      # surfaces when sanitizer instrumentation combines with -Werror (found
-      # triaging #266) -- not itself a real bug. -fno-sanitize=alignment:
-      # bundled lzo/minilzo.c's own memops macros deliberately do unaligned
-      # loads/stores as a real, permanent performance optimization (its
-      # LZO_UNALIGNED_OK_* family) -- confirmed live, this job's first real
-      # run failed CompressedCompile_Case purely on 60 UBSan
-      # "misaligned load/store" reports in lzo/minilzo.c, no other category.
-      # That's vendored third-party code behaving exactly as designed, not
-      # something this job will ever have a fix to offer for -- same
-      # "known, accepted, would just be permanent noise" rationale as
-      # detect_leaks=0 above, scoped to one specific UBSan check rather than
-      # disabling UBSan wholesale.
+      # What: --without-seccomp (orthogonal to this job's checks);
+      # -fno-sanitize-recover=address paired with
+      # -fsanitize-recover=undefined; -Wno-stringop-truncation;
+      # -fno-sanitize=alignment.
+      # Why: A real memory-safety violation should always be fatal while
+      # UBSan prints and continues so one report doesn't mask the rest of
+      # the run; -Wno-stringop-truncation works around a sanitizer-only
+      # -Werror false positive in dcc_trim_path(), not a real bug;
+      # -fno-sanitize=alignment accepts bundled lzo/minilzo.c's deliberate
+      # unaligned loads/stores as permanent, known noise, the same
+      # rationale as detect_leaks=0 below.
+      # From: Issue #266
       - run: |
           ./configure CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" PYTHON="$(which python3)" --without-seccomp
       - run: make
-      # detect_leaks=0: this project's own client-side allocation pattern
-      # (short-lived process, several process-lifetime allocations reclaimed
-      # by the OS at exit rather than explicitly freed) was triaged in #266
-      # and is not itself a bug -- see PR #352. Enabling leak detection here
-      # would just re-report that same already-understood, accepted class on
-      # every run instead of surfacing genuinely new memory-safety/UB
-      # regressions, which is this job's actual purpose. verify_asan_link_order=0:
-      # the include-server C extension (include_server/c_extensions/, built
-      # with the same ASan-instrumented CFLAGS above) gets loaded into a
-      # plain, non-instrumented `python3` by its own maintainer-check test,
-      # which otherwise fails with ASan's "runtime does not come first in
-      # initial library list" check -- confirmed live. A global LD_PRELOAD
-      # was tried first and made things worse: it also injects into every
-      # unrelated helper subprocess the test harness shells out to (e.g.
-      # `cat` in Getline_Case's `printf '' | h_getline | cat -v` pipeline),
-      # and that build of `cat` then aborts on an unrelated ASan
-      # invalid-aligned-alloc-alignment false positive in its own
-      # unrelated aligned_alloc() call -- confirmed live, a second failure
-      # mode LD_PRELOAD introduced. verify_asan_link_order=0 disables only
-      # that one specific link-order check, globally, without injecting
-      # ASan into any process that wasn't already linked against it.
+      # What: ASAN_OPTIONS sets detect_leaks=0 and
+      # verify_asan_link_order=0.
+      # Why: This project's client-side allocation pattern (short-lived,
+      # OS-reclaimed at exit) was triaged as not a bug (see PR #352), so
+      # leak detection would just re-report an already-accepted class;
+      # the include-server C extension loads into a plain, uninstrumented
+      # python3 for its own maintainer-check test, which otherwise fails
+      # ASan's link-order check without actually missing instrumentation.
+      # From: Issue #266, PR #352
       - run: |
           ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 make check
+
+  # What: Files/updates the standing nightly-broken issue on a failed
+  # scheduled (03:00 UTC) run, closes it on success, reusing the same
+  # composite action nightly-publish.yml/master-heartbeat.yml already use
+  # (AGENTS.md rule 69); scoped to the schedule event only, and needs
+  # `changes` itself plus the 6 real jobs.
+  # Why: push/pull_request failures already surface through the normal
+  # PR/commit check UI; `changes` can fail on its own independent of its
+  # forced-relevant schedule path, and omitting it from `needs` would
+  # report that as six unrelated skipped-job failures with no visible
+  # root cause.
+  # From: PR #476
+  report:
+    needs:
+      [
+        changes,
+        make_check,
+        popt_fallback_build,
+        popt_vendor_check,
+        coverage,
+        distributed_e2e,
+        sanitizer_check,
+      ]
+    if: ${{ always() && !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      # What: Pins ref to current_dev directly (this job's own `if:`
+      #   above already restricts it to schedule events, so there is no
+      #   other case to fall back to).
+      # Why: An unpinned checkout on `schedule` resolves to master, not
+      # current_dev, and matters here specifically because `uses:
+      # ./.github/actions/nightly-status` below is a local-path action
+      # reference -- whichever branch gets checked out is the version of
+      # that action's code that actually runs.
+      # From: PR #476
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: current_dev
+      - name: Compute which specific job(s) failed
+        id: failed_jobs
+        if: always()
+        uses: ./.github/actions/failed-jobs
+        with:
+          jobs: |
+            changes=${{ needs.changes.result }}
+            make_check=${{ needs.make_check.result }}
+            popt_fallback_build=${{ needs.popt_fallback_build.result }}
+            popt_vendor_check=${{ needs.popt_vendor_check.result }}
+            coverage=${{ needs.coverage.result }}
+            distributed_e2e=${{ needs.distributed_e2e.result }}
+            sanitizer_check=${{ needs.sanitizer_check.result }}
+      - uses: ./.github/actions/nightly-status
+        with:
+          outcome: ${{ (needs.changes.result == 'success' && needs.make_check.result == 'success' && needs.popt_fallback_build.result == 'success' && needs.popt_vendor_check.result == 'success' && needs.coverage.result == 'success' && needs.distributed_e2e.result == 'success' && needs.sanitizer_check.result == 'success') && 'success' || 'failure' }}
+          scope: nightly health check (current_dev)
+          failed_jobs: ${{ steps.failed_jobs.outputs.list }}
+          project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}
 

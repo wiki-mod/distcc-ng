@@ -13,6 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/nightly-publish.yml`**: the nightly-tag guard's
+  comment had a `What:` but no `Why:` -- added the actual safety-critical
+  reason (the `git push -f` right after it could force-move a real
+  `vX.Y.Z-NG` release tag on a `NIGHTLY_TAG` misconfiguration).
+- **`doc/ci-workflows.md`**: didn't document the new shared
+  `.github/actions/failed-jobs` composite action or its 3 callers.
+- **`.github/workflows/add-to-project.yml`, `.github/actions/nightly-status/report.sh`**:
+  the project owner/number (`wiki-mod`/`11`) was hardcoded independently
+  in both places with no cross-reference; added an explicit comment in
+  each pointing at the other so a future org/board change is less likely
+  to update only one.
 - **`packaging/deb.sh`**: `DEBIAN/md5sums` was never regenerated after the
   pump/distcc-pump rename below, leaving it referencing the removed
   `usr/bin/pump` path and missing the new one, which would fail `dpkg -V`
@@ -38,9 +49,57 @@ See `doc/release-versioning.md` for the full versioning and release process.
   Now requires an actual mechanical pass over every instance with a
   stated count as evidence, and calls a claim of full compliance without
   one a rule 62 violation (false factual claim), not a shortcut.
+- **`.github/workflows/master-heartbeat.yml`, `.github/actions/failed-jobs/action.yml`,
+  `.github/actions/nightly-status/action.yml`, `.github/actions/nightly-status/report.sh`**:
+  rule 38/40 sweep of these four files' comments to What/Why/From,
+  triggered by this PR touching them, scoped to these four files only
+  (not the rest of the workflows this PR touches). Every `From:`
+  resolved via git blame against the actual introducing commit (PRs
+  #86, #89, #349, #476; Issue #81, #263), not guessed or copied from a
+  neighboring block. The first mechanical re-count only checked
+  existing `# What:` blocks for a missing `From:`, which missed a
+  fully bare, untagged comment (`# Mondays 05:00 UTC.` in
+  master-heartbeat.yml -- removed per rule 41, since no genuine `Why:`
+  for that specific schedule time exists in PR #86's own record);
+  re-run with a block-aware check covering every comment (tagged or
+  not), the four files now hold 24 complete What/Why/From blocks and
+  0 bare/incomplete ones.
+- **`.github/workflows/c-build.yml`, `.github/workflows/nightly-publish.yml`,
+  `.github/workflows/e2e-image-build.yml`**: same rule 38/40 sweep
+  extended to these three files, closing the remainder of this PR's
+  own comment-provenance gap (previously tracked as ~87 missing
+  `From:` lines across exactly these files). `From:` resolved via git
+  blame/`git log -S` against the actual code (not the recent same-PR
+  comment-rewrite commits, which would give false provenance) and
+  cross-checked against each PR's own body for Issue references; 5
+  pre-existing blocks in `nightly-publish.yml` that had picked up an
+  incomplete or wrong citation in an earlier pass were also corrected.
+  3 bare/self-evident comments removed per rule 41 (no genuine `Why:`
+  existed) instead of inventing one. Mechanical re-count: 97 real
+  comment blocks (decorative `# ---` section dividers excluded) across
+  the three files, 1 known exception -- a pre-existing, unimplemented
+  `brew-cask`/`choco` TODO placeholder in `c-build.yml` left as-is
+  pending a maintainer decision on whether to implement, remove, or
+  track it separately, not removed unilaterally.
 
 ### Added
 
+- **`.github/actions/failed-jobs/`**: new composite action centralizing the
+  `add_if_failed` job-result filter previously duplicated in `c-build.yml`,
+  `nightly-publish.yml`, and `e2e-image-build.yml` (three independent copies
+  that would silently drift on the next change). Each caller now passes its
+  `name=result` pairs as one `jobs` input instead of reimplementing the
+  filter.
+
+- **`c-build.yml`**: a `report` job files/updates the standing `nightly-broken`
+  issue when the scheduled (nightly, 03:00 UTC) run of this workflow fails,
+  and closes it on the next success -- reusing the same `nightly-status`
+  composite action `nightly-publish.yml`/`master-heartbeat.yml` already use
+  for this, rather than a new, parallel mechanism. Previously, a
+  nightly failure (including the opt-in ASan/UBSan sanitizer check, per
+  #266) was only visible in the Actions tab, with no standing tracking issue
+  and no notification unless the viewer had personally enabled GitHub
+  Actions email/web notifications for scheduled workflows.
 - **`AGENTS.md`**: added rule 91 -- the first repository-mutating action
   in a freshly created worktree, after the mandatory rulebook read and
   before any actual code change, must be an empty marker commit
@@ -61,6 +120,49 @@ See `doc/release-versioning.md` for the full versioning and release process.
   repeating it.
 
 ### Fixed
+
+- **`.github/actions/nightly-status`**: standing issues this action files now
+  reach the project board. `report.sh`'s `gh issue create` used the default
+  `GITHUB_TOKEN`, and GitHub suppresses downstream workflow events (here,
+  `add-to-project.yml`'s own `issues: opened` trigger) for anything created
+  by that token -- the same anti-recursion behavior already found and fixed
+  for release publishing. Fixed with a separate, explicit `gh project
+  item-add` call right after creating a new issue, using a new `project_pat`
+  input -- **not** by switching the existing issue-mutation token, since
+  `PROJECT_AUTOMATION_PAT` is a classic PAT documented (`add-to-project.yml`'s
+  own header) as having only the `project` scope, insufficient for
+  `gh issue create`/`comment`/`close`/`updateIssue`; an earlier revision of
+  this fix did exactly that and would have made every scheduled reporter
+  fail outright wherever this PAT is configured, caught by review before
+  merging. Every caller (`c-build.yml`, `e2e-image-build.yml`,
+  `master-heartbeat.yml`, `nightly-publish.yml`) now passes
+  `secrets.PROJECT_AUTOMATION_PAT` as `project_pat`; issue mutations
+  themselves keep using the default `GITHUB_TOKEN` as before. The board-add
+  call is also retried on every existing-issue touch (comment or close),
+  not just at creation -- `addProjectV2ItemById` (what `gh project
+  item-add` calls) is idempotent, so re-adding an already-assigned issue
+  is a safe no-op, matching `ensure_bug_type()`'s own established
+  self-healing pattern in this same file for a transient creation-time
+  failure, or an issue that predates this action having either mutation.
+  - Also: standing issues/comments now record which specific job(s) failed
+    (a new `failed_jobs` input, computed by each multi-job caller from
+    `needs.*.result`), not just "the pipeline failed" -- previously the
+    issue had no independently actionable evidence once the linked run log
+    expired.
+  - Also: `report.sh`'s `DRY_RUN=true` path silently swallowed the
+    simulated `gh issue create` command instead of printing it, since
+    capturing the command's output via `$(...)` for later parsing also
+    captured `DRY_RUN`'s own echoed command instead of letting it reach the
+    log. Now re-emitted explicitly in that branch.
+  - Also: in `DRY_RUN`, the same captured (non-URL) text was then passed
+    straight into the new project-board-add call, producing a garbled,
+    nested `--url` value; that call is now skipped in `DRY_RUN`, matching
+    `ensure_bug_type()`'s existing gating on the same path.
+  - Also: `nightly-publish.yml`/`e2e-image-build.yml`'s `failed_jobs`
+    computation mislabeled a downstream job as "failed" when it was
+    actually `skipped` as a consequence of its own upstream job failing
+    (`publish` depends on other jobs with no `if:` override) -- now only
+    flags a job whose result is literally `failure`/`cancelled`.
 
 - **`c-build.yml`, `codeql.yml`, `osv-scanner.yml`, `actionlint.yml`,
   `clusterfuzzlite-pr.yml`, `e2e-image-build.yml`,
