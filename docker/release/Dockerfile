@@ -15,6 +15,13 @@ LABEL org.opencontainers.image.title="distcc-ng builder" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
 
+# What: libelf-dev is included so configure's --with-libelf probe finds
+#   elf_compress and enables it.
+# Why: Without it, distccd falls back to the pre-fix raw <elf.h> path,
+#   which silently fails to rewrite a compressed (SHF_COMPRESSED) debug
+#   section (issue #398) -- a real, shippable regression, not just a
+#   local build-config choice.
+# From: PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
@@ -23,6 +30,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       automake \
       build-essential \
       ccache \
+      libelf-dev \
       libpopt-dev \
       libseccomp-dev \
       libzstd-dev \
@@ -66,11 +74,19 @@ LABEL org.opencontainers.image.title="distcc-ng" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
 
+# What: libelf1 is the runtime counterpart to the build stage's
+#   libelf-dev.
+# Why: distccd is now dynamically linked against libelf (issue #398's
+#   compressed-debug-info fix) whenever the build stage detects it --
+#   without libelf1 here, the binary copied in below would fail to
+#   start at all (missing shared library), not just lose the fix.
+# From: PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential \
+      libelf1 \
       libpopt0 \
       libseccomp2 \
       libzstd1 \
@@ -106,11 +122,17 @@ LABEL org.opencontainers.image.title="distcc-ng-pump" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
 
+# What: libelf1 here for the same reason as the plain `runtime` stage
+#   above.
+# Why: This stage's distccd is the exact same build output, so it needs
+#   the identical runtime library or it fails to start (issue #398).
+# From: PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential \
+      libelf1 \
       libpopt0 \
       libseccomp2 \
       libzstd1 \
