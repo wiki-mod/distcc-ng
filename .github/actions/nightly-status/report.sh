@@ -175,13 +175,20 @@ else
     --body "A scheduled CI run failed. This standing issue is reused across consecutive failures (every scheduled workflow that feeds it can comment on or close it, not just the one that filed it) and closed automatically on the next successful run.
 
 ${detail}.")"
-  # What: Re-emits `run()`'s echoed command in DRY_RUN.
+  # What: Re-emits `run()`'s echoed command in DRY_RUN, plus synthetic
+  # previews of the two metadata mutations below.
   # Why: The command substitution above captures that echoed text instead
   # of printing it, so without this, dry-run would silently look like it
-  # did nothing for this mutation.
+  # did nothing for this mutation; the two extra lines are hand-written
+  # previews, not real ensure_bug_type/add_to_project_board calls, since
+  # (see the next comment) there is no real issue number/URL yet to pass
+  # them -- without these, dry-run on this specific branch could never
+  # surface a wiring bug in either mutation before a real run does.
   # From: PR #476
   if [ "${DRY_RUN}" = "true" ]; then
     echo "${new_issue_url}"
+    echo "DRY_RUN would run: assign Bug type to the newly created issue"
+    echo "DRY_RUN would run: GH_TOKEN=*** gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url <newly created issue URL>"
   fi
   if [ "${DRY_RUN}" != "true" ]; then
     ensure_bug_type "${new_issue_url##*/}"
