@@ -11,8 +11,33 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`packaging/deb.sh`**: `DEBIAN/md5sums` was never regenerated after the
+  pump/distcc-pump rename below, leaving it referencing the removed
+  `usr/bin/pump` path and missing the new one, which would fail `dpkg -V`
+  integrity checks on the built package. Regenerated from the actual
+  post-rename file tree before repacking. Refs #485.
+- **`doc/docker.md`**: still said the `distcc-ng-pump` image ships `pump`;
+  updated to `distcc-pump` to match the rename below. Refs #485.
+
+### Changed
+
+- **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
+  now shipped as `distcc-pump` in the `.deb` package and the
+  `distcc-ng-pump` Docker image, matching Debian's own real
+  `distcc-pump` package (verified against its actual `debian/rules`) --
+  a packaging-layer rename only, no upstream build-system change, and no
+  `pump` compatibility symlink, exactly mirroring Debian's own choice.
+  `packaging/RedHat/rpm.spec` is unaffected. Refs #485.
+
 ### Documentation
 
+- **`AGENTS.md`**: rule 78(c)'s file-wide self-check requirement allowed
+  "I fixed what was flagged" to pass as "this file is fully compliant."
+  Now requires an actual mechanical pass over every instance with a
+  stated count as evidence, and calls a claim of full compliance without
+  one a rule 62 violation (false factual claim), not a shortcut.
 - **`.github/workflows/master-heartbeat.yml`, `.github/actions/failed-jobs/action.yml`,
   `.github/actions/nightly-status/action.yml`, `.github/actions/nightly-status/report.sh`**:
   full rule 38/40 sweep of these files' comments to What/Why/From,
