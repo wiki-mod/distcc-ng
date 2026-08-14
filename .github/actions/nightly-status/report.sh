@@ -19,6 +19,8 @@ LABEL="${LABEL:-nightly-broken}"
 DRY_RUN="${DRY_RUN:-false}"
 FAILED_JOBS="${FAILED_JOBS:-}"
 PROJECT_PAT="${PROJECT_PAT:-}"
+# kept in sync with add-to-project.yml's own hardcoded project-url; update
+# both together if the org or board ever changes.
 PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
 

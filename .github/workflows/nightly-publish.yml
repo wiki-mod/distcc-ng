@@ -138,6 +138,10 @@ jobs:
           set -euo pipefail
           # What: Hard stop if NIGHTLY_TAG was ever mis-set to a real
           # release tag.
+          # Why: The `git push -f` below force-moves whatever tag
+          #   NIGHTLY_TAG names; without this guard, a misconfiguration
+          #   here could force-move a real vX.Y.Z-NG release tag instead
+          #   of the intended floating nightly one.
           case "${NIGHTLY_TAG}" in
             v*) echo "refusing to force-move a v* tag" >&2; exit 1 ;;
           esac

@@ -13,6 +13,17 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`.github/workflows/nightly-publish.yml`**: the nightly-tag guard's
+  comment had a `What:` but no `Why:` -- added the actual safety-critical
+  reason (the `git push -f` right after it could force-move a real
+  `vX.Y.Z-NG` release tag on a `NIGHTLY_TAG` misconfiguration).
+- **`doc/ci-workflows.md`**: didn't document the new shared
+  `.github/actions/failed-jobs` composite action or its 3 callers.
+- **`.github/workflows/add-to-project.yml`, `.github/actions/nightly-status/report.sh`**:
+  the project owner/number (`wiki-mod`/`11`) was hardcoded independently
+  in both places with no cross-reference; added an explicit comment in
+  each pointing at the other so a future org/board change is less likely
+  to update only one.
 - **`packaging/deb.sh`**: `DEBIAN/md5sums` was never regenerated after the
   pump/distcc-pump rename below, leaving it referencing the removed
   `usr/bin/pump` path and missing the new one, which would fail `dpkg -V`

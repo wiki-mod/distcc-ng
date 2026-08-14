@@ -1,6 +1,6 @@
 # CI workflow landscape
 
-A map of `.github/workflows/*.yml` (plus the composite action and labeler
+A map of `.github/workflows/*.yml` (plus the composite actions and labeler
 config they share): what triggers each file, what it writes, and how they
 cross-reference each other. Companion to `doc/docker.md` (which covers the
 container images themselves, not the workflows that build them) -- keep
@@ -31,11 +31,18 @@ actual YAML before relying on this after a workflow file changes.
 
 ## Cross-reference matrix
 
-**Shared composite action** -- `.github/actions/nightly-status` files/updates/closes
-one standing `nightly-broken`-labeled issue (issue #81 design: any caller's
-success can close an issue a different caller opened). Callers: `master-heartbeat.yml`,
-`nightly-publish.yml`, `c-build.yml` (its `report` job, schedule-event only),
-`e2e-image-build.yml`.
+**Shared composite actions**:
+
+- `.github/actions/nightly-status` files/updates/closes one standing
+  `nightly-broken`-labeled issue (issue #81 design: any caller's success
+  can close an issue a different caller opened). Callers:
+  `master-heartbeat.yml`, `nightly-publish.yml`, `c-build.yml` (its
+  `report` job, schedule-event only), `e2e-image-build.yml`.
+- `.github/actions/failed-jobs` filters a caller's `name=result` job
+  list down to the ones that actually failed or were cancelled (not
+  merely skipped), for use in the standing issue's `failed_jobs` detail
+  above. Callers: `c-build.yml`, `nightly-publish.yml`,
+  `e2e-image-build.yml`.
 
 **GHCR image namespace** -- four separate package names, no tag overlap:
 
