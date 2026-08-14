@@ -88,6 +88,10 @@ jobs:
     # What: Needs both write scopes the top-level block used to grant every
     # job: contents:write to force-move the nightly tag and create/replace
     # its release, packages:write to push distcc-ng-nightly:latest to GHCR.
+    # Why: Per-job least-privilege instead of one top-level grant every job
+    # in this file inherited, even build_check/distributed_e2e which never
+    # write anything (OSSF Scorecard "Token-Permissions" finding).
+    # From: PR #308
     permissions:
       contents: write
       packages: write
