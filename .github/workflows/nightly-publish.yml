@@ -16,7 +16,6 @@ concurrency:
 on:
   workflow_dispatch:
   schedule:
-    # What: One hour after c-build.yml's 03:00 UTC nightly health check.
     - cron: '0 4 * * *'
     # --- DISABLED: full_bidirectional_e2e's own weekly schedule --------------
     # What: A disabled weekly schedule (Fridays 02:00 CET = 01:00 UTC,

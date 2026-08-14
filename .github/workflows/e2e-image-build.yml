@@ -303,7 +303,6 @@ jobs:
 
           SHOULD_MOVE=false
           if [ -z "${PUBLISHED_SHA}" ]; then
-            # What: Nothing published yet, so always proceed.
             SHOULD_MOVE=true
           else
             # What: Resolves the published tag's SHA as its own statement,
