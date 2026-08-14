@@ -354,6 +354,52 @@ AC_CHECK_HEADERS([float.h mcheck.h alloca.h sys/mman.h sys/loadavg.h])
 AC_CHECK_HEADERS([elf.h])
 AC_CHECK_HEADERS([fnmatch.h])
 
+dnl dcc_fix_debug_info()'s current <elf.h>-based raw byte search-and-replace
+dnl (src/fix_debug_info.c) cannot rewrite a compressed (SHF_COMPRESSED)
+dnl debug section -- libelf's (elfutils) elf_compress()/elf_compress_gnu()
+dnl decompress/patch/recompress round-trip fixes this (issue #398).
+dnl Optional, matching the zstd/seccomp pattern above: a toolchain without
+dnl a libelf new enough to declare elf_compress falls back to today's
+dnl behavior (a compressed section is traced and left unrewritten, not a
+dnl hard configure failure -- see doc/compatibility-policy.md).
+AC_ARG_WITH(libelf,
+        AS_HELP_STRING([--with-libelf], [correctly rewrite compressed ELF debug-info sections via libelf (elfutils)]))
+
+HAVE_LIBELF=
+if test x"$with_libelf" != xno; then
+    PKG_CHECK_MODULES([LIBELF], [libelf],
+                      [have_libelf_pkg=yes],
+                      [have_libelf_pkg=no])
+    if test x"$have_libelf_pkg" = xyes; then
+        save_CPPFLAGS="$CPPFLAGS"
+        save_LIBS="$LIBS"
+        CPPFLAGS="$CPPFLAGS $LIBELF_CFLAGS"
+        LIBS="$LIBS $LIBELF_LIBS"
+        AC_CHECK_HEADERS([libelf.h gelf.h], [], [have_libelf_pkg=no])
+        dnl elf_compress()/elf_compress_gnu() are elfutils-specific
+        dnl additions, absent from older elfutils and from legacy
+        dnl (non-elfutils) libelf implementations -- checked directly as
+        dnl a real function probe rather than assumed from a version
+        dnl number, since no minimum elfutils version for their
+        dnl introduction has been verified against elfutils' own history.
+        AC_CHECK_FUNCS([elf_compress elf_compress_gnu], [], [have_libelf_pkg=no])
+        CPPFLAGS="$save_CPPFLAGS"
+        LIBS="$save_LIBS"
+    fi
+
+    if test x"$have_libelf_pkg" = xyes; then
+        AC_DEFINE([HAVE_LIBELF], [1], [Define to 1 if a libelf providing elf_compress is available for the compressed-ELF debug-info fix.])
+        CFLAGS="$CFLAGS $LIBELF_CFLAGS"
+        LIBS="$LIBS $LIBELF_LIBS"
+        HAVE_LIBELF=1
+    elif test x"$with_libelf" = xyes; then
+        AC_MSG_ERROR([Cannot find a libelf providing elf_compress (elfutils)])
+    else
+        AC_MSG_NOTICE([libelf with elf_compress not found -- compressed ELF debug-info sections will not be rewritten, see issue 398])
+    fi
+fi
+AC_SUBST(HAVE_LIBELF)
+
 ######################################################################
 dnl Checks for types
 
