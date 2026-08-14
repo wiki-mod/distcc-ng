@@ -41,22 +41,15 @@ RUN ./autogen.sh && \
     install -D lsdistcc /out/usr/local/bin/lsdistcc && \
     install -D distccmon-text /out/usr/local/bin/distccmon-text
 
-# Pump-mode output tree (issue #181), built from these exact same compiled
-# objects -- pump mode is enabled by default (only --disable-pump-mode
-# turns it off, not passed above), so nothing above needs to be rebuilt.
-# `make install` (not a manual file-by-file copy) is deliberate: pump's own
-# install step needs to know where include_server.py ends up installed
-# (it embeds that path into the installed `pump` wrapper via setup.py's
-# --record output, see Makefile.in's install-include-server target's own
-# comment) -- a naive `install -D` of the built files would skip that
-# wiring and produce a `pump` that can't find its include server.
-# What: Renames the installed pump wrapper to distcc-pump in this image
-#   too, matching the .deb package's own rename (packaging/deb.sh).
-# Why: Debian's real distcc-pump package does this same rename, in its
-#   own packaging layer, never in upstream's build system -- this image
-#   is Debian-based, so it follows the same convention; no compatibility
-#   symlink is shipped, matching Debian's own choice.
-# From: Issue #485
+# What: Builds the pump-mode output tree via `make install` (same
+#   compiled objects as above) and renames the installed `pump` wrapper
+#   to `distcc-pump`.
+# Why: `make install`, not a manual file copy, is required because
+#   pump's install step embeds the include-server's install path into
+#   the wrapper via setup.py's --record output, which a manual copy
+#   would skip; the rename afterward matches Debian's own real
+#   distcc-pump package, done in this same packaging layer.
+# From: Issue #181, Issue #485
 RUN make install DESTDIR=/out-pump && \
     mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump
 
@@ -95,9 +88,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 CMD ["distccd", "--daemon", "--no-detach", "--log-stderr", "--allow", "127.0.0.1", "--enable-tcp-insecure"]
 
-# --- Pump-mode variant (issue #181): published separately as distcc-ng-pump,
-# not a second tag on plain distcc-ng, matching this repo's existing
-# distcc-ng-nightly/distcc-ng-buildtools precedent for build variants. ---
+# What: Pump-mode variant, published separately as distcc-ng-pump.
+# Why: Matches this repo's existing distcc-ng-nightly/distcc-ng-buildtools
+#   precedent of a separate package per build variant, not a second tag
+#   on plain distcc-ng.
+# From: Issue #181
 FROM ${DEBIAN_IMAGE} AS runtime-pump
 
 ARG VCS_REF=unknown

@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`packaging/deb.sh`**: `DEBIAN/md5sums` was never regenerated after the
+  pump/distcc-pump rename below, leaving it referencing the removed
+  `usr/bin/pump` path and missing the new one, which would fail `dpkg -V`
+  integrity checks on the built package. Regenerated from the actual
+  post-rename file tree before repacking. Refs #485.
+- **`doc/docker.md`**: still said the `distcc-ng-pump` image ships `pump`;
+  updated to `distcc-pump` to match the rename below. Refs #485.
+
 ### Changed
 
 - **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
