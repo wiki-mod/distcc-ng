@@ -41,6 +41,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `--without-libelf` still builds cleanly with the prior behavior
   unchanged. Issue #398, support-upstream entry added (rule 57): the
   identical gap is still present in upstream `distcc/distcc`.
+  **Found via real CI failure**: `install-build-deps`/`install-packaging-deps`
+  (shared by `c-build.yml`, `nightly-publish.yml`, `package-release.yml`)
+  never installed `libelf-dev` -- `elfutils` alone (already present in
+  the packaging list) has no headers or link-time `.so`, only CLI
+  tools -- so every one of those legs silently built the pre-fix raw
+  path, confirmed via `make_check (ubuntu-latest)`'s own `configure`
+  log ("checking for libelf... no") and `GdbCompressedDebugInfo_Case`
+  correctly failing there. Both composite actions now install
+  `libelf-dev`; `docker/release/Dockerfile`'s `runtime`/`runtime-pump`
+  stages also gained `libelf1` (`distccd` now dynamically links against
+  it, verified via `ldd`), since without it the shipped binary would
+  fail to start at all, not just lose the fix.
 - **`.github/workflows/nightly-publish.yml`**: the nightly-tag guard's
   comment had a `What:` but no `Why:` -- added the actual safety-critical
   reason (the `git push -f` right after it could force-move a real
