@@ -659,6 +659,7 @@ jobs:
       # ./.github/actions/nightly-status` below is a local-path action
       # reference -- whichever branch gets checked out is the version of
       # that action's code that actually runs.
+      # From: PR #476
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
