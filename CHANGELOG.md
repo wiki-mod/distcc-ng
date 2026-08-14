@@ -64,6 +64,23 @@ See `doc/release-versioning.md` for the full versioning and release process.
   re-run with a block-aware check covering every comment (tagged or
   not), the four files now hold 24 complete What/Why/From blocks and
   0 bare/incomplete ones.
+- **`.github/workflows/c-build.yml`, `.github/workflows/nightly-publish.yml`,
+  `.github/workflows/e2e-image-build.yml`**: same rule 38/40 sweep
+  extended to these three files, closing the remainder of this PR's
+  own comment-provenance gap (previously tracked as ~87 missing
+  `From:` lines across exactly these files). `From:` resolved via git
+  blame/`git log -S` against the actual code (not the recent same-PR
+  comment-rewrite commits, which would give false provenance) and
+  cross-checked against each PR's own body for Issue references; 5
+  pre-existing blocks in `nightly-publish.yml` that had picked up an
+  incomplete or wrong citation in an earlier pass were also corrected.
+  3 bare/self-evident comments removed per rule 41 (no genuine `Why:`
+  existed) instead of inventing one. Mechanical re-count: 97 real
+  comment blocks (decorative `# ---` section dividers excluded) across
+  the three files, 1 known exception -- a pre-existing, unimplemented
+  `brew-cask`/`choco` TODO placeholder in `c-build.yml` left as-is
+  pending a maintainer decision on whether to implement, remove, or
+  track it separately, not removed unilaterally.
 
 ### Added
 
