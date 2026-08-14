@@ -8,6 +8,7 @@ name: Nightly build and publish (current_dev)
 # default branch (master), so this activates only after the next
 # current_dev->master promotion; every job checks out current_dev
 # explicitly regardless of the trigger's branch.
+# From: Issue #81, PR #85
 
 concurrency:
   group: nightly-publish
@@ -24,7 +25,7 @@ on:
     # Why: Arming it is a separate, not-yet-made decision. DO NOT UNCOMMENT
     # without the maintainer's explicit go-ahead: a weekly full
     # third-party-project build is a real, non-trivial CI cost commitment.
-    # From: Issue #264
+    # From: Issue #264, PR #302
     # - cron: '0 1 * * 5'
 
 # What: Top-level permissions are read-only; the real write scopes (moving
@@ -33,6 +34,7 @@ on:
 # Why: build_check and distributed_e2e are pure build/test gates that never
 # touch the GitHub API or a registry and shouldn't inherit write access
 # they never use.
+# From: Issue #267, PR #308
 permissions:
   contents: read
 
@@ -40,6 +42,7 @@ env:
   # What: Hardcoded, never derived; the only tag this workflow may
   # force-move.
   # Why: Must never collide with a real vX.Y.Z-NG release tag.
+  # From: Issue #81, PR #85
   NIGHTLY_TAG: nightly
 
 jobs:
@@ -49,6 +52,7 @@ jobs:
     timeout-minutes: 20
     # What: Only checks out current_dev and runs a local build+test.
     # Why: No GitHub API or registry write happens here, hence read-only.
+    # From: Issue #267, PR #308
     permissions:
       contents: read
     env:
@@ -70,6 +74,7 @@ jobs:
     # What: Only checks out current_dev and runs the local docker-compose
     # e2e script.
     # Why: No GitHub API or registry write happens here, hence read-only.
+    # From: Issue #267, PR #308
     permissions:
       contents: read
     steps:
@@ -90,7 +95,7 @@ jobs:
     # Why: Per-job least-privilege instead of one top-level grant every job
     # in this file inherited, even build_check/distributed_e2e which never
     # write anything (OSSF Scorecard "Token-Permissions" finding).
-    # From: PR #308
+    # From: Issue #267, PR #308
     permissions:
       contents: write
       packages: write
@@ -101,6 +106,7 @@ jobs:
           ref: current_dev
           # What: Full history checkout.
           # Why: So the nightly tag can be force-moved onto this commit.
+          # From: Issue #81, PR #85
           fetch-depth: 0
 
       - uses: $/.github/actions/install-packaging-deps
@@ -112,6 +118,7 @@ jobs:
         # the default branch, so github.sha is master's tip even though
         # current_dev is what gets built; using it would make the
         # provenance metadata dishonest.
+        # From: Issue #81, PR #91
         run: echo "BUILT_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
 
       - name: Build release packages
@@ -145,6 +152,7 @@ jobs:
           #   NIGHTLY_TAG names; without this guard, a misconfiguration
           #   here could force-move a real vX.Y.Z-NG release tag instead
           #   of the intended floating nightly one.
+          # From: Issue #81, PR #85
           case "${NIGHTLY_TAG}" in
             v*) echo "refusing to force-move a v* tag" >&2; exit 1 ;;
           esac
@@ -172,6 +180,7 @@ jobs:
           # moved tag.
           # Why: --latest=false keeps it from ever outranking a real
           # tagged release.
+          # From: Issue #81, PR #85
           if gh release view "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng >/dev/null 2>&1; then
             gh release delete "${NIGHTLY_TAG}" --repo wiki-mod/distcc-ng --yes
           fi
@@ -193,7 +202,7 @@ jobs:
   # and must never block or be blocked by the nightly publish chain; the
   # `if` below restricts it to workflow_dispatch so the daily schedule
   # never silently grows a full Samba build onto it.
-  # From: Issue #264
+  # From: Issue #264, PR #302
   full_bidirectional_e2e:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
@@ -204,7 +213,7 @@ jobs:
     # runners) is the real ceiling; WAF_TARGETS below bounds this CI leg to
     # fit it, while test/e2e-full/README.md documents running the full
     # build on the project's own hosts.
-    # From: Issue #264
+    # From: Issue #264, PR #302
     timeout-minutes: 340
     permissions:
       contents: read
@@ -217,6 +226,7 @@ jobs:
         # Why: This job is workflow_dispatch-only, unlike this file's
         # schedule-triggered jobs, which must redirect off the default
         # branch explicitly.
+        # From: Issue #264, PR #302
       - name: Run the full bidirectional native-compatibility E2E matrix
         env:
           WORKLOAD: samba
@@ -224,6 +234,7 @@ jobs:
           # test/e2e-full/README.md) so it finishes within timeout-minutes.
           # Why: Only affects the CI-hosted run; a manual run on a project
           # host with WAF_TARGETS unset gets the full, unrestricted build.
+          # From: Issue #264, PR #302
           WAF_TARGETS: "replace,ldb,tdb,talloc,tevent"
         run: bash test/e2e-full/run-bidirectional-e2e.sh
 
@@ -233,7 +244,7 @@ jobs:
   # it on success.
   # Why: So it fires even when a gate fails and `publish` is skipped -- a
   # step inside publish would never run on the most important failure.
-  # From: PR #476
+  # From: Issue #81, PR #89
   report:
     needs: [build_check, distributed_e2e, publish]
     if: ${{ always() && !cancelled() }}
@@ -241,6 +252,7 @@ jobs:
     # What: Job-level permissions replace the top-level set.
     # Why: This job only needs to read the tree (for the composite action)
     # and write issues.
+    # From: Issue #81, PR #89
     permissions:
       contents: read
       issues: write
@@ -260,8 +272,6 @@ jobs:
             publish=${{ needs.publish.result }}
       - uses: ./.github/actions/nightly-status
         with:
-          # What: Success only if all three jobs succeeded.
-          # Why: Any failure/skip is a failure worth reporting.
           outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: nightly build+publish (current_dev)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
