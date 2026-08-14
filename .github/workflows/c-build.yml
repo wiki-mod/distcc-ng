@@ -32,10 +32,12 @@ on:
   # What: Lets a branch's build health be checked on demand.
   # Why: Without this, checking current_dev/master would need a new
   # commit or PR to trigger CI.
+  # From: Issue #32, PR #84
   workflow_dispatch:
   # What: Nightly health check on current_dev.
   # Why: So a break doesn't sit silently until the next PR touches that
   # branch.
+  # From: Issue #32, PR #84
   schedule:
     - cron: '0 3 * * *'
 
@@ -44,6 +46,7 @@ on:
 # Why: So a future job added without its own block falls back to this
 # explicit minimal default instead of the broader legacy GITHUB_TOKEN
 # default.
+# From: Issue #267, PR #308
 permissions:
   contents: read
 
@@ -55,6 +58,7 @@ jobs:
   # Why: workflow_dispatch/schedule always force a full run, since those
   # exist specifically to check real build health on demand and must
   # never silently no-op.
+  # From: Issue #267, PR #337
   changes:
     name: Detect relevant (non-docs) changes
     runs-on: ubuntu-latest
@@ -114,6 +118,7 @@ jobs:
     # Why: Needed for actions/attest-build-provenance below (Linux only
     # for now); contents:read must be restated here or it's lost by
     # declaring this block at all.
+    # From: Issue #38, PR #39
     permissions:
       contents: read
       id-token: write
@@ -122,6 +127,7 @@ jobs:
     # Why: ccache's own default cache_dir differs by platform
     # (~/.cache/ccache on Linux, ~/Library/Caches/ccache on macOS); pinning
     # it keeps the actions/cache path below correct on both matrix legs.
+    # From: Issue #54, PR #61
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
@@ -139,13 +145,15 @@ jobs:
           # Why: schedule always evaluates using the default branch
           # (master); push/pull_request already cover master on every
           # change.
+          # From: Issue #32, PR #84
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - if: needs.changes.outputs.relevant == 'true'
         uses: $/.github/actions/install-build-deps
         with:
           # What: Includes automake (for aclocal) but no gdb entry.
           # Why: Homebrew packages aclocal with automake even though
-          # automake itself isn't used; gdb isn't supported on arm64 macOS.
+          # automake itself isn't used.
+          # From: Issue #362, PR #434
           brew: autoconf automake popt python@3.13 python-setuptools ccache zstd
           # brew-cask: TODO
           # choco: TODO
@@ -157,6 +165,7 @@ jobs:
       # Why: A stale/missing cache never produces wrong results, only a
       # slower build; bumping github.run_id into the key keeps the cache
       # warm since actions/cache no-ops a save on an exact key collision.
+      # From: Issue #362, PR #434
       - if: needs.changes.outputs.relevant == 'true'
         uses: $/.github/actions/ccache-cache
         with:
@@ -170,6 +179,7 @@ jobs:
       # that, config.cache's ac_cv_* entries are blindly trusted once
       # cached and can go stale silently when a dependency's availability
       # changes without configure.ac itself changing.
+      # From: Issue #54, PR #166
       - if: needs.changes.outputs.relevant == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -185,6 +195,7 @@ jobs:
       # `$(CC) --version` under a restricted PATH that deliberately
       # excludes Homebrew's /opt/homebrew/bin, where a bare "ccache" would
       # fail to resolve.
+      # From: Issue #54, PR #61
       - if: needs.changes.outputs.relevant == 'true'
         run: ./configure CC="$(command -v ccache) cc" PYTHON="$(which python3.13 || which python3)"
       - if: needs.changes.outputs.relevant == 'true'
@@ -220,6 +231,7 @@ jobs:
       # scheduled run checks out current_dev while github.sha (what the
       # attestation records) is master's tip, which would tie the
       # attestation to the wrong commit.
+      # From: Issue #38, PR #39, Issue #81, PR #91
       - if: needs.changes.outputs.relevant == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'schedule'
         run: |
           mkdir -p /tmp/attest-subjects
@@ -236,6 +248,7 @@ jobs:
   # Why: This runner deliberately never installs libpopt-dev, so popt.pc
   # is absent and PKG_CHECK_MODULES(POPT, ...) must fail over to the
   # bundled copy.
+  # From: Issue #63, PR #170
   popt_fallback_build:
     name: Bundled popt fallback build (no system libpopt)
     needs: changes
@@ -245,6 +258,7 @@ jobs:
     # What: Only checks out and builds the tree.
     # Why: Doesn't need anything beyond read access to repository
     # contents.
+    # From: Issue #63, PR #170
     permissions:
       contents: read
     steps:
@@ -256,6 +270,7 @@ jobs:
           # Why: schedule always evaluates using the default branch
           # (master); otherwise this job would test master while the
           # `report` job labels the aggregated outcome as current_dev.
+          # From: PR #476
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
@@ -265,6 +280,7 @@ jobs:
           # case this job exercises, more representative than pkg-config
           # itself being missing; libavahi-client-dev keeps the default
           # zeroconf-enabled build configuring the same as the main matrix.
+          # From: Issue #63, PR #170
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
       - name: configure (must report the bundled-popt fallback)
@@ -280,6 +296,7 @@ jobs:
       # end against a representative sample of src/dopt.c's real
       # options[] entry types, so a real argInfo/parsing regression in
       # the vendored popt tree shows up as missing/garbled output here.
+      # From: Issue #63, PR #170
       - name: Functional smoke test (distccd --help against bundled popt)
         run: |
           ./distccd --help > distccd-help.log 2>&1
@@ -309,6 +326,7 @@ jobs:
     # What: Read-only checkout and compile.
     # Why: Same rationale as popt_fallback_build above; no need for the
     # default token's write access to anything.
+    # From: Issue #63, PR #170
     permissions:
       contents: read
     steps:
@@ -320,6 +338,7 @@ jobs:
           # Why: schedule always evaluates using the default branch
           # (master); otherwise this job would test master while the
           # `report` job labels the aggregated outcome as current_dev.
+          # From: PR #476
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - name: Vendored version marker matches what this repo claims to ship
         run: |
@@ -330,12 +349,14 @@ jobs:
           # hash-table implementation, so it's a real, checkable
           # fingerprint that the vendored tree is genuinely 1.19-era, not
           # just a renamed marker file.
+          # From: Issue #63, PR #170
           grep -q "poptJlu32lpair" popt/poptint.h \
             || { echo "::error::popt/poptint.h is missing poptJlu32lpair -- vendored tree does not look like popt 1.19"; exit 1; }
           # What: Checks that findme.c/.h are absent.
           # Why: They were part of the old 1.7 snapshot and dropped when
           # vendoring 1.19; their reappearance signals an accidental
           # revert to the stale tree.
+          # From: Issue #63, PR #170
           if [ -e popt/findme.c ] || [ -e popt/findme.h ]; then
             echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
             exit 1
@@ -345,11 +366,13 @@ jobs:
           # What: Same package set as popt_fallback_build (no libpopt-dev).
           # Why: config.h needs to end up with the real
           # BUILD_POPT-triggering macros this job's compile reflects.
+          # From: Issue #63, PR #170
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
       # What: Runs the real ./configure, forced onto the bundled path.
       # Why: So config.h reflects the actual HAVE_* results this job's
       # compile uses; a hand-written set of -D flags could silently drift
       # from what configure.ac really detects.
+      # From: Issue #63, PR #170
       - run: ./autogen.sh
       - run: ./configure --without-system-popt PYTHON="$(which python3)"
       - name: Compile vendored popt/*.c under this project's own warning flags
@@ -365,6 +388,7 @@ jobs:
           # configure.ac never defines on its own, and the warning
           # exemptions match inherent, unmodified popt 1.19 source (see
           # the job-level comment above).
+          # From: Issue #63, PR #170
           CFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
           for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
             echo "::group::gcc ${CFLAGS[*]} -c $f"
@@ -381,6 +405,7 @@ jobs:
   # (unoptimized, extra profiling counters), so this job's output is a
   # coverage report only, never the pass/fail gate -- make_check's own
   # uninstrumented build remains the actual required check.
+  # From: PR #370
   coverage:
     name: Test coverage (gcov/lcov, job summary + artifact)
     needs: changes
@@ -391,6 +416,7 @@ jobs:
     # Why: The job summary write goes through $GITHUB_STEP_SUMMARY and the
     # artifact upload uses actions/upload-artifact's own default token
     # scope; nothing here needs elevated permission.
+    # From: PR #370
     permissions:
       contents: read
     steps:
@@ -401,6 +427,7 @@ jobs:
           # above.
           # Why: The nightly run evaluates from master but must measure
           # current_dev, since that is where real development happens.
+          # From: PR #370
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
@@ -408,6 +435,7 @@ jobs:
           # Why: So configure's optional seccomp check finds it and
           # defines HAVE_SECCOMP; otherwise src/sandbox-seccomp.c compiles
           # only its no-op fallback, contributing nothing to coverage.
+          # From: PR #370
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage
       - run: ./autogen.sh
       # What: --coverage (-fprofile-arcs -ftest-coverage plus libgcov)
@@ -418,6 +446,7 @@ jobs:
       # override breaks those callers outright; --with-seccomp turns a
       # missing libseccomp-dev into a hard configure failure instead of a
       # silent fallback that would quietly shrink what this job measures.
+      # From: PR #370
       - run: ./configure PYTHON="$(command -v python3)" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp
       - run: make
       # What: Creates a real, single-token executable wrapper instead of
@@ -426,6 +455,7 @@ jobs:
       # (e.g. subprocess.check_output() receives it as an executable
       # name), so a multiword override is never re-split and fails as a
       # program literally named with spaces.
+      # From: PR #370
       - name: Create a coverage-recording PYTHON wrapper
         run: |
           set -euo pipefail
@@ -436,6 +466,7 @@ jobs:
           # Why: 'coverage run' doesn't understand -c the way plain
           # python does, and that one-line version-probe use isn't part
           # of include_server's own code anyway.
+          # From: PR #370
           if [ "\$1" = "-c" ]; then
             exec "$(command -v python3)" "\$@"
           fi
@@ -444,6 +475,7 @@ jobs:
           # include_server/ before invoking the PYTHON override, so a
           # relative path would resolve against the already-cd'd cwd and
           # match nothing.
+          # From: PR #370
           exec python3-coverage run --append --source="$GITHUB_WORKSPACE/include_server" "\$@"
           EOF
           chmod +x "$GITHUB_WORKSPACE/coverage-python-wrapper"
@@ -453,6 +485,7 @@ jobs:
       # would be silently absent from the coverage denominator; the
       # extension is already built by this point, so nothing needs its
       # build_ext step re-run.
+      # From: PR #370
       - run: make check PYTHON="$GITHUB_WORKSPACE/coverage-python-wrapper"
       # What: Reruns AutogroupNicenessPrivilegeDrop_Case under sudo
       # against the same already-built, coverage-instrumented binaries,
@@ -461,6 +494,7 @@ jobs:
       # root-only case (mirroring make_check's own rerun) would otherwise
       # be silently NOTRUN and its instrumented lines never recorded
       # before lcov captures below.
+      # From: PR #370
       - name: Run the root-only case against the instrumented binaries
         run: |
           set -o pipefail
@@ -481,6 +515,7 @@ jobs:
           # Why: This project's real coverage data needs neither
           # "mismatch" nor "negative" suppression, and blanket-ignoring
           # either would let a genuinely corrupt report upload silently.
+          # From: PR #370
           lcov --capture --directory . --output-file coverage_raw.info \
             --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
           # What: Removes only lzo/ and src/h_*.c, with no popt/, test/,
@@ -490,6 +525,7 @@ jobs:
           # own in this job, so an unmatched removal pattern would be a
           # real error here (AGENTS.md rule 76), not something to
           # silently accept.
+          # From: PR #370
           lcov --remove coverage_raw.info \
             '*/lzo/*' '*/src/h_*.c' \
             --output-file coverage.info \
@@ -503,6 +539,7 @@ jobs:
           # test_*.py invocation into one .coverage data file directly.
           # Why: Unlike --parallel-mode's per-process files, there is
           # nothing here for `coverage combine` to merge.
+          # From: PR #370
           python3-coverage xml -o ../coverage-python.xml
           python3-coverage report
       - name: Publish coverage summary to the job summary
@@ -525,6 +562,7 @@ jobs:
       # alongside the job summary table above, no third-party service.
       # Why: Both are native GitHub Actions features, needing no external
       # account or secret.
+      # From: PR #370
       - name: Upload coverage reports as a build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -541,6 +579,7 @@ jobs:
   # Why: make check already exercises a localhost daemon, but only this
   # proves a compile genuinely crosses the network rather than being
   # silently completed by distcc's local-fallback path.
+  # From: Issue #32, PR #84
   distributed_e2e:
     name: Distributed compile E2E (2-container)
     needs: changes
@@ -552,6 +591,7 @@ jobs:
     # Why: This job's sibling jobs all declare an explicit job-level
     # block; without one here it inherited the default token scope, which
     # CodeQL flagged (actions/missing-workflow-permissions).
+    # From: Issue #222, Issue #251, PR #255
     permissions:
       contents: read
     steps:
@@ -565,9 +605,11 @@ jobs:
           # What: Same schedule redirect as make_check.
           # Why: The nightly run evaluates from master but must validate
           # current_dev.
+          # From: Issue #32, PR #84
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       # What: No install step for docker/compose.
       # Why: Both are preinstalled on ubuntu-latest.
+      # From: Issue #362, PR #434
       - uses: $/.github/actions/distributed-e2e-test
 
   # What: Opt-in ASan/UBSan sanitizer build; never runs on
@@ -591,6 +633,7 @@ jobs:
           # What: Same schedule redirect as the other jobs above.
           # Why: The nightly run evaluates from master but must validate
           # current_dev.
+          # From: Issue #266, PR #395
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
         with:
