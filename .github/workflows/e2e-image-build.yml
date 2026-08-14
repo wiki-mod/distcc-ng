@@ -29,6 +29,7 @@ on:
       - '.github/workflows/e2e-image-build.yml'
   # What: ready_for_review is listed explicitly.
   # Why: See c-build.yml's pull_request block for the full rationale.
+  # From: Issue #460, PR #468
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -39,6 +40,7 @@ on:
     # updates.
     # Why: 02:00 UTC avoids this repo's other daily/weekly schedules; see
     # the header comment above for why the base image is unpinned.
+    # From: PR #354
     - cron: '0 2 * * *'
 
 permissions:
@@ -62,6 +64,7 @@ jobs:
     # Why: Mirrors the publish job's own condition below exactly so both
     # jobs agree, and lets downstream steps consume it instead of each
     # re-deriving it and risking drift.
+    # From: PR #354
     outputs:
       built_sha: ${{ steps.resolve.outputs.sha }}
       built_full_sha: ${{ steps.resolve.outputs.full_sha }}
@@ -73,6 +76,7 @@ jobs:
       # github.run_attempt could outrun the attempt that actually produced
       # the retained artifact; consuming the producing job's output avoids
       # requesting a name nothing exists under.
+      # From: PR #354
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
     steps:
       - uses: $/.github/actions/harden-runner
@@ -82,6 +86,7 @@ jobs:
           # Why: schedule always evaluates from the default branch
           # (master), but this image tracks current_dev's own Dockerfile;
           # same pattern as c-build.yml/nightly-publish.yml.
+          # From: PR #354
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
           # What: Does not persist the checkout credential.
           # Why: test/e2e/Dockerfile's `COPY . /work` bakes this whole
@@ -90,6 +95,7 @@ jobs:
           # actions/checkout's default would write an authenticated
           # extraheader into .git/config that would leak into that
           # publicly-pullable layer. Nothing here needs the credential.
+          # From: PR #354
           persist-credentials: false
 
       # What: Resolved once, right after the checkout that gets built, and
@@ -98,6 +104,7 @@ jobs:
       # branch could observe a newer current_dev commit if a push landed
       # in between the two jobs' checkouts, tagging a revision this run
       # never actually built.
+      # From: PR #354
       - name: Resolve build identity
         id: resolve
         env:
@@ -113,6 +120,7 @@ jobs:
           # What: One grouped redirect into $GITHUB_OUTPUT rather than an
           # echo-per-line, matching package-release.yml's own setup job.
           # Why: shellcheck's SC2129 flags the repeated-redirect form.
+          # From: PR #354
           {
             printf 'sha=%s\n' "$(git rev-parse --short HEAD)"
             printf 'full_sha=%s\n' "$(git rev-parse HEAD)"
@@ -131,6 +139,7 @@ jobs:
       # reproduce the exact bytes that passed the self-test above; a
       # non-eligible run (pull_request, off-current_dev dispatch) skips
       # this to avoid burning transfer time and storage quota for nothing.
+      # From: PR #354
       - name: Save the proven image for publish
         if: steps.resolve.outputs.publish_eligible == 'true'
         run: docker save distcc-ng-e2e:selftest -o /tmp/distcc-ng-e2e.tar
@@ -145,6 +154,7 @@ jobs:
           # hand publish the previous attempt's tar tagged with this
           # attempt's built_sha, publishing an image never actually
           # self-tested this run.
+          # From: PR #354
           name: ${{ steps.resolve.outputs.artifact_name }}
           path: /tmp/distcc-ng-e2e.tar
           retention-days: 1
@@ -157,6 +167,7 @@ jobs:
   # without the explicit branch check, a manual dispatch from an old
   # feature branch's stale copy of this file could publish that branch's
   # Dockerfile to the moving :latest tag.
+  # From: PR #354
   publish:
     needs: build_and_selftest
     if: needs.build_and_selftest.outputs.publish_eligible == 'true'
@@ -172,6 +183,7 @@ jobs:
     # (master) and a current_dev push land in different groups and could
     # otherwise publish concurrently, letting a late-finishing scheduled
     # run overwrite :latest with older content.
+    # From: PR #354
     concurrency:
       group: e2e-image-build-publish
       cancel-in-progress: false
@@ -184,6 +196,7 @@ jobs:
       # build itself, which loads build_and_selftest's artifact instead of
       # rebuilding; full history keeps both the published and built
       # commits reachable regardless of how far apart they are.
+      # From: Issue #358, PR #366
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
@@ -202,6 +215,7 @@ jobs:
           # already-succeeded build_and_selftest, leaving this job's own
           # attempt number ahead of the one that uploaded the tar;
           # recomputing it here would request a name nothing produced.
+          # From: PR #354
           name: ${{ needs.build_and_selftest.outputs.artifact_name }}
           path: /tmp
 
@@ -229,6 +243,7 @@ jobs:
           # Why: It is tied to exactly what this run built and
           # self-tested, so it is always correct to publish regardless of
           # current_dev's tip by now.
+          # From: PR #354
           docker push "${IMAGE_BASE}:${BUILD_TAG}"
 
       # What: Guards the :latest move separately from the immutable-tag
@@ -260,6 +275,7 @@ jobs:
           # 404) is treated as "nothing published yet"; any other lookup
           # failure fails the step outright instead of silently letting a
           # stale queued run win the comparison while reporting success.
+          # From: Issue #358, PR #366
           PUBLISHED_SHA=""
           PUBLISHED_RUN_ID=0
           PUBLISHED_RUN_ATTEMPT=0
@@ -286,6 +302,7 @@ jobs:
           # content was pushed under more than one per-run tag; trusting
           # API return order instead of the actual maximum could compare
           # against a stale sibling and move :latest backward.
+          # From: Issue #358, PR #366
           while IFS= read -r t; do
             [ -n "${t}" ] || continue
             FIELDS="$(printf '%s' "${t}" | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $1, $3, $4}')"
@@ -311,6 +328,7 @@ jobs:
             # so a failing `git rev-parse` there (e.g. an ambiguous short
             # SHA) would silently read as "false" and leave :latest stale
             # while still reporting success.
+            # From: Issue #358, PR #366
             if ! PUBLISHED_FULL_SHA="$(git rev-parse "${PUBLISHED_SHA}")"; then
               echo "::error::Published tag's SHA (${PUBLISHED_SHA}) could not be resolved against current_dev's history fetched above -- refusing to treat an unresolvable published commit as \"not newer\" and silently leave :latest stale."
               exit 1
@@ -321,6 +339,7 @@ jobs:
               # recency.
               # Why: The mutable base image means the two builds' bytes
               # might still differ.
+              # From: Issue #358, PR #366
               if [ "${CURRENT_RUN_ID}" -gt "${PUBLISHED_RUN_ID}" ] || \
                  { [ "${CURRENT_RUN_ID}" -eq "${PUBLISHED_RUN_ID}" ] && [ "${CURRENT_RUN_ATTEMPT}" -ge "${PUBLISHED_RUN_ATTEMPT}" ]; }; then
                 SHOULD_MOVE=true
@@ -331,6 +350,7 @@ jobs:
               # Why: So a real error (an invalid object) is distinguished
               # from a genuine "not an ancestor" result, instead of both
               # reading as the same silent "false".
+              # From: Issue #358, PR #366
               set +e
               git merge-base --is-ancestor "${PUBLISHED_FULL_SHA}" "${BUILT_FULL_SHA}"
               ANCESTOR_STATUS=$?
@@ -340,6 +360,7 @@ jobs:
                 # published on current_dev.
                 # Why: Genuinely newer content, regardless of which run
                 # has the higher run_id.
+                # From: Issue #358, PR #366
                 SHOULD_MOVE=true
               elif [ "${ANCESTOR_STATUS}" -gt 1 ]; then
                 echo "::error::git merge-base --is-ancestor failed validating ${PUBLISHED_FULL_SHA} against ${BUILT_FULL_SHA} (exit ${ANCESTOR_STATUS}), not a plain \"not an ancestor\" result -- refusing to treat this as \"not newer\" and silently leave :latest stale."
@@ -357,6 +378,7 @@ jobs:
             # Why: AGENTS.md rule 31 governs unexpected problems, not an
             # intended skip like this one; the immutable tag pushed above
             # is still pullable either way.
+            # From: Issue #358, PR #366
             echo "::notice::this run's built commit (${BUILT_FULL_SHA}) is not newer than what :latest already points at (${PUBLISHED_SHA}, run ${PUBLISHED_RUN_ID} attempt ${PUBLISHED_RUN_ATTEMPT}); skipping the :latest move so it never regresses to an older or stale build."
           fi
 
