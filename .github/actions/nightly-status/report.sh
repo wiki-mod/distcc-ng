@@ -28,15 +28,18 @@ PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
 
 # What: Adds the standing issue to the project board via a separate
 # PROJECT_PAT-authenticated call, on every touch (create, comment, close),
-# skipping silently when PROJECT_PAT is unset (AGENTS.md rule 3).
+# warning (not failing) when PROJECT_PAT is unset (AGENTS.md rule 3).
 # Why: GH_TOKEN cannot write Projects v2 data and PROJECT_AUTOMATION_PAT's
 # project-only scope cannot mutate issues, so the two calls need separate
 # tokens; retrying on every touch self-heals a transient board-add failure,
-# since addProjectV2ItemById is idempotent.
+# since addProjectV2ItemById is idempotent. A silent skip would leave a
+# board-less standing issue with no signal that triage is incomplete,
+# which rule 3 requires this sub-check to surface, just not fail on.
 # From: PR #476
 add_to_project_board() {
   local issue_url="$1"
   if [ -z "${PROJECT_PAT}" ]; then
+    echo "::warning::PROJECT_PAT not configured; ${issue_url} was not added to the project board (AGENTS.md rule 3)."
     return 0
   fi
   if [ "${DRY_RUN}" = "true" ]; then
