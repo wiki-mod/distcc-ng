@@ -56,10 +56,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (not the rest of the workflows this PR touches). Every `From:`
   resolved via git blame against the actual introducing commit (PRs
   #86, #89, #349, #476; Issue #81, #263), not guessed or copied from a
-  neighboring block. Mechanical re-count after the sweep: 10 + 2 + 1 +
-  12 = 25 `# What:` blocks across the four files, 0 missing a `From:`
-  (per rule 78(c); a bare-prose sync comment in `report.sh` was the
-  last gap, since converted to What/Why/From).
+  neighboring block. The first mechanical re-count only checked
+  existing `# What:` blocks for a missing `From:`, which missed a
+  fully bare, untagged comment (`# Mondays 05:00 UTC.` in
+  master-heartbeat.yml -- removed per rule 41, since no genuine `Why:`
+  for that specific schedule time exists in PR #86's own record);
+  re-run with a block-aware check covering every comment (tagged or
+  not), the four files now hold 24 complete What/Why/From blocks and
+  0 bare/incomplete ones.
 
 ### Added
 
