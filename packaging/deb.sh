@@ -55,6 +55,22 @@ for deb in *.deb; do
   if ! grep -q '^Replaces:' "$work_dir/DEBIAN/control"; then
     printf 'Replaces: distcc\n' >> "$work_dir/DEBIAN/control"
   fi
+
+  # What: Renames usr/bin/pump to usr/bin/distcc-pump (and its man page)
+  #   when present in this .deb -- only the client subpackage carries it.
+  # Why: Debian's own real distcc-pump package does this exact rename in
+  #   its own packaging layer (debian/rules' execute_before_dh_install),
+  #   never in upstream's build system, to avoid a too-generic command
+  #   name in the global PATH; no compatibility symlink is shipped either.
+  # From: Issue #485
+  if [ -f "$work_dir/usr/bin/pump" ]; then
+    mv "$work_dir/usr/bin/pump" "$work_dir/usr/bin/distcc-pump"
+  fi
+  if [ -f "$work_dir/usr/share/man/man1/pump.1.gz" ]; then
+    mv "$work_dir/usr/share/man/man1/pump.1.gz" \
+       "$work_dir/usr/share/man/man1/distcc-pump.1.gz"
+  fi
+
   fakeroot dpkg-deb -b "$work_dir" "$deb"
   rm -rf "$work_dir"
 done

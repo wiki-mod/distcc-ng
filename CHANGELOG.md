@@ -11,6 +11,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
+  now shipped as `distcc-pump` in the `.deb` package and the
+  `distcc-ng-pump` Docker image, matching Debian's own real
+  `distcc-pump` package (verified against its actual `debian/rules`) --
+  a packaging-layer rename only, no upstream build-system change, and no
+  `pump` compatibility symlink, exactly mirroring Debian's own choice.
+  `packaging/RedHat/rpm.spec` is unaffected. Refs #485.
+
 ### Documentation
 
 - **`AGENTS.md`**: rule 78(c)'s file-wide self-check requirement allowed

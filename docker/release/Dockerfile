@@ -50,7 +50,15 @@ RUN ./autogen.sh && \
 # --record output, see Makefile.in's install-include-server target's own
 # comment) -- a naive `install -D` of the built files would skip that
 # wiring and produce a `pump` that can't find its include server.
-RUN make install DESTDIR=/out-pump
+# What: Renames the installed pump wrapper to distcc-pump in this image
+#   too, matching the .deb package's own rename (packaging/deb.sh).
+# Why: Debian's real distcc-pump package does this same rename, in its
+#   own packaging layer, never in upstream's build system -- this image
+#   is Debian-based, so it follows the same convention; no compatibility
+#   symlink is shipped, matching Debian's own choice.
+# From: Issue #485
+RUN make install DESTDIR=/out-pump && \
+    mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump
 
 FROM ${DEBIAN_IMAGE} AS runtime
 
