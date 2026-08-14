@@ -87,11 +87,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       # From: PR #291, Issue #264
       python3-dbg \
       # What: Reference toolchain sized to build a real, demanding C project.
-      # Why: Matches Samba's 51-package Debian build-dependency surface
-      #   (vs. Apache httpd's 20) to prove this image adequate for
-      #   large-C-project work, minus Samba's packaging-only/cross-compile
-      #   deps (debhelper-compat, dh-exec, jdupes, rpcsvc-proto, MinGW),
-      #   which this image's own `./configure && make` target never needs.
+      # Why: A representative subset of Samba's 51-package Debian
+      #   build-dependency surface (vs. Apache httpd's 20), to prove this
+      #   image adequate for large-C-project work -- deliberately not a
+      #   complete match, since this image's own `./configure && make`
+      #   target never needs Samba's packaging-only/cross-compile/Ceph
+      #   dependencies.
       # From: Issue #264
       libkrb5-dev \
       libldap2-dev \
