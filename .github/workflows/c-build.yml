@@ -652,8 +652,9 @@ jobs:
       issues: write
     steps:
       - uses: $/.github/actions/harden-runner
-      # What: Pins ref to current_dev on schedule, same as the other jobs
-      # in this file and nightly-publish.yml's own `report` job.
+      # What: Pins ref to current_dev directly (this job's own `if:`
+      #   above already restricts it to schedule events, so there is no
+      #   other case to fall back to).
       # Why: An unpinned checkout on `schedule` resolves to master, not
       # current_dev, and matters here specifically because `uses:
       # ./.github/actions/nightly-status` below is a local-path action
@@ -662,7 +663,7 @@ jobs:
       # From: PR #476
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+          ref: current_dev
       - name: Compute which specific job(s) failed
         id: failed_jobs
         if: always()

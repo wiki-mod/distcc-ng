@@ -51,10 +51,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   one a rule 62 violation (false factual claim), not a shortcut.
 - **`.github/workflows/master-heartbeat.yml`, `.github/actions/failed-jobs/action.yml`,
   `.github/actions/nightly-status/action.yml`, `.github/actions/nightly-status/report.sh`**:
-  full rule 38/40 sweep of these files' comments to What/Why/From,
-  triggered by this PR touching them. Every `From:` resolved via git
-  blame against the actual introducing commit (PRs #86, #89, #349,
-  #476; Issue #81, #263), not guessed or copied from a neighboring block.
+  rule 38/40 sweep of these four files' comments to What/Why/From,
+  triggered by this PR touching them, scoped to these four files only
+  (not the rest of the workflows this PR touches). Every `From:`
+  resolved via git blame against the actual introducing commit (PRs
+  #86, #89, #349, #476; Issue #81, #263), not guessed or copied from a
+  neighboring block. Mechanical re-count after the sweep: 10 + 2 + 1 +
+  12 = 25 `# What:` blocks across the four files, 0 missing a `From:`
+  (per rule 78(c); a bare-prose sync comment in `report.sh` was the
+  last gap, since converted to What/Why/From).
 
 ### Added
 

@@ -19,8 +19,10 @@ LABEL="${LABEL:-nightly-broken}"
 DRY_RUN="${DRY_RUN:-false}"
 FAILED_JOBS="${FAILED_JOBS:-}"
 PROJECT_PAT="${PROJECT_PAT:-}"
-# kept in sync with add-to-project.yml's own hardcoded project-url; update
-# both together if the org or board ever changes.
+# What: Default project owner/number for the board-add call.
+# Why: Kept in sync with add-to-project.yml's own hardcoded project-url;
+#   update both together if the org or board ever changes.
+# From: PR #476
 PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
 
@@ -144,6 +146,7 @@ fi
 # standing issue or opens one.
 # Why: `gh label create` erroring because the label already exists is
 # harmless and expected, since the label is optional tracking infra.
+# From: Issue #81, PR #89
 run gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
   --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
 
