@@ -183,12 +183,20 @@ ${detail}.")"
   # previews, not real ensure_bug_type/add_to_project_board calls, since
   # (see the next comment) there is no real issue number/URL yet to pass
   # them -- without these, dry-run on this specific branch could never
-  # surface a wiring bug in either mutation before a real run does.
+  # surface a wiring bug in either mutation before a real run does. The
+  # board-add preview branches on PROJECT_PAT the same way
+  # add_to_project_board itself does, so an unset PAT previews the same
+  # warning a real run would emit instead of a mutation that wouldn't
+  # actually happen.
   # From: PR #476
   if [ "${DRY_RUN}" = "true" ]; then
     echo "${new_issue_url}"
     echo "DRY_RUN would run: assign Bug type to the newly created issue"
-    echo "DRY_RUN would run: GH_TOKEN=*** gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url <newly created issue URL>"
+    if [ -z "${PROJECT_PAT}" ]; then
+      echo "::warning::PROJECT_PAT not configured; the newly created issue would not be added to the project board (AGENTS.md rule 3)."
+    else
+      echo "DRY_RUN would run: GH_TOKEN=*** gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url <newly created issue URL>"
+    fi
   fi
   if [ "${DRY_RUN}" != "true" ]; then
     ensure_bug_type "${new_issue_url##*/}"
