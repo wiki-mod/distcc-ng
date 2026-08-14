@@ -46,6 +46,7 @@ add_to_project_board() {
 # What: Echoes a mutating command instead of running it when DRY_RUN=true.
 # Why: Lets the branch logic be exercised locally without touching real
 # issues/labels.
+# From: Issue #81, PR #89
 run() {
   if [ "${DRY_RUN}" = "true" ]; then
     printf 'DRY_RUN would run:'; printf ' %q' "$@"; printf '\n'
@@ -113,6 +114,7 @@ ensure_bug_type() {
 # What: Finds the oldest open standing issue for this label, if any.
 # Why: --jq yields the number or nothing directly, avoiding a `grep -q`
 # pipe that would trip the SIGPIPE-under-pipefail trap.
+# From: Issue #81, PR #89
 existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
   --json number --jq 'sort_by(.number) | .[0].number // empty')"
 

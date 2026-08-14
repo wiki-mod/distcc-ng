@@ -1,3 +1,9 @@
+# What: Composite action wrapping the failed-job-name filter shared by
+#   every scheduled CI reporter.
+# Why: Was three separately copy-pasted shell implementations
+#   (c-build.yml, nightly-publish.yml, e2e-image-build.yml) before this;
+#   centralizing avoids the three copies silently drifting apart.
+# From: PR #476
 name: 'Compute failed job list'
 description: 'Filters a name=result job list down to the ones that actually failed or were cancelled.'
 

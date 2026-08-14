@@ -11,6 +11,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`.github/workflows/master-heartbeat.yml`, `.github/actions/failed-jobs/action.yml`,
+  `.github/actions/nightly-status/action.yml`, `.github/actions/nightly-status/report.sh`**:
+  full rule 38/40 sweep of these files' comments to What/Why/From,
+  triggered by this PR touching them. Every `From:` resolved via git
+  blame against the actual introducing commit (PRs #86, #89, #349,
+  #476; Issue #81, #263), not guessed or copied from a neighboring block.
+
 ### Added
 
 - **`.github/actions/failed-jobs/`**: new composite action centralizing the

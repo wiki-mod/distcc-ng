@@ -1,19 +1,14 @@
 name: Master weekly distributed heartbeat
 
-# Weekly real-world validation for master: builds ccache's own source (a real
-# third-party C/C++ CMake project, chosen over a full kernel build for CI cost
-# while staying genuinely representative) fully distributed across the same
-# two-container distccd/distcc harness the nightly e2e uses. It runs on a fixed
-# cadence independent of whether master changed, because master moves only on
-# explicit promotion -- this is the standing "does distribution still work for
-# a real external project" signal in between those promotions.
-#
-# Per-push master health (build + make check + the distributed_e2e job) is
-# already covered by c-build.yml, which triggers on push and now includes that
-# e2e job; this workflow adds only the heavier external-project heartbeat.
-#
-# schedule and workflow_dispatch are honored only from the workflow file on the
-# default branch (master), so this has no effect until it is promoted there.
+# What: Weekly real-world validation for master -- builds ccache's own
+#   source fully distributed across the same two-container harness the
+#   nightly e2e uses, on a fixed cadence independent of whether master
+#   changed.
+# Why: Per-push health is already covered by c-build.yml; this adds only
+#   the heavier external-project heartbeat, and (like any schedule/
+#   workflow_dispatch trigger) has no effect until promoted to the
+#   default branch.
+# From: Issue #81, PR #86
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,67 +24,75 @@ permissions:
   contents: read
 
 env:
-  # Single source of truth for the pinned ccache tag both the distributed
-  # build (client-heartbeat.sh) and the diagnostic control build
-  # (control-build.sh) must build, so the two can never silently drift onto
-  # different revisions of ccache.
+  # What: Single source of truth for the pinned ccache tag.
+  # Why: Both the distributed build (client-heartbeat.sh) and the
+  #   diagnostic control build (control-build.sh) must build the exact
+  #   same revision, or a mismatch between them would look like a real
+  #   distcc-ng bug.
+  # From: PR #349
   CCACHE_HEARTBEAT_TAG: v4.13.6
 
 jobs:
   ccache_heartbeat:
     runs-on: ubuntu-latest
-    # Raised from the original 40 to give E2E_MAX_ATTEMPTS: "2" below room for
-    # a full second attempt (image rebuild is mostly docker-layer-cache hits,
-    # but the distributed ccache build itself is not) -- a job timeout killing
-    # a retry mid-flight would silently discard the "not retrying further,
-    # this is a real failure" exit path and read as a worse-classified failure
-    # than today's single-attempt job, defeating the point of retrying at all.
+    # What: Raised from the original 40, to give E2E_MAX_ATTEMPTS: "2"
+    #   below room for a full second attempt.
+    # Why: A timeout killing a retry mid-flight would silently discard
+    #   the "real failure, not retrying further" exit path, misclassifying
+    #   it as a worse failure than a single-attempt job would show.
+    # From: PR #349
     timeout-minutes: 75
     steps:
       - uses: $/.github/actions/harden-runner
-      # No ref override: this validates master, and schedule/dispatch already
-      # evaluate from master (the default branch).
+      # What: No ref override on checkout.
+      # Why: This validates master, and schedule/dispatch already
+      #   evaluate from master (the default branch).
+      # From: PR #86
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # docker and the compose plugin are preinstalled on ubuntu-latest. The
-      # same run-e2e.sh orchestrator and daemon setup as the nightly job, with
-      # the client workload swapped to the ccache build via E2E_CLIENT_SCRIPT.
+      # What: Builds ccache distributed across the two-container harness
+      #   via run-e2e.sh, the same orchestrator as the nightly e2e.
+      # Why: docker/compose is already preinstalled on ubuntu-latest, so
+      #   no setup step is needed; only the client workload changes, via
+      #   E2E_CLIENT_SCRIPT.
+      # From: PR #86
       - name: Build ccache distributed across the two-container harness
         env:
           E2E_CLIENT_SCRIPT: test/e2e/client-heartbeat.sh
-          # A floor that proves distribution without spuriously failing a
-          # healthy build: ccache has well over this many translation units,
-          # so a genuine distributed build clears 20 easily, while a silently
-          # non-distributing build (launcher ignored) reports 0 and goes red.
+          # What: A floor proving distribution actually happened.
+          # Why: ccache has well over 20 translation units, so a genuine
+          #   distributed build clears it easily, while a silently
+          #   non-distributing build (launcher ignored) reports 0 and fails.
+          # From: PR #86
           E2E_MIN_REMOTE_JOBS: "20"
           E2E_SCENARIO: ccache weekly heartbeat
-          # Absorbs a one-off network/container flake in this heavier weekly
-          # build without hiding a real, reproducible distcc bug -- run-e2e.sh
-          # only stops retrying early on success, so a failure that recurs on
-          # every attempt still exits non-zero and still goes red here. Kept
-          # at 2 (one retry), not higher, to stay inside timeout-minutes above
-          # with real margin.
+          # What: One retry (2 total attempts) for this heavier weekly build.
+          # Why: Absorbs a one-off network/container flake without hiding a
+          #   real, reproducible bug -- run-e2e.sh only stops retrying early
+          #   on success, so a recurring failure still fails; kept at 2 to
+          #   stay inside timeout-minutes above with margin.
+          # From: PR #349
           E2E_MAX_ATTEMPTS: "2"
         run: bash test/e2e/run-e2e.sh
 
-  # Diagnostic only: builds the exact same pinned ccache source with this
-  # image's plain compiler, entirely independent of distcc/distccd (no
-  # daemon, no network hop, no launcher). Never gates ccache_heartbeat's own
-  # result -- the report job below keys exclusively off
-  # needs.ccache_heartbeat.result, this job is not in its needs: at all -- it
-  # only helps classify a same-run ccache_heartbeat failure as a real
-  # distcc-ng bug versus a compiler/toolchain/ccache-version problem (see
-  # issue #263, where exactly that ambiguity took real effort to untangle
-  # from the raw distccd trace log alone).
+  # What: Diagnostic-only control build: the same pinned ccache source
+  #   with a plain compiler, entirely independent of distcc/distccd.
+  # Why: Never gates ccache_heartbeat's own result (not in its needs:);
+  #   only helps classify a same-run heartbeat failure as a real
+  #   distcc-ng bug vs. a compiler/toolchain/ccache-version problem,
+  #   which previously took real effort to untangle from the raw trace
+  #   log alone.
+  # From: Issue #263, PR #349
   ccache_control_build:
     name: Control build (plain compiler, no distcc) -- diagnostic only
     runs-on: ubuntu-latest
-    # This job gets a fresh runner (no image-layer cache carried over from
-    # ccache_heartbeat's own runner) and still has to build the e2e image
-    # from scratch plus a full ccache build, so it is given the same order of
-    # budget as the heartbeat job itself rather than a smaller one -- a
-    # timeout kill here would skip the always()-summary step and read as a
-    # misclassified "plain compiler can't build ccache", exactly the outcome
-    # this job exists to avoid.
+    # What: Same order of timeout budget as the heartbeat job itself, not
+    #   a smaller one.
+    # Why: This job gets a fresh runner (no shared image-layer cache) and
+    #   still builds the e2e image plus a full ccache build from scratch;
+    #   a timeout kill here would skip the always()-summary step and
+    #   misclassify as exactly the ambiguous outcome this job exists to
+    #   resolve.
+    # From: PR #349
     timeout-minutes: 45
     steps:
       - uses: $/.github/actions/harden-runner
@@ -118,9 +121,11 @@ jobs:
         if: steps.control_build.outcome != 'success'
         run: exit 1
 
-  # Files/updates the standing nightly-broken issue on failure, closes it on
-  # success. Separate job with if: always() so it reports even when the
-  # heartbeat job itself failed.
+  # What: Files/updates the standing nightly-broken issue on failure,
+  #   closes it on success.
+  # Why: Separate job with if: always() so it reports even when the
+  #   heartbeat job itself failed.
+  # From: Issue #81, PR #89
   report:
     needs: [ccache_heartbeat]
     if: ${{ always() && !cancelled() }}
