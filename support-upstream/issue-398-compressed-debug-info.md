@@ -1,6 +1,7 @@
 # `dcc_fix_debug_info()` silently fails to rewrite compressed ELF debug sections
 
 **Fork issue:** [wiki-mod/distcc-ng#398](https://github.com/wiki-mod/distcc-ng/issues/398)
+**Fixed by:** [wiki-mod/distcc-ng#487](https://github.com/wiki-mod/distcc-ng/pull/487)
 **Upstream location:** `src/fix_debug_info.c`, functions `update_section`/`replace_string`/`dcc_fix_debug_info`
 **Checked against upstream commit:** [`1ff5357c`](https://github.com/distcc/distcc/commit/1ff5357cb2dd570501d07114aceb90260059ad3f) (`master`, checked 2026-08-14) -- the same commit that added `.debug_line_str` handling for DWARF 5's `comp_dir` relocation; this fork's copy of the file is otherwise byte-identical to upstream's at this commit (`replace_string`/`update_section` at the same line numbers, 236/362).
 **Searched upstream issues/PRs for:** `SHF_COMPRESSED compressed debug`, `fix_debug_info compressed`, `compressed debug section`, `gz=zlib gdb`, `elf_compress`, `compress-debug-sections` -- no matching report or fix attempt found, open or closed.
@@ -31,7 +32,7 @@ on a longer, more realistic one -- e.g. a CI runner's deeper workspace
 path, or (in `distccd`'s own case) its server-side temp-directory path
 concatenated with the client's own working directory.
 
-## Upstream code (unchanged as of the commit above)
+## Upstream code (unchanged as of the commit above, upstream)
 
 ```c
 static int replace_string(void *base, size_t size,
@@ -60,22 +61,45 @@ static int replace_string(void *base, size_t size,
 No check anywhere in `update_section()`/`FindElfSection()` for the
 section's `sh_flags & SHF_COMPRESSED` bit before running this scan.
 
-## This fork's fix
+## Fixed code (changed code as of the commit from distcc-ng fork)
 
 Adds an optional `libelf` (elfutils) code path, preferred over the raw
-`<elf.h>` one when available, that decompresses the section via
-`elf_compress(scn, 0, 0)` before the same `replace_string()` scan runs
-unchanged, then recompresses via `elf_compress(scn, ELFCOMPRESS_ZLIB, 0)`
-and writes the file back via `elf_update()`, which recomputes the ELF
-layout itself (a same-length decompressed edit can still change the
-*compressed* size). `configure.ac` gains a `--with-libelf` probe
-(`PKG_CHECK_MODULES` plus a real `AC_CHECK_FUNCS([elf_compress
-elf_compress_gnu])` probe, not an assumed minimum elfutils version) with
-graceful degradation to the existing raw path -- never a hard configure
-failure -- when a new-enough `libelf` isn't present, matching this fork's
-existing optional-dependency pattern for `zstd`/`libseccomp`.
+`<elf.h>` one when available, that decompresses the section before the
+same `replace_string()` scan runs unchanged, then recompresses it and
+writes the file back via `elf_update()`, which recomputes the ELF layout
+itself (a same-length decompressed edit can still change the
+*compressed* size):
 
-## Verification
+```c
+was_compressed = (shdr.sh_flags & SHF_COMPRESSED) != 0;
+if (was_compressed && elf_compress(scn, 0, 0) < 0) {
+  /* trace + return 0, leaving this section unrewritten */
+}
+
+data = elf_getdata(scn, NULL);
+count = replace_string(data->d_buf, data->d_size, search, replace);
+if (count > 0) {
+  elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+}
+
+if (was_compressed) {
+  int rc = elf_compress(scn, ELFCOMPRESS_ZLIB, 0);
+  if (rc == 0) {
+    rc = elf_compress(scn, ELFCOMPRESS_ZLIB, ELF_CHF_FORCE);
+  }
+  /* rc < 0: abort without calling elf_update(), leaving the file
+   * untouched rather than half-edited */
+}
+```
+
+`configure.ac` gains a `--with-libelf` probe (`PKG_CHECK_MODULES` plus a
+real `AC_CHECK_FUNCS([elf_compress elf_compress_gnu])` probe, not an
+assumed minimum elfutils version) with graceful degradation to the
+existing raw path -- never a hard configure failure -- when a new-enough
+`libelf` isn't present, matching this fork's existing optional-dependency
+pattern for `zstd`/`libseccomp`.
+
+## Empirical verification
 
 Built and ran the project's own `h_fix_debug_info` `TEST`-mode harness
 against a real `gcc -gz=zlib -g -c` object with a long, realistic
