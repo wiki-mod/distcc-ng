@@ -354,14 +354,11 @@ AC_CHECK_HEADERS([float.h mcheck.h alloca.h sys/mman.h sys/loadavg.h])
 AC_CHECK_HEADERS([elf.h])
 AC_CHECK_HEADERS([fnmatch.h])
 
-dnl dcc_fix_debug_info()'s current <elf.h>-based raw byte search-and-replace
-dnl (src/fix_debug_info.c) cannot rewrite a compressed (SHF_COMPRESSED)
-dnl debug section -- libelf's (elfutils) elf_compress()/elf_compress_gnu()
-dnl decompress/patch/recompress round-trip fixes this (issue #398).
-dnl Optional, matching the zstd/seccomp pattern above: a toolchain without
-dnl a libelf new enough to declare elf_compress falls back to today's
-dnl behavior (a compressed section is traced and left unrewritten, not a
-dnl hard configure failure -- see doc/compatibility-policy.md).
+dnl What: --with-libelf enables a libelf-based fix for compressed ELF
+dnl   debug-info sections in dcc_fix_debug_info() (src/fix_debug_info.c).
+dnl Why: Optional, matching zstd/seccomp above -- a toolchain without
+dnl   libelf falls back to today's raw <elf.h> behavior, not a failure.
+dnl From: Issue #398
 AC_ARG_WITH(libelf,
         AS_HELP_STRING([--with-libelf], [correctly rewrite compressed ELF debug-info sections via libelf (elfutils)]))
 
@@ -376,17 +373,19 @@ if test x"$with_libelf" != xno; then
         CPPFLAGS="$CPPFLAGS $LIBELF_CFLAGS"
         LIBS="$LIBS $LIBELF_LIBS"
         AC_CHECK_HEADERS([libelf.h gelf.h], [], [have_libelf_pkg=no])
-        dnl elf_compress()/elf_compress_gnu() are elfutils-specific
-        dnl additions, absent from older elfutils and from legacy
-        dnl (non-elfutils) libelf implementations -- checked directly as
-        dnl a real function probe rather than assumed from a version
-        dnl number, since no minimum elfutils version for their
-        dnl introduction has been verified against elfutils' own history.
+        dnl What: Probes for elf_compress/elf_compress_gnu directly.
+        dnl Why: Both are elfutils-specific; no minimum version is
+        dnl   verified, so a real function check is used, not a guess.
+        dnl From: Issue #398
         AC_CHECK_FUNCS([elf_compress elf_compress_gnu], [], [have_libelf_pkg=no])
         CPPFLAGS="$save_CPPFLAGS"
         LIBS="$save_LIBS"
     fi
 
+    dnl What: Three outcomes -- fix enabled, hard error, or a graceful
+    dnl   degrade notice.
+    dnl Why: --with-libelf=yes must fail loudly if unmet; unset must not.
+    dnl From: Issue #398
     if test x"$have_libelf_pkg" = xyes; then
         AC_DEFINE([HAVE_LIBELF], [1], [Define to 1 if a libelf providing elf_compress is available for the compressed-ELF debug-info fix.])
         CFLAGS="$CFLAGS $LIBELF_CFLAGS"

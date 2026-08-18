@@ -120,6 +120,11 @@ static int FindElfSection(const void *elf_mapped_base, off_t elf_size,
    * TODO(fergus):
    * handle object files with different endianness than the host.
    */
+  /* What: TODO above is still real, scoped to this raw path only.
+   * Why: libelf's gelf_xlatetom() (verified in gelf.h) already
+   *   translates GElf_Shdr fields for the HAVE_LIBELF path below.
+   * From: Issue #398
+   */
 #if WORDS_BIGENDIAN
   if (elf32_header->e_ident[EI_DATA] != ELFDATA2MSB) {
     rs_trace("sorry, not fixing debug info: "
