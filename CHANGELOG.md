@@ -13,6 +13,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`.github/dependabot.yml`**: every update block now sets `labels:
+  [dependencies, no-changelog-needed]`, so `require_changelog` no longer
+  blocks a Dependabot PR on a missing `CHANGELOG.md` entry -- a dependency
+  version bump has no user-visible effect on distcc-ng itself. Uses
+  Dependabot's own native `labels` option instead of new workflow logic.
+
 - **`docker/verify/Dockerfile`**: the buildtools verification image now
   installs `libelf-dev` (issue #398), providing `libelf.h`/`gelf.h`
   programming headers for `elfutils`' libelf -- `elf.h` (already present

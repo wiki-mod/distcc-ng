@@ -31,6 +31,14 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    # What: Applies both Dependabot's own default label and the
+    #   changelog-check opt-out to every PR from this update block.
+    # Why: The `labels` key replaces Dependabot's default labels rather
+    #   than adding to them, so `dependencies` must be re-listed explicitly
+    #   to keep it; a version bump here has no user-visible effect on
+    #   distcc-ng itself, so a CHANGELOG.md entry is never warranted.
+    # From: PR #492
+    labels: [dependencies, no-changelog-needed]
   - package-ecosystem: github-actions
     directory: /
     target-branch: current_dev
@@ -39,6 +47,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    labels: [dependencies, no-changelog-needed]
 
   # Docker base images (every Dockerfile below already pins a base image
   # digest; Dependabot keeps that pinned digest current instead of leaving
@@ -48,22 +57,26 @@ updates:
     target-branch: master
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
   - package-ecosystem: docker
     directory: /docker/release
     target-branch: current_dev
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
 
   - package-ecosystem: docker
     directory: /docker/verify
     target-branch: master
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
   - package-ecosystem: docker
     directory: /docker/verify
     target-branch: current_dev
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
 
   # test/e2e/Dockerfile and .clusterfuzzlite/Dockerfile were pinned to a
   # digest (issue #267, Scorecard PinnedDependenciesID) on 2026-07-30 --
@@ -78,19 +91,23 @@ updates:
     target-branch: master
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
   - package-ecosystem: docker
     directory: /test/e2e
     target-branch: current_dev
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
 
   - package-ecosystem: docker
     directory: /.clusterfuzzlite
     target-branch: master
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
   - package-ecosystem: docker
     directory: /.clusterfuzzlite
     target-branch: current_dev
     schedule:
       interval: weekly
+    labels: [dependencies, no-changelog-needed]
