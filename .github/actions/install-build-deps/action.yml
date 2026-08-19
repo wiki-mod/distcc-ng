@@ -14,6 +14,12 @@ description: >-
   through ConorMacBride/install-package unchanged.
 
 inputs:
+  # What: The default apt list includes libelf-dev.
+  # Why: Without it, configure's --with-libelf probe silently falls back
+  #   to the pre-fix raw <elf.h> path, so make check's
+  #   GdbCompressedDebugInfo_Case would exercise the still-broken
+  #   behavior instead of the actual fix.
+  # From: Issue #398, PR #487
   apt:
     description: >-
       Apt package list; defaults to make_check's own list so every existing
