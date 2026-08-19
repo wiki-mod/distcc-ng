@@ -22,15 +22,15 @@ on:
       - current_dev
       - master
   # What: Explicit types (GitHub's default omits ready_for_review).
-  # Why: A PR opened as a draft and never pushed to again before merge --
-  # the normal shape of a release PR (doc/release-versioning.md step 2a)
-  # -- can never emit `opened` (suppressed while draft) or `synchronize`
-  # (no later push), so `ready_for_review` is the only pull_request event
-  # it can ever emit; empirically confirmed on release PR #461 (zero
-  # pull_request-event runs of any kind existed until ready_for_review,
-  # this repo's own run history, not documented GitHub platform
-  # behavior -- see issue #460 Finding 4 for the full evidence).
-  # From: Issue #460, PR #461, PR #468
+  # Why: GitHub does not run pull_request-triggered workflows while a PR
+  # has a real merge conflict; release PR #461 had one against master's
+  # stale base (105 commits behind current_dev), so no pull_request event
+  # ran for its whole ~10-hour draft window. The conflict was cleared by a
+  # separate PR merging into master, not by a push to #461 itself, so no
+  # synchronize event followed -- ready_for_review is the only event such
+  # a PR can still emit once no more commits are coming. See issue #460
+  # Finding 4 for the full reconstruction.
+  # From: Issue #460, PR #461, PR #463, PR #468
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # What: Lets a branch's build health be checked on demand.
