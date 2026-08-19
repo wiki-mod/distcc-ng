@@ -5,7 +5,13 @@ description: >-
   and package-release.yml all needed the exact same list kept in sync by
   hand. A duplicated dependency list drifts silently: a package added for a
   new build requirement in one file and not the other produces a failure
-  only in the workflow nobody edited.
+  only in the workflow nobody edited. The apt path (issue #493) retries
+  through a bounded per-attempt timeout instead of ConorMacBride/
+  install-package's single, unretried `apt update` -- GitHub-hosted
+  ubuntu-latest's default mirror has twice hung indefinitely and burned a
+  whole job timeout with nothing to show for it. The brew path (macOS
+  matrix legs, only c-build.yml uses it) is unaffected and still goes
+  through ConorMacBride/install-package unchanged.
 
 inputs:
   brew:
@@ -18,13 +24,45 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
-      with:
-        # What: apt's package list includes libelf-dev.
+    # What: Installs the shared apt package list through a bounded retry
+    #   loop (3 attempts, 2 minutes each) instead of a single unretried
+    #   `apt update`.
+    # Why: ConorMacBride/install-package (used below for brew) runs `sudo
+    #   apt update` as one of its own composite-action steps, which can't
+    #   be wrapped individually -- replacing the apt path with a plain
+    #   shell equivalent is what makes it retryable at all. GitHub-hosted
+    #   ubuntu-latest's default azure.archive.ubuntu.com mirror has hung
+    #   indefinitely twice (issue #493), each time consuming the entire
+    #   job timeout for zero retries; a healthy run takes well under a
+    #   minute, so 3x2 worst-case minutes leaves the smallest consumer job
+    #   (c-build.yml's 15-minute make_check) ample time for the actual
+    #   build even if every attempt times out.
+    # From: Issue #493
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        # What: The package list includes libelf-dev.
         # Why: Without it, configure's --with-libelf probe silently falls
         #   back to the pre-fix raw <elf.h> path, so make check's
         #   GdbCompressedDebugInfo_Case would exercise the still-broken
-        #   behavior on this leg instead of the actual fix (issue #398).
-        # From: PR #487
-        apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev
+        #   behavior on this leg instead of the actual fix.
+        # From: Issue #398, PR #487
+        packages="clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
+        max_attempts=3
+        attempt=1
+        while true; do
+          if timeout 2m sudo bash -c "apt-get update && apt-get install -y $packages"; then
+            exit 0
+          fi
+          if [ "$attempt" -ge "$max_attempts" ]; then
+            echo "apt update/install did not succeed after $max_attempts attempts" >&2
+            exit 1
+          fi
+          echo "apt update/install attempt $attempt failed or timed out, retrying" >&2
+          attempt=$((attempt + 1))
+          sleep 10
+        done
+    - if: runner.os == 'macOS'
+      uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      with:
         brew: ${{ inputs.brew }}
