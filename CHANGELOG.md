@@ -92,7 +92,7 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 - **`.github/PULL_REQUEST_TEMPLATE/create_and_publish_release.md`,
   `doc/release-checklist.md`**: redesigned per issue #460 Finding 5 --
-  every checklist item now carries a stable `REL-*` ID (38 total),
+  every checklist item now carries a stable `REL-*` ID (40 total),
   cross-referenced identically between both files; the template's
   status vocabulary gains `Blocked` alongside `Pending`/`Passed`/`Failed`/
   `N/A`; broad one-line checks ("container image labels match",

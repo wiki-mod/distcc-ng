@@ -132,16 +132,19 @@ exercises them, rather than relying on that rule being remembered unprompted.
       `doc/verification-checklist.md`'s 9 categories, the honest answer was
       no — only this document had been worked through in full, the
       per-commit sweep had only been spot-checked).
-- [ ] **`REL-PRECUT-10`** — `master`'s tip is not so far behind
-      `current_dev` that the release PR (`release/X.Y.Z-NG` → `master`)
-      would need a real merge to land — checked via `git merge-base
-      --is-ancestor <master-tip> <release-branch-head>`. If `master` isn't
-      an ancestor, real content drift exists between the two; per issue
-      #460 Finding 4, this is the leading (though not fully confirmed)
-      explanation for why the release PR's own `pull_request`-triggered CI
-      can go silent for its entire review window. If it isn't an ancestor,
-      resolve `master`'s staleness (e.g. the promotion-PR pattern PR #463
-      used) before relying on the release PR's own CI as evidence.
+- [ ] **`REL-PRECUT-10`** — `master` has no commits of its own that aren't
+      already on the release branch — i.e. `master`'s tip is an ancestor
+      of the release branch's head (`git merge-base --is-ancestor
+      <master-tip> <release-branch-head>`). How far behind `master` is in
+      commit count doesn't matter; a single independent commit on
+      `master` (a direct-to-master Dependabot merge, a one-off CI fix) is
+      enough to break the ancestor relationship regardless of lag. Per
+      issue #460 Finding 4, this is the leading (though not fully
+      confirmed) explanation for why a release PR's own
+      `pull_request`-triggered CI can go silent for its entire review
+      window. If `master` isn't an ancestor, resolve it (e.g. the
+      promotion-PR pattern PR #463 used) before relying on the release
+      PR's own CI as evidence.
 
 ## Artifact verification — real behavior, not a build matrix
 

@@ -55,7 +55,7 @@ Allowed status values: `Pending`, `Passed`, `Failed`, `Blocked`, `N/A`.
 | REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` | Pending | | | |
 | REL-PRECUT-08 | No unreviewed drift beyond the release branch's stated expected relationship to `current_dev` | Pending | | | |
 | REL-PRECUT-09 | Every commit/PR since the previous tag classified against `doc/verification-checklist.md`'s 9 categories, with real evidence for every touched category | Pending | | | |
-| REL-PRECUT-10 | `master`'s tip is not so far behind `current_dev` that this release PR needs a real merge to land | Pending | | | |
+| REL-PRECUT-10 | `master` has no commits of its own not already on the release branch (`master`'s tip is an ancestor of the release-branch head) | Pending | | | |
 | REL-ART-01a | Container image labels match published image — `distcc-ng` | Pending | | | |
 | REL-ART-01b | Container image labels match published image — `distcc-ng-pump` | Pending | | | |
 | REL-ART-01c | Container image labels match published image — `distcc-ng-nightly` | Pending | | | |
