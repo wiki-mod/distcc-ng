@@ -625,7 +625,7 @@ IncludeServerAlive() {
 # contain real rows, a genuine "our pid isn't in there" result is trusted
 # as a real rejection.
 #
-# `-A` is requested first (issue #401 finding 1): a plain `ps -o pid,args`
+# `-A` is requested first: a plain `ps -o pid,args`
 # with no selection flag can silently omit a process with no controlling
 # terminal on BSD/macOS ps -- confirmed live on a real macOS-latest GitHub
 # Actions runner (not a PTY simulation): a backgrounded, tty-less child
