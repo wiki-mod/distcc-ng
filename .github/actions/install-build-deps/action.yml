@@ -14,6 +14,14 @@ description: >-
   through ConorMacBride/install-package unchanged.
 
 inputs:
+  apt:
+    description: >-
+      Apt package list; defaults to make_check's own list so every existing
+      caller keeps its current behavior unchanged.
+    required: false
+    default: >-
+      clang libavahi-client-dev libpopt-dev gdb python3-dev
+      python3-setuptools ccache libzstd-dev libelf-dev
   brew:
     description: >-
       Optional Homebrew package list, passed through unchanged for macOS
@@ -24,32 +32,29 @@ inputs:
 runs:
   using: composite
   steps:
-    # What: Installs the shared apt package list through a bounded retry
+    # What: Installs the apt input's package list through a bounded retry
     #   loop (2 attempts, 3 minutes each, sudo wrapping timeout) instead
     #   of a single unretried `apt update`.
     # Why: GitHub-hosted ubuntu-latest's default azure.archive.ubuntu.com
-    #   mirror has hung indefinitely twice, each of those two times
-    #   consuming the entire job timeout with zero retry; 2x3 worst-case
-    #   minutes still leaves c-build.yml's 15-minute make_check room for
-    #   the actual build. `sudo` must wrap `timeout`, not the reverse: the
-    #   reverse ordering leaves a killed attempt's `apt-get` running as an
-    #   orphan holding /var/lib/apt/lists/lock, breaking every later
-    #   attempt.
-    # From: Issue #493
+    #   mirror has hung indefinitely twice, each time consuming the whole
+    #   job timeout with zero retry; 2x3 worst-case minutes still leaves
+    #   c-build.yml's 15-minute make_check room for the actual build.
+    #   `sudo` must wrap `timeout`, not the reverse: the reverse ordering
+    #   leaves a killed attempt's `apt-get` running as an orphan holding
+    #   /var/lib/apt/lists/lock, breaking every later attempt. The
+    #   package list comes from the apt input (not hardcoded here) so
+    #   callers with a different build under test can override it without
+    #   duplicating this step.
+    # From: Issue #493, Issue #479
     - if: runner.os == 'Linux'
       shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.apt }}
       run: |
-        # What: The package list includes libelf-dev.
-        # Why: Without it, configure's --with-libelf probe silently falls
-        #   back to the pre-fix raw <elf.h> path, so make check's
-        #   GdbCompressedDebugInfo_Case would exercise the still-broken
-        #   behavior on this leg instead of the actual fix.
-        # From: Issue #398, PR #487
-        packages="clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
         max_attempts=2
         attempt=1
         while true; do
-          if sudo timeout -k 10s 3m bash -c "apt-get update && apt-get install -y $packages"; then
+          if sudo timeout -k 10s 3m bash -c "apt-get update && apt-get install -y $APT_PACKAGES"; then
             exit 0
           fi
           if [ "$attempt" -ge "$max_attempts" ]; then
