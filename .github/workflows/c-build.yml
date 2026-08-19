@@ -22,11 +22,15 @@ on:
       - current_dev
       - master
   # What: Explicit types (GitHub's default omits ready_for_review).
-  # Why: A PR that never got an initial pull_request-event run for its
-  # `opened` activity (confirmed live on release PR #461, root cause not
-  # established) gets one real chance to self-heal when later marked
-  # ready for review, instead of requiring a manual workflow_dispatch.
-  # From: PR #461
+  # Why: A PR opened as a draft and never pushed to again before merge --
+  # the normal shape of a release PR (doc/release-versioning.md step 2a)
+  # -- can never emit `opened` (suppressed while draft) or `synchronize`
+  # (no later push), so `ready_for_review` is the only pull_request event
+  # it can ever emit; empirically confirmed on release PR #461 (zero
+  # pull_request-event runs of any kind existed until ready_for_review,
+  # this repo's own run history, not documented GitHub platform
+  # behavior -- see issue #460 Finding 4 for the full evidence).
+  # From: Issue #460, PR #461, PR #468
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # What: Lets a branch's build health be checked on demand.
