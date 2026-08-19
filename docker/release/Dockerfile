@@ -15,6 +15,10 @@ LABEL org.opencontainers.image.title="distcc-ng builder" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
 
+# What: Package list adds libelf-dev.
+# Why: Enables configure's --with-libelf probe; without it distccd
+#   silently keeps the pre-fix, compressed-debug-info bug.
+# From: Issue #398, PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
@@ -23,6 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       automake \
       build-essential \
       ccache \
+      libelf-dev \
       libpopt-dev \
       libseccomp-dev \
       libzstd-dev \
@@ -41,14 +46,10 @@ RUN ./autogen.sh && \
     install -D lsdistcc /out/usr/local/bin/lsdistcc && \
     install -D distccmon-text /out/usr/local/bin/distccmon-text
 
-# What: Builds the pump-mode output tree via `make install` (same
-#   compiled objects as above) and renames the installed `pump` wrapper
-#   to `distcc-pump`.
-# Why: `make install`, not a manual file copy, is required because
-#   pump's install step embeds the include-server's install path into
-#   the wrapper via setup.py's --record output, which a manual copy
-#   would skip; the rename afterward matches Debian's own real
-#   distcc-pump package, done in this same packaging layer.
+# What: `make install`, then renames the installed `pump` wrapper to
+#   `distcc-pump`.
+# Why: `make install` (not a manual copy) embeds the include-server's
+#   path into the wrapper; the rename matches Debian's real package.
 # From: Issue #181, Issue #485
 RUN make install DESTDIR=/out-pump && \
     mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump
@@ -66,11 +67,17 @@ LABEL org.opencontainers.image.title="distcc-ng" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
 
+# What: Package list adds libelf1, the runtime counterpart to
+#   libelf-dev above.
+# Why: distccd links against it when built; without libelf1 here the
+#   binary copied in below fails to start (missing shared library).
+# From: Issue #398, PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential \
+      libelf1 \
       libpopt0 \
       libseccomp2 \
       libzstd1 \
@@ -83,9 +90,18 @@ COPY --from=build /out/ /
 USER distcc
 EXPOSE 3632/tcp
 
+# What: HEALTHCHECK only proves the binary starts (--version), not a
+#   real compile round-trip.
+# Why: A liveness probe must stay cheap; a real compile would need a
+#   client/toolchain this image doesn't ship.
+# From: doc/docker.md
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD distccd --version >/dev/null 2>&1 || exit 1
 
+# What: Default CMD binds only --allow 127.0.0.1, not a real network.
+# Why: Safe-by-default; doc/docker.md's own "Running as a server"
+#   section documents overriding --allow for real deployment.
+# From: doc/docker.md
 CMD ["distccd", "--daemon", "--no-detach", "--log-stderr", "--allow", "127.0.0.1", "--enable-tcp-insecure"]
 
 # What: Pump-mode variant, published separately as distcc-ng-pump.
@@ -106,11 +122,17 @@ LABEL org.opencontainers.image.title="distcc-ng-pump" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
 
+# What: libelf1 here for the same reason as the plain `runtime` stage
+#   above.
+# Why: This stage's distccd is the exact same build output, so it needs
+#   the identical runtime library or it fails to start (issue #398).
+# From: PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential \
+      libelf1 \
       libpopt0 \
       libseccomp2 \
       libzstd1 \

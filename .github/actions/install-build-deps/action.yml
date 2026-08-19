@@ -20,5 +20,11 @@ runs:
   steps:
     - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
       with:
-        apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev
+        # What: apt's package list includes libelf-dev.
+        # Why: Without it, configure's --with-libelf probe silently falls
+        #   back to the pre-fix raw <elf.h> path, so make check's
+        #   GdbCompressedDebugInfo_Case would exercise the still-broken
+        #   behavior on this leg instead of the actual fix (issue #398).
+        # From: PR #487
+        apt: clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev
         brew: ${{ inputs.brew }}

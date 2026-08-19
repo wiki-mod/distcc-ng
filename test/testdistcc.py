@@ -2059,6 +2059,29 @@ class GdbOpt3_Case(Gdb_Case):
         """Command for compiling and linking."""
         return self._cc + " -g -O3 ";
 
+class GdbCompressedDebugInfo_Case(Gdb_Case):
+    """Test that dcc_fix_debug_info()'s server-side path rewrite still
+    works when the assembler compresses the debug sections it emits
+    (ELF SHF_COMPRESSED), not just the uncompressed default Gdb_Case
+    itself exercises (issue #398)."""
+
+    def compiler(self):
+        """Command for compiling and linking."""
+        return self._cc + " -g -gz=zlib "
+
+    def runtest(self):
+        # -gz=zlib compresses ELF debug sections via the assembler's own
+        # --compress-debug-sections=zlib -- unsupported on non-ELF
+        # targets (macOS Mach-O, Windows PE) and on an older binutils,
+        # so this skips rather than fails where it isn't applicable, the
+        # same way Gdb_Case itself skips when gdb is missing.
+        error_rc, _, _ = self.runcmd_unchecked(
+            self.compiler() + " -o junk -I. -c %s" % self.sourceFilename())
+        if error_rc != 0:
+            raise comfychair.NotRunError(
+                'compiler/assembler does not support -gz=zlib')
+        Gdb_Case.runtest(self)
+
 class GdbPrefixMap_Case(Gdb_Case):
     """Test that -fdebug-prefix-map= paths are rewritten correctly by a
     distccd running in a different directory than the client (this is
@@ -4667,6 +4690,7 @@ tests = [
          GdbOpt1_Case,
          GdbOpt2_Case,
          GdbOpt3_Case,
+         GdbCompressedDebugInfo_Case,
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,
