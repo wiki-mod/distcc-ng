@@ -69,10 +69,10 @@ unchanged:
       shell: bash
       run: |
         packages="clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
-        max_attempts=3
+        max_attempts=2
         attempt=1
         while true; do
-          if timeout 2m sudo bash -c "apt-get update && apt-get install -y $packages"; then
+          if sudo timeout -k 10s 3m bash -c "apt-get update && apt-get install -y $packages"; then
             exit 0
           fi
           if [ "$attempt" -ge "$max_attempts" ]; then
@@ -95,19 +95,45 @@ retried, instead of silently consuming the whole job budget once. This
 fork's fix does not touch the brew/macOS path, which was not part of
 either live reproduction.
 
+`sudo` deliberately wraps `timeout` rather than the reverse. An earlier
+version of this fix (`timeout 2m sudo bash -c "..."`) was pushed, and this
+fork's own CI caught a real defect in it: `timeout`'s process-group kill
+reached `sudo` but not `sudo`'s own child, so a killed attempt's `apt-get`
+survived as an orphan holding `/var/lib/apt/lists/lock`, and every later
+attempt failed instantly on that lock (`E: Could not get lock ... held by
+process 2838 (apt-get)`) instead of getting a real retry. Putting `sudo`
+outside `timeout` fixed it -- confirmed with a deliberate reproduction
+(a throwaway branch, `timeout -k 5s 10s` instead of `-k 10s 3m`, to force
+every attempt to time out on demand): across 3 forced timeouts, each
+attempt showed fresh `Get:`/`Reading package lists...` output from the
+start, with no lock-contention error at any point, and the run succeeded
+once a later attempt's tighter 10s window happened to be enough.
+
 ## Empirical verification
 
-This fix could not be verified against a live mirror hang on demand (that
-failure mode isn't reproducible at will) -- see this fork's PR body for the
-full reasoning on why the retry design is still correct despite that. What
-was verified: a real triggered CI run on the fix branch completing the apt
-step normally on a healthy mirror (the happy path is unchanged), and a
-read-through confirming `ConorMacBride/install-package`'s own `action.yml`
-(pinned SHA `3e7ad059e07782ee54fa35f827df52aae0626f30`) runs `sudo apt
-update` unretried, gated only on `runner.os == 'Linux'`, and `brew update`
-unretried, gated only on `runner.os == 'macOS'` -- confirming both this
-fork's pre-fix exposure and upstream's identical exposure are the same
-underlying mechanism.
+An indefinite live mirror hang (the original issue #493 symptom) isn't
+reproducible on demand, so this fix's behavior against that exact scenario
+remains unverified by direct reproduction -- see this fork's PR body for
+the full reasoning on why the retry design is still expected to hold up
+against it. What was directly verified, against the real branch:
+
+- A real triggered CI run completing the apt step normally on a healthy
+  mirror (the happy path is unchanged).
+- A real triggered CI run on the pre-fix (`timeout` wrapping `sudo`)
+  version failing with a lock-contention error on attempts 2/3, not a
+  mirror-hang symptom -- a genuine defect this fork's own CI caught.
+- A deliberate reproduction (throwaway branch, shortened per-attempt
+  timeout) forcing 3 real timeout-and-retry cycles against the fixed
+  (`sudo` wrapping `timeout`) version: every attempt showed fresh
+  `apt-get update` output from scratch, no lock-contention error at any
+  point, confirming the process-group kill actually reaches and cleans up
+  the timed-out `apt-get` before the next attempt starts.
+- A read-through confirming `ConorMacBride/install-package`'s own
+  `action.yml` (pinned SHA `3e7ad059e07782ee54fa35f827df52aae0626f30`)
+  runs `sudo apt update` unretried, gated only on `runner.os == 'Linux'`,
+  and `brew update` unretried, gated only on `runner.os == 'macOS'` --
+  confirming both this fork's pre-fix exposure and upstream's identical
+  exposure are the same underlying mechanism.
 
 ## Upstream status
 

@@ -27,16 +27,13 @@ runs:
     # What: Installs the shared apt package list through a bounded retry
     #   loop (2 attempts, 3 minutes each, sudo wrapping timeout) instead
     #   of a single unretried `apt update`.
-    # Why: GitHub-hosted ubuntu-latest's default azure.archive.ubuntu.com
-    #   mirror has hung indefinitely twice (issue #493), each time
-    #   consuming the entire job timeout with zero retry; 2x3 worst-case
-    #   minutes still leaves c-build.yml's 15-minute make_check room for
-    #   the actual build. `sudo` wraps `timeout`, not the reverse,
-    #   because `sudo`'s own pty/session handling for the command it
-    #   execs can detach that command from a `timeout` that started *it*
-    #   instead, letting a killed attempt's `apt-get` survive as an
-    #   orphan holding /var/lib/apt/lists/lock and breaking every later
-    #   retry.
+    # Why: GitHub-hosted ubuntu-latest's default mirror has hung
+    #   indefinitely, each time consuming the entire job timeout with
+    #   zero retry; 2x3 worst-case minutes still leaves c-build.yml's
+    #   15-minute make_check room for the actual build. `sudo` must wrap
+    #   `timeout`, not the reverse: the reverse ordering leaves a killed
+    #   attempt's `apt-get` running as an orphan holding
+    #   /var/lib/apt/lists/lock, breaking every later attempt.
     # From: Issue #493
     - if: runner.os == 'Linux'
       shell: bash
