@@ -22,14 +22,12 @@ on:
       - current_dev
       - master
   # What: Explicit types (GitHub's default omits ready_for_review).
-  # Why: GitHub does not run pull_request-triggered workflows while a PR
-  # has a real merge conflict; release PR #461 had one against master's
-  # stale base (105 commits behind current_dev), so no pull_request event
-  # ran for its whole ~10-hour draft window. The conflict was cleared by a
-  # separate PR merging into master, not by a push to #461 itself, so no
-  # synchronize event followed -- ready_for_review is the only event such
-  # a PR can still emit once no more commits are coming. See issue #460
-  # Finding 4 for the full reconstruction.
+  # Why: A merge conflict against a stale base can suppress every
+  # pull_request event, including opened/synchronize; ready_for_review is
+  # the one event still available once no further commits are coming. See
+  # issue #460 Finding 4 for the investigation and its residual open
+  # questions -- the conflict theory is well-supported but not fully
+  # confirmed against GitHub's own internal mergeability computation.
   # From: Issue #460, PR #461, PR #463, PR #468
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
