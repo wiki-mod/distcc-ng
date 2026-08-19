@@ -25,24 +25,18 @@ runs:
   using: composite
   steps:
     # What: Installs the shared apt package list through a bounded retry
-    #   loop (2 attempts, 3 minutes each) instead of a single unretried
-    #   `apt update`.
-    # Why: ConorMacBride/install-package (used below for brew) runs `sudo
-    #   apt update` as one of its own composite-action steps, which can't
-    #   be wrapped individually -- replacing the apt path with a plain
-    #   shell equivalent is what makes it retryable at all. GitHub-hosted
-    #   ubuntu-latest's default azure.archive.ubuntu.com mirror has hung
-    #   indefinitely twice (issue #493), each time consuming the entire
-    #   job timeout for zero retries; 2x3 worst-case minutes still leaves
-    #   the smallest consumer job (c-build.yml's 15-minute make_check)
-    #   comfortable room for the actual build even if both attempts time
-    #   out. `sudo` wraps `timeout`, not the other way around, because
-    #   `sudo`'s own pty/session handling for the command it execs can
-    #   detach that command from a `timeout` that started *it* instead,
-    #   letting a killed attempt's `apt-get` survive as an orphan holding
-    #   /var/lib/apt/lists/lock -- confirmed live on this PR's own first
-    #   CI run, where attempt 1's orphaned `apt-get` made attempts 2 and 3
-    #   fail instantly on that same lock instead of getting a real retry.
+    #   loop (2 attempts, 3 minutes each, sudo wrapping timeout) instead
+    #   of a single unretried `apt update`.
+    # Why: GitHub-hosted ubuntu-latest's default azure.archive.ubuntu.com
+    #   mirror has hung indefinitely twice (issue #493), each time
+    #   consuming the entire job timeout with zero retry; 2x3 worst-case
+    #   minutes still leaves c-build.yml's 15-minute make_check room for
+    #   the actual build. `sudo` wraps `timeout`, not the reverse,
+    #   because `sudo`'s own pty/session handling for the command it
+    #   execs can detach that command from a `timeout` that started *it*
+    #   instead, letting a killed attempt's `apt-get` survive as an
+    #   orphan holding /var/lib/apt/lists/lock and breaking every later
+    #   retry.
     # From: Issue #493
     - if: runner.os == 'Linux'
       shell: bash
