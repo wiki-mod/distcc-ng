@@ -22,7 +22,11 @@ After that, continue reading the rest of this file normally.
 
 This file (`wiki-mod/distcc-ng/AGENTS.md`) contains `wiki-mod/distcc-ng`'s repository-wide agent rules. It applies to all paths in `wiki-mod/distcc-ng`, including `.github/**`, `packaging/**`, `scripts/**`, `src/**`, `include_server/**`, and `doc/**` — see rule 83 for the mandatory full-read requirement before doing any work here.
 
-Every rule below carries a continuous number (1, 2, 3, ...) running across the whole file, not restarting per section — so a rule can always be referenced unambiguously as "`wiki-mod/distcc-ng/AGENTS.md` rule N" regardless of which section it lives in.
+Every rule below carries a continuous number (0, 1, 2, 3, ...) running across the whole file, not restarting per section — so a rule can always be referenced unambiguously as "`wiki-mod/distcc-ng/AGENTS.md` rule N" regardless of which section it lives in.
+
+## Law
+
+0. **AGENTS.md is a single, unified rulebook. All applicable rules apply simultaneously to every affected part of the project and to the change as a whole. Compliance with the rule that motivated a change does not establish overall compliance.** Any touched file, asset, generated output, project behavior, or other affected part of the project must be checked against every applicable rule in this document. A task must not be declared complete until all affected parts and the complete change have been checked against every applicable rule in AGENTS.md. Declaring a task complete after verifying only one or some applicable rules is itself a violation of this rule, even if those specific rules were satisfied.
 
 ## Language
 
