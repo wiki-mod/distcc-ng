@@ -637,6 +637,10 @@ jobs:
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - uses: $/.github/actions/install-build-deps
         with:
+          # What: Omits libseccomp-dev from the apt list.
+          # Why: This job passes --without-seccomp below, so a seccomp dev
+          #   package would go unused by the build it exercises.
+          # From: Issue #266, Issue #479, PR #496
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
       # What: --without-seccomp (orthogonal to this job's checks);
