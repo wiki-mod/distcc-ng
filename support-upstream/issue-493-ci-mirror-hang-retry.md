@@ -97,17 +97,22 @@ either live reproduction.
 
 `sudo` deliberately wraps `timeout` rather than the reverse. An earlier
 version of this fix (`timeout 2m sudo bash -c "..."`) was pushed, and this
-fork's own CI caught a real defect in it: `timeout`'s process-group kill
-reached `sudo` but not `sudo`'s own child, so a killed attempt's `apt-get`
-survived as an orphan holding `/var/lib/apt/lists/lock`, and every later
-attempt failed instantly on that lock (`E: Could not get lock ... held by
-process 2838 (apt-get)`) instead of getting a real retry. Putting `sudo`
-outside `timeout` fixed it -- confirmed with a deliberate reproduction
-(a throwaway branch, `timeout -k 5s 10s` instead of `-k 10s 3m`, to force
-every attempt to time out on demand): across 3 forced timeouts, each
-attempt showed fresh `Get:`/`Reading package lists...` output from the
-start, with no lock-contention error at any point, and the run succeeded
-once a later attempt's tighter 10s window happened to be enough.
+fork's own CI caught a real defect in it: killing that ordering's `timeout`
+did not stop the `apt-get` it had started, which survived as an orphan
+holding `/var/lib/apt/lists/lock`, and every later attempt failed instantly
+on that lock (`E: Could not get lock ... held by process 2838 (apt-get)`)
+instead of getting a real retry. (The exact signal-delivery mechanism
+`sudo` uses that lets this happen was not independently instrumented --
+what's stated here is the observed before/after behavior, not a traced
+cause.) Putting `sudo` outside `timeout` fixed it -- confirmed with a
+deliberate reproduction (a throwaway branch, `timeout -k 5s 10s` instead of
+`-k 10s 3m`, to force every attempt to time out on demand): across 3 forced
+timeouts, each attempt showed fresh `Get:`/`Reading package lists...`
+output from the start, with no lock-contention error at any point. The run
+ultimately succeeded because `apt`'s local package-list/archive cache
+carried real progress forward between attempts (each retry had less left
+to fetch), not because a later attempt's window changed -- every attempt
+used the identical 10s cap.
 
 ## Empirical verification
 
@@ -122,12 +127,7 @@ against it. What was directly verified, against the real branch:
 - A real triggered CI run on the pre-fix (`timeout` wrapping `sudo`)
   version failing with a lock-contention error on attempts 2/3, not a
   mirror-hang symptom -- a genuine defect this fork's own CI caught.
-- A deliberate reproduction (throwaway branch, shortened per-attempt
-  timeout) forcing 3 real timeout-and-retry cycles against the fixed
-  (`sudo` wrapping `timeout`) version: every attempt showed fresh
-  `apt-get update` output from scratch, no lock-contention error at any
-  point, confirming the process-group kill actually reaches and cleans up
-  the timed-out `apt-get` before the next attempt starts.
+- A deliberate reproduction ([run 32306557635](https://github.com/wiki-mod/distcc-ng/actions/runs/32306557635), dispatched via `gh workflow run c-build.yml --ref probe/issue493_apt_retry_force` against a throwaway branch with the per-attempt timeout shortened, deleted after the probe) forcing 3 real timeout-and-retry cycles against the fixed (`sudo` wrapping `timeout`) version: every attempt showed fresh `apt-get update` output from scratch, no lock-contention error at any point, confirming the fixed ordering actually recovers cleanly between attempts.
 - A read-through confirming `ConorMacBride/install-package`'s own
   `action.yml` (pinned SHA `3e7ad059e07782ee54fa35f827df52aae0626f30`)
   runs `sudo apt update` unretried, gated only on `runner.os == 'Linux'`,
