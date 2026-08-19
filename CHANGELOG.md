@@ -90,6 +90,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`.github/PULL_REQUEST_TEMPLATE/create_and_publish_release.md`,
+  `doc/release-checklist.md`**: redesigned per issue #460 Finding 5 --
+  every checklist item now carries a stable `REL-*` ID (38 total),
+  cross-referenced identically between both files; the template's
+  status vocabulary gains `Blocked` alongside `Pending`/`Passed`/`Failed`/
+  `N/A`; broad one-line checks ("container image labels match",
+  "distributed compile succeeds") are split into per-variant items
+  (per image, per plain/pump mode); new items formalize issue #460
+  Findings 2 and 4's CI-pipeline-trigger gaps (`REL-CI-01`-`04`) and
+  AGENTS.md rule 78's release-specific completion gates (`REL-GOV-01`-`04`)
+  as checked-every-release rather than rediscovered. `doc/release-checklist.md`
+  remains the sole canonical definition; the template restates only the
+  imperative and ID.
 - **`AGENTS.md`**: rule 78(c)'s file-wide self-check requirement allowed
   "I fixed what was flagged" to pass as "this file is fully compliant."
   Now requires an actual mechanical pass over every instance with a
