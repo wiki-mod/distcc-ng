@@ -1,7 +1,7 @@
 # `c-build.yml`'s `ConorMacBride/install-package` step has no retry, so a hung package-manager mirror burns the whole job timeout
 
 **Fork issue:** [wiki-mod/distcc-ng#493](https://github.com/wiki-mod/distcc-ng/issues/493)
-**Fixed by:** [wiki-mod/distcc-ng#PLACEHOLDER](https://github.com/wiki-mod/distcc-ng/pull/PLACEHOLDER)
+**Fixed by:** [wiki-mod/distcc-ng#495](https://github.com/wiki-mod/distcc-ng/pull/495)
 **Upstream location:** `.github/workflows/c-build.yml`, `make_check` job's `ConorMacBride/install-package@v1` step
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-08-19)
 **Searched upstream issues/PRs for:** `apt mirror`, `ci hang`, `install-package`, `ci timeout` -- found upstream issue/PR [#565](https://github.com/distcc/distcc/issues/565) ("ci: Set shorter timeout on GitHub Actions", merged 2025-11-03), which documents the same underlying failure class (a `make_check` run "somehow hung though, running for 6hr before timing out", referencing [action run 18975209355](https://github.com/distcc/distcc/actions/runs/18975209355), whose `make_check (macOS-latest)` job shows `conclusion: cancelled` while `make_check (ubuntu-latest)` succeeded -- consistent with a single-leg hang, though the run's own step-level logs are no longer available to confirm which exact step hung). Upstream's merged fix only lowers `timeout-minutes` from the default 360 to 15, bounding the loss; it adds no retry.
