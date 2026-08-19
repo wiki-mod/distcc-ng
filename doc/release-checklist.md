@@ -132,6 +132,16 @@ exercises them, rather than relying on that rule being remembered unprompted.
       `doc/verification-checklist.md`'s 9 categories, the honest answer was
       no — only this document had been worked through in full, the
       per-commit sweep had only been spot-checked).
+- [ ] **`REL-PRECUT-10`** — `master`'s tip is not so far behind
+      `current_dev` that the release PR (`release/X.Y.Z-NG` → `master`)
+      would need a real merge to land — checked via `git merge-base
+      --is-ancestor <master-tip> <release-branch-head>`. If `master` isn't
+      an ancestor, real content drift exists between the two; per issue
+      #460 Finding 4, this is the leading (though not fully confirmed)
+      explanation for why the release PR's own `pull_request`-triggered CI
+      can go silent for its entire review window. If it isn't an ancestor,
+      resolve `master`'s staleness (e.g. the promotion-PR pattern PR #463
+      used) before relying on the release PR's own CI as evidence.
 
 ## Artifact verification — real behavior, not a build matrix
 
@@ -229,16 +239,22 @@ subsection.
 
 ## CI / Release pipeline sanity
 
-Added by issue #460 Findings 2 and 4: both were real, previously-unknown
-cases of an event that should fire per a workflow's own trigger config
-silently not firing for a real release PR. These items exist so the fix for
-each is actually checked per release, not just fixed once and assumed to
-stay fixed.
+Added by issue #460 Findings 2 and 4, two distinct real gaps found during
+v3.6.5-NG's release PR: `REL-CI-04`'s automation had a confirmed root
+cause (a `GITHUB_TOKEN` anti-recursion mechanism, PR #467); `REL-CI-01`'s
+gap most plausibly traces to a real merge conflict between the release PR
+and a stale `master`, though the investigation (issue #460 Finding 4)
+could not fully explain every observed timing detail. Either way, these
+items exist so a release PR's own CI actually ran, and the changelog
+automation actually fired, is checked per release rather than assumed.
 
 - [ ] **`REL-CI-01`** — a real `pull_request`-triggered CI run exists for
       this release PR itself (not inferred from a `pull_request_target` or
-      `workflow_dispatch` run) — confirms the `ready_for_review` fix (issue
-      #460 Finding 4, PR #468) actually took effect for this release's PR.
+      `workflow_dispatch` run) — this is the check that would have caught
+      issue #460 Finding 4 before merge, whatever the exact mechanism
+      behind a given occurrence turns out to be. If it's `Failed` or
+      `Blocked`, check whether the release branch's base is stale enough
+      to conflict (`REL-PRECUT-07`/`08`) before assuming it's benign.
 - [ ] **`REL-CI-02`** — the manual pre-tag package/artifact verification run
       (`workflow_dispatch` against the release branch), if used for this
       release, is recorded with its run URL and result.
