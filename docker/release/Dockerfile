@@ -15,9 +15,14 @@ LABEL org.opencontainers.image.title="distcc-ng builder" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
 
-# What: Package list adds libelf-dev.
+# What: Package list adds libelf-dev. No libpopt-dev.
 # Why: Enables configure's --with-libelf probe; without it distccd
-#   silently keeps the pre-fix, compressed-debug-info bug.
+#   silently keeps the pre-fix, compressed-debug-info bug. libpopt-dev is
+#   deliberately absent so --without-system-popt below always builds
+#   against this fork's own vendored, CVE-fixed popt/ tree (issue #398)
+#   instead of Debian's own libpopt package, whose CVE-2026-18739 fix is
+#   not yet in trixie as of this writing (checked against Debian's
+#   security tracker).
 # From: Issue #398, PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -28,7 +33,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       build-essential \
       ccache \
       libelf-dev \
-      libpopt-dev \
       libseccomp-dev \
       libzstd-dev \
       pkg-config \
@@ -38,8 +42,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY . .
 
+# What: --without-system-popt forces the vendored popt/ tree.
+# Why: Statically links our own fork's fixed popt into every binary
+#   instead of linking Debian's own libpopt0 at runtime, whose known CVEs
+#   this image would otherwise ship unpatched (see the apt-get comment
+#   above). This is an explicit build choice, not just "no libpopt-dev
+#   installed" relying on configure's autodetection to fall back
+#   correctly -- it stays correct even if a future base image change adds
+#   libpopt back in as a transitive dependency of something else.
+# From: Issue #398
 RUN ./autogen.sh && \
-    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror && \
+    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt && \
     make -j"$(nproc)" && \
     install -D distcc /out/usr/local/bin/distcc && \
     install -D distccd /out/usr/local/bin/distccd && \
@@ -78,7 +91,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libelf1 \
-      libpopt0 \
       libseccomp2 \
       libzstd1 \
       python3 && \
@@ -133,7 +145,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libelf1 \
-      libpopt0 \
       libseccomp2 \
       libzstd1 \
       python3 && \
