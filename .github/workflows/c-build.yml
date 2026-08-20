@@ -365,11 +365,10 @@ jobs:
           fi
           # What: Checks for both CVE fixes and the calloc-args fix content,
           # not just the 1.19-vs-1.7-era fingerprints above.
-          # Why: Those fingerprints can't tell this fork's CVE-fixed
-          # wiki-mod/popt-ng tree apart from upstream's older, unpatched
-          # popt-1.19-release tag -- both are 1.19-era. A revert of
-          # popt/*.c back to that tag while POPT_VERSION stays unchanged
-          # would pass every check above silently.
+          # Why: Those era fingerprints can't tell this fork's CVE-fixed
+          # tree apart from upstream's unpatched popt-1.19-release tag, so
+          # a revert to that tag would otherwise pass every check above
+          # silently.
           # From: PR #504
           sed -n '/^int poptStuffArgs(/,/^}/p' popt/popt.c \
             | grep -qF "con->os - con->optionStack + 1) == POPT_OPTION_DEPTH" \
