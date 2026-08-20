@@ -15,14 +15,12 @@ LABEL org.opencontainers.image.title="distcc-ng builder" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
 
-# What: Package list adds libelf-dev. No libpopt-dev.
-# Why: Enables configure's --with-libelf probe; without it distccd
-#   silently keeps the pre-fix, compressed-debug-info bug. libpopt-dev is
-#   deliberately absent so --without-system-popt below always builds
-#   against this fork's own vendored, CVE-fixed popt/ tree instead of
-#   Debian's own libpopt package, whose CVE-2026-18739 fix is not yet in
-#   trixie as of this writing (checked against Debian's security tracker).
-# From: Issue #398, PR #487
+# What: Package list adds libelf-dev, omits libpopt-dev.
+# Why: libelf-dev enables configure's --with-libelf probe (without it,
+#   distccd keeps the pre-fix compressed-debug-info bug). Omitting
+#   libpopt-dev forces --without-system-popt below onto this fork's
+#   CVE-fixed popt/ tree instead of Debian's still-unpatched libpopt.
+# From: Issue #398, PR #487, PR #504
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
