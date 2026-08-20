@@ -63,6 +63,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   comment had a `What:` but no `Why:` -- added the actual safety-critical
   reason (the `git push -f` right after it could force-move a real
   `vX.Y.Z-NG` release tag on a `NIGHTLY_TAG` misconfiguration).
+- **`.github/workflows/nightly-publish.yml`**: nightly's `build_check` job
+  failed `GdbCompressedDebugInfo_Case` under pump mode only (issue #500) --
+  not a code regression in the libelf fix above, confirmed by a real
+  `HAVE_LIBELF`/`--without-libelf` A/B rebuild. Root cause: GitHub resolves
+  a `schedule`-triggered workflow's own local composite actions (e.g.
+  `install-build-deps`) from the default branch (`master`), never from a
+  later job step's explicit `current_dev` checkout, so `master`'s
+  pre-libelf-dev `install-build-deps` kept silently shipping the pre-fix
+  raw path on every nightly run. Pinned this file's `current_dev`-building
+  jobs' local composite-action references to `@current_dev` explicitly.
 - **`doc/ci-workflows.md`**: didn't document the new shared
   `.github/actions/failed-jobs` composite action or its 3 callers.
 - **`.github/workflows/add-to-project.yml`, `.github/actions/nightly-status/report.sh`**:
