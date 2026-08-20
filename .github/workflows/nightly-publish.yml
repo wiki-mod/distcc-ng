@@ -6,10 +6,13 @@ name: Nightly build and publish (current_dev)
 # separate from package-release.yml's real vX.Y.Z-NG tagged-release path.
 # Why: schedule/workflow_dispatch only fire from the workflow copy on the
 # default branch (master); every job checks out current_dev explicitly,
-# and (per Issue #500) every local composite action a schedule-triggered
-# job below references is likewise pinned to @current_dev explicitly,
-# since GitHub resolves an unpinned local action the same way -- from the
-# default branch, not the later checkout's ref.
+# and (per Issue #500) every local composite action referenced *before*
+# that checkout runs is likewise pinned to @current_dev explicitly, since
+# GitHub resolves an unpinned local action the same way -- from the
+# default branch, not a later checkout's ref. Local actions referenced
+# *after* the checkout (e.g. failed-jobs, nightly-status below) correctly
+# stay unpinned `./`-relative -- they already resolve from that
+# checked-out current_dev workspace, so pinning them would be redundant.
 # From: Issue #81, PR #85, Issue #500, Issue #398
 
 concurrency:
