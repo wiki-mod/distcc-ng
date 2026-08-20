@@ -15,12 +15,16 @@ LABEL org.opencontainers.image.title="distcc-ng builder" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
 
-# What: Package list adds libelf-dev, omits libpopt-dev.
-# Why: libelf-dev enables configure's --with-libelf probe (without it,
-#   distccd keeps the pre-fix compressed-debug-info bug). Omitting
-#   libpopt-dev forces --without-system-popt below onto this fork's
-#   CVE-fixed popt/ tree instead of Debian's still-unpatched libpopt.
-# From: Issue #398, PR #487, PR #504
+# What: Package list adds libelf-dev.
+# Why: Enables configure's --with-libelf probe; without it distccd
+#   silently keeps the pre-fix, compressed-debug-info bug.
+# From: Issue #398, PR #487
+#
+# What: Package list omits libpopt-dev.
+# Why: It would be an unused build dependency -- --without-system-popt
+#   below skips the system-libpopt probe outright regardless of what's
+#   installed.
+# From: PR #504
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
@@ -40,14 +44,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY . .
 
 # What: --without-system-popt forces the vendored popt/ tree.
-# Why: Statically links our own fork's fixed popt into distccd (the only
-#   binary that uses popt, via src/dopt.c) instead of linking Debian's own
-#   libpopt0 at runtime, whose known CVEs this image would otherwise ship
-#   unpatched (see the apt-get comment above). This is an explicit build
-#   choice, not just "no libpopt-dev installed" relying on configure's
-#   autodetection to fall back correctly -- it stays correct even if a
-#   future base image change adds libpopt back in as a transitive
-#   dependency of something else.
+# Why: Statically links this fork's CVE-fixed popt into distccd instead
+#   of Debian's own libpopt0, which this image would otherwise ship
+#   unpatched.
 # From: PR #504
 RUN ./autogen.sh && \
     ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt && \
