@@ -363,8 +363,8 @@ jobs:
             echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
             exit 1
           fi
-          # What: Checks for the actual CVE-2026-18739 and calloc-args
-          # fix content, not just the 1.19-vs-1.7-era fingerprints above.
+          # What: Checks for both CVE fixes and the calloc-args fix content,
+          # not just the 1.19-vs-1.7-era fingerprints above.
           # Why: Those fingerprints can't tell this fork's CVE-fixed
           # wiki-mod/popt-ng tree apart from upstream's older, unpatched
           # popt-1.19-release tag -- both are 1.19-era. A revert of
@@ -375,6 +375,8 @@ jobs:
             || { echo "::error::popt/popt.c is missing the CVE-2026-18739 off-by-one fix in poptStuffArgs -- vendored tree may have reverted to a pre-fix popt-1.19-release copy"; exit 1; }
           grep -q "calloc((size_t)nb + 1, sizeof(\*b))" popt/poptconfig.c \
             || { echo "::error::popt/poptconfig.c is missing the transposed-calloc-args fix in poptReadFile -- vendored tree may have reverted to a pre-fix copy"; exit 1; }
+          test "$(grep -cF 'maxargvlen = argvlen * 2;' popt/poptparse.c)" -eq 2 \
+            || { echo "::error::popt/poptparse.c is missing the CVE-2026-18743 allocation fixes in poptConfigFileToString -- vendored tree may have reverted to a pre-fix copy"; exit 1; }
       - uses: $/.github/actions/install-build-deps
         with:
           # What: Same package set as popt_fallback_build (no libpopt-dev).
@@ -744,4 +746,3 @@ jobs:
           scope: nightly health check (current_dev)
           failed_jobs: ${{ steps.failed_jobs.outputs.list }}
           project_pat: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-
