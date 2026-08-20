@@ -344,8 +344,8 @@ jobs:
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
       - name: Vendored version marker matches what this repo claims to ship
         run: |
-          test "$(cat popt/POPT_VERSION)" = "popt-1.19-release" \
-            || { echo "::error::popt/POPT_VERSION does not read 'popt-1.19-release' -- has the vendored tree been swapped without updating the marker?"; exit 1; }
+          test "$(cat popt/POPT_VERSION)" = "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)" \
+            || { echo "::error::popt/POPT_VERSION does not match the pinned wiki-mod/popt-ng commit -- has the vendored tree been swapped without updating the marker?"; exit 1; }
           # What: Checks for poptJlu32lpair in popt/poptint.h.
           # Why: It only exists in upstream popt's modern (post-1.7)
           # hash-table implementation, so it's a real, checkable

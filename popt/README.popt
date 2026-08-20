@@ -1,9 +1,18 @@
-This is a copy of libpopt 1.19 (the `popt-1.19-release` tag, 2022-06-07),
-vendored from its real, actively-maintained upstream project at
+This is a copy of libpopt, vendored from `wiki-mod/popt-ng`
+(https://github.com/wiki-mod/popt-ng), our own maintained fork of popt's
+real, actively-maintained upstream project at
 https://github.com/rpm-software-management/popt, except that the build
 files have been replaced to fit with distcc's own autoconf/automake setup
 and NLS support has been left undetected (distcc does not use it; see
 "NLS" below).
+
+`wiki-mod/popt-ng` exists for the same reason `wiki-mod/distcc-ng` does:
+upstream popt does not accept AI-assisted contributions, so real bugs
+found while working on this vendored copy (e.g. a transposed `calloc()`
+argument order in `poptReadFile()` that GCC 14's `-Wcalloc-transposed-args`
+catches under `-Werror`) get fixed in our own fork first, with a
+`support-upstream/` entry there documenting the finding for upstream's
+benefit, same convention as this repo's own `support-upstream/`.
 
 It is only built and used as a fallback, when `configure` cannot find a
 system libpopt >= 1.7 via pkg-config. If you build distcc on a platform
@@ -41,6 +50,7 @@ features (`glob.h`-based config-directory globbing, `stdalign.h`,
 `secure_getenv()`, etc.) are still detected and used when available,
 matching a normal system popt build.
 
+Vendored from our own fork: https://github.com/wiki-mod/popt-ng
 popt's real upstream (no longer distcc's own history) is:
 https://github.com/rpm-software-management/popt
 

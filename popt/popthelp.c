@@ -6,7 +6,7 @@
 
 /* (C) 1998-2002 Red Hat, Inc. -- Licensing details are in the COPYING
    file accompanying popt source distributions, available from 
-   ftp://ftp.rpm.org/pub/rpm/dist. */
+   http://ftp.rpm.org/popt/releases/. */
 
 #include "system.h"
 
@@ -442,7 +442,6 @@ static void singleOptionHelp(FILE * fp, columns_t columns,
     helpLength = strlen(help);
     while (helpLength > lineLength) {
 	const char * ch;
-	char format[16];
 
 	ch = help + lineLength - 1;
 	while (ch > help && !_isspaceptr(ch))
@@ -459,8 +458,7 @@ static void singleOptionHelp(FILE * fp, columns_t columns,
 	{   char * fmthelp = xstrdup(help);
 	    if (fmthelp) {
 		fmthelp[ch - help] = '\0';
-		sprintf(format, "%%s\n%%%ds", (int) indentLength);
-		POPT_fprintf(fp, format, fmthelp, " ");
+		POPT_fprintf(fp, "%s\n%*s", fmthelp, (int) indentLength, " ");
 		free(fmthelp);
 	    }
 	}
