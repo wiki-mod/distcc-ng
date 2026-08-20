@@ -319,8 +319,10 @@ as soon as that happens we can go ahead and start the client."""
 
 
     def killDaemon(self):
+        """Avoid signaling a recycled pid when the daemon pidfile is absent."""
         try:
-            pid = int(open(self.daemon_pidfile, 'rt').read())
+            with open(self.daemon_pidfile, 'rt') as f:
+                pid = int(f.read())
         except IOError:
             # the daemon probably already exited, perhaps because of a timeout
             return
@@ -984,6 +986,10 @@ class Compile_c_Case(SimpleDistCC_Case):
       return m_obj.group(1)
 
   def runtest(self):
+      """Exercise compile.c's dcc_discrepancy_filename() and
+      dcc_fresh_dependency_exists() directly through the h_compile test
+      harness binary, independent of a real distcc client/server round trip.
+      """
 
       # Test dcc_discrepancy_filename
       # ********************************
@@ -1041,9 +1047,8 @@ foo_bar""",
               time.sleep(0.1)
           # Create .d file now, so that it appears to be no older than
           # time_ref.
-          dotd_fd = open("dotd", "w")
-          dotd_fd.write(dotd_contents)
-          dotd_fd.close()
+          with open("dotd", "w") as dotd_fd:
+              dotd_fd.write(dotd_contents)
           # Check: no fresh files here!
           out, err = self.runcmd(
               "h_compile dcc_fresh_dependency_exists dotd '%s' %i" %
@@ -1214,14 +1219,13 @@ class Compilation_Case(WithDaemon_Case):
         self.checkBuiltProgram()
 
     def createSource(self):
+        """Close both fixtures before the distcc client uploads them."""
         filename = self.sourceFilename()
-        f = open(filename, 'w')
-        f.write(self.source())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.source())
         filename = self.headerFilename()
-        f = open(filename, 'w')
-        f.write(self.headerSource())
-        f.close()
+        with open(filename, 'w') as f:
+            f.write(self.headerSource())
 
     def sourceFilename(self):
         return "testtmp.c"              # default
@@ -1935,6 +1939,10 @@ class Gdb_Case(CompileHello_Case):
         return 'break main\nrun\nnext\n'
 
     def checkBuiltProgram(self):
+        """Run the built test program under gdb and verify it can locate
+        testtmp.c's source, tolerating known-harmless gdb version quirks in
+        its stderr output.
+        """
         # On windows, the binary may be called testtmp.exe.  Check both
         if os.path.exists('link/testtmp.exe'):
             testtmp_exe = 'testtmp.exe'
@@ -1946,9 +1954,8 @@ class Gdb_Case(CompileHello_Case):
         # and run them via gdb --command.  (The alternative, to specify
         # the gdb commands directly on the commandline using gdb --ex,
         # is not as portable since only newer gdb's support it.)
-        f = open('gdb_commands', 'w')
-        f.write(self.gdbCommands())
-        f.close()
+        with open('gdb_commands', 'w') as f:
+            f.write(self.gdbCommands())
         out, errs = self.runcmd("gdb -nh --batch --command=gdb_commands "
                                 "link/%s </dev/null" % testtmp_exe)
         # Normally we expect the stderr output to be empty.
@@ -2052,6 +2059,29 @@ class GdbOpt3_Case(Gdb_Case):
         """Command for compiling and linking."""
         return self._cc + " -g -O3 ";
 
+class GdbCompressedDebugInfo_Case(Gdb_Case):
+    """Test that dcc_fix_debug_info()'s server-side path rewrite still
+    works when the assembler compresses the debug sections it emits
+    (ELF SHF_COMPRESSED), not just the uncompressed default Gdb_Case
+    itself exercises (issue #398)."""
+
+    def compiler(self):
+        """Command for compiling and linking."""
+        return self._cc + " -g -gz=zlib "
+
+    def runtest(self):
+        # -gz=zlib compresses ELF debug sections via the assembler's own
+        # --compress-debug-sections=zlib -- unsupported on non-ELF
+        # targets (macOS Mach-O, Windows PE) and on an older binutils,
+        # so this skips rather than fails where it isn't applicable, the
+        # same way Gdb_Case itself skips when gdb is missing.
+        error_rc, _, _ = self.runcmd_unchecked(
+            self.compiler() + " -o junk -I. -c %s" % self.sourceFilename())
+        if error_rc != 0:
+            raise comfychair.NotRunError(
+                'compiler/assembler does not support -gz=zlib')
+        Gdb_Case.runtest(self)
+
 class GdbPrefixMap_Case(Gdb_Case):
     """Test that -fdebug-prefix-map= paths are rewritten correctly by a
     distccd running in a different directory than the client (this is
@@ -2120,9 +2150,12 @@ class WriteDevNull_Case(CompileHello_Case):
 class MultipleCompile_Case(Compilation_Case):
     """Test compiling several files from one line"""
     def setup(self):
+        """Flush both inputs before either is handed to the compiler."""
         WithDaemon_Case.setup(self)
-        open("test1.c", "w").write("const char *msg = \"hello foreigner\";")
-        open("test2.c", "w").write("""#include <stdio.h>
+        with open("test1.c", "w") as f:
+            f.write("const char *msg = \"hello foreigner\";")
+        with open("test2.c", "w") as f:
+            f.write("""#include <stdio.h>
 
 int main(void) {
    extern const char *msg;
@@ -2195,6 +2228,7 @@ large foo!
 """
 
     def runtest(self):
+        """Read preprocessor output only after its producer has exited."""
         # Disable the test in pump mode since the pump wrapper fails
         # before we can run distcc.
         if "cpp" in _server_options:
@@ -2203,7 +2237,8 @@ large foo!
         # -P means not to emit linemarkers
         self.runcmd(self.distcc()
                     + self._cc + " -E testtmp.c -o testtmp.out")
-        out = open("testtmp.out").read()
+        with open("testtmp.out") as f:
+            out = f.read()
         # It's a bit hard to know the exact value, because different versions of
         # GNU cpp seem to handle the whitespace differently.
         self.assert_re_search("small foo!", out)
@@ -2691,6 +2726,7 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
     compiler child distccd forks, not just the daemon process itself."""
 
     def runtest(self):
+        """Verify the compiler child, rather than only the daemon, drops uid."""
         drop_pw = pwd.getpwnam(self.DROP_USER)
 
         compiler = os.path.abspath("uid_reporting_compiler")
@@ -2724,7 +2760,14 @@ class UserPrivilegeDropFunctional_Case(AutogroupNicenessPrivilegeDrop_Case):
         os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d' % self.server_port
         os.environ['DISTCC_LOG'] = os.path.join(os.getcwd(), 'distcc.log')
         os.environ['DISTCC_VERBOSE'] = '1'
-        open("testtmp.i", "wt").write("int main() {}")
+        # Explicit close (not just CPython's prompt refcounting) before
+        # runcmd() below execs the distcc client, which itself reads and
+        # uploads this file (src/bulk.c's dcc_x_file()) -- the fake
+        # compiler never opens it at all. An implementation that defers
+        # the close (PyPy) could otherwise hand the client a not-yet-
+        # flushed file.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         out, errs = self.runcmd(self.distcc_without_fallback() + compiler +
                                 " -c testtmp.i -o testtmp.o")
@@ -2832,12 +2875,14 @@ class DashMD_DashMF_DashMT_Case(CompileHello_Case):
         return "-MD -MFdotd_filename -MTtarget_name_42"
 
     def runtest(self):
+        """Inspect the dependency file only after the compile closes it."""
         try:
           os.remove('dotd_filename')
         except OSError:
           pass
         self.compile();
-        dotd_contents = open("dotd_filename").read()
+        with open("dotd_filename") as f:
+            dotd_contents = f.read()
         self.assert_re_search("target_name_42", dotd_contents)
 
 
@@ -2854,12 +2899,14 @@ class DashMMD_Case(CompileHello_Case):
         return "-MMD -MFdotd_mmd_filename"
 
     def runtest(self):
+        """Keep -MMD coverage distinct from the existing -MD case."""
         try:
             os.remove('dotd_mmd_filename')
         except OSError:
             pass
         self.compile()
-        dotd_contents = open("dotd_mmd_filename").read()
+        with open("dotd_mmd_filename") as f:
+            dotd_contents = f.read()
         self.assert_re_search("testtmp.o", dotd_contents)
 
 
@@ -2870,12 +2917,14 @@ class DashWpMD_Case(CompileHello_Case):
         return "-Wp,-MD,depsfile"
 
     def runtest(self):
+        """Inspect the dependency file only after the compile closes it."""
         try:
           os.remove('depsfile')
         except OSError:
           pass
         self.compile()
-        deps = open('depsfile').read()
+        with open('depsfile') as f:
+            deps = f.read()
         self.assert_re_search(r"testhdr\.h", deps)
         self.assert_re_search(r"stdio\.h", deps)
 
@@ -3014,18 +3063,22 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
                       (port, err))
 
     def _kill_daemon(self, pidfile):
+        """Treat an absent pidfile as an already-stopped test daemon."""
         try:
-            pid = int(open(pidfile, 'rt').read())
+            with open(pidfile, 'rt') as f:
+                pid = int(f.read())
         except IOError:
             return
         os.kill(pid, signal.SIGTERM)
 
     def _waitForPattern(self, logfile, pattern, timeout):
+        """Reopen the growing log so buffered daemon output becomes visible."""
         deadline = time.time() + timeout
         content = ""
         while True:
             try:
-                content = open(logfile).read()
+                with open(logfile) as f:
+                    content = f.read()
             except IOError:
                 content = ""
             if re.search(pattern, content):
@@ -3036,6 +3089,7 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
             time.sleep(0.2)
 
     def runtest(self):
+        """Occupy host A before verifying that the second job selects host B."""
         job1_pid = self.runcmd_background(
             self.distcc_without_fallback() + self.slow_compiler +
             " -c testtmp.c -o job1.o")
@@ -3047,7 +3101,8 @@ class HostSelectionAlgorithm_Case(CompileHello_Case):
         # compile, so job 2 must land on host B.
         self.runcmd(self.distcc_without_fallback() + self.slow_compiler +
                     " -c testtmp.c -o job2.o")
-        daemon_b_log = open(self.daemon_b_logfile).read()
+        with open(self.daemon_b_logfile) as f:
+            daemon_b_log = f.read()
         self.assert_re_search(r"forking to execute.*slow_compiler",
                               daemon_b_log)
 
@@ -3076,9 +3131,11 @@ class ScanIncludes_Case(CompileHello_Case):
                " -c %s" % (self.sourceFilename())
 
     def runtest(self):
+        """Read the completed log before checking include-scan behavior."""
         cmd = self.compileCmd()
         rc, out, err = self.runcmd_unchecked(cmd)
-        log = open('distcc.log').read()
+        with open('distcc.log') as f:
+            log = f.read()
         pump_mode = _server_options.find('cpp') != -1
         if pump_mode:
           if err != '':
@@ -3184,18 +3241,16 @@ class BigAssFile_Case(Compilation_Case):
 
     This will take a while to run"""
     def createSource(self):
-        """Create source file"""
-        f = open("testtmp.c", 'wt')
-
+        """Close the fixture once fully written, not just on the happy path."""
         # We want a file of many, which will be a few megabytes of
         # source.  Picking the size is kind of hard -- something that
         # will properly exercise distcc may be too big for small/old
         # machines.
 
-        f.write("int main() {}\n")
-        for i in range(200000):
-            f.write("int i%06d = %d;\n" % (i, i))
-        f.close()
+        with open("testtmp.c", 'wt') as f:
+            f.write("int main() {}\n")
+            for i in range(200000):
+                f.write("int i%06d = %d;\n" % (i, i))
 
     def runtest(self):
         self.runcmd(self.distcc() + self._cc + " -c %s" % "testtmp.c")
@@ -3221,7 +3276,12 @@ class ZeroByteOutputCompiler_Case(Compilation_Case):
     file) instead of actually compiling anything."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the output-touching compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         compiler = os.path.abspath("zero_byte_compiler")
@@ -3250,7 +3310,12 @@ class NastyCppWritesStdout_Case(Compilation_Case):
     handled by design, not a distcc bug, just never actually tested."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the stdout-writing compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         compiler = os.path.abspath("nasty_stdout_compiler")
@@ -3283,7 +3348,15 @@ class BinFalse_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Explicit file-handle hygiene, not sequencing.
+
+        'false'/'true' ignore their input entirely, so closing this
+        fixture before the fake compiler runs has no observable effect
+        on the test itself -- see
+        support-upstream/issue-testdistcc-unclosed-write-before-subprocess-read.md.
+        """
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         # On Solaris and IRIX 6, 'false' returns exit status 255
@@ -3309,7 +3382,15 @@ class BinTrue_Case(Compilation_Case):
     We have to use a .i file so that distcc does not try to preprocess it.
     """
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Explicit file-handle hygiene, not sequencing.
+
+        'false'/'true' ignore their input entirely, so closing this
+        fixture before the fake compiler runs has no observable effect
+        on the test itself -- see
+        support-upstream/issue-testdistcc-unclosed-write-before-subprocess-read.md.
+        """
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
         self.runcmd(self.distcc()
@@ -3330,9 +3411,15 @@ class CrashingCompiler_Case(Compilation_Case):
     reliably kill themselves with a specific signal on all platforms."""
 
     def createSource(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Close the fixture before the distcc client uploads it."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the crashing compiler, is what reads this
+        # file, so it can't rely on CPython-only prompt refcounting.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
     def runtest(self):
+        """Use a real signal death rather than a normal nonzero exit."""
         crasher = os.path.abspath("crashing_compiler")
         f = open(crasher, "w")
         try:
@@ -3364,7 +3451,12 @@ class ClientDisconnectKillsServerChild_Case(WithDaemon_Case):
     arguments are harmlessly ignored -- sleeps for real instead."""
 
     def runtest(self):
-        open("testtmp.i", "wt").write("int main() {}")
+        """Exec the client directly so killing it really closes the socket."""
+        # See UserPrivilegeDropFunctional_Case.runtest()'s comment: the
+        # distcc client, not the slow-sleeping compiler, is what reads
+        # this file, so it can't rely on CPython-only prompt refcounting.
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         slow_compiler = os.path.abspath("slow_compiler")
         f = open(slow_compiler, "w")
@@ -3449,9 +3541,11 @@ class NoServer_Case(CompileHello_Case):
         self.initCompiler()
 
     def runtest(self):
+        """Read fallback diagnostics only after the compile has completed."""
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
-        msgs = open(self.distcc_log, 'r').read()
+        with open(self.distcc_log, 'r') as f:
+            msgs = f.read()
         self.assert_re_search(r'failed to distribute.*running locally instead',
                               msgs)
 
@@ -3473,9 +3567,11 @@ class MixedServerPumpFallback_Case(CompileHello_Case):
         self.initCompiler()
 
     def runtest(self):
+        """Confirm the usable server wins after the pump host fails."""
         self.runcmd(self.distcc()
                     + self._cc + " -c -o testtmp.o testtmp.c")
-        msgs = open(self.distcc_log, 'r').read()
+        with open(self.distcc_log, 'r') as f:
+            msgs = f.read()
         self.assert_re_search(r'compile testtmp.c on 127.0.0.1:[0-9]* completed ok',
                               msgs)
 
@@ -3510,8 +3606,10 @@ class BackoffFromDownedHost_Case(CompileHello_Case):
             (down_port, self.server_port, _server_options))
 
     def runtest(self):
+        """Read the completed log before checking persistent host backoff."""
         self.compile()
-        log = open(os.environ['DISTCC_LOG']).read()
+        with open(os.environ['DISTCC_LOG']) as f:
+            log = f.read()
         self.assert_re_search(r'mark .*backoff', log)
 
 
@@ -3776,8 +3874,10 @@ msg:
     asm_filename = 'test2.s'
 
     def setup(self):
+        """Close the assembly fixture before the compiler reads it."""
         WithDaemon_Case.setup(self)
-        open(self.asm_filename, 'wt').write(self.asm_source)
+        with open(self.asm_filename, 'wt') as f:
+            f.write(self.asm_source)
 
     def compile(self):
         # Need to build both the C file and the assembly file
@@ -3803,8 +3903,10 @@ msg:
 """
 
     def setup(self):
+        """Close the preprocessed assembly fixture before compiling it."""
         WithDaemon_Case.setup(self)
-        open('test2.S', 'wt').write(self.asm_source)
+        with open('test2.S', 'wt') as f:
+            f.write(self.asm_source)
 
     def compile(self):
         if sys.platform == 'linux2':
@@ -3858,8 +3960,10 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
     inc_filename = 'local_only.inc'
 
     def setup(self):
+        """Close include fixtures before the local-only assembler reads them."""
         SimpleDistCC_Case.setup(self)
-        open(self.inc_filename, 'wt').write(".equ VALUE, 42\n")
+        with open(self.inc_filename, 'wt') as f:
+            f.write(".equ VALUE, 42\n")
         # No ".type"/".size": those are ELF symbol-table directives with
         # no Mach-O equivalent -- confirmed live, Apple's clang
         # assembler rejects them outright ("unknown directive"), unlike
@@ -3867,13 +3971,14 @@ class AssemblyIncludeLocalOnly_Case(SimpleDistCC_Case):
         # away with them (untested reason, not worth relying on here
         # too). ".globl"/".data"/".align"/a label/".long" are the same
         # minimal, already-proven-portable subset that fixture uses.
-        open(self.asm_filename, 'wt').write(
-            '.include "%s"\n'
-            ".globl distcc_ng_test_marker\n"
-            ".data\n"
-            "  .align 4\n"
-            "distcc_ng_test_marker:\n"
-            "  .long VALUE\n" % self.inc_filename)
+        with open(self.asm_filename, 'wt') as f:
+            f.write(
+                '.include "%s"\n'
+                ".globl distcc_ng_test_marker\n"
+                ".data\n"
+                "  .align 4\n"
+                "distcc_ng_test_marker:\n"
+                "  .long VALUE\n" % self.inc_filename)
 
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.bind(('127.0.0.1', 0))
@@ -3962,8 +4067,10 @@ class AccessDenied_Case(CompileHello_Case):
 
 
     def runtest(self):
+        """Read fallback diagnostics only after compilation has completed."""
         self.compile()
-        errs = open('distcc.log').read()
+        with open('distcc.log') as f:
+            errs = f.read()
         self.assert_re_search(r'failed to distribute', errs)
 
 
@@ -4087,6 +4194,7 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
                 " -c %s" % os.path.abspath(self.sourceFilename()))
 
     def runtest(self):
+        """Include the debug log when a required non-pump cache hit is absent."""
         self.compile()   # first compile: cold, populates the cache
         self.compile()   # second compile: should hit outside pump mode
         out, errs = self.runcmd("ccache -s")
@@ -4099,7 +4207,8 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
             return
         if not re.search(r"Hits:\s+[1-9]", out):
             try:
-                debug_log = open(self.ccache_logfile).read()
+                with open(self.ccache_logfile) as f:
+                    debug_log = f.read()
             except IOError:
                 debug_log = "(no ccache debug log found at %s)" % self.ccache_logfile
             self.fail("expected a real ccache hit, got:\n%s\n\n"
@@ -4109,13 +4218,15 @@ class CcacheHitThroughDistcc_Case(CompileHello_Case):
 
 class HostFile_Case(CompileHello_Case):
     def setup(self):
+        """Close the hosts file before distcc performs host discovery."""
         CompileHello_Case.setup(self)
         del os.environ['DISTCC_HOSTS']
         self.save_home = os.environ['HOME']
         os.environ['HOME'] = os.getcwd()
         # DISTCC_DIR is set to 'distccdir'
-        open(os.environ['DISTCC_DIR'] + '/hosts', 'w').write('127.0.0.1:%d%s' %
-            (self.server_port, _server_options))
+        with open(os.environ['DISTCC_DIR'] + '/hosts', 'w') as f:
+            f.write('127.0.0.1:%d%s' %
+                    (self.server_port, _server_options))
 
     def teardown(self):
         os.environ['HOME'] = self.save_home
@@ -4130,6 +4241,7 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
     never otherwise gets exercised."""
 
     def setup(self):
+        """Close the fallback hosts file before distcc discovers it."""
         CompileHello_Case.setup(self)
         del os.environ['DISTCC_HOSTS']
         del os.environ['DISTCC_DIR']
@@ -4137,8 +4249,9 @@ class HostFileDistccDirUnset_Case(CompileHello_Case):
         os.environ['HOME'] = os.getcwd()
         distcc_dir = os.path.join(os.environ['HOME'], '.distcc')
         os.mkdir(distcc_dir)
-        open(distcc_dir + '/hosts', 'w').write('127.0.0.1:%d%s' %
-            (self.server_port, _server_options))
+        with open(distcc_dir + '/hosts', 'w') as f:
+            f.write('127.0.0.1:%d%s' %
+                    (self.server_port, _server_options))
 
     def teardown(self):
         os.environ['HOME'] = self.save_home
@@ -4286,6 +4399,7 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
     on it and does not depend on it going away."""
 
     def runtest(self):
+        """Kill the server mid-compile so the client must fall back locally."""
         # Sleeps first (the window this test needs), then creates its -o
         # target via `touch` (same technique as ZeroByteOutputCompiler_Case
         # above) so the local-fallback re-run -- which invokes this exact
@@ -4311,7 +4425,8 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
         # file for the same 30s, before the daemon side is ever
         # reached at all. ClientDisconnectKillsServerChild_Case (above)
         # uses the same ".i" trick for the same reason.
-        open("testtmp.i", "wt").write("int main() {}")
+        with open("testtmp.i", "wt") as f:
+            f.write("int main() {}")
 
         client_pid = self.runcmd_background(
             self.distcc_with_fallback() + slow_compiler +
@@ -4319,7 +4434,8 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
 
         self.waitForLogPattern(r"forking to execute.*slow_compiler", 10)
 
-        daemon_pid = int(open(self.daemon_pidfile, 'rt').read())
+        with open(self.daemon_pidfile, 'rt') as f:
+            daemon_pid = int(f.read())
         os.kill(daemon_pid, signal.SIGKILL)
         # killDaemon() (teardown) tolerates the pidfile being gone (an
         # IOError on open()) but not SIGTERM-ing an already-dead pid (an
@@ -4333,7 +4449,8 @@ class ServerKilledMidJob_Case(NoForkDaemon_Case):
         self.assert_equal(os.WEXITSTATUS(waitstatus), 0)
         self.assert_equal(os.path.exists("testtmp.o"), True)
 
-        log = open(os.environ['DISTCC_LOG']).read()
+        with open(os.environ['DISTCC_LOG']) as f:
+            log = f.read()
         self.assert_re_search(r'failed to distribute.*running locally instead',
                               log)
 
@@ -4447,8 +4564,10 @@ class SSHMode_Case(CompileHello_Case):
         os.environ['DISTCC_HOSTS'] = '@127.0.0.1'
 
     def killSshd(self):
+        """Treat a missing pidfile as an sshd that already stopped."""
         try:
-            pid = int(open(self._sshd_pidfile, 'rt').read().strip())
+            with open(self._sshd_pidfile, 'rt') as f:
+                pid = int(f.read().strip())
         except IOError:
             # sshd probably already exited
             return
@@ -4571,6 +4690,7 @@ tests = [
          GdbOpt1_Case,
          GdbOpt2_Case,
          GdbOpt3_Case,
+         GdbCompressedDebugInfo_Case,
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,

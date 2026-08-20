@@ -36,6 +36,10 @@
 #ifdef HAVE_ELF_H
   #include <elf.h>
 #endif
+#ifdef HAVE_LIBELF
+  #include <gelf.h>
+  #include <libelf.h>
+#endif
 
 #include <sys/stat.h>
 #ifdef HAVE_SYS_MMAN_H
@@ -52,7 +56,16 @@
   #define SHN_XINDEX  SHN_HIRESERVE
 #endif
 
-#ifdef HAVE_ELF_H
+/*
+ * What: Guards the raw <elf.h> byte-search path (below, through
+ * update_debug_info()) to only compile when it is actually the active
+ * mechanism.
+ * Why: When HAVE_LIBELF is also defined, dcc_fix_debug_info() always
+ * prefers the libelf path (see below) and never calls into this one,
+ * which would otherwise trip -Werror=unused-function.
+ * From: Issue #398
+ */
+#if defined(HAVE_ELF_H) && !defined(HAVE_LIBELF)
 /*
  * Search for an ELF section of the specified name and type.
  * Given an ELF file that has been mmapped (or read) into memory starting
@@ -106,6 +119,11 @@ static int FindElfSection(const void *elf_mapped_base, off_t elf_size,
    *
    * TODO(fergus):
    * handle object files with different endianness than the host.
+   */
+  /* What: TODO above is still real, scoped to this raw path only.
+   * Why: libelf's gelf_xlatetom() (verified in gelf.h) already
+   *   translates GElf_Shdr fields for the HAVE_LIBELF path below.
+   * From: Issue #398
    */
 #if WORDS_BIGENDIAN
   if (elf32_header->e_ident[EI_DATA] != ELFDATA2MSB) {
@@ -228,11 +246,23 @@ static int FindElfSection(const void *elf_mapped_base, off_t elf_size,
   }
 }
 
+#endif /* defined(HAVE_ELF_H) && !defined(HAVE_LIBELF) */
+
 /*
  * Search in a memory buffer (starting at @p base and of size @p size)
  * for a string (@p search), and replace @p search with @p replace
  * in all null-terminated strings that contain @p search.
+ *
+ * What: Shared by both the raw <elf.h> path below and the HAVE_LIBELF
+ * path -- decompression (where needed) always happens before this runs,
+ * so this function itself never needs to know about ELF compression.
+ * Why: The same-length constraint (assert(replace_len == search_len))
+ * is what makes both paths safe: every byte offset and relocation into
+ * this section stays valid, only the recompressed size (if any) can
+ * change.
+ * From: Issue #398
  */
+#if defined(HAVE_ELF_H) || defined(HAVE_LIBELF)
 static int replace_string(void *base, size_t size,
                            const char *search, const char *replace) {
   char *start = (char *) base;
@@ -254,7 +284,9 @@ static int replace_string(void *base, size_t size,
   }
   return count;
 }
+#endif /* defined(HAVE_ELF_H) || defined(HAVE_LIBELF) */
 
+#if defined(HAVE_ELF_H) && !defined(HAVE_LIBELF)
 /*
  * Map the specified file into memory with MAP_SHARED.
  * Returns the mapped address, and stores the file descriptor in @p p_fd.
@@ -405,7 +437,197 @@ static int update_debug_info(const char *path, const char *search,
 
   return munmap_file(base, path, fd, &st);
 }
-#endif /* HAVE_ELF_H */
+#endif /* defined(HAVE_ELF_H) && !defined(HAVE_LIBELF) */
+
+#ifdef HAVE_LIBELF
+/*
+ * What: Finds a section by name via libelf's own section-header-string-
+ * table lookup.
+ * Why: gelf_* is class-independent (one code path for ELF32 and ELF64),
+ * unlike FindElfSection() above, which explicitly duplicates its body
+ * per class and warns future editors to keep the two copies consistent.
+ * From: Issue #398
+ */
+static Elf_Scn *find_section_libelf(Elf *elf, const char *name) {
+  size_t shstrndx;
+  Elf_Scn *scn = NULL;
+
+  if (elf_getshdrstrndx(elf, &shstrndx) != 0) {
+    return NULL;
+  }
+  while ((scn = elf_nextscn(elf, scn)) != NULL) {
+    GElf_Shdr shdr;
+    const char *section_name;
+    if (gelf_getshdr(scn, &shdr) != &shdr) {
+      continue;
+    }
+    section_name = elf_strptr(elf, shstrndx, shdr.sh_name);
+    if (section_name != NULL && strcmp(section_name, name) == 0) {
+      return scn;
+    }
+  }
+  return NULL;
+}
+
+/*
+ * What: Replaces @p search with @p replace in one named section via
+ * libelf, decompressing/recompressing around the edit if the section is
+ * SHF_COMPRESSED. Returns the replacement count (0 is not an error), or
+ * -1 if a section was left mid-decompressed by a failed recompress.
+ * Why: elf_compress() invalidates any previously-fetched Shdr/Elf_Data
+ * for this section (documented in libelf.h's own comment above its
+ * declaration), so both are re-fetched after each compress/decompress
+ * call rather than reused across it; a failed recompress must not be
+ * papered over by writing the file anyway, since that would ship a
+ * section stuck decompressed while its header still claims SHF_COMPRESSED.
+ * From: Issue #398
+ */
+static int update_section_libelf(Elf *elf, const char *path,
+                                  const char *section_name,
+                                  const char *search, const char *replace) {
+  Elf_Scn *scn = find_section_libelf(elf, section_name);
+  GElf_Shdr shdr;
+  Elf_Data *data;
+  int was_compressed;
+  int count;
+
+  if (scn == NULL) {
+    rs_trace("file %s has no \"%s\" section", path, section_name);
+    return 0;
+  }
+  if (gelf_getshdr(scn, &shdr) != &shdr) {
+    rs_log_warning("gelf_getshdr on \"%s\" section of file %s failed: %s",
+                   section_name, path, elf_errmsg(-1));
+    return 0;
+  }
+
+  was_compressed = (shdr.sh_flags & SHF_COMPRESSED) != 0;
+  if (was_compressed && elf_compress(scn, 0, 0) < 0) {
+    rs_log_warning("elf_compress (decompress) on \"%s\" section of file %s"
+                   " failed: %s -- leaving this section unrewritten",
+                   section_name, path, elf_errmsg(-1));
+    return 0;
+  }
+
+  data = elf_getdata(scn, NULL);
+  if (data == NULL) {
+    rs_log_warning("elf_getdata on \"%s\" section of file %s failed: %s",
+                   section_name, path, elf_errmsg(-1));
+    return 0;
+  }
+
+  count = replace_string(data->d_buf, data->d_size, search, replace);
+  if (count == 0) {
+    rs_trace("\"%s\" section of file %s has no occurrences of \"%s\"",
+             section_name, path, search);
+  } else {
+    rs_log_info("updated \"%s\" section of file \"%s\": "
+                "replaced %d occurrences of \"%s\" with \"%s\"",
+                section_name, path, count, search, replace);
+    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+  }
+
+  if (was_compressed) {
+    int rc = elf_compress(scn, ELFCOMPRESS_ZLIB, 0);
+    if (rc == 0) {
+      /* Per libelf.h: a same-length edit can make the recompressed size
+       * not shrink versus the header overhead; force it anyway so the
+       * section keeps the SHF_COMPRESSED shape it had before this edit. */
+      rc = elf_compress(scn, ELFCOMPRESS_ZLIB, ELF_CHF_FORCE);
+    }
+    if (rc < 0) {
+      rs_log_warning("elf_compress (recompress) on \"%s\" section of file %s"
+                     " failed: %s", section_name, path, elf_errmsg(-1));
+      return -1;
+    }
+  }
+
+  return count;
+}
+
+/*
+ * What: libelf equivalent of update_debug_info() above.
+ * Why: A single elf_update(ELF_C_WRITE) call lets libelf recompute the
+ * whole section-header/offset layout itself, needed because a
+ * recompressed section's size can differ from its original compressed
+ * size even though the decompressed content is always the same length
+ * as before the edit (see replace_string()'s same-length constraint).
+ * Returns 0 on success or a non-fatal skip (an already-existing
+ * elf_version(EV_CURRENT) call must precede any libelf use in this
+ * process; done lazily here since this function may never be called).
+ * Returns 1 if elf_update() itself failed, matching munmap_file()'s
+ * existing precedent of failing the compile rather than trusting an
+ * uncertain on-disk state after an attempted write-back.
+ * From: Issue #398
+ */
+static int update_debug_info_libelf(const char *path, const char *search,
+                                     const char *replace) {
+  static const char *const debug_sections[] = {
+    ".debug_info", ".debug_str", ".debug_line_str"
+  };
+  size_t i;
+  int fd;
+  Elf *elf;
+  int need_write = 0;
+
+  if (elf_version(EV_CURRENT) == EV_NONE) {
+    rs_log_warning("elf_version failed: %s -- skipping debug-info rewrite",
+                   elf_errmsg(-1));
+    return 0;
+  }
+
+  fd = open(path, O_RDWR);
+  if (fd < 0) {
+    rs_log_error("error opening file '%s': %s", path, strerror(errno));
+    return 0;
+  }
+
+  elf = elf_begin(fd, ELF_C_RDWR, NULL);
+  if (elf == NULL) {
+    rs_log_warning("elf_begin on '%s' failed: %s -- skipping debug-info"
+                   " rewrite", path, elf_errmsg(-1));
+    close(fd);
+    return 0;
+  }
+
+  if (elf_kind(elf) != ELF_K_ELF) {
+    rs_trace("file %s is not a plain ELF file, skipping debug-info rewrite",
+             path);
+    elf_end(elf);
+    close(fd);
+    return 0;
+  }
+
+  for (i = 0; i < sizeof(debug_sections) / sizeof(debug_sections[0]); i++) {
+    int count = update_section_libelf(elf, path, debug_sections[i],
+                                       search, replace);
+    if (count < 0) {
+      /* Nothing has been written to disk yet -- elf_update() below is
+       * the only call that commits anything, so skipping it here leaves
+       * the original file completely untouched, not half-edited. */
+      rs_log_warning("aborting debug-info rewrite of '%s' without writing,"
+                     " to avoid leaving it half-edited", path);
+      elf_end(elf);
+      close(fd);
+      return 0;
+    }
+    if (count > 0) {
+      need_write = 1;
+    }
+  }
+
+  if (need_write && elf_update(elf, ELF_C_WRITE) < 0) {
+    rs_log_warning("elf_update on '%s' failed: %s", path, elf_errmsg(-1));
+    elf_end(elf);
+    close(fd);
+    return 1;
+  }
+
+  elf_end(elf);
+  close(fd);
+  return 0;
+}
+#endif /* HAVE_LIBELF */
 
 /*
  * Edit the ELF file residing at @p path, changing all occurrences of
@@ -424,8 +646,8 @@ static int update_debug_info(const char *path, const char *search,
 int dcc_fix_debug_info(const char *path, const char *client_path,
                               const char *server_path)
 {
-#ifndef HAVE_ELF_H
-  rs_trace("no <elf.h>, so can't change %s to %s in debug info for %s",
+#if !defined(HAVE_ELF_H) && !defined(HAVE_LIBELF)
+  rs_trace("no <elf.h> or libelf, so can't change %s to %s in debug info for %s",
            server_path, client_path, path);
   return 0;
 #else
@@ -449,7 +671,20 @@ int dcc_fix_debug_info(const char *path, const char *client_path,
   }
   client_path_plus_slashes[client_path_len] = '\0';
   rs_log_info("client_path_plus_slashes = %s", client_path_plus_slashes);
+  /*
+   * What: Prefers the libelf path over the raw <elf.h> one when both are
+   * available.
+   * Why: libelf correctly handles a compressed (SHF_COMPRESSED) debug
+   * section via decompress/patch/recompress; the raw path silently finds
+   * zero occurrences on one instead (issue #398), so it is only the
+   * fallback for a toolchain without a libelf providing elf_compress.
+   * From: Issue #398
+   */
+#ifdef HAVE_LIBELF
+  return update_debug_info_libelf(path, server_path, client_path_plus_slashes);
+#else
   return update_debug_info(path, server_path, client_path_plus_slashes);
+#endif
 #endif
 }
 

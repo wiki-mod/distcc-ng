@@ -1,78 +1,32 @@
 # syntax=docker/dockerfile:1.7
 #
-# distcc-ng verification/debug container (issue #264).
-#
-# Purpose: give every agent/human doing real build+test verification work on
-# this repo one pre-built, fully self-contained image instead of each session
-# re-installing the same dependency list from scratch in an ad-hoc container
-# or (banned for cited verification evidence, see AGENTS.md/doc on WSL2)
-# a WSL2 instance. "Pre-built and fully self-contained" is a hard requirement
-# from the maintainer: downloading and starting this image must be the entire
-# setup step, with NO apt-get/tool-fetching happening at container start or
-# first use -- everything below is baked into the image layers at build time,
-# and every tool gets a real build-time self-test (not just "apt-get install
-# exited 0") so a broken tool fails the image build itself, not a later user.
-#
-# Sizing rationale: the maintainer asked which of Samba or Apache httpd has
-# the larger/more demanding real-world build-dependency surface, to use as a
-# sizing reference beyond distcc-ng's own (much smaller) needs. A real
-# Debian Build-Depends comparison (see the issue #264 research comment) found
-# Samba (2:4.22.10+dfsg-0+deb13u1, trixie) has 51 distinct build dependencies
-# -- Kerberos, LDAP, GnuTLS, PAM, systemd, ICU, LMDB, Ceph/RADOS clustering,
-# io_uring, Python bindings, MinGW cross-compilers -- versus Apache httpd
-# (2.4.68-1~deb13u1)'s 20 (APR/APR-util, PCRE2, OpenSSL, libxml2, Lua, brotli,
-# nghttp2, zlib). Samba is therefore this image's sizing target. Debian
-# packaging-only tooling from Samba's real Build-Depends (debhelper-compat,
-# dh-exec, dpkg-dev, jdupes, lsb-release, rpcsvc-proto, the mingw-w64 cross
-# compilers) is deliberately left out: this image targets a real `./configure
-# && make` build from a source tree, not producing a signed .deb, and cross-
-# compiling Samba's Windows-side tools is out of scope for what this image
-# needs to prove.
-#
-# Same Debian release lineage as docker/release/Dockerfile (trixie), for
-# consistency with this repo's existing container lineage, even though this
-# image serves a different purpose (dev/verification tools, not a minimal
-# runtime image) and is pinned to its own digest rather than sharing
-# docker/release/Dockerfile's ARG value: the two images are on independent
-# patch-level update schedules, so pinning them separately (rather than one
-# shared ARG) avoids an unrelated bump to one accidentally moving the other.
-#
-# Deliberately the full/"standard" debian image, not debian:*-slim: there is
-# no debian:minimal/debian:standard tag on Docker Hub (only the default,
-# full variant vs. an explicit -slim one) -- and slim would be the wrong
-# starting point here regardless, since this image's entire purpose is
-# carrying a large real toolchain (gdb, valgrind, binutils, etc.) well
-# beyond what the slim base strips down to; there is nothing for a smaller
-# base image to save.
-#
-# Pinned to the real, live digest for the debian:13.6 tag (verified against
-# Docker Hub's own API at pin time, 2026-07-21 -- not guessed from a prior
-# 13.5 pin) so this image doesn't sit on a stale trixie patch level.
+# What: distcc-ng's pre-built, fully self-contained verification/debug
+#   image: build toolchain, sanitizers, and inspection tools, all baked in
+#   with real build-time self-tests.
+# Why: Verification evidence must run in one image with nothing installed
+#   at container start, never an ad-hoc container or WSL2 (AGENTS.md rule
+#   87).
+# From: Issue #264
+
+# What: Pins the base image to a specific debian:13.6 digest, full (not
+#   slim) variant.
+# Why: This image's whole point is carrying a large toolchain that the
+#   slim base would strip down.
+# From: Issue #264
 ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
 
-# actionlint is a Go binary, and Go statically embeds its entire standard
-# library into every compiled binary -- unlike a dynamically-linked C tool,
-# there is no way to get stdlib security fixes into an already-built Go
-# binary short of recompiling it. rhysd/actionlint only cuts a new release
-# when the tool itself has a feature/fix to ship, not on every Go stdlib
-# security release, so its official static release binary can (and, per
-# wiki-mod/lancache-ng's own Trivy-scanning of this exact same version, has)
-# carry known stdlib CVEs from whatever Go toolchain happened to be current
-# when that release was cut. Building from source with a Go toolchain is
-# the only way to get a current, patched stdlib into it -- same approach
-# and same pinned version (v1.7.12, the latest release at pin time) as
-# lancache-ng's own build-tools image. `golang:latest` itself is pinned to
-# a digest (maintainer decision, issue #267, Scorecard PinnedDependenciesID)
-# rather than left as a floating tag; this repo's Dependabot config tracks
-# docker/verify's base images (.github/dependabot.yml) so the pinned
-# digest still gets refreshed weekly instead of freezing at whatever Go
-# release happened to be current on the day this was pinned.
+# What: Builds actionlint from source instead of using its release binary.
+# Why: Go statically embeds its stdlib, so an official actionlint release
+#   binary can carry a stale, CVE-affected stdlib version that only a
+#   fresh source build fixes.
+# From: Issue #267
 FROM golang@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS actionlint-builder
 ARG ACTIONLINT_VERSION=1.7.12
-# This stage has no SHELL override, so RUN executes via Docker's default
-# /bin/sh -- dash on this Debian-based golang image, which rejects the
-# bash-only `-o pipefail`. No pipe exists in this command anyway, so `-eu`
-# alone (POSIX sh, dash-compatible) gives the same fail-fast guarantee.
+# What: Uses `set -eu` instead of `set -eo pipefail`.
+# Why: This stage has no SHELL override, so RUN runs under dash, which
+#   rejects the bash-only `pipefail`; no pipe exists here anyway, so `-eu`
+#   gives the same fail-fast guarantee.
+# From: PR #377
 RUN set -eu; \
     GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"; \
     /out/actionlint --version
@@ -90,22 +44,21 @@ LABEL org.opencontainers.image.title="distcc-ng-buildtools" \
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
 
-# Deliberately one big apt-get layer (not several --no-install-recommends
-# RUNs split by category): a single `apt-get update` right before install
-# avoids a stale package index being reused across layers, and grouping the
-# install keeps the image to one extra layer instead of one per category.
-# --no-install-recommends throughout: recommends would silently balloon the
-# image and risk depending on something not deliberately chosen here. Where
-# a tool's actual runtime need (e.g. sanitizer runtimes) comes in as a hard
-# Depends of a package already listed below (gcc/g++ hard-depend on
-# libasanN/libubsanN/libtsan2 on Debian, not just Recommends), no extra
-# package name is needed -- verified for real by the self-test RUN step
-# further down, not assumed from package metadata alone.
+# What: Installs the full toolchain in one apt-get layer with
+#   --no-install-recommends.
+# Why: --no-install-recommends keeps only deliberately-chosen packages; a
+#   hard Depends already covers real runtime needs (e.g. sanitizer
+#   runtimes via gcc/g++), verified by the self-test below.
+# From: PR #273, Issue #264
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      # --- Core build toolchain (distcc-ng's own configure.ac/Makefile.in) ---
+      # What: Core build toolchain (distcc-ng's own configure.ac/Makefile.in).
+      # Why: clang is included alongside gcc/autotools since distcc-ng's
+      #   own code has clang-specific compiler-detection logic
+      #   (dcc_probe_is_clang) that a gcc-only image couldn't exercise.
+      # From: PR #273, Issue #264
       build-essential \
       autoconf \
       automake \
@@ -113,8 +66,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       pkg-config \
       ccache \
       clang \
-      # --- distcc-ng's real configure-time dependencies (c-build.yml's
-      #     ConorMacBride/install-package apt list, kept in sync here) ---
+      # What: distcc-ng's real configure-time dependencies, kept in sync
+      #   with c-build.yml's install-package apt list.
+      # Why: A drift between the two lists would let this image build
+      #   successfully against a dependency CI's real matrix no longer
+      #   provides, or vice versa.
+      # From: PR #273, Issue #264
       libpopt-dev \
       libavahi-client-dev \
       python3-dev \
@@ -122,16 +79,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libzstd-dev \
       libseccomp-dev \
       gdb \
-      # python3-dbg (debug build + gdb helper macros, e.g. py-bt/py-list):
-      # for debugging the include_server itself (a Python program) and its
-      # C extension (include_server/c_extensions/) together under gdb --
-      # follow-up ask this session. pdb (Python's own built-in debugger)
-      # needs nothing extra, it already ships inside plain python3.
+      # What: python3-dbg adds gdb helper macros (py-bt/py-list).
+      # Why: include_server is Python plus a C extension
+      #   (include_server/c_extensions/), and debugging both together needs
+      #   gdb's Python macros; pdb needs nothing extra since it already
+      #   ships in plain python3.
+      # From: PR #291, Issue #264
       python3-dbg \
-      # --- Samba-sized reference toolchain (see sizing rationale above):
-      #     the real library/header surface a project as demanding as Samba
-      #     needs to configure and build, so this image is proven adequate
-      #     for real large-C-project work, not just distcc-ng itself ---
+      # What: Reference toolchain sized to build a real, demanding C project.
+      # Why: A representative subset of Samba's 51-package Debian
+      #   build-dependency surface (vs. Apache httpd's 20), to prove this
+      #   image adequate for large-C-project work -- deliberately not a
+      #   complete match, since this image's own `./configure && make`
+      #   target never needs Samba's packaging-only/cross-compile/Ceph
+      #   dependencies.
+      # From: Issue #264
       libkrb5-dev \
       libldap2-dev \
       libgnutls28-dev \
@@ -163,23 +125,45 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       docbook-xsl \
       xsltproc \
       perl \
-      # Samba's own build (its waf-based ./configure) generates a parser
-      # via Parse::Yapp -- found missing empirically by this image's own
-      # CI verification step (a real `./configure` dry-run against Samba's
-      # source failed with "perl module Parse::Yapp::Driver ... not
-      # found" before this was added), not assumed from the Build-Depends
-      # list alone.
+      # What: libparse-yapp-perl is required by Samba's waf-based ./configure.
+      # Why: Missing it fails a real ./configure dry-run against Samba's
+      #   source ("perl module Parse::Yapp::Driver ... not found").
+      # From: Issue #264
       libparse-yapp-perl \
       python3-dnspython \
       python3-markdown \
-      # --- Debug tools (issue #264's explicit ask) ---
+      # What: strace/ltrace for tracing distccd/include_server syscalls and
+      #   library calls without attaching a debugger.
+      # Why: Kept as two separate tools since a syscall-level trace
+      #   (strace) won't show a library-call-level bug (ltrace), or vice
+      #   versa.
+      # From: Issue #264
       strace \
       ltrace \
-      # --- Sanitizer/memory-debug toolchain (follow-up ask this session) ---
+      # What: valgrind for memory-safety debugging without a
+      #   sanitizer-instrumented rebuild.
+      # Why: Unlike the ASan/UBSan self-test checks below, valgrind finds
+      #   memory bugs in an already-built binary with no need to recompile
+      #   with -fsanitize.
+      # From: PR #273, Issue #264
       valgrind \
-      # --- Binutils (objdump/readelf/nm/addr2line -- follow-up ask) ---
+      # What: objdump/readelf/nm/addr2line for inspecting distccd/
+      #   include_server binaries and symbols.
+      # Why: A crashed or misbehaving binary often needs static inspection
+      #   (symbols, sections, disassembly) without ever being run.
+      # From: PR #273, Issue #264
       binutils \
-      # --- Search/inspection tools agents commonly reach for ---
+      # What: libelf-dev adds the libelf.h/gelf.h programming API.
+      # Why: elf.h (already present via libc6-dev) only defines raw ELF
+      #   struct layouts, with no API for safely reading, decompressing, or
+      #   rewriting an ELF section's contents.
+      # From: Issue #398
+      libelf-dev \
+      # What: search/inspection tools agents commonly reach for.
+      # Why: An agent doing verification work needs to search source/logs
+      #   and fetch packages from inside the container itself, not just
+      #   the host.
+      # From: PR #273, Issue #264
       ripgrep \
       grep \
       less \
@@ -187,67 +171,66 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       ca-certificates \
       wget \
       curl \
-      # Network/socket debugging (follow-up ask this session): same bundle
-      # as strace/gdb/valgrind above -- diagnosing a distccd that won't
-      # bind/accept, or a hung distributed-compile connection, needs to see
-      # real open sockets/file descriptors, not just process-level tracing.
+      # What: lsof/iproute2 for network/socket debugging.
+      # Why: Diagnosing a distccd that won't bind/accept needs real
+      #   open-socket visibility, not just process-level tracing.
+      # From: PR #273, Issue #264
       lsof \
       iproute2 \
-      # DNS lookup tools (dig/nslookup/host -- follow-up ask this session):
-      # diagnosing a distccd host that won't resolve (DISTCC_HOSTS entries,
-      # a misbehaving --allow netrange, or a Redis remote-storage hostname
-      # for ccache) needs real name-resolution tools, not just IP-level
-      # socket inspection.
+      # What: dig/nslookup/host for DNS lookup diagnostics.
+      # Why: A distccd host that won't resolve needs real name-resolution
+      #   tools, not just IP-level socket inspection.
+      # From: PR #291, Issue #264
       dnsutils \
-      # shellcheck/jq (CI-lint tools, follow-up ask this session, same
-      # class as issue #267's actionlint gap): shellcheck is Haskell, not
-      # Go, so it doesn't have actionlint's stale-stdlib problem above --
-      # Debian's packaged version is fine here. jq has no compiled runtime
-      # embedding concern either (plain C).
+      # What: shellcheck/jq, apt-installed rather than built from source.
+      # Why: Neither is a statically-linked Go binary like actionlint
+      #   (shellcheck is Haskell, jq is plain C), so Debian's packaged
+      #   versions carry no stale-stdlib risk.
+      # From: Issue #267
       shellcheck \
       jq \
-      # openssh-server/openssh-client (issue #275/#440's SSHMode_Case):
-      # this test verifies distcc's SSH transport mode by starting a
-      # real, ephemeral, non-root sshd and connecting to it with a real
-      # ssh client -- confirmed live that GitHub's own ubuntu-latest/
-      # macOS-latest runner images already ship both, so the test
-      # already runs for real there; this image was the one place it
-      # was still silently NOTRUN-skipping, purely because openssh
-      # wasn't installed here, not because of any deliberate design
-      # choice to keep it out.
+      # What: openssh-server/openssh-client for SSHMode_Case's real sshd
+      #   test.
+      # Why: This image was the one place SSHMode_Case silently
+      #   NOTRUN-skipped, since GitHub's runner images ship both already
+      #   but this one didn't.
+      # From: Issue #275, Issue #440
       openssh-server \
       openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
-# actionlint built from source in the actionlint-builder stage above (see
-# its comment for why) -- not apt-installed, and not fetched via
-# curl|bash at CI runtime (the pattern this addition replaces; see
-# .github/workflows/actionlint.yml and issue #267/Scorecard's
-# PinnedDependenciesID finding).
+# What: Copies the source-built actionlint binary into the final image.
+# Why: Replaces a curl|bash fetch at CI runtime with a pinned, source-built
+#   binary.
+# From: Issue #267
 COPY --from=actionlint-builder /out/actionlint /usr/local/bin/actionlint
 
-# bash (not the default dash /bin/sh) for the self-test below: it uses
-# pipefail so a tool crashing mid-pipeline fails the build instead of being
-# masked by a downstream grep's own exit code.
+# What: Switches SHELL to bash for the self-test RUN block below.
+# Why: pipefail is bash-only and this stage's default dash would reject
+#   it, which would let a mid-pipeline tool crash go undetected.
+# From: PR #273, Issue #264
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Real build-time self-test: fails the image build itself if any tool is
-# missing or non-functional, rather than deferring discovery to whoever
-# first tries to use the running container. Each check exercises the tool
-# doing the thing it's actually needed for in this repo's verification work
-# (see issue #264 and the AGENTS.md verification-checklist references named
-# in the follow-up ask), not just "the binary exists".
+# What: Build-time self-test exercising every installed tool for real use,
+#   not just checking the binary exists.
+# Why: Fails the image build itself on a missing/broken tool, instead of
+#   deferring discovery to whoever first uses the running container.
+# From: Issue #264
 RUN set -eux; \
     mkdir -p /tmp/verify-selftest && cd /tmp/verify-selftest; \
-    # --- gcc/clang basic sanity ---
+    # What: Confirms gcc/clang produce a real, runnable binary.
+    # Why: Every later check in this self-test compiles its own test
+    #   program with gcc, so a broken compiler here would invalidate every
+    #   check that follows.
+    # From: PR #273, Issue #264
     echo 'int main(void) { return 0; }' > ok.c; \
     gcc ok.c -o ok_gcc && ./ok_gcc; \
     clang ok.c -o ok_clang && ./ok_clang; \
     gcc -g -O0 ok.c -o ok_dbg; \
-    # --- AddressSanitizer: a real, deliberately-broken program must be
-    #     caught at runtime, not just link cleanly. ASan aborts with a
-    #     non-zero exit on detection, so this RUN's own `set -e` would kill
-    #     the build on a *successful* catch -- guard the call with `!`. ---
+    # What: Confirms ASan catches a real heap-overflow at runtime.
+    # Why: ASan aborts non-zero on a real catch, which would otherwise trip
+    #   this RUN's own `set -e`; the `!` guard lets that expected abort pass.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { char *p = malloc(8); p[8] = 1; return 0; }' \
@@ -256,9 +239,10 @@ RUN set -eux; \
     ! ./asan_bug > asan.log 2>&1; \
     grep -q "AddressSanitizer" asan.log \
       || { echo "ERROR: ASan build did not report AddressSanitizer output"; cat asan.log; exit 1; }; \
-    # --- UndefinedBehaviorSanitizer: real signed-overflow UB must be
-    #     reported (UBSan's default trap does not necessarily exit non-zero,
-    #     so only the log content is checked here) ---
+    # What: Confirms UBSan reports a real signed-overflow.
+    # Why: UBSan's default trap does not reliably exit non-zero, so only
+    #   the log content is checked here.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <limits.h>' \
       'int main(void) { int x = INT_MAX; return x + 1; }' \
@@ -267,7 +251,11 @@ RUN set -eux; \
     ./ubsan_bug > ubsan.log 2>&1 || true; \
     grep -qi "runtime error" ubsan.log \
       || { echo "ERROR: UBSan build did not report a runtime error"; cat ubsan.log; exit 1; }; \
-    # --- valgrind: must actually detect a real leak ---
+    # What: Confirms valgrind detects a real memory leak.
+    # Why: `--error-exitcode=99` on a real leak would otherwise trip this
+    #   RUN's own `set -e`; `|| true` deliberately swallows that expected
+    #   nonzero exit so the log content, not the exit code, is checked.
+    # From: PR #273, Issue #264
     printf '%s\n' \
       '#include <stdlib.h>' \
       'int main(void) { malloc(16); return 0; }' \
@@ -276,27 +264,23 @@ RUN set -eux; \
     valgrind --error-exitcode=99 --leak-check=full ./leak > valgrind.log 2>&1 || true; \
     grep -q "definitely lost: 16 bytes" valgrind.log \
       || { echo "ERROR: valgrind did not report the expected leak"; cat valgrind.log; exit 1; }; \
-    # --- gdb/strace/ltrace: existence + version check only, here at build
-    #     time -- a full functional test (actually attaching, actually
-    #     tracing a syscall/library call) needs ptrace(2), which the default
-    #     Docker BuildKit sandbox denies via seccomp regardless of the image
-    #     content (no CAP_SYS_PTRACE is available to a `docker build` RUN
-    #     step, and there is no build-time flag to add it). Faking a pass
-    #     here by swallowing that failure would violate the "warnings/
-    #     failures are errors" rule as surely as skipping the check outright.
-    #     The real functional trace tests live in
-    #     docker/verify/selftest-ptrace.sh, run once against the built image
-    #     via `docker run --cap-add=SYS_PTRACE` (see doc/docker.md)
-    #     -- that is the honest way to prove these tools work in the
-    #     container's actual intended use (an agent's `docker run`, not
-    #     `docker build`). ---
+    # What: gdb/strace/ltrace get only an existence + version check here.
+    # Why: A real functional test needs ptrace(2), which BuildKit's build
+    #   sandbox denies with no way to add CAP_SYS_PTRACE; the real test
+    #   runs later, in docker/verify/selftest-ptrace.sh via `docker run
+    #   --cap-add=SYS_PTRACE` (see doc/docker.md).
+    # From: PR #273, Issue #264
     gdb --version | grep -q "GNU gdb" \
       || { echo "ERROR: gdb --version did not report a GNU gdb banner"; exit 1; }; \
     strace -V | grep -qi "strace" \
       || { echo "ERROR: strace -V did not report a strace banner"; exit 1; }; \
     ltrace -V | grep -qi "ltrace" \
       || { echo "ERROR: ltrace -V did not report an ltrace banner"; exit 1; }; \
-    # --- binutils: objdump/readelf/nm/addr2line must all read the real binary ---
+    # What: Confirms objdump/readelf/nm/addr2line all read the real binary.
+    # Why: addr2line needs the debug-info binary (`ok_dbg`) to resolve an
+    #   address to a symbol name; the other three tools work on the plain
+    #   `ok_gcc` binary and would not catch a debug-info-specific break.
+    # From: PR #273, Issue #264
     objdump -d ok_gcc | grep -q "main>:" \
       || { echo "ERROR: objdump did not disassemble main"; exit 1; }; \
     readelf -h ok_gcc | grep -q "ELF Header" \
@@ -306,21 +290,56 @@ RUN set -eux; \
     MAIN_ADDR="$(nm ok_dbg | awk '/ T main/ {print $1}')"; \
     addr2line -e ok_dbg -f "${MAIN_ADDR}" | grep -q "main" \
       || { echo "ERROR: addr2line did not resolve main"; exit 1; }; \
-    # --- ripgrep/grep/less: must actually find real content ---
+    # What: Confirms libelf-dev works: compiles, links -lelf, and reads a
+    #   real ELF header from ok_gcc via the libelf API.
+    # Why: Proves the API actually works, not just that the headers exist
+    #   on disk.
+    # From: Issue #398
+    printf '%s\n' \
+      '#include <fcntl.h>' \
+      '#include <stdio.h>' \
+      '#include <unistd.h>' \
+      '#include <libelf.h>' \
+      '#include <gelf.h>' \
+      'int main(void) {' \
+      '  if (elf_version(EV_CURRENT) == EV_NONE) { fprintf(stderr, "elf_version failed\n"); return 1; }' \
+      '  int fd = open("ok_gcc", O_RDONLY);' \
+      '  if (fd < 0) { perror("open"); return 1; }' \
+      '  Elf *e = elf_begin(fd, ELF_C_READ, NULL);' \
+      '  if (!e || elf_kind(e) != ELF_K_ELF) { fprintf(stderr, "elf_begin/elf_kind failed\n"); return 1; }' \
+      '  GElf_Ehdr ehdr;' \
+      '  if (!gelf_getehdr(e, &ehdr)) { fprintf(stderr, "gelf_getehdr failed\n"); return 1; }' \
+      '  printf("libelf_selftest_ok e_type=%d\n", ehdr.e_type);' \
+      '  elf_end(e); close(fd);' \
+      '  return 0;' \
+      '}' \
+      > libelf_selftest.c; \
+    gcc libelf_selftest.c -lelf -o libelf_selftest; \
+    ./libelf_selftest > libelf_selftest.log 2>&1; \
+    grep -q "libelf_selftest_ok" libelf_selftest.log \
+      || { echo "ERROR: libelf selftest did not report success"; cat libelf_selftest.log; exit 1; }; \
+    # What: Confirms ripgrep/grep/less actually find real content.
+    # Why: A search tool that runs but silently matches nothing would look
+    #   identical to one that works, judging by exit code alone.
+    # From: PR #273, Issue #264
     printf 'needle_marker\nhaystack\n' > rgtest.txt; \
     rg -q needle_marker rgtest.txt; \
     grep -q needle_marker rgtest.txt; \
     less --version >/dev/null; \
-    # --- ccache: must actually cache a compile (second run is a hit) ---
+    # What: Confirms ccache actually caches a compile (second run hits).
+    # Why: A ccache that always misses would silently defeat the entire
+    #   point of including it, while still exiting 0 on every call.
+    # From: PR #273, Issue #264
     ccache --zero-stats >/dev/null; \
     ccache gcc -c ok.c -o ok.o; \
     ccache gcc -c ok.c -o ok.o; \
     ccache --show-stats | grep -qE "Hits:[[:space:]]*[1-9]" \
       || { ccache --show-stats; echo "ERROR: ccache reported no cache hit"; exit 1; }; \
-    # --- ss (iproute2): must show a real listening socket, not just
-    #     --version -- neither binding nor listing a loopback socket needs
-    #     ptrace, so this works fine at image-build time (unlike gdb/
-    #     strace/ltrace above). ---
+    # What: Confirms ss shows a real listening loopback socket.
+    # Why: Binding/listing a loopback socket needs no ptrace, so this runs
+    #   as a real test at build time, unlike the gdb/strace/ltrace checks
+    #   above.
+    # From: PR #273, Issue #264
     python3 -u -c "import socket,time; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('127.0.0.1',0)); s.listen(1); print(s.getsockname()[1], flush=True); time.sleep(5)" > ss_port.log 2>&1 & \
     SS_PID=$!; \
     for _ in 1 2 3 4 5; do [ -s ss_port.log ] && break; sleep 0.5; done; \
@@ -329,35 +348,29 @@ RUN set -eux; \
       || { echo "ERROR: ss did not show the real listening socket on port ${SS_PORT}"; ss -tln; kill "${SS_PID}" 2>/dev/null || true; exit 1; }; \
     kill "${SS_PID}" 2>/dev/null || true; \
     wait "${SS_PID}" 2>/dev/null || true; \
-    # --- lsof: must show a real open file descriptor on this same shell ---
+    # What: Confirms lsof shows a real open file descriptor on this shell.
+    # Why: lsof needs a real, currently-open fd to prove it can actually
+    #   inspect process file descriptors, not just parse its own arguments.
+    # From: PR #273, Issue #264
     exec 9< /etc/hostname; \
     lsof -p "$$" | grep -q hostname \
       || { echo "ERROR: lsof did not show the open /etc/hostname file descriptor"; lsof -p "$$"; exit 1; }; \
     exec 9<&-; \
-    # --- dig/nslookup (dnsutils): must actually resolve a real hostname,
-    #     not just print a --version banner -- unlike the ptrace-dependent
-    #     tools above, DNS resolution needs only network access, which a
-    #     `docker build` RUN step does have (apt-get install just used it
-    #     to reach Debian's own mirrors), so this can be a real functional
-    #     test here rather than deferred to a runtime selftest script.
-    #     Resolving the same mirror host apt-get already reached avoids
-    #     depending on a third, unrelated external hostname being up. ---
+    # What: Confirms dig/nslookup actually resolve a real hostname.
+    # Why: DNS resolution needs only network access, available at build
+    #   time unlike ptrace, so this is a real test here rather than
+    #   deferred.
+    # From: PR #291, Issue #264
     dig +short deb.debian.org | grep -qE '^[0-9]+\.' \
       || { echo "ERROR: dig did not resolve deb.debian.org to an IPv4 address"; dig deb.debian.org; exit 1; }; \
     nslookup deb.debian.org | grep -qi "Address" \
       || { echo "ERROR: nslookup did not resolve deb.debian.org"; nslookup deb.debian.org; exit 1; }; \
-    # --- openssh: must actually start a real sshd, connect with a real
-    #     ssh client, and run a real remote command over that connection
-    #     -- the same mechanism issue #275/#440's SSHMode_Case exercises
-    #     via a real "distccd --inetd" session over SSH. Runs here as
-    #     root (this RUN block's own context, before `USER verify`
-    #     below) since privilege-dropping semantics are SSHMode_Case's
-    #     own concern at container runtime, not what this build-time
-    #     self-test needs to prove -- only that real key exchange and
-    #     remote command execution actually work in this image. Neither
-    #     needs ptrace, so (like ss/dig above) this can be a real
-    #     functional test at build time rather than deferred to the
-    #     runtime selftest script. ---
+    # What: Confirms a real sshd/ssh client round-trip, mirroring
+    #   SSHMode_Case's real session.
+    # Why: Runs as root (before `USER verify` below) since
+    #   privilege-dropping is SSHMode_Case's own runtime concern, not what
+    #   this build-time check proves.
+    # From: Issue #275, Issue #440
     ssh-keygen -q -t ed25519 -f ssh_host_key -N ''; \
     ssh-keygen -q -t ed25519 -f ssh_client_key -N ''; \
     cp ssh_client_key.pub ssh_authorized_keys; \
@@ -372,11 +385,11 @@ RUN set -eux; \
       'PrintMotd no' \
       'Subsystem sftp none' \
       > sshd_selftest_config; \
-    # Debian's sshd expects its privilege-separation directory to
-    # already exist (normally created by the openssh-server package's
-    # own postinst/init-script, neither of which runs in a plain
-    # Dockerfile RUN) -- without it, sshd fails to start at all with
-    # "Missing privilege separation directory: /run/sshd". ---
+    # What: Creates /run/sshd before starting sshd.
+    # Why: Debian's sshd expects this directory already created by the
+    #   package's own postinst/init-script, neither of which runs in a
+    #   plain Dockerfile RUN.
+    # From: PR #443, Issue #275, Issue #440
     mkdir -p /run/sshd; \
     /usr/sbin/sshd -f /tmp/verify-selftest/sshd_selftest_config \
       -E /tmp/verify-selftest/sshd_selftest.log; \
@@ -393,19 +406,26 @@ RUN set -eux; \
     [ "${SSH_OK}" = "1" ] && grep -q "ssh_selftest_marker" ssh_selftest_out.log \
       || { echo "ERROR: ssh did not receive the expected remote command output"; \
            cat ssh_selftest_out.log; cat /tmp/verify-selftest/sshd_selftest.log; exit 1; }; \
-    # --- jq: must actually parse and query real JSON, not just print a
-    #     --version banner ---
+    # What: Confirms jq actually parses and queries real JSON.
+    # Why: jq's query engine is the part actually used by CI/scripts; a jq
+    #   binary that starts but mis-parses would still exit 0 on --version.
+    # From: PR #332, Issue #264
     echo '{"tool":"jq","ok":true}' | jq -e '.ok == true' >/dev/null \
       || { echo "ERROR: jq did not correctly query the test JSON document"; exit 1; }; \
-    # --- shellcheck: must actually flag a real, deliberately-broken shell
-    #     script (an unquoted variable expansion, SC2086) ---
+    # What: Confirms shellcheck flags a real SC2086 (unquoted variable) bug.
+    # Why: A shellcheck that runs but never actually lints (e.g. the wrong
+    #   rule set) would still exit 0 and look installed correctly.
+    # From: PR #332, Issue #264
     printf '%s\n' '#!/bin/sh' 'x="a b"' 'echo $x' > shellcheck_bug.sh; \
     shellcheck shellcheck_bug.sh > shellcheck.log 2>&1 && \
       { echo "ERROR: shellcheck did not flag the deliberately broken script"; cat shellcheck.log; exit 1; } \
       || grep -q "SC2086" shellcheck.log \
       || { echo "ERROR: shellcheck did not report the expected SC2086 finding"; cat shellcheck.log; exit 1; }; \
-    # --- actionlint: must actually flag a real, deliberately-broken
-    #     workflow file (a job with no runs-on:) ---
+    # What: Confirms actionlint flags a real missing-`runs-on:` bug.
+    # Why: This is the one point that actually exercises the source-built
+    #   binary from the actionlint-builder stage, not just its --version
+    #   output.
+    # From: PR #332, Issue #264
     mkdir -p actionlint_test/.github/workflows; \
     printf '%s\n' 'on: push' 'jobs:' '  test:' '    steps:' '      - run: echo hi' \
       > actionlint_test/.github/workflows/broken.yml; \
@@ -415,21 +435,12 @@ RUN set -eux; \
       || { echo "ERROR: actionlint did not report the expected missing runs-on finding"; cat actionlint.log; exit 1; }; \
     cd / && rm -rf /tmp/verify-selftest
 
-# Non-root by default (matches docker/release/Dockerfile's convention);
-# a real distributed-compile verification run needs to bind a port and
-# read/write the mounted worktree, both of which work as a non-root user.
-#
-# Deliberately no build-arg-parameterized uid/gid here (issue #286
-# considered this -- "approach 1", a HOST_UID/HOST_GID build-arg matching
-# the caller's own host uid -- and confirmed empirically via this image's
-# own CI that it works cleanly). Not adopted: it would require rebuilding
-# this image locally with a matching build-arg any time the caller's own
-# uid differs from this image's baked-in 1000, which reintroduces exactly
-# the local build step issue #264's "pull and run, nothing to build"
-# requirement exists to avoid. `docker run --user $(id -u):$(id -g)`
-# (see doc/verification-checklist.md section 9) solves the same
-# bind-mount-ownership problem against this exact, unmodified,
-# already-published image instead, with no rebuild ever needed.
+# What: Runs as a fixed non-root `verify` user (uid/gid 1000).
+# Why: A HOST_UID/HOST_GID build-arg was rejected since it would need a
+#   local rebuild per caller uid; `docker run --user $(id -u):$(id -g)`
+#   (doc/verification-checklist.md section 9) solves the same problem
+#   against the unmodified published image.
+# From: Issue #264, Issue #286
 RUN useradd --create-home --shell /bin/bash verify
 USER verify
 WORKDIR /home/verify
