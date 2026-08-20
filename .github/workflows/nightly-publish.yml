@@ -275,13 +275,13 @@ jobs:
       - name: Compute which specific job(s) failed
         id: failed_jobs
         if: always()
-        uses: wiki-mod/distcc-ng/.github/actions/failed-jobs@current_dev
+        uses: ./.github/actions/failed-jobs
         with:
           jobs: |
             build_check=${{ needs.build_check.result }}
             distributed_e2e=${{ needs.distributed_e2e.result }}
             publish=${{ needs.publish.result }}
-      - uses: wiki-mod/distcc-ng/.github/actions/nightly-status@current_dev
+      - uses: ./.github/actions/nightly-status
         with:
           outcome: ${{ (needs.build_check.result == 'success' && needs.distributed_e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
           scope: nightly build+publish (current_dev)
