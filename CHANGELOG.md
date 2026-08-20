@@ -30,6 +30,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
+  (this fork's own maintained fork of `rpm-software-management/popt`,
+  pinned to an exact commit) instead of that project's four-year-old
+  `popt-1.19-release` tag directly, pulling in two upstream CVE fixes
+  (CVE-2026-18739, an off-by-one in `poptStuffArgs()`; CVE-2026-18743, a
+  buffer overflow in `poptConfigFileToString()`) and this fork's own fix
+  for a transposed `calloc()` argument order that GCC 14's
+  `-Wcalloc-transposed-args` flags under `-Werror`. `docker/release/Dockerfile`
+  now builds with `--without-system-popt`, so the shipped release images
+  statically link this fixed tree instead of Debian's own `libpopt`
+  package, whose CVE-2026-18739 fix had not landed in trixie as of this
+  writing. See `support-upstream/issue-063-popt-current-vendor-alternative.md`
+  for the vendoring history this builds on (#63, PR #504).
 - **`src/fix_debug_info.c`**: `dcc_fix_debug_info()`'s raw byte
   search-and-replace silently failed to rewrite a compressed
   (`SHF_COMPRESSED`) debug section -- the server-side compilation
@@ -63,6 +76,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
   comment had a `What:` but no `Why:` -- added the actual safety-critical
   reason (the `git push -f` right after it could force-move a real
   `vX.Y.Z-NG` release tag on a `NIGHTLY_TAG` misconfiguration).
+- **`.github/workflows/nightly-publish.yml`**: nightly's `build_check` job
+  failed `GdbCompressedDebugInfo_Case` under pump mode only (issue #500) --
+  not a code regression in the libelf fix above, confirmed by a real
+  `HAVE_LIBELF`/`--without-libelf` A/B rebuild. Root cause: GitHub resolves
+  a `schedule`-triggered workflow's own local composite actions (e.g.
+  `install-build-deps`) from the default branch (`master`), never from a
+  later job step's explicit `current_dev` checkout, so `master`'s
+  pre-libelf-dev `install-build-deps` kept silently shipping the pre-fix
+  raw path on every nightly run. Pinned this file's `current_dev`-building
+  jobs' local composite-action references to `@current_dev` explicitly.
 - **`doc/ci-workflows.md`**: didn't document the new shared
   `.github/actions/failed-jobs` composite action or its 3 callers.
 - **`.github/workflows/add-to-project.yml`, `.github/actions/nightly-status/report.sh`**:

@@ -434,18 +434,20 @@ AC_SEARCH_LIBS(setsockopt, [socket])
 AC_SEARCH_LIBS(hstrerror, [resolv])
 AC_SEARCH_LIBS(inet_aton, [resolv])
 
-# popt is used by distccd (src/dopt.c) for command-line parsing. Prefer the
-# system library (kept up to date with security fixes by the distro), but
-# fall back to the bundled copy in popt/ -- vendored from popt's own real
-# upstream project's popt-1.19-release tag -- when no suitable system
-# libpopt is available (minimal containers, embedded/cross-compilation
-# environments, older or unusual distros without a popt package). This
-# mirrors the configure-time optional-detection pattern used for zstd
-# above: the system package is tried first and the build degrades
-# gracefully instead of failing outright, per doc/compatibility-policy.md.
-# --without-system-popt forces the bundled copy even if a system libpopt is
-# present; --with-system-popt (the implicit "yes" of the pair below) makes a
-# missing system libpopt a hard configure error instead of falling back.
+# What: popt is used by distccd (src/dopt.c) for command-line parsing.
+#   Prefer the system library, falling back to the bundled copy in popt/
+#   (vendored from wiki-mod/popt-ng, this fork's own maintained fork of
+#   popt's real upstream project) when no suitable system libpopt is
+#   available. Mirrors the same optional-detection pattern used for zstd
+#   above. --without-system-popt forces the bundled copy even when a
+#   system libpopt is present; --with-system-popt makes a missing system
+#   libpopt a hard configure error instead of falling back.
+# Why: The system package stays current with distro security fixes, but
+#   minimal containers, embedded/cross-compilation environments, and
+#   older or unusual distros often lack a packaged popt at all -- see
+#   doc/compatibility-policy.md for this fork's general degrade-gracefully
+#   policy for optional dependencies.
+# From: PR #504
 AC_ARG_WITH([system-popt],
 	AS_HELP_STRING([--without-system-popt],
 		[do not use system libpopt even if present; always build the bundled copy. The default, with neither flag given, is to auto-detect and fall back to the bundled copy if no system libpopt >= 1.7 is found.]))

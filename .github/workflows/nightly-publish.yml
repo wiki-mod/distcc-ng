@@ -5,10 +5,15 @@ name: Nightly build and publish (current_dev)
 # nightly GitHub pre-release), overwritten on every successful run; kept
 # separate from package-release.yml's real vX.Y.Z-NG tagged-release path.
 # Why: schedule/workflow_dispatch only fire from the workflow copy on the
-# default branch (master), so this activates only after the next
-# current_dev->master promotion; every job checks out current_dev
-# explicitly regardless of the trigger's branch.
-# From: Issue #81, PR #85
+# default branch (master); every job checks out current_dev explicitly,
+# and (per Issue #500) every local composite action referenced *before*
+# that checkout runs is likewise pinned to @current_dev explicitly, since
+# GitHub resolves an unpinned local action the same way -- from the
+# default branch, not a later checkout's ref. Local actions referenced
+# *after* the checkout (e.g. failed-jobs, nightly-status below) correctly
+# stay unpinned `./`-relative -- they already resolve from that
+# checked-out current_dev workspace, so pinning them would be redundant.
+# From: Issue #81, PR #85, Issue #500, Issue #398
 
 concurrency:
   group: nightly-publish
@@ -58,11 +63,20 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
-      - uses: $/.github/actions/harden-runner
+      - uses: wiki-mod/distcc-ng/.github/actions/harden-runner@current_dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - uses: $/.github/actions/build-and-check
+      # What: Installs the same build deps build-and-check's own internal
+      # install-build-deps step installs, run again here explicitly.
+      # Why: Issue #500 -- a schedule-triggered job's local composite
+      # actions resolve from the default branch; whether that resolution
+      # cascades into a pinned composite action's own nested local
+      # references is unconfirmed, so this direct, explicitly pinned call
+      # guarantees current_dev's deps install regardless either way.
+      # From: Issue #500, Issue #398
+      - uses: wiki-mod/distcc-ng/.github/actions/install-build-deps@current_dev
+      - uses: wiki-mod/distcc-ng/.github/actions/build-and-check@current_dev
         with:
           cache-key-prefix: ccache-nightly
           autoconf-cache-key-prefix: autoconf-nightly
@@ -78,11 +92,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: $/.github/actions/harden-runner
+      - uses: wiki-mod/distcc-ng/.github/actions/harden-runner@current_dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
-      - uses: $/.github/actions/distributed-e2e-test
+      - uses: wiki-mod/distcc-ng/.github/actions/distributed-e2e-test@current_dev
 
   # --- Publish, only if BOTH gates passed -----------------------------------
   publish:
@@ -100,7 +114,7 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: $/.github/actions/harden-runner
+      - uses: wiki-mod/distcc-ng/.github/actions/harden-runner@current_dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
@@ -109,7 +123,7 @@ jobs:
           # From: Issue #81, PR #85
           fetch-depth: 0
 
-      - uses: $/.github/actions/install-packaging-deps
+      - uses: wiki-mod/distcc-ng/.github/actions/install-packaging-deps@current_dev
 
       - name: Resolve the built commit
         # What: Stamps the image/release with the commit actually checked
@@ -124,7 +138,7 @@ jobs:
       - name: Build release packages
         run: ./scripts/build-release-packages.sh
 
-      - uses: $/.github/actions/ghcr-login
+      - uses: wiki-mod/distcc-ng/.github/actions/ghcr-login@current_dev
         with:
           token: ${{ github.token }}
 
@@ -257,7 +271,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: $/.github/actions/harden-runner
+      - uses: wiki-mod/distcc-ng/.github/actions/harden-runner@current_dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
