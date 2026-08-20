@@ -4,12 +4,14 @@
 
 /* (C) 1998-2000 Red Hat, Inc. -- Licensing details are in the COPYING
    file accompanying popt source distributions, available from 
-   ftp://ftp.rpm.org/pub/rpm/dist. */
+   http://ftp.rpm.org/popt/releases/. */
 
 #ifndef H_POPTINT
 #define H_POPTINT
 
 #include <stdint.h>
+
+#define POPT_OPTION_DEPTH	10
 
 /**
  * Wrapper to free(3), hides const compilation noise, permit NULL, return NULL.
