@@ -371,7 +371,8 @@ jobs:
           # popt/*.c back to that tag while POPT_VERSION stays unchanged
           # would pass every check above silently.
           # From: PR #504
-          grep -q "con->os - con->optionStack + 1) == POPT_OPTION_DEPTH" popt/popt.c \
+          sed -n '/^int poptStuffArgs(/,/^}/p' popt/popt.c \
+            | grep -qF "con->os - con->optionStack + 1) == POPT_OPTION_DEPTH" \
             || { echo "::error::popt/popt.c is missing the CVE-2026-18739 off-by-one fix in poptStuffArgs -- vendored tree may have reverted to a pre-fix popt-1.19-release copy"; exit 1; }
           grep -q "calloc((size_t)nb + 1, sizeof(\*b))" popt/poptconfig.c \
             || { echo "::error::popt/poptconfig.c is missing the transposed-calloc-args fix in poptReadFile -- vendored tree may have reverted to a pre-fix copy"; exit 1; }

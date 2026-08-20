@@ -28,26 +28,12 @@ major versions behind any current system-installed popt, and was missing
 two decades of real bugfixes (e.g. `poptReadFile()`'s file-length/overflow
 handling, which needed a hand patch on the 1.7 tree but is already
 correctly handled in 1.19 — see `poptReadFile()` in `poptconfig.c`). This
-directory now tracks the real popt project's own latest tagged release
-instead.
+directory now tracks the exact `wiki-mod/popt-ng` commit recorded in
+`POPT_VERSION` instead.
 
 `POPT_VERSION` in this directory records the exact vendored release, so a
 future accidental regression back to a stale/wrong copy can be caught
 mechanically (see the `popt_vendor_check` step in `c-build.yml`).
-
-## Why this code doesn't follow this fork's own comment convention
-
-`wiki-mod/distcc-ng`'s own comment rules (`AGENTS.md`'s What/Why/From
-convention) deliberately do not apply to the `.c`/`.h` files in this
-directory. This copy is meant to stay a close, mechanically diffable match
-against `wiki-mod/popt-ng`'s own source, file for file, so that the next
-vendoring update (see PR #504's checklist section 10) can diff each file
-against the previous copy and actually see what changed upstream, not
-what changed because this fork re-commented the whole tree in its own
-style. Real bugs found here get fixed upstream in `wiki-mod/popt-ng`
-first (see above), with only the minimal diff needed to fix the bug
-carried into this copy on the next sync — not a parallel comment-style
-rewrite.
 
 ## NLS
 
