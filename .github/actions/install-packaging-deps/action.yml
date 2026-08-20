@@ -18,4 +18,8 @@ runs:
   steps:
     - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
       with:
-        apt: autoconf automake build-essential elfutils fakeroot libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien
+        # What: Package list adds libelf-dev alongside elfutils.
+        # Why: elfutils has no libelf.h/gelf.h; configure's --with-libelf
+        #   probe needs libelf-dev too, or it silently disables itself.
+        # From: Issue #398, PR #487
+        apt: autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien

@@ -1,0 +1,40 @@
+# What: Composite action wrapping the failed-job-name filter shared by
+#   every scheduled CI reporter.
+# Why: Was three separately copy-pasted shell implementations
+#   (c-build.yml, nightly-publish.yml, e2e-image-build.yml) before this;
+#   centralizing avoids the three copies silently drifting apart.
+# From: PR #476
+name: 'Compute failed job list'
+description: 'Filters a name=result job list down to the ones that actually failed or were cancelled.'
+
+inputs:
+  jobs:
+    description: 'Newline-separated name=result pairs, one per job to check (e.g. "make_check=${{ needs.make_check.result }}").'
+    required: true
+
+outputs:
+  list:
+    description: 'Space-separated names of jobs whose result was failure or cancelled.'
+    value: ${{ steps.compute.outputs.list }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      run: |
+        set -euo pipefail
+        # What: Filters the input job=result pairs down to failures.
+        # Why: A dependent job reports "skipped", not "failure", once its
+        #   own dependency fails first; treating only literal
+        #   failure/cancelled as failed keeps the root cause visible
+        #   instead of every downstream skip being reported as one.
+        # From: PR #476
+        failed=""
+        while IFS='=' read -r name result; do
+          [ -z "${name}" ] && continue
+          case "${result}" in
+            failure|cancelled) failed="${failed} ${name}" ;;
+          esac
+        done <<< "${{ inputs.jobs }}"
+        echo "list=${failed# }" >> "$GITHUB_OUTPUT"

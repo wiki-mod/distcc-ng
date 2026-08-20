@@ -514,12 +514,14 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # No checkout in this job (it only downloads the already-built package
-    # artifact); contents: write is what the `gh release create/upload/edit`
-    # calls below actually need -- this job never pushes to GHCR or mints an
-    # attestation, so it gets neither packages: write nor id-token/
-    # attestations: write.
+    # artifact, which needs no elevated permission). Every actual `gh`
+    # call in this job's publish step authenticates as
+    # GHCR_PACKAGE_DELETE_PAT via GH_TOKEN, not github.token, so
+    # contents: write was never what authorized any of it. Confirmed
+    # droppable: the publish_manifest job above uses the identical
+    # actions/download-artifact action with only contents: read.
     permissions:
-      contents: write
+      contents: read
     steps:
       # Trial run (#58): audit-only egress monitoring, see the setup job's
       # identical first step for the full rationale.
@@ -531,7 +533,23 @@ jobs:
       - name: Publish GitHub release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GHCR_PACKAGE_DELETE_PAT (a real, long-lived repo-scoped PAT,
+          # already used the same way in ghcr-cleanup.yml and
+          # openssf-baseline-recheck.yml -- see those files' own comments)
+          # instead of github.token: GitHub does not deliver downstream
+          # workflow events (including release:released, confirmed via
+          # `gh run list --repo wiki-mod/distcc-ng --event release`: zero
+          # runs, ever, across every workflow in this repo) for anything
+          # created by the default GITHUB_TOKEN, as a deliberate
+          # anti-recursion measure. Every
+          # real release since this repo's automated changelog chain was
+          # introduced (v3.6.0-NG through v3.6.4-NG) was in fact created
+          # by this step using github.token, so
+          # changelog-update-on-release.yml's release:released trigger
+          # had never once fired for a real release. Publishing as a
+          # real PAT identity instead is the fix for that specific
+          # mechanism.
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           IMAGE_TAG: ${{ needs.setup.outputs.image_base }}
           PUMP_IMAGE_TAG: ${{ needs.setup.outputs.pump_image_base }}
           RELEASE_TITLE: ${{ needs.setup.outputs.release_title }}
@@ -540,19 +558,141 @@ jobs:
           shopt -s nullglob
           assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb distcc-ng-*.spdx.json)
 
-          notes_file="$(mktemp)"
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No release assets were downloaded; refusing to publish an incomplete release."
+            exit 1
+          fi
+
+          # A rerun for an already-published tag must never consume the newer
+          # rolling draft that release-drafter may have created in the
+          # meantime. Refresh only the immutable tag's assets and leave its
+          # published notes and the next release's draft untouched.
+          # Explicitly checked via --json isDraft, not just the command's
+          # exit code: `gh release view`/its underlying FetchRelease can, in
+          # principle, also resolve a draft release by its pending tag name
+          # (confirmed via gh CLI's own source, cli/cli
+          # pkg/cmd/release/shared/fetch.go's fetchDraftRelease) -- treating
+          # any successful lookup as "already published" would wrongly
+          # short-circuit past the draft-promotion logic below on a
+          # brand-new tag whose only matching release object is still a
+          # draft.
+          # `2>` is captured to a file, not discarded, so a real failure
+          # (an expired/misconfigured GHCR_PACKAGE_DELETE_PAT, a transient
+          # API error) can be told apart from the one error this lookup is
+          # actually meant to tolerate -- "release not found" (confirmed
+          # live, this repo, a nonexistent tag: `gh release view` prints
+          # exactly that string to stderr and exits 1). Anything else is a
+          # real problem this step must not silently treat the same as
+          # "tag not tagged yet" and fall through into draft-promotion.
+          existing_json="$(mktemp)"
+          existing_err="$(mktemp)"
+          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" \
+            --json isDraft > "${existing_json}" 2>"${existing_err}"; then
+            if [ "$(jq -r '.isDraft' "${existing_json}")" = "false" ]; then
+              echo "already published: uploading assets to the existing release for ${TAG_NAME} only"
+              gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
+              exit 0
+            fi
+          elif ! grep -q "release not found" "${existing_err}"; then
+            echo "::error::gh release view failed for ${TAG_NAME} for a reason other than the release not existing yet -- refusing to proceed into draft-promotion blindly:"
+            cat "${existing_err}" >&2
+            exit 1
+          fi
+
+          # Not yet published -- find release-drafter's rolling draft.
+          # Deliberately not a tag-based lookup. The REST `releases/tags/
+          # {tag}` endpoint really can't resolve a draft at all (GitHub's
+          # own docs: "Get a published release with the specified tag").
+          # The GraphQL `repository.release(tagName:)` field genuinely can
+          # resolve a draft-only release by its pending tag name (`gh`
+          # CLI's own fetchDraftRelease relies on exactly this) -- but not
+          # when a published release already shares that same tag_name:
+          # confirmed empirically against this repo's own real v3.6.5-NG
+          # tag -- one single draft release (release-drafter's own real,
+          # actively-maintained rolling draft, still just displaying its
+          # stale pre-release name/tag_name) and one separate, already-
+          # published release object happen to share that same display
+          # text; both REST and GraphQL return only the published one
+          # there, never the draft, and there is only ever the one draft,
+          # not two. The real, decisive reason
+          # a tag-based lookup is still the wrong tool here regardless:
+          # release-drafter's own tag-template computes a *guessed* next
+          # version from merged-PR labels, not guaranteed to equal whatever
+          # tag the maintainer actually cuts (e.g. a manual configure.ac
+          # version bump can
+          # diverge from that guess). The actual invariant this repo relies
+          # on is release-drafter's own single-rolling-draft design
+          # (.github/release-drafter.yml) -- there should be exactly one
+          # open draft, whatever its tag_name says, and this step retargets
+          # it to the real ${TAG_NAME} below.
+          # `--jq` runs once per page under `--paginate`, each page emitting
+          # its own separate JSON value -- wrapping in `[...]` here would
+          # produce one array per page (multiple top-level JSON values once
+          # this repo's release count crosses a page boundary), which the
+          # `<<<` here-string below could not parse as a single document.
+          # Emit each matching draft as its own stream item instead, and
+          # `jq -s` (slurp) after piping combines the whole multi-page
+          # stream into one flat array regardless of page count.
+          drafts_json="$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            --jq '.[] | select(.draft == true)' | jq -s '.')"
+          draft_count="$(jq 'length' <<<"${drafts_json}")"
+          if [ "${draft_count}" -eq 0 ]; then
+            echo "::error::No release-drafter draft release found; refusing to publish incomplete release notes."
+            exit 1
+          elif [ "${draft_count}" -gt 1 ]; then
+            echo "::error::Found ${draft_count} draft releases, expected exactly one (release-drafter's own single-rolling-draft design). Refusing to guess which one to promote."
+            exit 1
+          fi
+
+          draft_id="$(jq -r '.[0].id' <<<"${drafts_json}")"
+
+          # Retarget the draft's tag_name to the real ${TAG_NAME} *before*
+          # uploading assets, while still leaving it draft=true -- `gh
+          # release upload <tag>` (below) resolves its target by tag, and
+          # this identity-based PATCH (by numeric draft_id, immune to the
+          # tag-lookup limitation above) is what makes it findable by that
+          # name. This step's actual find-by-tag behavior against a draft
+          # can only be exercised by a real tag push, never by any PR's
+          # own CI.
+          gh api --method PATCH "repos/${{ github.repository }}/releases/${draft_id}" \
+            -f tag_name="${TAG_NAME}" \
+            > /dev/null
+
+          # Assets are uploaded while the release is still private as a
+          # draft; publishing (below) is the final operation, so a failed
+          # upload cannot emit a release event for an incomplete artifact
+          # set.
+          gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
+
+          metadata_file="$(mktemp)"
           {
-            printf '%s\n\n' "${RELEASE_TITLE}"
-            printf 'See CHANGELOG.md for the full list of changes in this release.\n\n'
             printf 'Source commit: %s\n' "${GITHUB_SHA}"
             printf 'Tag: %s\n\n' "${TAG_NAME}"
             printf 'Container image: %s\n' "${IMAGE_TAG}"
             printf 'Container image (pump mode, issue #181): %s\n' "${PUMP_IMAGE_TAG}"
-          } > "${notes_file}"
+          } > "${metadata_file}"
 
-          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --clobber
-            gh release edit "${TAG_NAME}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
-          else
-            gh release create "${TAG_NAME}" "${assets[@]}" --repo "${{ github.repository }}" --title "${RELEASE_TITLE}" --notes-file "${notes_file}" --latest
-          fi
+          # Prefer release-drafter's own rolling draft (.github/release-drafter.yml's
+          # entire design point: its body is the real, per-PR categorized
+          # notes meant to become this release's notes -- not a second,
+          # separately-authored text) over the short hand-rolled summary
+          # this step used to always write on its own (maintainer decision,
+          # 2026-08-12).
+          notes_file="$(mktemp)"
+          jq -r '.[0].body' <<<"${drafts_json}" > "${notes_file}"
+          printf '\n' >> "${notes_file}"
+          cat "${metadata_file}" >> "${notes_file}"
+
+          # Finalize: publish (draft=false) with the real title/notes/latest
+          # flag, by the same numeric draft_id used throughout -- promoting
+          # the existing object instead of creating a second, separate
+          # release also keeps release-drafter's own "latest release"
+          # lookup correct when it computes the *next* draft's version
+          # afterward (a second orphaned release object with the same
+          # tag_name was found to confuse that computation).
+          gh api --method PATCH "repos/${{ github.repository }}/releases/${draft_id}" \
+            -f name="${RELEASE_TITLE}" \
+            -F draft=false \
+            -f make_latest=true \
+            -F body=@"${notes_file}" \
+            > /dev/null
