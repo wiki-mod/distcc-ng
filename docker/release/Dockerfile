@@ -19,10 +19,9 @@ WORKDIR /src
 # Why: Enables configure's --with-libelf probe; without it distccd
 #   silently keeps the pre-fix, compressed-debug-info bug. libpopt-dev is
 #   deliberately absent so --without-system-popt below always builds
-#   against this fork's own vendored, CVE-fixed popt/ tree (issue #398)
-#   instead of Debian's own libpopt package, whose CVE-2026-18739 fix is
-#   not yet in trixie as of this writing (checked against Debian's
-#   security tracker).
+#   against this fork's own vendored, CVE-fixed popt/ tree instead of
+#   Debian's own libpopt package, whose CVE-2026-18739 fix is not yet in
+#   trixie as of this writing (checked against Debian's security tracker).
 # From: Issue #398, PR #487
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -50,7 +49,7 @@ COPY . .
 #   installed" relying on configure's autodetection to fall back
 #   correctly -- it stays correct even if a future base image change adds
 #   libpopt back in as a transitive dependency of something else.
-# From: Issue #398
+# From: PR #504
 RUN ./autogen.sh && \
     ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt && \
     make -j"$(nproc)" && \

@@ -436,10 +436,11 @@ AC_SEARCH_LIBS(inet_aton, [resolv])
 
 # popt is used by distccd (src/dopt.c) for command-line parsing. Prefer the
 # system library (kept up to date with security fixes by the distro), but
-# fall back to the bundled copy in popt/ -- vendored from popt's own real
-# upstream project's popt-1.19-release tag -- when no suitable system
-# libpopt is available (minimal containers, embedded/cross-compilation
-# environments, older or unusual distros without a popt package). This
+# fall back to the bundled copy in popt/ -- vendored from wiki-mod/popt-ng,
+# this fork's own maintained fork of popt's real upstream project -- when
+# no suitable system libpopt is available (minimal containers, embedded/
+# cross-compilation environments, older or unusual distros without a
+# popt package). This
 # mirrors the configure-time optional-detection pattern used for zstd
 # above: the system package is tried first and the build degrades
 # gracefully instead of failing outright, per doc/compatibility-policy.md.

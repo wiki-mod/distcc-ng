@@ -52,6 +52,13 @@ maintained project —
 — pinned to its `popt-1.19-release` tag (2022-06-07), the same license
 family (MIT) as before:
 
+**Update (PR #504):** the vendored source has since moved one step further
+— from that raw upstream tag to `wiki-mod/popt-ng`, this fork's own
+maintained fork of the same upstream project, pinned to an exact commit.
+`popt/README.popt` documents the current, real provenance; the tag-based
+description below is this decision's original historical record, not the
+current state.
+
 ```
 # configure.ac (this fork)
 PKG_CHECK_MODULES([POPT], [popt >= 1.7], [have_system_popt=yes], [have_system_popt=no])

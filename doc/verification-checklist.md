@@ -751,7 +751,7 @@ vendored copy to a newer commit of whatever it's sourced from.
       name or a moving tag — a tag can be re-pushed, a branch moves by
       definition. Record the SHA in the tree's own version-marker file
       (`popt/POPT_VERSION` for the `popt/` tree) and keep the CI check
-      that verifies it (`popt_version_check` in `c-build.yml`) in sync
+      that verifies it (`popt_vendor_check` in `c-build.yml`) in sync
       with the exact same string — a marker update without the matching
       check update either breaks CI immediately or, worse, silently stops
       checking anything if the check itself was loosened instead of kept
@@ -778,12 +778,15 @@ vendored copy to a newer commit of whatever it's sourced from.
       7's input-validation entry, applied to a dependency's CVE fix
       instead of this repo's own code.
 - [ ] Confirm a full `make` (every binary, not just the one you were
-      focused on) still links cleanly — a vendored library shared across
-      multiple binaries (`distcc`, `distccd`, `lsdistcc`,
-      `distccmon-text`, `pump`, all linking against the same bundled
-      `popt/`) can have a symbol/macro change that only breaks a binary
-      you didn't happen to build in isolation. Same underlying risk as
-      section 6's "linked into every binary that needs the symbol" entry.
+      focused on) still links cleanly — check `Makefile.in` for which
+      binaries actually consume the vendored library rather than assuming
+      it's shared across all of them: currently only `distccd`
+      (`src/dopt.c`'s `@BUILD_POPT@`) and its `h_dopt`/`h_srvrpc` test
+      helpers link the bundled `popt/`; `distcc`, `lsdistcc`,
+      `distccmon-text`, and `pump` don't use it at all. Same underlying
+      risk as section 6's "linked into every binary that needs the
+      symbol" entry — verify against the actual object lists, not a
+      remembered list of "the binaries this repo ships."
 - [ ] State explicitly which uid/environment the verification build+test
       ran under (see section 0's baseline requirement) — a vendored-code
       update is exactly the kind of change where "it built" can mask a
@@ -793,7 +796,7 @@ vendored copy to a newer commit of whatever it's sourced from.
       because the vendored code is actually fine. Don't report a partial
       test run as full coverage.
 
-Added after issue #398's `popt/` tree was switched from vendoring
+Added after PR #504 switched the `popt/` tree from vendoring
 `rpm-software-management/popt`'s `popt-1.19-release` tag directly to
 vendoring `wiki-mod/popt-ng` (this fork's own maintained fork of that
 project, created for the same reason `wiki-mod/distcc-ng` itself exists:
