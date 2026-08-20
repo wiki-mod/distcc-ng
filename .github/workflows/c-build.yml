@@ -22,11 +22,13 @@ on:
       - current_dev
       - master
   # What: Explicit types (GitHub's default omits ready_for_review).
-  # Why: A PR that never got an initial pull_request-event run for its
-  # `opened` activity (confirmed live on release PR #461, root cause not
-  # established) gets one real chance to self-heal when later marked
-  # ready for review, instead of requiring a manual workflow_dispatch.
-  # From: PR #461
+  # Why: A merge conflict against a stale base can suppress every
+  # pull_request event, including opened/synchronize; ready_for_review is
+  # the one event still available once no further commits are coming. See
+  # issue #460 Finding 4 for the investigation and its residual open
+  # questions -- the conflict theory is well-supported but not fully
+  # confirmed against GitHub's own internal mergeability computation.
+  # From: Issue #460, PR #461, PR #463, PR #468
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # What: Lets a branch's build health be checked on demand.
