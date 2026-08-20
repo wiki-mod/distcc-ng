@@ -274,7 +274,7 @@ jobs:
           # `report` job labels the aggregated outcome as current_dev.
           # From: PR #476
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/install-build-deps
         with:
           # What: Deliberately excludes libpopt-dev/libpopt0 while
           # installing pkg-config and libavahi-client-dev.
@@ -282,7 +282,7 @@ jobs:
           # case this job exercises, more representative than pkg-config
           # itself being missing; libavahi-client-dev keeps the default
           # zeroconf-enabled build configuring the same as the main matrix.
-          # From: Issue #63, PR #170
+          # From: Issue #63, PR #170, Issue #479, PR #496
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
       - name: configure (must report the bundled-popt fallback)
@@ -363,12 +363,12 @@ jobs:
             echo "::error::popt/findme.c or popt/findme.h exist -- this looks like a reversion to the old popt 1.7 snapshot"
             exit 1
           fi
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/install-build-deps
         with:
           # What: Same package set as popt_fallback_build (no libpopt-dev).
           # Why: config.h needs to end up with the real
           # BUILD_POPT-triggering macros this job's compile reflects.
-          # From: Issue #63, PR #170
+          # From: Issue #63, PR #170, Issue #479, PR #496
           apt: autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev
       # What: Runs the real ./configure, forced onto the bundled path.
       # Why: So config.h reflects the actual HAVE_* results this job's
@@ -431,13 +431,13 @@ jobs:
           # current_dev, since that is where real development happens.
           # From: PR #370
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/install-build-deps
         with:
           # What: Includes libseccomp-dev.
           # Why: So configure's optional seccomp check finds it and
           # defines HAVE_SECCOMP; otherwise src/sandbox-seccomp.c compiles
           # only its no-op fallback, contributing nothing to coverage.
-          # From: PR #370
+          # From: PR #370, Issue #479, PR #496
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage
       - run: ./autogen.sh
       # What: --coverage (-fprofile-arcs -ftest-coverage plus libgcov)
@@ -637,8 +637,12 @@ jobs:
           # current_dev.
           # From: Issue #266, PR #395
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
-      - uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
+      - uses: $/.github/actions/install-build-deps
         with:
+          # What: Omits libseccomp-dev from the apt list.
+          # Why: This job passes --without-seccomp below, so a seccomp dev
+          #   package would go unused by the build it exercises.
+          # From: Issue #266, Issue #479, PR #496
           apt: autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev
       - run: ./autogen.sh
       # What: --without-seccomp (orthogonal to this job's checks);
