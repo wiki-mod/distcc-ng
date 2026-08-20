@@ -42,13 +42,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY . .
 
 # What: --without-system-popt forces the vendored popt/ tree.
-# Why: Statically links our own fork's fixed popt into every binary
-#   instead of linking Debian's own libpopt0 at runtime, whose known CVEs
-#   this image would otherwise ship unpatched (see the apt-get comment
-#   above). This is an explicit build choice, not just "no libpopt-dev
-#   installed" relying on configure's autodetection to fall back
-#   correctly -- it stays correct even if a future base image change adds
-#   libpopt back in as a transitive dependency of something else.
+# Why: Statically links our own fork's fixed popt into distccd (the only
+#   binary that uses popt, via src/dopt.c) instead of linking Debian's own
+#   libpopt0 at runtime, whose known CVEs this image would otherwise ship
+#   unpatched (see the apt-get comment above). This is an explicit build
+#   choice, not just "no libpopt-dev installed" relying on configure's
+#   autodetection to fall back correctly -- it stays correct even if a
+#   future base image change adds libpopt back in as a transitive
+#   dependency of something else.
 # From: PR #504
 RUN ./autogen.sh && \
     ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt && \

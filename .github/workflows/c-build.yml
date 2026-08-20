@@ -318,7 +318,7 @@ jobs:
   # below (not the compile itself, since the unused-parameter exemption is
   # load-bearing even for a correct, unmodified 1.19 tree) is what
   # actually catches a stale or wrong vendored copy.
-  # From: Issue #63
+  # From: Issue #63, PR #504
   popt_vendor_check:
     name: Vendored popt/ version and compile check
     needs: changes

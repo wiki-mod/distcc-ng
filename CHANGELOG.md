@@ -30,6 +30,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
+  (this fork's own maintained fork of `rpm-software-management/popt`,
+  pinned to an exact commit) instead of that project's four-year-old
+  `popt-1.19-release` tag directly, pulling in two upstream CVE fixes
+  (CVE-2026-18739, an off-by-one in `poptStuffArgs()`; CVE-2026-18743, a
+  buffer overflow in `poptConfigFileToString()`) and this fork's own fix
+  for a transposed `calloc()` argument order that GCC 14's
+  `-Wcalloc-transposed-args` flags under `-Werror`. `docker/release/Dockerfile`
+  now builds with `--without-system-popt`, so the shipped release images
+  statically link this fixed tree instead of Debian's own `libpopt`
+  package, whose CVE-2026-18739 fix had not landed in trixie as of this
+  writing. See `support-upstream/issue-063-popt-current-vendor-alternative.md`
+  for the vendoring history this builds on (#63, PR #504).
 - **`src/fix_debug_info.c`**: `dcc_fix_debug_info()`'s raw byte
   search-and-replace silently failed to rewrite a compressed
   (`SHF_COMPRESSED`) debug section -- the server-side compilation
