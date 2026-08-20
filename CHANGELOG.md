@@ -11,6 +11,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`.github/workflows/nightly-publish.yml`**: ports `current_dev`'s fix for
+  issue #500 directly to `master`, same one-off-exception pattern as this
+  file's own initial sync. `schedule`/`workflow_dispatch` are evaluated from
+  the workflow copy on the default branch (`master`), so a `current_dev`-only
+  fix to this file had no effect on the real daily nightly cron until now.
+  Every local composite action this file's schedule-triggered jobs reference
+  before their own `current_dev` checkout runs is now explicitly pinned
+  `@current_dev` (PR #503), so those steps stop resolving from `master`'s
+  stale copies -- most notably `install-build-deps`/`build-and-check`, which
+  is what actually pulls in PR #487's `libelf-dev` addition and fixes
+  `GdbCompressedDebugInfo_Case`'s real nightly failure.
+
 ## [3.6.5-NG] - 2026-08-11
 
 ### Fixed
