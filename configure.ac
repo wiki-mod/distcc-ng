@@ -434,19 +434,11 @@ AC_SEARCH_LIBS(setsockopt, [socket])
 AC_SEARCH_LIBS(hstrerror, [resolv])
 AC_SEARCH_LIBS(inet_aton, [resolv])
 
-# What: popt is used by distccd (src/dopt.c) for command-line parsing.
-#   Prefer the system library, falling back to the bundled copy in popt/
-#   (vendored from wiki-mod/popt-ng, this fork's own maintained fork of
-#   popt's real upstream project) when no suitable system libpopt is
-#   available. Mirrors the same optional-detection pattern used for zstd
-#   above. --without-system-popt forces the bundled copy even when a
-#   system libpopt is present; --with-system-popt makes a missing system
-#   libpopt a hard configure error instead of falling back.
-# Why: The system package stays current with distro security fixes, but
-#   minimal containers, embedded/cross-compilation environments, and
-#   older or unusual distros often lack a packaged popt at all -- see
-#   doc/compatibility-policy.md for this fork's general degrade-gracefully
-#   policy for optional dependencies.
+# What: Falls back to the bundled popt/ (wiki-mod/popt-ng) when no system
+#   libpopt is found; --with-system-popt/--without-system-popt override
+#   the choice either way.
+# Why: Minimal containers, embedded/cross-compilation environments, and
+#   older distros often lack a packaged popt at all.
 # From: PR #504
 AC_ARG_WITH([system-popt],
 	AS_HELP_STRING([--without-system-popt],
