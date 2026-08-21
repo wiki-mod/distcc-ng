@@ -13,6 +13,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- THROWAWAY TEST LINE for issue #460 Finding 4 reproduction -- not a real changelog entry, this PR is never meant to merge.
+
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
   blocks a Dependabot PR on a missing `CHANGELOG.md` entry -- a dependency
