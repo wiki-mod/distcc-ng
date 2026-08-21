@@ -133,12 +133,16 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache-dir
     steps:
-      # What: Trial run, audit-only egress monitoring; must be the very
-      # first step.
+      # What: Trial run, audit-only egress monitoring; must run before
+      #   any checkout.
       # Why: It can't retroactively cover network calls made by steps
-      # that already ran.
-      # From: Issue #58
-      - if: needs.changes.outputs.relevant == 'true'
+      #   that already ran. $/ resolves at the workflow's own triggering
+      #   SHA (master on schedule), so schedule needs its own
+      #   current_dev-pinned step, since uses: can't take an expression.
+      # From: Issue #58, Issue #502
+      - if: needs.changes.outputs.relevant == 'true' && github.event_name == 'schedule'
+        uses: wiki-mod/distcc-ng/.github/actions/harden-runner@current_dev
+      - if: needs.changes.outputs.relevant == 'true' && github.event_name != 'schedule'
         uses: $/.github/actions/harden-runner
       - if: needs.changes.outputs.relevant == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,8 +153,13 @@ jobs:
           # change.
           # From: Issue #32, PR #84
           ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      # What: ./ (not $/) local-action reference.
+      # Why: ./ resolves from the actual checked-out workspace above, so
+      # this correctly follows that step's schedule->current_dev
+      # redirect instead of $/'s fixed triggering-SHA resolution.
+      # From: Issue #502
       - if: needs.changes.outputs.relevant == 'true'
-        uses: $/.github/actions/install-build-deps
+        uses: ./.github/actions/install-build-deps
         with:
           # What: Includes automake (for aclocal) but no gdb entry.
           # Why: Homebrew packages aclocal with automake even though
