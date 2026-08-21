@@ -9,7 +9,7 @@ description: 'Filters a name=result job list down to the ones that actually fail
 
 inputs:
   jobs:
-    description: 'Newline-separated name=result pairs, one per job to check (e.g. "make_check=${{ needs.make_check.result }}").'
+    description: 'Newline-separated name=result pairs, one per job to check (e.g. "make_check=success").'
     required: true
 
 outputs:
