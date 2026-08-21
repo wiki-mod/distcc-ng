@@ -24,8 +24,22 @@ on:
         description: "Release notes body to insert (same content GitHub shows on the release page)"
         required: true
         type: string
+  # `published` fires for every draft->public transition regardless of how
+  # the release was originally created. GitHub's own docs directly confirm
+  # this specific unreliability only for `prereleased` ("will not trigger
+  # for pre-releases published from draft releases, but the published
+  # type will trigger") -- they don't make the identical claim in so many
+  # words for `released`, `prereleased`'s stable-release sibling. That
+  # `released` has the same real-world limitation for a draft-originated
+  # release is confirmed instead by the maintainer's own direct
+  # operational experience on a sibling project (wiki-mod/lancache-ng),
+  # not by this citation alone. This always applies here, since
+  # package-release.yml's publish_github_release job promotes an existing
+  # release-drafter draft rather than creating a release directly. Using
+  # `released` would have left this workflow unable to fire even after
+  # switching off the default GITHUB_TOKEN.
   release:
-    types: [released]
+    types: [published]
 
 permissions:
   contents: read
@@ -35,16 +49,39 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # nightly-publish.yml also publishes a real GitHub release (its
+    # `nightly` pre-release channel) -- exclude it here so a prerelease
+    # publish never inserts a nightly build into CHANGELOG.md, which only
+    # tracks real vX.Y.Z-NG releases.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     steps:
       - uses: $/.github/actions/harden-runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: current_dev
 
+      # `latest-version` keeps its real vX.Y.Z-NG tag (with the `v`), since
+      # the action also uses it to build its `release_compare_url`/
+      # `unreleased_compare_url` outputs, which need the real git tag to
+      # resolve. `heading-text` is this repo's own X.Y.Z-NG convention
+      # (no `v`, matching every existing `## [X.Y.Z-NG]` CHANGELOG.md
+      # section and doc/release-versioning.md) -- confirmed via the
+      # action's own action.yml that `heading-text` exists specifically to
+      # override the heading independently of `latest-version`, defaulting
+      # to `latest-version` verbatim when unset (which would otherwise
+      # write `## [vX.Y.Z-NG]`, not this repo's real format).
+      - name: Compute the CHANGELOG heading version (no v prefix)
+        id: heading
+        run: |
+          set -euo pipefail
+          raw_tag="${{ github.event.inputs.tag_name || github.event.release.tag_name }}"
+          echo "version=${raw_tag#v}" >> "$GITHUB_OUTPUT"
+
       - name: Insert release notes into CHANGELOG.md
         uses: stefanzweifel/changelog-updater-action@a938690fad7edf25368f37e43a1ed1b34303eb36 # v1.12.0
         with:
           latest-version: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
+          heading-text: ${{ steps.heading.outputs.version }}
           release-notes: ${{ github.event.inputs.release_notes || github.event.release.body }}
 
       - name: Commit updated CHANGELOG.md

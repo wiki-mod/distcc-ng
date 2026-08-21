@@ -28,7 +28,10 @@ on:
   # (well under a minute each against the pinned, already-cached
   # buildtools image), so running them unconditionally on every PR/push
   # costs little and keeps every required check genuinely present.
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     # Was "main", which has never existed in this repo (only current_dev/
     # master) -- this trigger had never once fired. Found 2026-07-16 via a

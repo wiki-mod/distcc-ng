@@ -22,8 +22,11 @@ name: OSV-Scanner
 # rather than just proposing an update).
 
 on:
+  # See c-build.yml's pull_request block for why ready_for_review is
+  # listed explicitly.
   pull_request:
     branches: [current_dev, master]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [current_dev, master]
   schedule:

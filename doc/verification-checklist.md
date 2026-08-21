@@ -740,6 +740,72 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       you're on; real CI remains the authoritative check for pump-mode
       behavior either way.
 
+## 10. Vendored dependency provenance changes (`popt/` fallback tree, or any future vendored third-party source)
+
+Relevant to: switching which upstream source a vendored tree is copied
+from (e.g. from a raw upstream release tag to this fork's own maintained
+fork of that project, `wiki-mod/popt-ng`), or updating an existing
+vendored copy to a newer commit of whatever it's sourced from.
+
+- [ ] Pin the vendored source to an exact commit SHA, not just a branch
+      name or a moving tag — a tag can be re-pushed, a branch moves by
+      definition. Record the SHA in the tree's own version-marker file
+      (`popt/POPT_VERSION` for the `popt/` tree) and keep the CI check
+      that verifies it (`popt_vendor_check` in `c-build.yml`) in sync
+      with the exact same string — a marker update without the matching
+      check update either breaks CI immediately or, worse, silently stops
+      checking anything if the check itself was loosened instead of kept
+      exact.
+- [ ] Diff every changed file individually against the previous vendored
+      copy, not just "the new tree builds" — a multi-year gap between
+      what was previously vendored and the new source (e.g. a 2022
+      release tag vs. that project's current state four years later) can
+      pull in far more than the one specific fix that motivated the
+      update. Read what actually changed (API surface, removed macros,
+      new warnings-as-errors triggers) before treating the update as a
+      drop-in swap.
+- [ ] If the new source's own commit history names a specific CVE fix,
+      don't accept "it's fixed upstream, so it's fixed here" as
+      sufficient — reproduce the vulnerability's *absence* directly: get
+      the exact pre-fix version of the affected file (e.g. via the
+      upstream project's own commit history, `git show <parent-sha>:path`
+      or the equivalent hosted API), swap only that one file back into an
+      otherwise-current build, and confirm it actually reproduces the
+      flaw (an AddressSanitizer/UBSan crash for a memory-safety CVE, using
+      that project's own reproducer test if one was added alongside the
+      fix) before confirming the current, updated tree does not. This is
+      the same "show the crash before, its absence after" bar as section
+      7's input-validation entry, applied to a dependency's CVE fix
+      instead of this repo's own code.
+- [ ] Confirm a full `make` (every binary, not just the one you were
+      focused on) still links cleanly — check `Makefile.in` for which
+      binaries actually consume the vendored library rather than assuming
+      it's shared across all of them: currently only `distccd`
+      (`src/dopt.c`'s `@BUILD_POPT@`) and its `h_dopt`/`h_srvrpc` test
+      helpers link the bundled `popt/`; `distcc`, `lsdistcc`,
+      `distccmon-text`, and `pump` don't use it at all. Same underlying
+      risk as section 6's "linked into every binary that needs the
+      symbol" entry — verify against the actual object lists, not a
+      remembered list of "the binaries this repo ships."
+- [ ] State explicitly which uid/environment the verification build+test
+      ran under (see section 0's baseline requirement) — a vendored-code
+      update is exactly the kind of change where "it built" can mask a
+      real functional regression if the test run itself silently skipped
+      or failed for an unrelated environment reason (e.g. a container
+      user-mapping issue breaking an unrelated test case) rather than
+      because the vendored code is actually fine. Don't report a partial
+      test run as full coverage.
+
+Added after PR #504 switched the `popt/` tree from vendoring
+`rpm-software-management/popt`'s `popt-1.19-release` tag directly to
+vendoring `wiki-mod/popt-ng` (this fork's own maintained fork of that
+project, created for the same reason `wiki-mod/distcc-ng` itself exists:
+upstream doesn't accept AI-assisted contributions) — the update pulled in
+four years of upstream changes at once, including two real CVE fixes
+(CVE-2026-18739, CVE-2026-18743) that got the before/after ASan-crash
+treatment above, and this checklist had no section covering "vendoring
+from our own fork" as a change category at all before this.
+
 ## Keeping this checklist current
 
 This list is not closed — it only covers the categories of change this

@@ -16,9 +16,9 @@ same `Dockerfile` via different build targets:
 - **`ghcr.io/wiki-mod/distcc-ng`** (`--target runtime`): plain
   `distcc`/`distccd`/`lsdistcc`/`distccmon-text`, no pump mode.
 - **`ghcr.io/wiki-mod/distcc-ng-pump`** (`--target runtime-pump`,
-  issue #181): the same binaries plus `pump` and the Python
-  `include_server` package, for pump-mode (server-side preprocessing)
-  distributed compiles.
+  issue #181): the same binaries plus `distcc-pump` (issue #485) and the
+  Python `include_server` package, for pump-mode (server-side
+  preprocessing) distributed compiles.
 
 Both are published as multi-arch (`amd64`, `arm64` best-effort) manifests,
 scanned with Trivy, and shipped with an SPDX SBOM.

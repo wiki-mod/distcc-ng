@@ -1,6 +1,6 @@
 # CI workflow landscape
 
-A map of `.github/workflows/*.yml` (plus the composite action and labeler
+A map of `.github/workflows/*.yml` (plus the composite actions and labeler
 config they share): what triggers each file, what it writes, and how they
 cross-reference each other. Companion to `doc/docker.md` (which covers the
 container images themselves, not the workflows that build them) -- keep
@@ -14,9 +14,9 @@ actual YAML before relying on this after a workflow file changes.
 |---|---|---|---|
 | `actionlint.yml` | `workflow_dispatch`, `pull_request` (unfiltered), `push` to `current_dev`/`master` | Lints all workflow YAML (`action-lint` job) and `scripts/*.sh` (`shellcheck` job) via the pinned `distcc-ng-buildtools` image | nothing (pass/fail gate) |
 | `add-to-project.yml` | `issues: opened`, `pull_request_target: opened` | Adds new issues/PRs to the project board (needs `PROJECT_AUTOMATION_PAT`) | project-board card |
-| `c-build.yml` | `push` (`current_dev`/`master`), `pull_request` (unfiltered), `workflow_dispatch`, `schedule 03:00 daily` | Core build+test gate: `make_check` (macOS+Linux matrix), `popt_fallback_build`, `popt_vendor_check`, `distributed_e2e` (builds `test/e2e/` fresh), `coverage` (gcov/lcov + Python coverage, published to the job summary and as a build artifact -- no third-party service) | build-provenance attestations, coverage job summary + `coverage-reports` artifact |
+| `c-build.yml` | `push` (`current_dev`/`master`), `pull_request` (unfiltered), `workflow_dispatch`, `schedule 03:00 daily` | Core build+test gate: `make_check` (macOS+Linux matrix), `popt_fallback_build`, `popt_vendor_check`, `distributed_e2e` (builds `test/e2e/` fresh), `coverage` (gcov/lcov + Python coverage, published to the job summary and as a build artifact -- no third-party service), `report` (schedule-only, files/updates/closes the standing nightly-broken issue) | build-provenance attestations, coverage job summary + `coverage-reports` artifact, standing nightly-broken issue (schedule runs only) |
 | `changelog-check.yml` | `pull_request` (unfiltered, several types), `workflow_dispatch` | Three PR gates: CHANGELOG touched, tracking-metadata (rule 3), title convention (rule 71, warn-only) | nothing persistent |
-| `changelog-update-on-release.yml` | `release: released`, `workflow_dispatch` | Inserts release notes into `CHANGELOG.md`, commits to `current_dev` | commit to `current_dev` |
+| `changelog-update-on-release.yml` | `release: published` (guarded to non-prerelease), `workflow_dispatch` | Inserts release notes into `CHANGELOG.md`, commits to `current_dev` | commit to `current_dev` |
 | `clusterfuzzlite-pr.yml` | `pull_request`, path-filtered `src/**`, `test/fuzz/**`, `.clusterfuzzlite/**` | Fuzzes `test/fuzz/fuzz_rpc_argv.c` | SARIF |
 | `codeql.yml` | `push`/`pull_request` (unfiltered), `workflow_dispatch`, `schedule 05:00 Sun` | CodeQL Advanced Setup, matrix `[c-cpp, python, actions]`, each leg gated by its own path-based `changes` job | SARIF -> code-scanning |
 | `labeler.yml` | `pull_request_target: [opened, synchronize]` | Applies `.github/labeler.yml`'s path-based labels | PR labels |
@@ -31,10 +31,18 @@ actual YAML before relying on this after a workflow file changes.
 
 ## Cross-reference matrix
 
-**Shared composite action** -- `.github/actions/nightly-status` files/updates/closes
-one standing `nightly-broken`-labeled issue (issue #81 design: any caller's
-success can close an issue a different caller opened). Callers: `master-heartbeat.yml`,
-`nightly-publish.yml`.
+**Shared composite actions**:
+
+- `.github/actions/nightly-status` files/updates/closes one standing
+  `nightly-broken`-labeled issue (issue #81 design: any caller's success
+  can close an issue a different caller opened). Callers:
+  `master-heartbeat.yml`, `nightly-publish.yml`, `c-build.yml` (its
+  `report` job, schedule-event only), `e2e-image-build.yml`.
+- `.github/actions/failed-jobs` filters a caller's `name=result` job
+  list down to the ones that actually failed or were cancelled (not
+  merely skipped), for use in the standing issue's `failed_jobs` detail
+  above. Callers: `c-build.yml`, `nightly-publish.yml`,
+  `e2e-image-build.yml`.
 
 **GHCR image namespace** -- four separate package names, no tag overlap:
 
@@ -86,9 +94,14 @@ see issue #81's history) -- this repo develops on `current_dev` and only
 promotes to `master` via explicit maintainer-approved release PRs.
 `nightly-publish.yml` and `master-heartbeat.yml` both self-document this: their
 `schedule` trigger has no live effect until the next `current_dev`->`master`
-promotion. `c-build.yml`, `codeql.yml`, `scorecard.yml`,
-`openssf-baseline-recheck.yml`, and `osv-scanner.yml` carry no such caveat and
-are treated as already live.
+promotion. `c-build.yml`'s own `schedule` trigger is already live (the
+workflow exists on `master` today), but its new `report` job is not: since
+`report` was added on `current_dev` only, `master`'s copy of `c-build.yml`
+still lacks that job entirely, so the nightly standing-issue reporting this
+table describes for `c-build.yml` has no live effect until the next
+`current_dev`->`master` promotion, same as the two workflows above.
+`codeql.yml`, `scorecard.yml`, `openssf-baseline-recheck.yml`, and
+`osv-scanner.yml` carry no such caveat and are treated as already live.
 
 ## Known follow-ups (not fixed by this doc)
 

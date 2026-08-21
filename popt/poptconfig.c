@@ -4,7 +4,7 @@
 
 /* (C) 1998-2002 Red Hat, Inc. -- Licensing details are in the COPYING
    file accompanying popt source distributions, available from 
-   ftp://ftp.rpm.org/pub/rpm/dist. */
+   http://ftp.rpm.org/popt/releases/. */
 
 #include "system.h"
 #include "poptint.h"
@@ -138,7 +138,7 @@ int poptReadFile(const char * fn, char ** bp, size_t * nbp, int flags)
     if ((nb = lseek(fdno, 0, SEEK_END)) == (off_t)-1
      || (uintmax_t)nb >= SIZE_MAX
      || lseek(fdno, 0, SEEK_SET) == (off_t)-1
-     || (b = calloc(sizeof(*b), (size_t)nb + 1)) == NULL
+     || (b = calloc((size_t)nb + 1, sizeof(*b))) == NULL
      || read(fdno, (char *)b, (size_t)nb) != (ssize_t)nb)
     {
 	int oerrno = errno;
@@ -394,8 +394,7 @@ exit:
 int poptReadConfigFiles(poptContext con, const char * paths)
 {
     char * buf = (paths ? xstrdup(paths) : NULL);
-    const char * p;
-    char * pe;
+    char * p, * pe;
     int rc = 0;		/* assume success */
 
     for (p = buf; p != NULL && *p != '\0'; p = pe) {
