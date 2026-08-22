@@ -1,30 +1,19 @@
 # Contributor: wiki-mod/distcc-ng
-# What: Maintainer is a GitHub-provided noreply address, not a GitHub
-#   org/repo slug.
-# Why: Alpine's abuild validates this line as an RFC822 address and
-#   rejects a bare slug like "wiki-mod/distcc-ng" outright (confirmed
-#   by actually running `abuild -r` against this file); the address
-#   below is GitHub's own "<user-id>+<login>@users.noreply.github.com"
-#   format for the account this fork's own GitHub activity is
-#   maintained under.
-# From: Issue #398
 # Maintainer: djdomi <1812020+djdomi@users.noreply.github.com>
-# What: Alpine package for this fork, built from this fork's own GitHub
-#   release tarball rather than Alpine's real upstream "distcc" APKBUILD.
-# Why: pkgname is deliberately "distcc-ng" (not "distcc"), matching this
-#   repo's own maintainer decision to use provides= as an alias
-#   mechanism here rather than literally overriding Alpine's real,
-#   independently-maintained "distcc" package under the same name (the
-#   approach this fork's RPM/deb packaging uses instead, per those
-#   packaging formats' own Conflicts/Obsoletes/Replaces conventions).
+
+# What: Alpine packaging for this fork. pkgname is "distcc-ng", not
+#   "distcc"; provides=/replaces= below alias Alpine's real,
+#   independently-maintained "distcc"/"distcc-pump" packages, the apk
+#   equivalent of this fork's RPM/deb Conflicts/Replaces convention.
+# Why: distcc-ng is a one-way drop-in replacement for distcc (wire-
+#   compatible in that direction only), not an independent package
+#   meant to coexist with it.
 # From: Issue #398
 pkgname=distcc-ng
 # What: pkgver strips the "-NG" suffix; _fullver keeps it for the
 #   source URL and builddir.
-# Why: Alpine's pkgver format forbids a bare "-"; this fork's real
-#   version string (e.g. "3.6.6-NG") needs splitting the same way
-#   packaging/rpm.sh already splits it for RPM's Version/Release.
-# From: Issue #398
+# Why: Alpine's pkgver format forbids a bare "-", same reason
+#   packaging/rpm.sh splits this fork's version string for RPM.
 pkgver=3.6.6
 _fullver="$pkgver-NG"
 pkgrel=0
@@ -33,64 +22,31 @@ url="https://github.com/wiki-mod/distcc-ng"
 arch="all"
 license="GPL-2.0-or-later"
 _pump_deps="python3 py3-setuptools"
-# What: No popt-dev here.
-# Why: --without-system-popt below always builds against this fork's own
-#   vendored, CVE-fixed popt/ tree instead of Alpine's own libpopt
-#   (same rationale as docker/release/Dockerfile, PR #504/#506) -- whether
-#   Alpine's own popt package (1.19-r4 as of this writing) carries the
-#   same fix has not been checked, so this stays consistent with that
-#   decision rather than assuming Alpine's copy is unaffected.
-# From: Issue #398, PR #504
 makedepends="autoconf automake libtool elfutils-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
-# What: Tests disabled, matching Alpine's own real "distcc" APKBUILD
-#   (options="!check").
+# What: Tests disabled, matching Alpine's own real "distcc" APKBUILD.
 # Why: abuild runs check() under fakeroot, which fakes geteuid() back
-#   to 0 for some syscalls but not others (verified directly: a plain
-#   `id` inside a fakeroot session reports uid=0, while `id -u` in that
-#   same session reports the real unprivileged uid) -- distccd's own
-#   root-privilege-drop logic reacts to that inconsistent picture the
-#   same way it would under real root: it falls back to a "nobody" uid
-#   it then can't use to write into the test's own tmp dir. This is an
-#   abuild/fakeroot sandboxing artifact, not a functional regression:
-#   the full suite (./configure --with-libelf --with-seccomp
-#   --without-system-popt && make && make check) passes cleanly
-#   (176 OK, 26 NOTRUN, 0 FAIL) when actually run outside fakeroot, as
-#   a non-root user with --cap-add=SYS_PTRACE and seccomp=unconfined
-#   (gdb's own ASLR-disabling syscall needs both).
-# From: Issue #398, Issue #399, PR #400, PR #487
+#   to 0 inconsistently across syscalls; distccd's privilege-drop logic
+#   reacts to that the same way it would under real root and fails.
+#   Not a functional regression -- see doc/verification-checklist.md
+#   section 11 for the real, non-fakeroot verification this relies on.
+# From: Issue #398
 options="!check"
 install="$pkgname.pre-install"
 # What: $pkgname-pump-pyc listed before $pkgname-pump.
-# Why: abuild runs each subpackage's split function in this list's
-#   order; the generic -pyc splitter needs to run against the
-#   original, untouched $pkgdir before pump() below moves
-#   usr/lib/python* out of it -- reversing this order (as an earlier
-#   draft of this file did) makes the -pyc split silently find nothing
-#   to split, since pump() has already relocated those files. Matches
-#   the same ordering in Alpine's own real distcc APKBUILD.
-# From: Issue #398
+# Why: abuild runs split functions in this list's order; the generic
+#   -pyc splitter needs the original $pkgdir before pump() below moves
+#   usr/lib/python* out of it. Matches Alpine's real distcc APKBUILD.
 subpackages="$pkgname-doc $pkgname-pump-pyc $pkgname-pump $pkgname-openrc"
 # What: Explicit "localname::url" source rename.
-# Why: GitHub's tag-archive URL basename is "v$_fullver.tar.gz", not
-#   "distcc-ng-$_fullver.tar.gz" as sha512sums below names it -- without
-#   this rename, abuild would cache/verify the download under a
-#   different filename than sha512sums expects and checksumming would
-#   fail. Found by actually running `abuild fetch`/`abuild checksum`
-#   against this APKBUILD, not by inspection.
-# From: Issue #398
+# Why: GitHub's tag-archive basename ("v$_fullver.tar.gz") differs from
+#   the filename sha512sums below names; without the rename, abuild
+#   caches/verifies under the wrong filename.
 source="distcc-ng-$_fullver.tar.gz::https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v$_fullver.tar.gz
 	distccd.initd
 	distccd.confd
 	"
 builddir="$srcdir/distcc-ng-$_fullver"
 
-# What: Provides/replaces alias Alpine's real, independently-maintained
-#   "distcc"/"distcc-pump" packages (see subpackage pump() below for its
-#   own matching pair).
-# Why: pkgname is "distcc-ng", not "distcc" -- without this, apk would
-#   treat this and Alpine's real distcc as unrelated packages able to be
-#   installed side by side, both installing /usr/bin/distcc.
-# From: Issue #398
 provides="distcc=$pkgver-r$pkgrel"
 replaces="distcc"
 
@@ -100,6 +56,11 @@ prepare() {
 }
 
 build() {
+	# What: --without-system-popt forces linking this fork's own
+	#   vendored, CVE-fixed popt/ tree.
+	# Why: Otherwise configure silently prefers Alpine's own libpopt,
+	#   same gap PR #504 closed for docker/release/Dockerfile.
+	# From: PR #504
 	./configure \
 		--build="$CBUILD" \
 		--host="$CHOST" \
@@ -116,17 +77,9 @@ build() {
 package() {
 	make DESTDIR="$pkgdir" install
 
-	# What: Only distccd gets an OpenRC service; the include-server (the
-	#   pump-mode component) does not.
-	# Why: pump.in itself starts the include-server as a subprocess for
-	#   the lifetime of a single build invocation and shuts it down when
-	#   that build finishes (see pump.in's own top-of-file description:
-	#   "This will start an include server ... execute COMMAND ... and
-	#   then shutdown the include server") -- it is not a persistent
-	#   system daemon like distccd, so it has nothing for a service unit
-	#   to start/stop/supervise. Matches Alpine's own real distcc
-	#   package, which also ships only a distccd service.
-	# From: Issue #398
+	# What: Only distccd gets an OpenRC service.
+	# Why: The include-server (pump mode) is a per-build subprocess
+	#   pump.in itself starts and stops, not a persistent daemon.
 	install -D -m644 "$srcdir"/distccd.confd "$pkgdir"/etc/conf.d/distccd
 	install -D -m755 "$srcdir"/distccd.initd "$pkgdir"/etc/init.d/distccd
 
@@ -140,13 +93,9 @@ package() {
 
 pump() {
 	pkgdesc="$pkgdesc (pump mode)"
-	# What: Same provides/replaces pattern as the main package, scoped
-	#   to Alpine's real "distcc-pump" subpackage instead.
-	# Why: The pump binary keeps its real upstream name ("pump", not
-	#   "distcc-pump" -- this fork's Debian packaging renames it per
-	#   issue #485, but Alpine's own real distcc-pump package does not,
-	#   and this subpackage matches Alpine's own convention instead).
-	# From: Issue #398, Issue #485
+	# What: pump binary keeps its upstream name, not "distcc-pump".
+	# Why: Matches Alpine's own real distcc-pump subpackage; this
+	#   fork's Debian packaging renames it instead, per issue #485.
 	provides="distcc-pump=$pkgver-r$pkgrel"
 	replaces="distcc-pump"
 	depends="$_pump_deps distcc-ng=$pkgver-r$pkgrel"
@@ -155,14 +104,10 @@ pump() {
 	mv "$pkgdir"/usr/lib/python* "$subpkgdir"/usr/lib/
 }
 
-# What: distccd.initd/distccd.confd already have real sha512sums below;
-#   only the tarball entry is still a placeholder.
-# Why: Those two files are static, versioned in this repo, and don't
-#   depend on the not-yet-existing v3.6.6-NG release tarball -- their
-#   hashes were computed for real via `abuild checksum` against this
-#   worktree's own copy and won't change before release. The tarball
-#   line has to stay a placeholder until that tag actually exists.
-# From: Issue #398
+# What: distccd.initd/distccd.confd have real sha512sums; the tarball
+#   entry is still a placeholder.
+# Why: Those two files are static and already in this repo; the
+#   tarball's checksum needs the real v3.6.6-NG release to exist first.
 sha512sums="
 REPLACE_WITH_REAL_SHA512_OF_v3.6.6-NG.tar.gz  distcc-ng-3.6.6-NG.tar.gz
 aca91677d287a09aa68e043d3eab35f863839b0b93d265c1c9940f2e1b959fc652c827d3e4db2cbf1908b96476efb548d9de1748271a07eb3511e0baa753a04f  distccd.initd
