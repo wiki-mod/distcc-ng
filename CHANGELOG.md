@@ -28,6 +28,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
   test binary via `elf_begin()`/`gelf_getehdr()`, matching this file's
   existing per-tool self-test convention.
 
+- **`packaging/Alpine/`**: adds Alpine Linux (`apk`) packaging (issue
+  #398) -- an `APKBUILD` plus `distcc-ng.pre-install`, `distccd.initd`,
+  and `distccd.confd`, modeled on this fork's existing RPM/deb packaging
+  and on Alpine's own real `distcc` APKBUILD where the two diverge.
+  `provides=`/`replaces=` alias Alpine's real, independently-maintained
+  `distcc`/`distcc-pump` packages, matching this fork's own
+  Conflicts/Replaces convention on RPM/deb. `--without-system-popt` forces
+  linking this fork's CVE-fixed vendored `popt/` tree instead of Alpine's
+  own `libpopt`. Verified with a real `./configure && make && make check`
+  run on Alpine 3.24.1 (176 OK, 26 NOTRUN, 0 FAIL) and a full `abuild -r`
+  end-to-end packaging run producing all four installable packages.
+
 ### Fixed
 
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
