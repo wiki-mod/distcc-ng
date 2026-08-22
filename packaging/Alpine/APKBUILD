@@ -24,7 +24,15 @@ url="https://github.com/wiki-mod/distcc-ng"
 arch="all"
 license="GPL-2.0-or-later"
 _pump_deps="python3 py3-setuptools"
-makedepends="autoconf automake libtool popt-dev libelf-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
+# What: No popt-dev here.
+# Why: --without-system-popt below always builds against this fork's own
+#   vendored, CVE-fixed popt/ tree instead of Alpine's own libpopt
+#   (same rationale as docker/release/Dockerfile, PR #504/#506) -- whether
+#   Alpine's own popt package (1.19-r4 as of this writing) carries the
+#   same fix has not been checked, so this stays consistent with that
+#   decision rather than assuming Alpine's copy is unaffected.
+# From: Issue #398, PR #504
+makedepends="autoconf automake libtool elfutils-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
 checkdepends="gdb"
 install="$pkgname.pre-install"
 subpackages="$pkgname-doc $pkgname-openrc $pkgname-pump $pkgname-pump-pyc"
@@ -57,7 +65,8 @@ build() {
 		--sysconfdir=/etc \
 		--mandir=/usr/share/man \
 		--with-libelf \
-		--with-seccomp
+		--with-seccomp \
+		--without-system-popt
 
 	make
 }
