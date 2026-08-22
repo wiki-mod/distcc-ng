@@ -1,13 +1,15 @@
 # Contributor: wiki-mod/distcc-ng
 # Maintainer: djdomi <1812020+djdomi@users.noreply.github.com>
 
-# What: package name and drop-in alias to Alpine's real "distcc"
-# Why: distcc-ng replaces distcc one-way (wire-compatible, not reverse)
+# What: currently fails to build (popt calloc-transposed-args, PR #504
+#   fixes it but v3.6.5-NG predates that fix)
+# Why: blocked on the next release; see packaging/Alpine-nightly for a
+#   working build in the meantime
 # From: #398
 pkgname=distcc-ng
 # What: pkgver has no "-NG" suffix; _fullver keeps it
 # Why: apk pkgver forbids "-"
-pkgver=3.6.6
+pkgver=3.6.5
 _fullver="$pkgver-NG"
 pkgrel=0
 pkgdesc="wiki-mod/distcc-ng: a maintained fork of distcc, the distributed C/C++ compiler"
@@ -15,7 +17,7 @@ url="https://github.com/wiki-mod/distcc-ng"
 arch="all"
 license="GPL-2.0-or-later"
 _pump_deps="python3 py3-setuptools"
-makedepends="autoconf automake libtool elfutils-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
+makedepends="autoconf automake libtool libseccomp-dev zstd-dev python3-dev $_pump_deps"
 # What: tests disabled
 # Why: abuild's fakeroot breaks distccd's privilege-drop test
 # From: #398
@@ -32,6 +34,8 @@ source="distcc-ng-$_fullver.tar.gz::https://github.com/wiki-mod/distcc-ng/archiv
 	"
 builddir="$srcdir/distcc-ng-$_fullver"
 
+# What: drop-in alias to Alpine's real "distcc"
+# Why: distcc-ng replaces distcc one-way (wire-compatible, not reverse)
 provides="distcc=$pkgver-r$pkgrel"
 replaces="distcc"
 
@@ -50,7 +54,6 @@ build() {
 		--prefix=/usr \
 		--sysconfdir=/etc \
 		--mandir=/usr/share/man \
-		--with-libelf \
 		--with-seccomp \
 		--without-system-popt
 
@@ -85,10 +88,8 @@ pump() {
 	mv "$pkgdir"/usr/lib/python* "$subpkgdir"/usr/lib/
 }
 
-# What: tarball checksum is a placeholder
-# Why: v3.6.6-NG isn't released yet
 sha512sums="
-REPLACE_WITH_REAL_SHA512_OF_v3.6.6-NG.tar.gz  distcc-ng-3.6.6-NG.tar.gz
+c703fc44f0259ccaa10b1ea47c96788a7f66ec96980a87d0969139eb238a0a7397fca9c56ecd72ab14b1388161c8d46bf390c188edd1aec5a755ec4e7bad6683  distcc-ng-3.6.5-NG.tar.gz
 aca91677d287a09aa68e043d3eab35f863839b0b93d265c1c9940f2e1b959fc652c827d3e4db2cbf1908b96476efb548d9de1748271a07eb3511e0baa753a04f  distccd.initd
 b2ef052570aa4e3d6db5cacf10891d7c2e12ded10c13da434e073f116257976445da5bf7ef46329544f4a154cac0108c94e22881a778069fb4a3ea696d8073c3  distccd.confd
 "
