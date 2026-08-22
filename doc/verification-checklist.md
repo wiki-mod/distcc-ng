@@ -823,6 +823,20 @@ running the packaging tool itself, not by reading the recipe.
       Real verification: `apk add <name>` (or the target distro's
       equivalent) actually succeeding in a real container of that
       distro, not a name that merely looks plausible by analogy.
+- [ ] **A bare base image of the target distro is missing tools this
+      repo's own test suite needs, not just its build dependencies —
+      check what the test run itself actually requires, separately from
+      what `./configure`/`make` need.** A bare `alpine:latest` container
+      has no `gdb`, no `ccache`, no `ssh`/`sshd`/`ssh-keygen`, and was
+      not built with `--enable-rfc2553` for IPv6 -- `make check` degrades
+      the corresponding test cases to `NOTRUN` rather than failing, which
+      is easy to misread as "the suite is green" when it's actually
+      silently skipping real coverage (`Gdb*_Case`,
+      `CcacheHitThroughDistcc_Case`, `SSHMode_Case`, `IPv6Compile_Case`
+      specifically). `gdb` is the one that matters most here: it's also
+      a real `checkdepends` gap if a future revision of this packaging
+      re-enables `check()` under `abuild` (see the fakeroot entry below
+      for why it's currently disabled instead).
 - [ ] **A vendored-vs-system dependency choice (see section 10) needs
       its distro-specific opt-out flag explicitly set in every distro's
       own packaging recipe, not just the one it was first fixed in.**
