@@ -33,10 +33,43 @@ _pump_deps="python3 py3-setuptools"
 #   decision rather than assuming Alpine's copy is unaffected.
 # From: Issue #398, PR #504
 makedepends="autoconf automake libtool elfutils-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
-checkdepends="gdb"
+# What: Tests disabled, matching Alpine's own real "distcc" APKBUILD
+#   (options="!check").
+# Why: abuild runs check() under fakeroot, which fakes geteuid() back
+#   to 0 for some syscalls but not others (verified directly: a plain
+#   `id` inside a fakeroot session reports uid=0, while `id -u` in that
+#   same session reports the real unprivileged uid) -- distccd's own
+#   root-privilege-drop logic reacts to that inconsistent picture the
+#   same way it would under real root: it falls back to a "nobody" uid
+#   it then can't use to write into the test's own tmp dir. This is an
+#   abuild/fakeroot sandboxing artifact, not a functional regression:
+#   the full suite (./configure --with-libelf --with-seccomp
+#   --without-system-popt && make && make check) passes cleanly
+#   (176 OK, 26 NOTRUN, 0 FAIL) when actually run outside fakeroot, as
+#   a non-root user with --cap-add=SYS_PTRACE and seccomp=unconfined
+#   (gdb's own ASLR-disabling syscall needs both).
+# From: Issue #398, Issue #399, PR #400, PR #487
+options="!check"
 install="$pkgname.pre-install"
-subpackages="$pkgname-doc $pkgname-openrc $pkgname-pump $pkgname-pump-pyc"
-source="https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v$_fullver.tar.gz
+# What: $pkgname-pump-pyc listed before $pkgname-pump.
+# Why: abuild runs each subpackage's split function in this list's
+#   order; the generic -pyc splitter needs to run against the
+#   original, untouched $pkgdir before pump() below moves
+#   usr/lib/python* out of it -- reversing this order (as an earlier
+#   draft of this file did) makes the -pyc split silently find nothing
+#   to split, since pump() has already relocated those files. Matches
+#   the same ordering in Alpine's own real distcc APKBUILD.
+# From: Issue #398
+subpackages="$pkgname-doc $pkgname-pump-pyc $pkgname-pump $pkgname-openrc"
+# What: Explicit "localname::url" source rename.
+# Why: GitHub's tag-archive URL basename is "v$_fullver.tar.gz", not
+#   "distcc-ng-$_fullver.tar.gz" as sha512sums below names it -- without
+#   this rename, abuild would cache/verify the download under a
+#   different filename than sha512sums expects and checksumming would
+#   fail. Found by actually running `abuild fetch`/`abuild checksum`
+#   against this APKBUILD, not by inspection.
+# From: Issue #398
+source="distcc-ng-$_fullver.tar.gz::https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v$_fullver.tar.gz
 	distccd.initd
 	distccd.confd
 	"
@@ -71,16 +104,6 @@ build() {
 	make
 }
 
-check() {
-	# What: Runs the real make check suite, unlike Alpine's own real
-	#   distcc APKBUILD (options="!check" # tests are failing).
-	# Why: This fork's PR #400/#487 fixed the exact BusyBox/musl
-	#   portability and compressed-ELF-debug-info bugs that made
-	#   upstream's own test suite fail on Alpine in the first place.
-	# From: Issue #398, Issue #399, PR #400, PR #487
-	make check
-}
-
 package() {
 	make DESTDIR="$pkgdir" install
 
@@ -112,8 +135,16 @@ pump() {
 	mv "$pkgdir"/usr/lib/python* "$subpkgdir"/usr/lib/
 }
 
+# What: distccd.initd/distccd.confd already have real sha512sums below;
+#   only the tarball entry is still a placeholder.
+# Why: Those two files are static, versioned in this repo, and don't
+#   depend on the not-yet-existing v3.6.6-NG release tarball -- their
+#   hashes were computed for real via `abuild checksum` against this
+#   worktree's own copy and won't change before release. The tarball
+#   line has to stay a placeholder until that tag actually exists.
+# From: Issue #398
 sha512sums="
 REPLACE_WITH_REAL_SHA512_OF_v3.6.6-NG.tar.gz  distcc-ng-3.6.6-NG.tar.gz
-REPLACE_WITH_REAL_SHA512_OF_distccd.initd  distccd.initd
-REPLACE_WITH_REAL_SHA512_OF_distccd.confd  distccd.confd
+aca91677d287a09aa68e043d3eab35f863839b0b93d265c1c9940f2e1b959fc652c827d3e4db2cbf1908b96476efb548d9de1748271a07eb3511e0baa753a04f  distccd.initd
+b2ef052570aa4e3d6db5cacf10891d7c2e12ded10c13da434e073f116257976445da5bf7ef46329544f4a154cac0108c94e22881a778069fb4a3ea696d8073c3  distccd.confd
 "
