@@ -806,6 +806,89 @@ four years of upstream changes at once, including two real CVE fixes
 treatment above, and this checklist had no section covering "vendoring
 from our own fork" as a change category at all before this.
 
+## 11. New distro packaging (a new `APKBUILD`/`rpm.spec`/`deb.sh`-equivalent recipe, or a new package format entirely)
+
+Relevant to: adding packaging for a distro/format this repo has not
+shipped before (e.g. `packaging/Alpine/APKBUILD`, issue #398 Thread A) —
+not to routine version bumps of an existing, already-verified recipe.
+"The recipe is syntactically valid and matches an existing package's
+conventions" is not evidence it actually builds and installs correctly;
+every item below was a real, distinct failure found only by actually
+running the packaging tool itself, not by reading the recipe.
+
+- [ ] **A build dependency's package name is distro-specific — check it
+      exists under that exact name on the target distro, don't assume
+      it matches another distro's name.** `libelf-dev` (Debian's name)
+      does not exist on Alpine; the real name there is `elfutils-dev`.
+      Real verification: `apk add <name>` (or the target distro's
+      equivalent) actually succeeding in a real container of that
+      distro, not a name that merely looks plausible by analogy.
+- [ ] **A vendored-vs-system dependency choice (see section 10) needs
+      its distro-specific opt-out flag explicitly set in every distro's
+      own packaging recipe, not just the one it was first fixed in.**
+      `--without-system-popt` was added to `docker/release/Dockerfile`
+      by PR #504 to force linking this fork's CVE-fixed vendored
+      `popt/` tree instead of the system copy; a first draft of the
+      Alpine `APKBUILD` omitted it, and `./configure` silently linked
+      Alpine's own system `libpopt` instead — no error, no warning, just
+      a silently different binary than intended. Confirmed by inspecting
+      the actual link line (`-lpopt` vs. `popt/popt.o popt/poptconfig.o
+      ...`) with the system package fully removed from the test
+      container, not by trusting the configure flag was "probably"
+      honored.
+- [ ] **A packaging tool's own build sandbox can differ from a plain,
+      direct build+test run in ways that break privilege-sensitive
+      tests — check both, and don't assume they behave identically.**
+      Alpine's `abuild -r` runs its `check()` step under `fakeroot`,
+      which fakes `geteuid()` back to `0` for some syscalls but not
+      others (confirmed directly: a plain `id` inside a `fakeroot`
+      session reports `uid=0`, while `id -u` in that same session
+      reports the real unprivileged uid) — `distccd`'s own
+      root-privilege-drop logic reacts to that inconsistent picture the
+      same way it would under real root (see section 9's bind-mount/
+      root entry for the same underlying `dcc_discard_root()` behavior
+      triggered a different way), and fails the same way. This is a
+      packaging-sandbox artifact, not a real regression — the actual
+      correctness evidence has to come from a real, non-fakeroot,
+      non-root run (with `--cap-add=SYS_PTRACE` and
+      `seccomp=unconfined`, per section 9, if `gdb`-based tests are
+      involved) kept separate from, and not replaced by, whatever the
+      packaging tool's own build step reports.
+- [ ] **A packaging tool's automatic split-function ordering can depend
+      on the exact order names are listed, not just which names are
+      listed.** `apk`'s generic `-pyc` bytecode-splitting mechanism (used
+      via a `$pkgname-foo-pyc` entry in `subpackages=`) has to run
+      against the original, untouched package directory — listing it
+      *after* a custom split function that already manually relocated
+      the same files (as an earlier draft of `packaging/Alpine/APKBUILD`
+      did) makes the `-pyc` split silently find nothing to split,
+      failing the whole build. Real verification: an actual
+      `abuild -r`/equivalent full packaging run, not just confirming
+      each name individually appears somewhere in `subpackages=`.
+- [ ] **A packaging tool's required metadata fields can have a stricter
+      format than a plausible-looking placeholder satisfies.** Alpine's
+      `abuild` validates the `# Maintainer:` header as an RFC822
+      address and rejects a bare project/org name outright; this is
+      only caught by actually running the packaging tool, since nothing
+      about the recipe's own syntax looks wrong otherwise.
+- [ ] **A recipe's checksum manifest and its own source URL must name
+      the same local filename — a mismatch fails checksumming, not the
+      download.** GitHub's tag-archive URL basename (`v$pkgver.tar.gz`)
+      does not automatically match a differently-named local filename
+      already written into a checksum manifest (`distcc-ng-$pkgver
+      .tar.gz`); an explicit rename (`localname::url` in `apk`'s
+      `source=`, or the equivalent for another packaging format) is
+      needed to make the two agree. Found by actually running the
+      packaging tool's own checksum/fetch step, not by reading the
+      `source=`/checksum lines side by side.
+
+Added after issue #398 Thread A's Alpine packaging work (PR #515) found
+all six of the above as real, distinct failures during an actual
+`./configure && make && make check` run plus a full `abuild -r` run —
+none of them were visible from reading the `APKBUILD` on its own, and
+this checklist had no section covering "new distro packaging" as a
+change category before this.
+
 ## Keeping this checklist current
 
 This list is not closed — it only covers the categories of change this
