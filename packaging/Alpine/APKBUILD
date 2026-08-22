@@ -1,5 +1,14 @@
 # Contributor: wiki-mod/distcc-ng
-# Maintainer: wiki-mod/distcc-ng
+# What: Maintainer is a GitHub-provided noreply address, not a GitHub
+#   org/repo slug.
+# Why: Alpine's abuild validates this line as an RFC822 address and
+#   rejects a bare slug like "wiki-mod/distcc-ng" outright (confirmed
+#   by actually running `abuild -r` against this file); the address
+#   below is GitHub's own "<user-id>+<login>@users.noreply.github.com"
+#   format for the account this fork's own GitHub activity is
+#   maintained under.
+# From: Issue #398
+# Maintainer: djdomi <1812020+djdomi@users.noreply.github.com>
 # What: Alpine package for this fork, built from this fork's own GitHub
 #   release tarball rather than Alpine's real upstream "distcc" APKBUILD.
 # Why: pkgname is deliberately "distcc-ng" (not "distcc"), matching this
