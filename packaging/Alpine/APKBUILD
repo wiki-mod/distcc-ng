@@ -116,6 +116,17 @@ build() {
 package() {
 	make DESTDIR="$pkgdir" install
 
+	# What: Only distccd gets an OpenRC service; the include-server (the
+	#   pump-mode component) does not.
+	# Why: pump.in itself starts the include-server as a subprocess for
+	#   the lifetime of a single build invocation and shuts it down when
+	#   that build finishes (see pump.in's own top-of-file description:
+	#   "This will start an include server ... execute COMMAND ... and
+	#   then shutdown the include server") -- it is not a persistent
+	#   system daemon like distccd, so it has nothing for a service unit
+	#   to start/stop/supervise. Matches Alpine's own real distcc
+	#   package, which also ships only a distccd service.
+	# From: Issue #398
 	install -D -m644 "$srcdir"/distccd.confd "$pkgdir"/etc/conf.d/distccd
 	install -D -m755 "$srcdir"/distccd.initd "$pkgdir"/etc/init.d/distccd
 
