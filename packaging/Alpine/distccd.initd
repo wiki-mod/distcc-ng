@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+# What: OpenRC service unit for distccd, adapted from Alpine's real
+#   distcc package's own init script.
+# Why: Drops the original's dead #ifdef AVAHI/#endif C-preprocessor
+#   markers (never expanded in a real shell script, so that branch was
+#   always unreachable there) rather than carrying over non-functional
+#   avahi wiring.
+# From: Issue #398
+
+name="distccd"
+description="distcc distributed compiler daemon"
+
+depend() {
+	need net
+	after firewall
+}
+
+start() {
+	[ -e "${DISTCCD_PIDFILE}" ] && rm -f "${DISTCCD_PIDFILE}"
+
+	ebegin "Starting distccd"
+	checkpath -d /var/run/distccd -m 755 -o distcc
+	# shellcheck disable=SC2086
+	start-stop-daemon --start --quiet --exec "${DISTCCD_EXEC}" \
+		--pidfile "${DISTCCD_PIDFILE}" -- \
+		--pid-file "${DISTCCD_PIDFILE}" -N "${DISTCCD_NICE}" --user distcc \
+		${DISTCCD_OPTS}
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping distccd"
+	start-stop-daemon --stop --quiet --pidfile "${DISTCCD_PIDFILE}" \
+		&& rm -f "${DISTCCD_PIDFILE}"
+	eend $?
+}

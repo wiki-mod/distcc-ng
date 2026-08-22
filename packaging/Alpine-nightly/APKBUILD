@@ -1,0 +1,83 @@
+# Contributor: wiki-mod/distcc-ng
+# Maintainer: djdomi <1812020+djdomi@users.noreply.github.com>
+
+# What: nightly channel, tracks a pinned current_dev commit
+# Why: current_dev has PR #504's popt fix; the latest real release (v3.6.5-NG) doesn't
+# From: #398
+pkgname=distcc-ng-nightly
+pkgver=20260822
+pkgrel=0
+_commit="427f772da3bdb4255a5a8639e0e51b2c0f78064c"
+pkgdesc="wiki-mod/distcc-ng: nightly build from current_dev, not a stable release"
+url="https://github.com/wiki-mod/distcc-ng"
+arch="all"
+license="GPL-2.0-or-later"
+_pump_deps="python3 py3-setuptools"
+makedepends="autoconf automake libtool elfutils-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
+# What: tests disabled
+# Why: abuild's fakeroot breaks distccd's privilege-drop test
+# From: #398
+options="!check"
+install="$pkgname.pre-install"
+# What: pump-pyc listed before pump
+# Why: split functions run in this order; pump() moves the files first otherwise
+subpackages="$pkgname-doc $pkgname-pump-pyc $pkgname-pump $pkgname-openrc"
+source="distcc-ng-nightly-$pkgver.tar.gz::https://github.com/wiki-mod/distcc-ng/archive/$_commit.tar.gz
+	distccd.initd
+	distccd.confd
+	"
+builddir="$srcdir/distcc-ng-$_commit"
+
+# What: same drop-in alias as the stable package
+# Why: only one distcc-providing package can be installed at a time
+provides="distcc=$pkgver-r$pkgrel"
+replaces="distcc"
+
+prepare() {
+	default_prepare
+	./autogen.sh
+}
+
+build() {
+	./configure \
+		--build="$CBUILD" \
+		--host="$CHOST" \
+		--prefix=/usr \
+		--sysconfdir=/etc \
+		--mandir=/usr/share/man \
+		--with-libelf \
+		--with-seccomp \
+		--without-system-popt
+
+	make
+}
+
+package() {
+	make DESTDIR="$pkgdir" install
+
+	install -D -m644 "$srcdir"/distccd.confd "$pkgdir"/etc/conf.d/distccd
+	install -D -m755 "$srcdir"/distccd.initd "$pkgdir"/etc/init.d/distccd
+
+	local d="$pkgdir/usr/lib/$pkgname/bin"
+	mkdir -p "$d"
+	ln -sf /usr/bin/distcc "$d"/cc
+	ln -sf /usr/bin/distcc "$d"/gcc
+	ln -sf /usr/bin/distcc "$d"/g++
+	ln -sf /usr/bin/distcc "$d"/cpp
+}
+
+pump() {
+	pkgdesc="$pkgdesc (pump mode)"
+	provides="distcc-pump=$pkgver-r$pkgrel"
+	replaces="distcc-pump"
+	depends="$_pump_deps distcc-ng-nightly=$pkgver-r$pkgrel"
+	mkdir -p "$subpkgdir"/usr/lib "$subpkgdir"/usr/bin
+	mv "$pkgdir"/usr/bin/pump "$subpkgdir"/usr/bin/
+	mv "$pkgdir"/usr/lib/python* "$subpkgdir"/usr/lib/
+}
+
+sha512sums="
+9c4bbf9a9d5140da0e3a8fccb1da3db69e5a7000b5d5d1bebf8499da8acc06e0feccaa51f5e3a375e45b29205b35c5469775e9ea60a3a6e386304df74e35edf5  distcc-ng-nightly-20260822.tar.gz
+7c7e8a13fbf2c14d732787745cf97219a972f9b0633f03d07927d8a2c54edfb5a2647bdb1c8769e1c35451a31310b92fb8ec304b3140369b059a8e23c3d9e88d  distccd.initd
+b2ef052570aa4e3d6db5cacf10891d7c2e12ded10c13da434e073f116257976445da5bf7ef46329544f4a154cac0108c94e22881a778069fb4a3ea696d8073c3  distccd.confd
+"
