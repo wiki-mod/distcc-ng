@@ -1,0 +1,110 @@
+# Contributor: wiki-mod/distcc-ng
+# Maintainer: wiki-mod/distcc-ng
+# What: Alpine package for this fork, built from this fork's own GitHub
+#   release tarball rather than Alpine's real upstream "distcc" APKBUILD.
+# Why: pkgname is deliberately "distcc-ng" (not "distcc"), matching this
+#   repo's own maintainer decision to use provides= as an alias
+#   mechanism here rather than literally overriding Alpine's real,
+#   independently-maintained "distcc" package under the same name (the
+#   approach this fork's RPM/deb packaging uses instead, per those
+#   packaging formats' own Conflicts/Obsoletes/Replaces conventions).
+# From: Issue #398
+pkgname=distcc-ng
+# What: pkgver strips the "-NG" suffix; _fullver keeps it for the
+#   source URL and builddir.
+# Why: Alpine's pkgver format forbids a bare "-"; this fork's real
+#   version string (e.g. "3.6.6-NG") needs splitting the same way
+#   packaging/rpm.sh already splits it for RPM's Version/Release.
+# From: Issue #398
+pkgver=3.6.6
+_fullver="$pkgver-NG"
+pkgrel=0
+pkgdesc="wiki-mod/distcc-ng: a maintained fork of distcc, the distributed C/C++ compiler"
+url="https://github.com/wiki-mod/distcc-ng"
+arch="all"
+license="GPL-2.0-or-later"
+_pump_deps="python3 py3-setuptools"
+makedepends="autoconf automake libtool popt-dev libelf-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
+checkdepends="gdb"
+install="$pkgname.pre-install"
+subpackages="$pkgname-doc $pkgname-openrc $pkgname-pump $pkgname-pump-pyc"
+source="https://github.com/wiki-mod/distcc-ng/archive/refs/tags/v$_fullver.tar.gz
+	distccd.initd
+	distccd.confd
+	"
+builddir="$srcdir/distcc-ng-$_fullver"
+
+# What: Provides/replaces alias Alpine's real, independently-maintained
+#   "distcc"/"distcc-pump" packages (see subpackage pump() below for its
+#   own matching pair).
+# Why: pkgname is "distcc-ng", not "distcc" -- without this, apk would
+#   treat this and Alpine's real distcc as unrelated packages able to be
+#   installed side by side, both installing /usr/bin/distcc.
+# From: Issue #398
+provides="distcc=$pkgver-r$pkgrel"
+replaces="distcc"
+
+prepare() {
+	default_prepare
+	./autogen.sh
+}
+
+build() {
+	./configure \
+		--build="$CBUILD" \
+		--host="$CHOST" \
+		--prefix=/usr \
+		--sysconfdir=/etc \
+		--mandir=/usr/share/man \
+		--with-libelf \
+		--with-seccomp
+
+	make
+}
+
+check() {
+	# What: Runs the real make check suite, unlike Alpine's own real
+	#   distcc APKBUILD (options="!check" # tests are failing).
+	# Why: This fork's PR #400/#487 fixed the exact BusyBox/musl
+	#   portability and compressed-ELF-debug-info bugs that made
+	#   upstream's own test suite fail on Alpine in the first place.
+	# From: Issue #398, Issue #399, PR #400, PR #487
+	make check
+}
+
+package() {
+	make DESTDIR="$pkgdir" install
+
+	install -D -m644 "$srcdir"/distccd.confd "$pkgdir"/etc/conf.d/distccd
+	install -D -m755 "$srcdir"/distccd.initd "$pkgdir"/etc/init.d/distccd
+
+	local d="$pkgdir/usr/lib/$pkgname/bin"
+	mkdir -p "$d"
+	ln -sf /usr/bin/distcc "$d"/cc
+	ln -sf /usr/bin/distcc "$d"/gcc
+	ln -sf /usr/bin/distcc "$d"/g++
+	ln -sf /usr/bin/distcc "$d"/cpp
+}
+
+pump() {
+	pkgdesc="$pkgdesc (pump mode)"
+	# What: Same provides/replaces pattern as the main package, scoped
+	#   to Alpine's real "distcc-pump" subpackage instead.
+	# Why: The pump binary keeps its real upstream name ("pump", not
+	#   "distcc-pump" -- this fork's Debian packaging renames it per
+	#   issue #485, but Alpine's own real distcc-pump package does not,
+	#   and this subpackage matches Alpine's own convention instead).
+	# From: Issue #398, Issue #485
+	provides="distcc-pump=$pkgver-r$pkgrel"
+	replaces="distcc-pump"
+	depends="$_pump_deps distcc-ng=$pkgver-r$pkgrel"
+	mkdir -p "$subpkgdir"/usr/lib "$subpkgdir"/usr/bin
+	mv "$pkgdir"/usr/bin/pump "$subpkgdir"/usr/bin/
+	mv "$pkgdir"/usr/lib/python* "$subpkgdir"/usr/lib/
+}
+
+sha512sums="
+REPLACE_WITH_REAL_SHA512_OF_v3.6.6-NG.tar.gz  distcc-ng-3.6.6-NG.tar.gz
+REPLACE_WITH_REAL_SHA512_OF_distccd.initd  distccd.initd
+REPLACE_WITH_REAL_SHA512_OF_distccd.confd  distccd.confd
+"

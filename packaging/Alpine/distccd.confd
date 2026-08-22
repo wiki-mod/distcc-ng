@@ -1,0 +1,10 @@
+# /etc/conf.d/distccd: config file for /etc/init.d/distccd
+
+DISTCCD_EXEC="/usr/bin/distccd"
+DISTCCD_PIDFILE="/var/run/distccd/distccd.pid"
+DISTCCD_NICE="15"
+
+# SECURITY NOTICE: --allow is mandatory; distccd refuses to start
+# without at least one --allow entry. Restrict this to your real
+# trusted build-network range before enabling this service.
+DISTCCD_OPTS="--port 3632 --log-level critical --allow 192.168.0.0/24"
