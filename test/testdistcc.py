@@ -2082,6 +2082,65 @@ class GdbCompressedDebugInfo_Case(Gdb_Case):
                 'compiler/assembler does not support -gz=zlib')
         Gdb_Case.runtest(self)
 
+class FixDebugInfoGnuCompressed_Case(SimpleDistCC_Case):
+    """Test that dcc_fix_debug_info() rewrites the server path inside a
+    legacy GNU-compressed (".zdebug_*") debug section, which carries no
+    SHF_COMPRESSED flag and so needs elf_compress_gnu() rather than
+    elf_compress() (issue #398). Drives the h_fix_debug_info harness
+    directly, so the check is deterministic and does not depend on gdb."""
+
+    def runtest(self):
+        # binutils is needed to build and inspect the .zdebug fixture; skip
+        # (like the gdb cases) rather than fail where the tools are absent.
+        for tool in ("readelf", "objcopy"):
+            rc, _, _ = self.runcmd_unchecked("%s --version </dev/null" % tool)
+            if rc != 0:
+                raise comfychair.NotRunError("%s not available" % tool)
+
+        # The rewritten string is DW_AT_comp_dir (the compile cwd), so compile
+        # in a long-named subdir. -gdwarf-4 -gstrict-dwarf -fno-merge-debug-
+        # strings keeps comp_dir inline in .debug_info (not .debug_str /
+        # .debug_line_str, which zlib-gnu leaves uncompressed), and zlib-gnu
+        # then renames that section to the GNU-compressed .zdebug_info.
+        server_dir = os.path.join(os.getcwd(), "srv_" + "d" * 40)
+        os.mkdir(server_dir)
+        open(os.path.join(server_dir, "t.c"), "w").write(
+            "int main(void){return 0;}\n")
+        obj = os.path.join(server_dir, "t.o")
+        rc, _, _ = self.runcmd_unchecked(
+            "cd %s && %s -g -gdwarf-4 -gstrict-dwarf -fno-merge-debug-strings "
+            "-Wa,--compress-debug-sections=zlib-gnu -c t.c -o t.o"
+            % (server_dir, self._cc))
+        if rc != 0:
+            raise comfychair.NotRunError(
+                "compiler/assembler does not support zlib-gnu debug compression")
+
+        # Confirm the fixture actually has a GNU-compressed section: without
+        # this the test would pass even if the new code path never ran.
+        rc, sects, _ = self.runcmd_unchecked("readelf -SW %s" % obj)
+        if rc != 0 or ".zdebug_info" not in sects:
+            raise comfychair.NotRunError(
+                "toolchain did not emit a .zdebug_info section")
+
+        # Rewrite server_dir -> a shorter client path (the harness pads the
+        # shorter path with trailing slashes to keep the byte length equal).
+        client_dir = os.path.join(os.getcwd(), "cl")
+        self.runcmd("h_fix_debug_info %s %s %s" % (obj, client_dir, server_dir))
+
+        # Decompress a copy and confirm the rewrite landed inside the section.
+        dec = os.path.join(server_dir, "dec.o")
+        self.runcmd("objcopy --decompress-debug-sections %s %s" % (obj, dec))
+        _, dump, _ = self.runcmd_unchecked("readelf -p .debug_info %s" % dec)
+        if client_dir not in dump:
+            self.fail("client path not written into .zdebug_info section")
+        if server_dir in dump:
+            self.fail("server path still present in .zdebug_info after rewrite")
+
+        # The section must stay GNU-compressed after the decompress/recompress.
+        _, sects2, _ = self.runcmd_unchecked("readelf -SW %s" % obj)
+        if ".zdebug_info" not in sects2:
+            self.fail(".zdebug_info section lost its GNU compression")
+
 class GdbPrefixMap_Case(Gdb_Case):
     """Test that -fdebug-prefix-map= paths are rewritten correctly by a
     distccd running in a different directory than the client (this is
@@ -4691,6 +4750,7 @@ tests = [
          GdbOpt2_Case,
          GdbOpt3_Case,
          GdbCompressedDebugInfo_Case,
+         FixDebugInfoGnuCompressed_Case,
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,

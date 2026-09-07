@@ -472,8 +472,9 @@ static Elf_Scn *find_section_libelf(Elf *elf, const char *name) {
 /*
  * What: Replaces @p search with @p replace in one named section via
  * libelf, decompressing/recompressing around the edit if the section is
- * SHF_COMPRESSED. Returns the replacement count (0 is not an error), or
- * -1 if a section was left mid-decompressed by a failed recompress.
+ * SHF_COMPRESSED or legacy GNU-compressed (".zdebug_*"). Returns the
+ * replacement count (0 is not an error), or -1 if a section was left
+ * mid-decompressed by a failed recompress.
  * Why: elf_compress() invalidates any previously-fetched Shdr/Elf_Data
  * for this section (documented in libelf.h's own comment above its
  * declaration), so both are re-fetched after each compress/decompress
@@ -488,7 +489,8 @@ static int update_section_libelf(Elf *elf, const char *path,
   Elf_Scn *scn = find_section_libelf(elf, section_name);
   GElf_Shdr shdr;
   Elf_Data *data;
-  int was_compressed;
+  int gnu_compressed;
+  int shf_compressed;
   int count;
 
   if (scn == NULL) {
@@ -501,8 +503,19 @@ static int update_section_libelf(Elf *elf, const char *path,
     return 0;
   }
 
-  was_compressed = (shdr.sh_flags & SHF_COMPRESSED) != 0;
-  if (was_compressed && elf_compress(scn, 0, 0) < 0) {
+  /* what: a ".zdebug_*" section is GNU-compressed but has no SHF_COMPRESSED.
+   * why: it is (de)compressed by elf_compress_gnu(), keyed off the name here.
+   * from: #398 */
+  gnu_compressed = strncmp(section_name, ".zdebug", 7) == 0;
+  shf_compressed = !gnu_compressed && (shdr.sh_flags & SHF_COMPRESSED) != 0;
+
+  if (gnu_compressed && elf_compress_gnu(scn, 0, 0) < 0) {
+    rs_log_warning("elf_compress_gnu (decompress) on \"%s\" section of file %s"
+                   " failed: %s -- leaving this section unrewritten",
+                   section_name, path, elf_errmsg(-1));
+    return 0;
+  }
+  if (shf_compressed && elf_compress(scn, 0, 0) < 0) {
     rs_log_warning("elf_compress (decompress) on \"%s\" section of file %s"
                    " failed: %s -- leaving this section unrewritten",
                    section_name, path, elf_errmsg(-1));
@@ -527,7 +540,20 @@ static int update_section_libelf(Elf *elf, const char *path,
     elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
   }
 
-  if (was_compressed) {
+  if (gnu_compressed) {
+    /* what: recompress GNU-style; ".zdebug_*" name is kept, so no rename.
+     * why: a failed recompress returns -1 so the caller aborts the write.
+     * from: #398 */
+    int rc = elf_compress_gnu(scn, 1, 0);
+    if (rc == 0) {
+      rc = elf_compress_gnu(scn, 1, ELF_CHF_FORCE);
+    }
+    if (rc < 0) {
+      rs_log_warning("elf_compress_gnu (recompress) on \"%s\" section of"
+                     " file %s failed: %s", section_name, path, elf_errmsg(-1));
+      return -1;
+    }
+  } else if (shf_compressed) {
     int rc = elf_compress(scn, ELFCOMPRESS_ZLIB, 0);
     if (rc == 0) {
       /* Per libelf.h: a same-length edit can make the recompressed size
@@ -563,7 +589,11 @@ static int update_section_libelf(Elf *elf, const char *path,
 static int update_debug_info_libelf(const char *path, const char *search,
                                      const char *replace) {
   static const char *const debug_sections[] = {
-    ".debug_info", ".debug_str", ".debug_line_str"
+    ".debug_info", ".debug_str", ".debug_line_str",
+    /* what: GNU-compressed variants of the three above (".zdebug_*").
+     * why: -Wa,--compress-debug-sections=zlib-gnu renames them with a "z".
+     * from: #398 */
+    ".zdebug_info", ".zdebug_str", ".zdebug_line_str"
   };
   size_t i;
   int fd;
