@@ -1,0 +1,65 @@
+description of distcc protocol version 6000
+
+disclaimer
+----------
+
+This document is provided as explanation for people developing or
+debugging distcc.  Discrepancies between this document and the distcc
+code are an error in the document.
+
+protocol
+--------
+
+Protocol 6000 extends protocol 3 (LZO compression + server-side preprocessing,
+pump mode) with an external split-DWARF (".dwo") result. It exists because
+protocols 1-5000 leave no wire slot to return a server-produced ".dwo" in pump
+mode: protocol 3 and 5000 end their result header with DOTD, and protocol
+4000's DDWO token is client-side-cpp only (no DOTD in the same response).
+
+The protocol number (DIST) sent by the client is 6000. The server must respond
+(DONE) in version 6000.
+
+The client selects 6000 per compile job -- only when the effective compiler
+arguments request an external ".dwo" (-gsplit-dwarf or -gsplit-dwarf=split;
+not -gsplit-dwarf=single; a later -gno-split-dwarf disables it) AND the job is
+still using server-side cpp. Ordinary pump jobs stay on protocol 3, so a
+stock/old distccd that does not know 6000 rejects it cleanly rather than
+silently dropping the ".dwo". The feature is gated by the build's
+HAVE_SPLIT_DWARF_PUMP (--disable-split-dwarf-pump); a server built without it
+rejects 6000 as an unknown protocol.
+
+request
+-------
+
+Identical in shape to protocol 3's request (CDIR, ARGC/ARGV, then the
+NFIL/NAME/FILE/LINK sequence of the include closure), whose file bodies remain
+LZO-compressed. The request is unchanged from protocol 3.
+
+response
+--------
+
+As for protocol 3 (single-int LZO length format for the SERR/SOUT/DOTO/DOTD
+bulk tokens), with one added token, DDWO, between DOTO and DOTD:
+
+DOTO <lzo-len> <bytes>
+    The result object file.
+
+DDWO <lzo-len> <bytes>
+    The external split-DWARF (".dwo") file the server-side compile produced,
+    LZO-compressed. A zero length means the compiler emitted no ".dwo": the
+    client then skips creating a ".dwo" and continues to DOTD (it must NOT
+    end result retrieval on an empty DDWO, unlike protocol 4000). Stored
+    beside the client's object file via dcc_make_dwo_fname().
+
+DOTD <lzo-len> <bytes>
+    The contents of the result .d file, exactly as protocol 3, still sent
+    after DDWO.
+
+Notes
+-----
+
+Only the response gains the DDWO slot; the request is unchanged from protocol
+3. On a compile failure the server sends DOTO 0 and neither DDWO nor DOTD,
+exactly as the other pump protocols, and the client skips the whole result
+block. See doc/split-dwarf-pump-design.md and src/split_dwarf.c; the Zstd
+counterpart is protocol 6001 (doc/protocol-6001.txt).

@@ -13,6 +13,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **Split DWARF in pump mode** (`src/split_dwarf.c`, issue #398): compiling
+  with `-gsplit-dwarf` now works with server-side cpp (pump mode) -- the
+  server-produced external `.dwo` file is returned to the client alongside the
+  object and dependency files. Two new protocol versions carry a `DDWO` result
+  slot between `DOTO` and `DOTD`: `DCC_VER_6000` (LZO) and `DCC_VER_6001`
+  (Zstd). Selected per job only when an external `.dwo` is requested, so
+  ordinary pump jobs stay on protocol 3/5000 and still interoperate with a
+  stock `distccd`. Opt-out build feature (`--disable-split-dwarf-pump`, on by
+  default; `6001` additionally needs zstd).
+
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
   blocks a Dependabot PR on a missing `CHANGELOG.md` entry -- a dependency

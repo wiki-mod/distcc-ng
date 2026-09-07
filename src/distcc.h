@@ -148,9 +148,9 @@ enum dcc_protover {
                                   *  version: pump mode's result-header
                                   *  ordering (DOTO, then DOTD) has no slot
                                   *  for DDWO between them without a further
-                                  *  wire-format bump, and split dwarf has
-                                  *  never been wired for server-side cpp in
-                                  *  the first place. The include-server's
+                                  *  wire-format bump -- that slot is what
+                                  *  DCC_VER_6001 adds (see split_dwarf.c).
+                                  *  The include-server's
                                   *  header-closure transfer (NFIL/NAME/FILE)
                                   *  stays LZO-compressed regardless of this
                                   *  version, since it is produced

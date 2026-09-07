@@ -2,7 +2,7 @@
 
 Tracking: [wiki-mod/distcc-ng#398](https://github.com/wiki-mod/distcc-ng/issues/398) section C (umbrella). Original design plan and rationale: issue #305's comment history (issue #305 itself is closed as consolidated into #398; the DCC_VER_6000/6001 plan there is the basis for this document).
 
-Status: design, not yet implemented. This document is written before the wire-format specs `doc/protocol-6000.txt` / `doc/protocol-6001.txt`, which land with the implementation and must then match the code (per those files' own disclaimer).
+Status: implemented (PR #527). The wire-format specs `doc/protocol-6000.txt` / `doc/protocol-6001.txt` describe the shipped behavior; the implementation lives in `src/split_dwarf.{c,h}` with call sites in `distcc.h`, `hosts.c`, `srvrpc.c`, `compile.c`, `clirpc.c`, and `serve.c`, gated by `HAVE_SPLIT_DWARF_PUMP` (`--disable-split-dwarf-pump`).
 
 ## 1. Goal
 

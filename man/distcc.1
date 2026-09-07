@@ -135,6 +135,15 @@ Wrap your build inside the pump command, here assuming 10 servers:
 $ pump make -j20 CC=distcc
 .RE
 
+.PP
+Compiling with
+.B \-gsplit-dwarf
+works in pump mode: the server-produced external
+.B .dwo
+file is transferred back alongside the object and dependency files. This is
+built in by default and can be turned off at configure time with
+.BR \-\-disable\-split\-dwarf\-pump .
+
 .SH "QUICKSTART FOR DISTCC-GSSAPI MODE"
 Proceed as per the
 .B QUICKSTART
