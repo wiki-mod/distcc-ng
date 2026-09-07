@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+# What: OpenRC unit for distccd, adapted from Alpine's real distcc package
+# Why: drops the original's dead #ifdef AVAHI markers, never expand in shell
+# From: #398
+
+name="distccd"
+description="distcc distributed compiler daemon"
+
+depend() {
+	need net
+	after firewall
+}
+
+start() {
+	[ -e "${DISTCCD_PIDFILE}" ] && rm -f "${DISTCCD_PIDFILE}"
+
+	ebegin "Starting distccd"
+	checkpath -d /var/run/distccd -m 755 -o distcc
+	# shellcheck disable=SC2086
+	start-stop-daemon --start --quiet --exec "${DISTCCD_EXEC}" \
+		--pidfile "${DISTCCD_PIDFILE}" -- \
+		--pid-file "${DISTCCD_PIDFILE}" -N "${DISTCCD_NICE}" --user distcc \
+		${DISTCCD_OPTS}
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping distccd"
+	start-stop-daemon --stop --quiet --pidfile "${DISTCCD_PIDFILE}" \
+		&& rm -f "${DISTCCD_PIDFILE}"
+	eend $?
+}
