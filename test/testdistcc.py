@@ -2202,6 +2202,83 @@ class FixDebugInfoGnuCompressed_Case(SimpleDistCC_Case):
         if ".zdebug_info" not in sects2:
             self.fail(".zdebug_info section lost its GNU compression")
 
+class FixDebugInfoNonElf_Case(SimpleDistCC_Case):
+    """dcc_fix_debug_info() must skip a non-ELF or truncated input cleanly --
+    return 0 and leave the file untouched, never crash or corrupt it (issue
+    #398, deferred negative-test follow-up). Drives h_fix_debug_info directly;
+    needs no libelf, since the skip happens on both the libelf and raw paths."""
+
+    def runtest(self):
+        server = os.path.join(os.getcwd(), "srv_" + "s" * 40)
+        client = os.path.join(os.getcwd(), "cl")
+
+        # (a) a plain non-ELF text file that even contains the search string:
+        # it must come back byte-for-byte unchanged (the rewrite only ever
+        # touches real ELF debug sections, never raw file bytes).
+        with open("not_elf.txt", "w") as f:
+            f.write("not an ELF file, plain text mentioning %s here\n" % server)
+        with open("not_elf.txt", "rb") as f:
+            before = f.read()
+        self.runcmd("h_fix_debug_info not_elf.txt %s %s" % (client, server))
+        with open("not_elf.txt", "rb") as f:
+            after = f.read()
+        if before != after:
+            self.fail("non-ELF input was modified by dcc_fix_debug_info")
+
+        # (b) a truncated ELF (first 48 bytes of a real object): h_fix_debug_info
+        # must still return 0 (skip) rather than crash on the malformed header.
+        with open("t.c", "w") as f:
+            f.write("int main(void){return 0;}\n")
+        rc, _, _ = self.runcmd_unchecked(self._cc + " -g -c t.c -o real.o")
+        if rc != 0:
+            raise comfychair.NotRunError("could not build a probe object")
+        with open("real.o", "rb") as rf:
+            head = rf.read(48)
+        with open("trunc.o", "wb") as wf:
+            wf.write(head)
+        self.runcmd("h_fix_debug_info trunc.o %s %s" % (client, server))
+
+class FixDebugInfoElf32Compressed_Case(SimpleDistCC_Case):
+    """dcc_fix_debug_info()'s libelf path is class-independent (gelf), unlike
+    the raw path that duplicates its body per ELF class; verify it rewrites an
+    SHF_COMPRESSED debug section in a 32-bit ELF object too, not only 64-bit
+    (issue #398, deferred ELF32 coverage). Skips without a working -m32."""
+
+    def runtest(self):
+        if not _build_can_rewrite_compressed_debug(self):
+            raise comfychair.NotRunError(
+                'build has no libelf compressed-debug-section support')
+        server_dir = os.path.join(os.getcwd(), "srv32_" + "d" * 40)
+        os.mkdir(server_dir)
+        with open(os.path.join(server_dir, "t.c"), "w") as f:
+            f.write("int main(void){return 0;}\n")
+        obj = os.path.join(server_dir, "t.o")
+        # As the 64-bit case, force comp_dir inline into .debug_info, but as a
+        # 32-bit object; -gz=zlib then SHF-compresses that section.
+        rc, _, _ = self.runcmd_unchecked(
+            "cd %s && %s -m32 -g -gz=zlib -gdwarf-4 -gstrict-dwarf "
+            "-fno-merge-debug-strings -c t.c -o t.o" % (server_dir, self._cc))
+        if rc != 0:
+            raise comfychair.NotRunError("no working -m32 (32-bit toolchain absent)")
+        rc, hdr, _ = self.runcmd_unchecked("readelf -h %s" % obj)
+        if rc != 0 or "ELF32" not in hdr:
+            raise comfychair.NotRunError("object is not ELF32")
+        if not _readelf_has_compressed_debug(self, obj):
+            raise comfychair.NotRunError("no SHF_COMPRESSED section on this m32 object")
+
+        client_dir = os.path.join(os.getcwd(), "cl")
+        self.runcmd("h_fix_debug_info %s %s %s" % (obj, client_dir, server_dir))
+
+        dec = os.path.join(server_dir, "dec.o")
+        self.runcmd("objcopy --decompress-debug-sections %s %s" % (obj, dec))
+        _, dump, _ = self.runcmd_unchecked("readelf -p .debug_info %s" % dec)
+        if client_dir not in dump:
+            self.fail("client path not written into ELF32 compressed .debug_info")
+        if server_dir in dump:
+            self.fail("server path still present in ELF32 .debug_info after rewrite")
+        if not _readelf_has_compressed_debug(self, obj):
+            self.fail("ELF32 debug section lost its compression after rewrite")
+
 class GdbPrefixMap_Case(Gdb_Case):
     """Test that -fdebug-prefix-map= paths are rewritten correctly by a
     distccd running in a different directory than the client (this is
@@ -4812,6 +4889,8 @@ tests = [
          GdbOpt3_Case,
          GdbCompressedDebugInfo_Case,
          FixDebugInfoGnuCompressed_Case,
+         FixDebugInfoNonElf_Case,
+         FixDebugInfoElf32Compressed_Case,
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,

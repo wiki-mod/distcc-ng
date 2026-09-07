@@ -469,6 +469,10 @@ static Elf_Scn *find_section_libelf(Elf *elf, const char *name) {
   return NULL;
 }
 
+/* Rule-86 note: this libelf section rewrite is the shared ELF/DWARF
+ * embedded-path rewrite capability AGENTS.md rule 86 ties to issue #305's
+ * split DWARF; it is deliberately not extended to ".dwo" files (see #305/#527).
+ */
 /*
  * What: Replaces @p search with @p replace in one named section via
  * libelf, decompressing/recompressing around the edit if the section is
