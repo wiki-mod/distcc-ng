@@ -475,9 +475,9 @@ static Elf_Scn *find_section_libelf(Elf *elf, const char *name) {
  * SHF_COMPRESSED or legacy GNU-compressed (".zdebug_*"). Returns the
  * replacement count (0 is not an error), or -1 if a section was left
  * mid-decompressed by a failed recompress.
- * Why: elf_compress() invalidates any previously-fetched Shdr/Elf_Data
- * for this section (documented in libelf.h's own comment above its
- * declaration), so both are re-fetched after each compress/decompress
+ * Why: elf_compress()/elf_compress_gnu() invalidate any previously-fetched
+ * Shdr/Elf_Data for this section (documented in libelf.h's own comment above
+ * their declarations), so both are re-fetched after each compress/decompress
  * call rather than reused across it; a failed recompress must not be
  * papered over by writing the file anyway, since that would ship a
  * section stuck decompressed while its header still claims SHF_COMPRESSED.
