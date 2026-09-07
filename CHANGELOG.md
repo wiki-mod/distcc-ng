@@ -13,6 +13,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
+  profile for the verification container -- Docker's default profile plus a
+  single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable
+  ASLR without the "Operation not permitted" warning. Recommended in place of
+  the blanket `--security-opt seccomp=unconfined` (which disables the entire
+  filter); `docker/verify/selftest-ptrace.sh` and `doc/verification-checklist.md`
+  now point at it. Verified: the full ptrace self-test passes under it.
+
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
   blocks a Dependabot PR on a missing `CHANGELOG.md` entry -- a dependency

@@ -14,8 +14,15 @@
 # and this can be re-run against an already-built image without a rebuild):
 #
 #   docker run --rm --cap-add=SYS_PTRACE \
+#     --security-opt seccomp=./docker/verify/seccomp-verify.json \
 #     -v "$(pwd)/docker/verify:/verify:ro" \
 #     <image> bash /verify/selftest-ptrace.sh
+#
+# The narrow seccomp profile (Docker's default plus one personality(2)
+# ADDR_NO_RANDOMIZE allow rule) lets gdb disable ASLR without the "Operation
+# not permitted" warning, and is strictly narrower than seccomp=unconfined.
+# It is optional here (the self-test tolerates the warning), but is the
+# recommended replacement for unconfined -- see doc/verification-checklist.md.
 #
 set -euo pipefail
 
