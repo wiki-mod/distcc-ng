@@ -75,7 +75,11 @@ int dcc_r_request_header(int ifd,
      * exchanged, but reject it here too for an accurate error message
      * and to keep this function's own stated contract honest. */
     if (vers != DCC_VER_1 && vers != DCC_VER_2 && vers != DCC_VER_3 &&
-        vers != DCC_VER_4000 && vers != DCC_VER_5000) {
+        vers != DCC_VER_4000 && vers != DCC_VER_5000
+#ifdef HAVE_SPLIT_DWARF_PUMP
+        && vers != DCC_VER_6000 && vers != DCC_VER_6001
+#endif
+        ) {
         rs_log_error("can't handle requested protocol version is %d", vers);
         return EXIT_PROTOCOL_ERROR;
     }
