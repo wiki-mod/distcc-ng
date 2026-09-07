@@ -3098,6 +3098,71 @@ class SplitDwarfZstdPumpCompile_Case(SplitDwarfPumpMixin, CompileHello_Case):
         self._check_split_dwarf_results(self._depsfile, 6001)
 
 
+class SplitDwarfEmptyDwoPump_Case(SplitDwarfPumpMixin, CompileHello_Case):
+    """Protocol 6000 with an *empty* DDWO: the args request split DWARF (so the
+    client selects 6000) but the compiler emits no .dwo, exercising the
+    skip-and-continue path where a zero-length DDWO must not swallow the
+    following DOTD. Uses `clang -gsplit-dwarf -g0`, the one combination found
+    (GCC 14 / Clang 19) that requests split DWARF yet produces no .dwo -- GCC
+    still emits one -- so this is clang-only and skips where unavailable."""
+
+    _depsfile = "split_dwarf_empty_test.d"
+    _cc_override = "clang"
+
+    def compileOpts(self):
+        return "-g -gsplit-dwarf -g0 -MD -MF" + self._depsfile
+
+    def compileCmd(self):
+        return (self.distcc_without_fallback() + self._cc_override +
+                " -o testtmp.o " + self.compileOpts() +
+                " -c " + self.sourceFilename())
+
+    def linkCmd(self):
+        return (self.distcc() + self._cc_override +
+                " -o testtmp testtmp.o " + self.libraries())
+
+    def setup(self):
+        CompileHello_Case.setup(self)
+        os.environ['DISTCC_HOSTS'] = '127.0.0.1:%d,lzo,cpp' % self.server_port
+
+    def runtest(self):
+        if _server_options.find('cpp') == -1:
+            raise comfychair.NotRunError(
+                "split-dwarf pump needs an actual pump-mode test run (--pump)")
+        out, unused_err = self.runcmd(self.distcc() + "--version")
+        if 'split-DWARF pump-mode support' not in out:
+            raise comfychair.NotRunError(
+                "this distcc build has no split-DWARF pump support")
+        rc, _, _ = self.runcmd_unchecked("command -v " + self._cc_override)
+        if rc != 0:
+            raise comfychair.NotRunError("clang not available")
+        # Confirm this clang really emits no .dwo under -g0; otherwise there is
+        # no empty-DDWO to exercise and the case would not test its own point.
+        rc, _, _ = self.runcmd_unchecked(
+            self._cc_override + " -g -gsplit-dwarf -g0 -c %s -o sdprobe.o"
+            % self.sourceFilename())
+        produced = os.path.exists("sdprobe.dwo")
+        for f in ("sdprobe.o", "sdprobe.dwo"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if rc != 0 or produced:
+            raise comfychair.NotRunError(
+                "this clang still emits a .dwo under -g0; can't force empty DDWO")
+        for f in ("testtmp.dwo", self._depsfile):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        CompileHello_Case.runtest(self)
+        # No .dwo is expected here, but the .d (DOTD, sent after the empty DDWO)
+        # must still arrive -- the empty-DDWO skip must not end the stream.
+        if os.path.exists("testtmp.dwo"):
+            self.fail("unexpected .dwo for the -g0 empty-DDWO case")
+        self._check_split_dwarf_results(self._depsfile, 6000, want_dwo=False)
+
+
 class HostSelectionAlgorithm_Case(CompileHello_Case):
     """Direct test of the host-selection algorithm (issue #275).
 
@@ -4826,6 +4891,7 @@ tests = [
          ZstdPumpCompile_Case,
          SplitDwarfLzoPumpCompile_Case,
          SplitDwarfZstdPumpCompile_Case,
+         SplitDwarfEmptyDwoPump_Case,
          HostSelectionAlgorithm_Case,
          ScanIncludes_Case,
          ForceDirectory_Case,
