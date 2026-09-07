@@ -193,7 +193,7 @@ jobs:
         # to the GitHub release below) rather than the live build
         # directory, so the SBOM describes exactly what a downstream
         # consumer receives.
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: ${{ steps.source_tarball.outputs.path }}
           format: spdx-json
@@ -335,7 +335,7 @@ jobs:
           exit-code: "1"
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           image: ${{ steps.leg.outputs.image_tag }}
           format: spdx-json
