@@ -39,6 +39,17 @@
  * still denies those syscalls to the untrusted compiler afterward.
  */
 
+/* What: define _GNU_SOURCE before any header so unshare()/CLONE_NEWUSER/
+ * CLONE_NEWNS are declared.
+ * Why: the normal build gets it from configure.ac's global CPPFLAGS, but the
+ * CI fuzzer harness compiles this file standalone without those flags; the
+ * #ifndef guard supplies it there while avoiding a redefinition warning under
+ * the normal -Werror build.
+ * From: Issue #289. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <config.h>
 
 #include <string.h>
@@ -96,9 +107,8 @@ int dcc_fs_jail_root_path(const char *job_dir, char *buf, size_t buflen)
 
 #ifdef __linux__
 
-/* _GNU_SOURCE is supplied globally by configure.ac's CPPFLAGS; redefining it
- * here is a hard error under this fork's -Werror build. unshare()/CLONE_* and
- * the syscall wrappers below all come from that same global macro. */
+/* unshare()/CLONE_* and the syscall wrappers below come from _GNU_SOURCE,
+ * defined at the top of this file. */
 #include <sched.h>
 #include <sys/syscall.h>
 #include <sys/mount.h>
