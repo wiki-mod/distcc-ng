@@ -259,6 +259,64 @@ static int dcc_jail_mount_allowed_source(const char *src, const char *jail_root)
 }
 
 /**
+ * What: create @p subpath under @p jail_root and mount a fresh, empty,
+ * world-writable (sticky, mode 1777) tmpfs on it.
+ * Why: the compiler needs a writable /tmp (gcc's intermediate files) and some
+ * tools a /dev/shm; a fresh tmpfs gives those without exposing any host
+ * content, and keeps the compiler's /tmp distinct from the host's (plan
+ * sections 2.5/89). Returns 0 on success, 1 on failure (pre-pivot).
+ * From: Issue #289.
+ */
+static int dcc_jail_mount_writable_tmpfs(const char *jail_root,
+                                         const char *subpath)
+{
+    char dst[PATH_MAX];
+
+    if (snprintf(dst, sizeof dst, "%s%s", jail_root, subpath)
+            >= (int) sizeof dst) {
+        rs_log_error("fs-jail: tmpfs mount path too long: %s", subpath);
+        return 1;
+    }
+    dcc_mk_tmp_ancestor_dirs(dst);
+    if (mkdir(dst, 01777) != 0 && errno != EEXIST) {
+        rs_log_error("fs-jail: mkdir(%s) failed: %s", dst, strerror(errno));
+        return 1;
+    }
+    if (mount("tmpfs", dst, "tmpfs", 0, "mode=1777") != 0) {
+        rs_log_error("fs-jail: mount tmpfs on %s failed: %s", dst,
+                     strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * What: close every inherited file descriptor above stderr.
+ * Why: a host file/dir/socket handle the parent distccd left open (including
+ * the client connection) survives fork and the namespace switch, handing the
+ * jailed compiler a path out of the jail (plan section 10). The compiler
+ * reads/writes only by path (stdin/out/err are already redirected), so it
+ * needs no fd above 2. Uses close_range(2) where available, else a bounded
+ * loop -- neither needs /proc, which the jail does not mount.
+ * From: Issue #289.
+ */
+static void dcc_jail_close_inherited_fds(void)
+{
+#if defined(__NR_close_range)
+    if (syscall(__NR_close_range, (unsigned) 3, ~0U, 0) == 0)
+        return;
+#endif
+    {
+        long maxfd = sysconf(_SC_OPEN_MAX);
+        int fd;
+        if (maxfd < 0 || maxfd > 65536)
+            maxfd = 65536;
+        for (fd = 3; fd < (int) maxfd; fd++)
+            close(fd);
+    }
+}
+
+/**
  * What: perform the full jail setup for @p resolved_job_dir; return 0 on
  * success, 1 on a failure before pivot_root (safe to proceed unjailed), or
  * -1 on a failure after pivot_root (jailed but broken -- must refuse).
@@ -356,6 +414,16 @@ static int dcc_jail_setup(const char *resolved_job_dir, const char *jail_root,
     for (i = 0; dcc_jail_dev_nodes[i] != NULL; i++)
         dcc_jail_mount_allowed_source(dcc_jail_dev_nodes[i], jail_root);
 
+    /* Private writable /tmp and /dev/shm as fresh empty tmpfs -- the compiler
+     * (gcc without -pipe) writes intermediate files under $TMPDIR (default
+     * /tmp), and some tools use /dev/shm; without these the compile fails
+     * inside the jail. Fresh tmpfs, so no host /tmp content is exposed (plan
+     * sections 2.5/89); mode 1777 matches a normal sticky /tmp. Mandatory:
+     * a compile that cannot write its temporaries is a broken jail. */
+    if (dcc_jail_mount_writable_tmpfs(jail_root, "/tmp") != 0 ||
+        dcc_jail_mount_writable_tmpfs(jail_root, "/dev/shm") != 0)
+        return 1;
+
     /* The job directory itself, read-write, at its own real absolute path so
      * all of serve.c's temp_dir-based path arithmetic keeps working. It is
      * server-created (mkdtemp), so it is trusted by construction and not
@@ -424,6 +492,11 @@ static int dcc_jail_setup(const char *resolved_job_dir, const char *jail_root,
                      "failed: %s", orig_cwd, strerror(errno));
         return -1;
     }
+
+    /* Last: drop every inherited fd above stderr so no host handle survives
+     * into the compiler. After the point of no return, but a failure to close
+     * is not itself a containment breach worth aborting a working jail for. */
+    dcc_jail_close_inherited_fds();
     return 0;
 }
 
