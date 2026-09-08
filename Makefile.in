@@ -338,6 +338,7 @@ h_ccvers_obj = src/h_ccvers.o $(common_obj)
 h_dotd_obj = src/h_dotd.o $(common_obj)
 h_fix_debug_info = src/h_fix_debug_info.o $(common_obj)
 h_fs_jail_obj = src/h_fs_jail.o $(common_obj)
+h_jail_containment_obj = src/h_jail_containment.o $(common_obj)
 h_compile_obj = src/h_compile.o $(common_obj) src/compile.o src/timefile.o \
                 src/backoff.o src/emaillog.o src/remote.o src/clinet.o \
 	        src/clirpc.o src/include_server_if.o src/state.o src/where.o \
@@ -396,6 +397,7 @@ SRC =	src/stats.c							\
 	src/emaillog.c							\
 	src/fix_debug_info.c						\
 	src/h_fs_jail.c							\
+	src/h_jail_containment.c					\
 	src/split_dwarf.c						\
 	src/zeroconf.c src/zeroconf-reg.c src/gcc-id.c
 
@@ -473,6 +475,7 @@ check_PROGRAMS = \
 	h_exten@EXEEXT@ \
 	h_fix_debug_info@EXEEXT@ \
 	h_fs_jail@EXEEXT@ \
+	h_jail_containment@EXEEXT@ \
 	h_hosts@EXEEXT@ \
 	h_ssh@EXEEXT@ \
 	h_issource@EXEEXT@ \
@@ -636,6 +639,9 @@ h_fix_debug_info@EXEEXT@: $(h_fix_debug_info)
 
 h_fs_jail@EXEEXT@: $(h_fs_jail_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_fs_jail_obj) $(LIBS)
+
+h_jail_containment@EXEEXT@: $(h_jail_containment_obj)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_jail_containment_obj) $(LIBS)
 
 h_compile@EXEEXT@: $(h_compile_obj)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(h_compile_obj) $(LIBS)

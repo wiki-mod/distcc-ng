@@ -771,6 +771,26 @@ class FsJailPathContainment_Case(SimpleDistCC_Case):
                 % (repr(out), repr(err)))
 
 
+class FsJailContainment_Case(SimpleDistCC_Case):
+    """End-to-end jail containment via h_jail_containment (issue #289): it
+    enters a real fs-jail=required jail with dcc_fs_jail_enter() and checks,
+    from inside, that an allowlisted directory survives while a host secret,
+    /proc, and a #95-style escape symlink are all absent. Unlike
+    FsJailPathContainment_Case (pure string logic), this needs a working
+    unprivileged user+mount namespace, so it NOTRUNs where that is unavailable
+    (an overlay-root container or a restrictive kernel/LSM); h_jail_containment
+    signals that with exit code 77."""
+    def runtest(self):
+        rc, out, err = self.runcmd_unchecked("h_jail_containment")
+        if rc == 77:
+            raise comfychair.NotRunError(
+                out.strip() or "fs-jail not testable in this environment")
+        if rc != 0:
+            raise AssertionError(
+                "h_jail_containment failed (rc=%d): %s (stderr: %s)"
+                % (rc, repr(out), repr(err)))
+
+
 class ScanArgs_Case(SimpleDistCC_Case):
     '''Test understanding of gcc command lines.'''
     def runtest(self):
@@ -5205,6 +5225,7 @@ tests = [
          Concurrent_Case,
          HundredFold_Case,
          FsJailCompileHello_Case,
+         FsJailContainment_Case,
          BigAssFile_Case]
 
 # On macOS, certain python installations set CPATH. distcc refuses to pump if

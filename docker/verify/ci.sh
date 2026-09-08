@@ -270,6 +270,16 @@ step_fs_jail_e2e() {
     grep -qE "FsJailCompileHello_Case[[:space:]]+OK" "${work}/jailcase.log" \
         || { echo "ERROR: FsJailCompileHello_Case did not report OK (NOTRUN or FAIL)"; exit 1; }
     echo "OK: fs-jail testdistcc.py case ran and passed."
+
+    # Containment harness: enters a real fs-jail=required jail and asserts the
+    # allowlist survives while a host secret, /proc, and a #95-style escape
+    # symlink are all absent inside it. On this userns-capable runner it must
+    # pass (exit 0), not skip (77, which would mean the jail could not engage).
+    ( cd "${REPO_ROOT}" && make h_jail_containment )
+    set +e; "${REPO_ROOT}/h_jail_containment"; hrc=$?; set -e
+    [ "${hrc}" = 0 ] \
+        || { echo "ERROR: h_jail_containment rc=${hrc} (expected 0 on this userns-capable runner, 77=skip/1=fail)"; exit 1; }
+    echo "OK: fs-jail containment harness passed."
 }
 
 # What: dispatches to the requested verification subcommand.
