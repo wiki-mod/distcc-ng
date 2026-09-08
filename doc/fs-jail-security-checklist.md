@@ -94,6 +94,16 @@ All runs inside `ghcr.io/wiki-mod/distcc-ng-buildtools` (rule 87) unless noted.
   produced no stderr" check this shows up as noise. Whether server-side jail
   diagnostics should reach the client at all is a broader question that also
   touches seccomp (plan sections 95/96).
+- A failed read-only *remount* of a system root (`/usr` etc.) in
+  `dcc_jail_bind_mount()` is logged as a warning and the compile proceeds,
+  even under `fs-jail = required` -- the root then stays bound read-write onto
+  the host inode. Maintainer decision (2026-09-08): keep
+  the compile working; compile availability outranks this hardening layer, and
+  for a non-root `distccd` the real file uid still bounds the write (the host
+  `/usr` is not writable by the daemon's own uid regardless). The residual
+  risk only matters if `distccd` runs as real root, where the mapped-root
+  compiler could then modify the host root; that is deferred to the later
+  security audit rather than made fatal here.
 
 ## The full #289 plan, tracked
 
