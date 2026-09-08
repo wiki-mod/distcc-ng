@@ -46,6 +46,8 @@ extern char *opt_listen_addr;
 extern int opt_niceness;
 extern int opt_job_file_mode;
 extern const char *arg_sysroot;
+/* Path to distccd's sandbox/jail config, or NULL for the default. From: #289. */
+extern const char *arg_sandbox_config;
 
 #ifdef HAVE_LINUX
 extern int opt_oom_score_adj;

@@ -138,6 +138,14 @@ const char *arg_log_file = NULL;
 
 const char *arg_sysroot = NULL;
 
+/* What: path to distccd's sandbox/jail config, or NULL for the compiled-in
+ *   default (/etc/distcc/distccd.conf).
+ * Why: lets one daemon read its own config (e.g. a test setting
+ *   fs-jail = required) without touching the shared system-wide file every
+ *   other daemon reads.
+ * From: Issue #289. */
+const char *arg_sandbox_config = NULL;
+
 int opt_job_lifetime = 0;
 
 /* Enumeration values for options that don't have single-letter name.  These
@@ -210,6 +218,7 @@ const struct poptOption options[] = {
     { "make-me-a-botnet", 0, POPT_ARG_NONE, &opt_enable_tcp_insecure, 0, 0, 0 },
     { "enable-tcp-insecure", 0, POPT_ARG_NONE, &opt_enable_tcp_insecure, 0, 0, 0 },
     { "sysroot", 0,   POPT_ARG_STRING, &arg_sysroot, 0, 0, 0 },
+    { "sandbox-config", 0, POPT_ARG_STRING, &arg_sandbox_config, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0 }
 };
 
@@ -247,6 +256,8 @@ static void distccd_show_usage(void)
 "    --whitelist=FILE           control client access through a whitelist\n"
 #endif
 "    --sysroot=DIR              search resource file in this directory\n"
+"    --sandbox-config=FILE      read the sandbox/jail config from FILE\n"
+"                               (default /etc/distcc/distccd.conf)\n"
 "    --stats                    enable statistics reporting via HTTP server\n"
 "    --stats-port PORT          TCP port to listen on for statistics requests\n"
 #ifdef HAVE_AVAHI

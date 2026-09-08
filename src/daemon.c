@@ -272,13 +272,16 @@ int main(int argc, char *argv[])
     if (!opt_enable_tcp_insecure)
         dcc_warn_masquerade_whitelist();
 
-    /* Load /etc/distcc/distccd.conf (see doc/seccomp-sandbox.md and
+    /* Load the daemon sandbox/jail config (--sandbox-config PATH, else the
+     * default /etc/distcc/distccd.conf; see doc/seccomp-sandbox.md and
      * issue #192, renamed from seccomp.conf in issue #207) and resolve it
      * into the effective per-child sandbox configuration before the first
      * remote compile can possibly be spawned. Both steps are one-time,
      * daemon-lifetime setup -- neither re-reads the file nor re-resolves
-     * any syscall name per compile. */
-    dcc_seccomp_config_load(NULL);
+     * any syscall name per compile. The --sandbox-config override lets a test
+     * point one daemon at its own config (e.g. fs-jail = required, issue
+     * #289) without touching the shared system-wide file. */
+    dcc_seccomp_config_load(arg_sandbox_config);
     dcc_seccomp_configure(dcc_seccomp_config_get());
 
     /* One-time startup notice: tells the administrator whether remote

@@ -213,11 +213,12 @@ step_fs_jail_e2e() {
         && make install )
     export PATH="${prefix}/bin:${PATH}"
 
-    # fs-jail = required: read from /etc/distcc/distccd.conf at daemon startup
-    # (dcc_seccomp_config_load), so a jail-setup failure refuses the compile
-    # rather than silently running it unjailed.
-    sudo mkdir -p /etc/distcc
-    echo "fs-jail = required" | sudo tee /etc/distcc/distccd.conf >/dev/null
+    # fs-jail = required in a throwaway config passed via --sandbox-config, so
+    # a jail-setup failure refuses the compile rather than silently running it
+    # unjailed. --sandbox-config keeps this test-local, touching no shared
+    # /etc/distcc/distccd.conf.
+    local conf="${RUNNER_TEMP:-/tmp}/distccd-jail.conf"
+    echo "fs-jail = required" > "${conf}"
 
     rm -rf "${work}"; mkdir -p "${work}"
     printf 'int main(void) { return 0; }\n' > "${work}/hello.c"
@@ -225,6 +226,7 @@ step_fs_jail_e2e() {
     # One daemon, --verbose so the jail's DEBUG-level "entered ... jail" trace
     # is emitted; killed on exit.
     distccd --no-detach --daemon --verbose \
+        --sandbox-config "${conf}" \
         --log-file "${log}" --pid-file "${pidfile}" \
         --port "${port}" --allow 127.0.0.1 --enable-tcp-insecure \
         --lifetime 120 &
