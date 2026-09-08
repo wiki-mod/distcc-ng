@@ -13,6 +13,16 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
+- **Filesystem jail for pump-mode compile jobs (issue #289, phase 1)**: a new
+  opt-in Linux mount-namespace jail (`src/fs-jail.c`) that contains a
+  server-side compile inside a server-controlled read-only system allowlist
+  plus the job's own directory, so a symlink escape cannot reach the host
+  filesystem. Configured via `distccd.conf`'s new `fs-jail` key
+  (`off` default / `optional` / `required`); Linux-only, a no-op elsewhere.
+  Phase 1 lands the trust model, the `temp_o`/deps relocation that a per-job
+  mount namespace requires, and the fail-open/closed modes; the full plan is
+  tracked in `doc/fs-jail-security-checklist.md`.
+
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
   blocks a Dependabot PR on a missing `CHANGELOG.md` entry -- a dependency
