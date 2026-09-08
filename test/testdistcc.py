@@ -2059,6 +2059,55 @@ class GdbOpt3_Case(Gdb_Case):
         """Command for compiling and linking."""
         return self._cc + " -g -O3 ";
 
+def _readelf_has_compressed_debug(case, obj):
+    """True if @p obj has a compressed debug section: a `.debug_*` carrying
+    the readelf `C` (SHF_COMPRESSED) flag, or a GNU `.zdebug_*` section.
+    Lets a test confirm the assembler really compressed something rather
+    than only that it accepted the flag (issue #398)."""
+    rc, out, _ = case.runcmd_unchecked("readelf -SW %s" % obj)
+    if rc != 0:
+        return False
+    for line in out.splitlines():
+        if ".zdebug" in line:
+            return True
+        # readelf -SW prints the flag cluster as its own space-delimited
+        # column; a compressed section's cluster contains "C".
+        if ".debug" in line and re.search(r" [A-Z]*C[A-Z]* ", line):
+            return True
+    return False
+
+def _build_can_rewrite_compressed_debug(case):
+    """Probe whether this build's dcc_fix_debug_info() has the libelf path
+    that can rewrite a *compressed* debug section. Runs the h_fix_debug_info
+    harness on an SHF-compressed fixture whose DW_AT_comp_dir sits inside the
+    compressed `.debug_info` (so only the libelf path can rewrite it);
+    h_fix_debug_info shares the build's config.h with distccd, so a positive
+    result holds for the E2E daemon too. Returns False when the toolchain
+    can't produce such a fixture (nothing to gate) or the build has no libelf
+    (issue #398), so a caller can skip rather than fail spuriously."""
+    for tool in ("readelf", "objcopy"):
+        rc, _, _ = case.runcmd_unchecked("%s --version </dev/null" % tool)
+        if rc != 0:
+            return False
+    probe = os.path.join(os.getcwd(), "libelf_probe_" + "p" * 40)
+    os.mkdir(probe)
+    with open(os.path.join(probe, "p.c"), "w") as f:
+        f.write("int main(void){return 0;}\n")
+    obj = os.path.join(probe, "p.o")
+    # -gdwarf-4 -gstrict-dwarf -fno-merge-debug-strings keeps comp_dir inline
+    # in .debug_info; -gz=zlib then SHF-compresses that section.
+    rc, _, _ = case.runcmd_unchecked(
+        "cd %s && %s -g -gz=zlib -gdwarf-4 -gstrict-dwarf "
+        "-fno-merge-debug-strings -c p.c -o p.o" % (probe, case._cc))
+    if rc != 0 or not _readelf_has_compressed_debug(case, obj):
+        return False
+    client = os.path.join(os.getcwd(), "lp")
+    case.runcmd("h_fix_debug_info %s %s %s" % (obj, client, probe))
+    dec = os.path.join(probe, "dec.o")
+    case.runcmd("objcopy --decompress-debug-sections %s %s" % (obj, dec))
+    _, dump, _ = case.runcmd_unchecked("readelf -p .debug_info %s" % dec)
+    return client in dump
+
 class GdbCompressedDebugInfo_Case(Gdb_Case):
     """Test that dcc_fix_debug_info()'s server-side path rewrite still
     works when the assembler compresses the debug sections it emits
@@ -2070,6 +2119,12 @@ class GdbCompressedDebugInfo_Case(Gdb_Case):
         return self._cc + " -g -gz=zlib "
 
     def runtest(self):
+        # The server-side rewrite of a compressed section needs the libelf
+        # build path; without it this case would fail spuriously rather than
+        # test anything, so skip (issue #398, finding 2).
+        if not _build_can_rewrite_compressed_debug(self):
+            raise comfychair.NotRunError(
+                'build has no libelf compressed-debug-section support')
         # -gz=zlib compresses ELF debug sections via the assembler's own
         # --compress-debug-sections=zlib -- unsupported on non-ELF
         # targets (macOS Mach-O, Windows PE) and on an older binutils,
@@ -2080,7 +2135,149 @@ class GdbCompressedDebugInfo_Case(Gdb_Case):
         if error_rc != 0:
             raise comfychair.NotRunError(
                 'compiler/assembler does not support -gz=zlib')
+        # Confirm the assembler actually compressed a section, not merely
+        # accepted the flag; otherwise this passes without exercising the
+        # compressed path at all (issue #398, finding 3).
+        if not _readelf_has_compressed_debug(self, "junk"):
+            raise comfychair.NotRunError(
+                '-gz=zlib accepted but produced no compressed debug section')
         Gdb_Case.runtest(self)
+
+class FixDebugInfoGnuCompressed_Case(SimpleDistCC_Case):
+    """Test that dcc_fix_debug_info() rewrites the server path inside a
+    legacy GNU-compressed (".zdebug_*") debug section, which carries no
+    SHF_COMPRESSED flag and so needs elf_compress_gnu() rather than
+    elf_compress() (issue #398). Drives the h_fix_debug_info harness
+    directly, so the check is deterministic and does not depend on gdb."""
+
+    def runtest(self):
+        # The GNU .zdebug rewrite needs the libelf build path (and binutils to
+        # build/inspect the fixture); skip rather than fail spuriously where
+        # either is absent (issue #398, finding 2).
+        if not _build_can_rewrite_compressed_debug(self):
+            raise comfychair.NotRunError(
+                'build has no libelf compressed-debug-section support')
+
+        # The rewritten string is DW_AT_comp_dir (the compile cwd), so compile
+        # in a long-named subdir. -gdwarf-4 -gstrict-dwarf -fno-merge-debug-
+        # strings keeps comp_dir inline in .debug_info (not .debug_str /
+        # .debug_line_str, which zlib-gnu leaves uncompressed), and zlib-gnu
+        # then renames that section to the GNU-compressed .zdebug_info.
+        server_dir = os.path.join(os.getcwd(), "srv_" + "d" * 40)
+        os.mkdir(server_dir)
+        with open(os.path.join(server_dir, "t.c"), "w") as f:
+            f.write("int main(void){return 0;}\n")
+        obj = os.path.join(server_dir, "t.o")
+        rc, _, _ = self.runcmd_unchecked(
+            "cd %s && %s -g -gdwarf-4 -gstrict-dwarf -fno-merge-debug-strings "
+            "-Wa,--compress-debug-sections=zlib-gnu -c t.c -o t.o"
+            % (server_dir, self._cc))
+        if rc != 0:
+            raise comfychair.NotRunError(
+                "compiler/assembler does not support zlib-gnu debug compression")
+
+        # Confirm the fixture actually has a GNU-compressed section: without
+        # this the test would pass even if the new code path never ran.
+        rc, sects, _ = self.runcmd_unchecked("readelf -SW %s" % obj)
+        if rc != 0 or ".zdebug_info" not in sects:
+            raise comfychair.NotRunError(
+                "toolchain did not emit a .zdebug_info section")
+
+        # Rewrite server_dir -> a shorter client path (the harness pads the
+        # shorter path with trailing slashes to keep the byte length equal).
+        client_dir = os.path.join(os.getcwd(), "cl")
+        self.runcmd("h_fix_debug_info %s %s %s" % (obj, client_dir, server_dir))
+
+        # Decompress a copy and confirm the rewrite landed inside the section.
+        dec = os.path.join(server_dir, "dec.o")
+        self.runcmd("objcopy --decompress-debug-sections %s %s" % (obj, dec))
+        _, dump, _ = self.runcmd_unchecked("readelf -p .debug_info %s" % dec)
+        if client_dir not in dump:
+            self.fail("client path not written into .zdebug_info section")
+        if server_dir in dump:
+            self.fail("server path still present in .zdebug_info after rewrite")
+
+        # The section must stay GNU-compressed after the decompress/recompress.
+        _, sects2, _ = self.runcmd_unchecked("readelf -SW %s" % obj)
+        if ".zdebug_info" not in sects2:
+            self.fail(".zdebug_info section lost its GNU compression")
+
+class FixDebugInfoNonElf_Case(SimpleDistCC_Case):
+    """dcc_fix_debug_info() must skip a non-ELF or truncated input cleanly --
+    return 0 and leave the file untouched, never crash or corrupt it (issue
+    #398, deferred negative-test follow-up). Drives h_fix_debug_info directly;
+    needs no libelf, since the skip happens on both the libelf and raw paths."""
+
+    def runtest(self):
+        server = os.path.join(os.getcwd(), "srv_" + "s" * 40)
+        client = os.path.join(os.getcwd(), "cl")
+
+        # (a) a plain non-ELF text file that even contains the search string:
+        # it must come back byte-for-byte unchanged (the rewrite only ever
+        # touches real ELF debug sections, never raw file bytes).
+        with open("not_elf.txt", "w") as f:
+            f.write("not an ELF file, plain text mentioning %s here\n" % server)
+        with open("not_elf.txt", "rb") as f:
+            before = f.read()
+        self.runcmd("h_fix_debug_info not_elf.txt %s %s" % (client, server))
+        with open("not_elf.txt", "rb") as f:
+            after = f.read()
+        if before != after:
+            self.fail("non-ELF input was modified by dcc_fix_debug_info")
+
+        # (b) a truncated ELF (first 48 bytes of a real object): h_fix_debug_info
+        # must still return 0 (skip) rather than crash on the malformed header.
+        with open("t.c", "w") as f:
+            f.write("int main(void){return 0;}\n")
+        rc, _, _ = self.runcmd_unchecked(self._cc + " -g -c t.c -o real.o")
+        if rc != 0:
+            raise comfychair.NotRunError("could not build a probe object")
+        with open("real.o", "rb") as rf:
+            head = rf.read(48)
+        with open("trunc.o", "wb") as wf:
+            wf.write(head)
+        self.runcmd("h_fix_debug_info trunc.o %s %s" % (client, server))
+
+class FixDebugInfoElf32Compressed_Case(SimpleDistCC_Case):
+    """dcc_fix_debug_info()'s libelf path is class-independent (gelf), unlike
+    the raw path that duplicates its body per ELF class; verify it rewrites an
+    SHF_COMPRESSED debug section in a 32-bit ELF object too, not only 64-bit
+    (issue #398, deferred ELF32 coverage). Skips without a working -m32."""
+
+    def runtest(self):
+        if not _build_can_rewrite_compressed_debug(self):
+            raise comfychair.NotRunError(
+                'build has no libelf compressed-debug-section support')
+        server_dir = os.path.join(os.getcwd(), "srv32_" + "d" * 40)
+        os.mkdir(server_dir)
+        with open(os.path.join(server_dir, "t.c"), "w") as f:
+            f.write("int main(void){return 0;}\n")
+        obj = os.path.join(server_dir, "t.o")
+        # As the 64-bit case, force comp_dir inline into .debug_info, but as a
+        # 32-bit object; -gz=zlib then SHF-compresses that section.
+        rc, _, _ = self.runcmd_unchecked(
+            "cd %s && %s -m32 -g -gz=zlib -gdwarf-4 -gstrict-dwarf "
+            "-fno-merge-debug-strings -c t.c -o t.o" % (server_dir, self._cc))
+        if rc != 0:
+            raise comfychair.NotRunError("no working -m32 (32-bit toolchain absent)")
+        rc, hdr, _ = self.runcmd_unchecked("readelf -h %s" % obj)
+        if rc != 0 or "ELF32" not in hdr:
+            raise comfychair.NotRunError("object is not ELF32")
+        if not _readelf_has_compressed_debug(self, obj):
+            raise comfychair.NotRunError("no SHF_COMPRESSED section on this m32 object")
+
+        client_dir = os.path.join(os.getcwd(), "cl")
+        self.runcmd("h_fix_debug_info %s %s %s" % (obj, client_dir, server_dir))
+
+        dec = os.path.join(server_dir, "dec.o")
+        self.runcmd("objcopy --decompress-debug-sections %s %s" % (obj, dec))
+        _, dump, _ = self.runcmd_unchecked("readelf -p .debug_info %s" % dec)
+        if client_dir not in dump:
+            self.fail("client path not written into ELF32 compressed .debug_info")
+        if server_dir in dump:
+            self.fail("server path still present in ELF32 .debug_info after rewrite")
+        if not _readelf_has_compressed_debug(self, obj):
+            self.fail("ELF32 debug section lost its compression after rewrite")
 
 class GdbPrefixMap_Case(Gdb_Case):
     """Test that -fdebug-prefix-map= paths are rewritten correctly by a
@@ -4691,6 +4888,9 @@ tests = [
          GdbOpt2_Case,
          GdbOpt3_Case,
          GdbCompressedDebugInfo_Case,
+         FixDebugInfoGnuCompressed_Case,
+         FixDebugInfoNonElf_Case,
+         FixDebugInfoElf32Compressed_Case,
          GdbPrefixMap_Case,
          Lsdistcc_Case,
          BadLogFile_Case,
