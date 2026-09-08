@@ -53,7 +53,7 @@ dir_defs="-DLIBDIR=\"\\\"${prefix}/lib\\\"\" -DSYSCONFDIR=\"\\\"${sysconfdir}\\\
 # main (and its rs_program_name) is entirely inside #ifdef TEST, which is
 # never defined here, so it compiles as pure library code with no
 # conflict (confirmed by reading the file, not assumed).
-main_having_files="distcc h_argvtostr h_compile h_dopt h_dotd h_exten h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text history renderer"
+main_having_files="distcc h_argvtostr h_compile h_dopt h_dotd h_exten h_fs_jail h_getline h_hosts h_includesort h_issource h_parsemask h_pathsafety h_sa2str h_scanargs h_srvrpc h_ssh h_state h_stats h_strip lsdistcc mon-gnome mon-text history renderer"
 
 # daemon.c and stringmap.c DO have a real, unconditional main() (confirmed
 # by reading both files) -- but per Makefile.in's distccd_obj list, both
