@@ -14,7 +14,7 @@ set -euo pipefail
 # Why: a caller (a future OS-specific variant, or a local invocation outside
 #   CI) needs to override the image/profile without editing this file.
 # From: Issue #285, PR #528.
-REPO_ROOT="${GITHUB_WORKSPACE:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+REPO_ROOT="${GITHUB_WORKSPACE:-$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
 IMAGE="${VERIFY_IMAGE:-distcc-ng-verify:ci}"
 SECCOMP_PROFILE="${VERIFY_SECCOMP:-${REPO_ROOT}/docker/verify/seccomp-verify.json}"
 
@@ -58,6 +58,9 @@ step_ptrace_selftest() {
 #   (Codex review comment 2, PR #528).
 # From: Issue #286, Issue #285, PR #528.
 step_build_test() {
+    # The bash -c payload is intentionally single-quoted: $HOME and the build
+    # commands must run inside the container, not expand in this outer shell.
+    # shellcheck disable=SC2016
     docker_run_ptrace \
         --user "$(id -u):$(id -g)" --init \
         -v "${REPO_ROOT}:/work/src:rw" \
@@ -88,6 +91,9 @@ step_ccache_redis() {
     run_ccache_build() {
         local label="$1"
         local stats_file="$2"
+        # The bash -c payload is intentionally single-quoted: $HOME and the
+        # ccache commands must run inside the container, not expand here.
+        # shellcheck disable=SC2016
         docker run --rm --network host --user "$(id -u):$(id -g)" \
             -v "${REPO_ROOT}:/work/src:rw" \
             -w /work/src \
@@ -147,18 +153,36 @@ step_samba_configure_dryrun() {
     '
 }
 
+# What: writes the verify image's own /etc/passwd and /etc/group into
+#   RUNNER_TEMP, then appends one synthetic entry for the runner's numeric
+#   uid/gid, for step_build_test to bind-mount read-only.
+# Why: the numeric --user has no /etc/passwd entry in the image, and
+#   ssh-keygen's getpwuid(getuid()) fatal()s without one (SSHMode_Case);
+#   reading the image's real files first preserves every account it ships,
+#   keeping issue #286's no-root/no-chown property (no rebuild, no su).
+# From: Issue #286, Issue #285, PR #528.
+step_prepare_etc() {
+    mkdir -p "${RUNNER_TEMP}/verify-etc"
+    docker run --rm "${IMAGE}" cat /etc/passwd > "${RUNNER_TEMP}/verify-etc/passwd"
+    docker run --rm "${IMAGE}" cat /etc/group > "${RUNNER_TEMP}/verify-etc/group"
+    printf 'ci-runner:x:%s:%s:GitHub Actions runner uid:/tmp/distcc-ng-verify-home:/bin/bash\n' \
+        "$(id -u)" "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/passwd"
+    printf 'ci-runner:x:%s:\n' "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/group"
+}
+
 # What: dispatches to the requested verification subcommand.
 # Why: keeps verify-image-build.yml's steps to a single
 #   `bash docker/verify/ci.sh <subcommand>` call each, with no embedded
 #   docker-run logic left in the YAML itself.
 # From: Issue #285, PR #528.
 case "${1:-}" in
+    prepare-etc) step_prepare_etc ;;
     ptrace-selftest) step_ptrace_selftest ;;
     build-test) step_build_test ;;
     ccache-redis) step_ccache_redis ;;
     samba-configure-dryrun) step_samba_configure_dryrun ;;
     *)
-        echo "usage: $0 {ptrace-selftest|build-test|ccache-redis|samba-configure-dryrun}" >&2
+        echo "usage: $0 {prepare-etc|ptrace-selftest|build-test|ccache-redis|samba-configure-dryrun}" >&2
         exit 1
         ;;
 esac
