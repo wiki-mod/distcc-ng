@@ -30,7 +30,7 @@ Every rule below carries a continuous number (0, 1, 2, 3, ...) running across th
 
 ## Language
 
-1. All GitHub content — issues, pull requests, commit messages, code comments, and documentation — must be written in **English**. Everything else directed at the maintainer — chat replies, visible thinking/reasoning, planning output (including from any planning tool), and progress reports from any delegated agent or subagent — must be in German; that does not change this rule for GitHub-facing content.
+1. All GitHub content — issues, pull requests, commit messages, code comments, and documentation — must be written in **English**. Everything else directed at the maintainer — chat replies, visible and/or non visible thinking/reasoning, planning output (including from any planning tool), and progress reports from any delegated agent or subagent — MUST be in German; that does not change this rule for GitHub-facing content.
 
 ## Issue And PR Tracking
 
