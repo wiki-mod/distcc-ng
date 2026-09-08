@@ -354,8 +354,13 @@ int dcc_seccomp_sandbox_child(void)
          * the time a compile is spawned (see src/daemon.c's main()), but
          * if it somehow hasn't, fall back to "sandbox active with
          * built-in defaults" rather than silently running unsandboxed. */
+        /* Designated initializers so this stays correct as fields are added
+         * to struct dcc_seccomp_config (fs_jail_mode was, issue #289) without
+         * a positional shift silently mis-assigning them. */
         static const struct dcc_seccomp_config defaults = {
-            1, 0, 1, 0, NULL, NULL
+            .enabled = 1, .deny_network = 0, .fail_open = 1,
+            .require_seccomp = 0, .fs_jail_mode = DCC_FS_JAIL_OFF,
+            .extra_deny = NULL, .allow_override = NULL
         };
         static char *empty_list[] = { NULL };
         struct dcc_seccomp_config safe_defaults = defaults;

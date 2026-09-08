@@ -753,6 +753,24 @@ class SymlinkTraversal_Case(SimpleDistCC_Case):
                 % (mirror, os.readlink(mirror)))
 
 
+class FsJailPathContainment_Case(SimpleDistCC_Case):
+    """Unit test for the filesystem jail's path-containment primitive
+    (issue #289). dcc_fs_jail_path_within_root() is the server-controlled
+    trust decision the whole jail rests on: it must accept a genuine
+    descendant of an allowed root but reject a prefix trick like "/usr-evil"
+    against "/usr". The h_fs_jail harness runs the full case matrix itself
+    and exits non-zero on any mismatch; this pure string logic needs no
+    kernel namespaces, so it runs everywhere, unlike the live-jail path."""
+    def runtest(self):
+        # runcmd() raises on a non-zero exit, which is exactly the failure
+        # signal h_fs_jail uses, so a clean return is the whole assertion.
+        out, err = self.runcmd("h_fs_jail")
+        if "all containment cases passed" not in out:
+            raise AssertionError(
+                "h_fs_jail did not report success: %s (stderr: %s)"
+                % (repr(out), repr(err)))
+
+
 class ScanArgs_Case(SimpleDistCC_Case):
     '''Test understanding of gcc command lines.'''
     def runtest(self):
@@ -4695,6 +4713,7 @@ tests = [
          Lsdistcc_Case,
          BadLogFile_Case,
          PathSafety_Case,
+         FsJailPathContainment_Case,
          ScanArgs_Case,
          SymlinkTraversal_Case,
          IncludeServerFileOrder_Case,
