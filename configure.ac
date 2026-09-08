@@ -102,6 +102,19 @@ if test "x${pump_mode}" = xyes; then
 	AC_SUBST(PYTHON_RELATIVE_LIB)
 fi
 
+# What: opt-out toggle for split-DWARF support in pump mode (protocols
+# DCC_VER_6000/6001, src/split_dwarf.c).
+# Why: pure protocol code with no external dependency, so it follows the
+# --disable-pump-mode toggle pattern, not the --with-X auto-detect one; the
+# Zstd variant (6001) stays additionally gated by HAVE_ZSTD.
+# From: Issue #398
+AC_ARG_ENABLE(split-dwarf-pump,
+	AS_HELP_STRING([--disable-split-dwarf-pump],[return server-produced external split-DWARF (.dwo) files in pump mode]),
+		[split_dwarf_pump=${enableval}], [split_dwarf_pump=yes])
+if test "x${split_dwarf_pump}" = xyes; then
+	AC_DEFINE([HAVE_SPLIT_DWARF_PUMP], [1], [Define to 1 if split-DWARF support in pump mode (protocols 6000/6001) is enabled.])
+fi
+
 AC_ARG_ENABLE(rfc2553,
 	AS_HELP_STRING([--enable-rfc2553],[use getaddrinfo, getnameinfo, etc]))
 
