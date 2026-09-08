@@ -64,11 +64,11 @@ Expected result: the caller's original working directory is preserved and is not
 
 ## 2. Existing CI namespace capability spike
 
-Do this before adding new CI plumbing. The existing `verify-image-build.yml` `make_check` container already uses `--security-opt seccomp=unconfined` and `--cap-add=SYS_PTRACE`. The prototype demonstrated that Docker's default Seccomp profile blocks `unshare --user --mount` unless that restriction is removed or the required capability is added.
+Do this before adding new CI plumbing. As of issue #285/PR #528, the `verify-image-build.yml` build+test container (`docker/verify/ci.sh`'s `step_build_test()`) no longer uses `--security-opt seccomp=unconfined` -- it uses the narrow `docker/verify/seccomp-verify.json` profile (Docker's default plus one `personality(ADDR_NO_RANDOMIZE)` allow rule), which does not allow `unshare --user --mount`. The prototype demonstrated that Docker's default Seccomp profile blocks `unshare --user --mount` unless that restriction is removed or the required capability is added; the narrow profile is Docker's default in this respect, so the same restriction applies.
 
-The existing `seccomp=unconfined` setting must therefore be verified first rather than assuming new Docker configuration is required.
+This capability spike must therefore explicitly request `--security-opt seccomp=unconfined` (or extend the narrow profile with the specific `unshare`-related syscalls this jail needs) rather than assuming the existing container already runs unconfined.
 
-- [ ] Confirm the current `verify-image-build.yml` `make_check` container still contains `--security-opt seccomp=unconfined`.
+- [ ] Confirm whether `unshare --user --mount` needs `--security-opt seccomp=unconfined` or specific syscall allow-rules added to `docker/verify/seccomp-verify.json`, and record which.
 - [ ] Confirm `unshare --user` works inside the existing verification container.
 - [ ] Confirm `unshare --mount` works where required.
 - [ ] Confirm `unshare --user --mount` works.

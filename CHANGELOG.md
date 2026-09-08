@@ -20,6 +20,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the blanket `--security-opt seccomp=unconfined` (which disables the entire
   filter); `docker/verify/selftest-ptrace.sh` and `doc/verification-checklist.md`
   now point at it. Verified: the full ptrace self-test passes under it.
+- **`docker/verify/ci.sh`** (issue #285, PR #528): moves every
+  `docker run distcc-ng-verify:ci` invocation out of
+  `.github/workflows/verify-image-build.yml` into one parametrized,
+  subcommand-dispatched script (`ptrace-selftest`, `build-test`,
+  `ccache-redis`, `samba-configure-dryrun`), so the YAML stays a thin
+  orchestrator with no embedded docker-run logic to duplicate or drift.
+  The two ptrace-dependent steps now share one wrapper function and both
+  actually run under the narrow seccomp profile above -- previously the
+  self-test step ran with no profile at all and the build+test step used
+  the blanket `--security-opt seccomp=unconfined`, so neither recurring CI
+  run was actually exercising the narrow profile this fork ships.
+- **`doc/fs-jail-security-checklist.md`** (issue #285, PR #528): section 2's
+  "Existing CI namespace capability spike" assumed the build+test container
+  still runs `--security-opt seccomp=unconfined`, which is no longer true
+  after the change above -- corrected to say the container now runs under
+  the narrow `seccomp-verify.json` profile, and that issue #289's future
+  `unshare`-based capability spike must explicitly request `unconfined` (or
+  extend the narrow profile) rather than assume it already has it.
 - **Split DWARF in pump mode** (`src/split_dwarf.c`, issue #398): compiling
   with `-gsplit-dwarf` now works with server-side cpp (pump mode) -- the
   server-produced external `.dwo` file is returned to the client alongside the
