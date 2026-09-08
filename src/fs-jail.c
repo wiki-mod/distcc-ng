@@ -42,8 +42,15 @@
 #include <config.h>
 
 #include <string.h>
+#include <stdio.h>
 
 #include "fs-jail.h"
+
+/* What: the fixed jail-root subdirectory name placed inside a job's temp_dir.
+ * Why: a single definition both dcc_fs_jail_root_path() and its callers share,
+ * so the jail's own root and serve.c's cleanup registration never disagree.
+ * From: Issue #289. */
+#define DCC_FS_JAIL_ROOT_SUBDIR ".distccd-jail"
 
 /**
  * What: see fs-jail.h. Non-zero if canonical absolute @p path equals @p root
@@ -73,6 +80,18 @@ int dcc_fs_jail_path_within_root(const char *path, const char *root)
     /* Exact match, or the next character is the separator -- never a mid-
      * component match like "/usr" against "/usrlocal". */
     return path[rlen] == '\0' || path[rlen] == '/';
+}
+
+/**
+ * What: see fs-jail.h. Build "<job_dir>/.distccd-jail" into @p buf.
+ * Why: shared by the jail and by serve.c's cleanup registration so the jail
+ * root's path has one definition, not two that could drift.
+ * From: Issue #289.
+ */
+int dcc_fs_jail_root_path(const char *job_dir, char *buf, size_t buflen)
+{
+    int n = snprintf(buf, buflen, "%s/%s", job_dir, DCC_FS_JAIL_ROOT_SUBDIR);
+    return (n < 0 || (size_t) n >= buflen) ? -1 : 0;
 }
 
 #ifdef __linux__
@@ -221,7 +240,12 @@ static int dcc_jail_mount_allowed_source(const char *src, const char *jail_root)
                        "outside the allowed-root policy", src, resolved);
         return -1;
     }
-    return dcc_jail_bind_mount(resolved, jail_root, 1 /* readonly */);
+    /* Mount at the *requested* path, not the resolved one: on a merged-/usr
+     * system /lib resolves to /usr/lib, and mounting it at jail_root/usr/lib
+     * would leave jail_root/lib (hence /lib/ld-linux) absent, breaking every
+     * dynamically-linked exec. The kernel resolves src's symlink for the mount
+     * source anyway; realpath is used only for the containment check above. */
+    return dcc_jail_bind_mount(src, jail_root, 1 /* readonly */);
 }
 
 /**
@@ -234,9 +258,9 @@ static int dcc_jail_mount_allowed_source(const char *src, const char *jail_root)
  * jail, so the compile must fail regardless of mode (plan section 53).
  * From: Issue #289.
  */
-static int dcc_jail_setup(const char *resolved_job_dir, const char *orig_cwd)
+static int dcc_jail_setup(const char *resolved_job_dir, const char *jail_root,
+                          const char *orig_cwd)
 {
-    char jail_root[] = "/tmp/distccd-fs-jail-XXXXXX";
     uid_t my_uid;
     gid_t my_gid;
     int i, fd;
@@ -291,8 +315,15 @@ static int dcc_jail_setup(const char *resolved_job_dir, const char *orig_cwd)
         return 1;
     }
 
-    if (mkdtemp(jail_root) == NULL) {
-        rs_log_error("fs-jail: mkdtemp failed: %s", strerror(errno));
+    /* jail_root lives inside the per-job temp_dir (built by the caller), not
+     * a fresh mkdtemp in the global /tmp: after pivot_root the jail root
+     * becomes "/" and cannot be removed from inside, so a global mkdtemp would
+     * leak one empty directory per job forever. Inside temp_dir the parent
+     * distccd's own per-job cleanup removes it (serve.c registers it). EEXIST
+     * is tolerated in case a prior run in the same temp_dir left it. */
+    if (mkdir(jail_root, 0700) != 0 && errno != EEXIST) {
+        rs_log_error("fs-jail: mkdir(%s) failed: %s", jail_root,
+                     strerror(errno));
         return 1;
     }
     if (mount("tmpfs", jail_root, "tmpfs", 0, "mode=0755") != 0) {
@@ -400,6 +431,7 @@ int dcc_fs_jail_enter(const char *job_dir)
     const struct dcc_seccomp_config *cfg;
     enum dcc_fs_jail_mode mode;
     char resolved_job_dir[PATH_MAX];
+    char jail_root[PATH_MAX];
     char orig_cwd[PATH_MAX];
     int r;
 
@@ -422,8 +454,16 @@ int dcc_fs_jail_enter(const char *job_dir)
                      strerror(errno));
         return mode == DCC_FS_JAIL_REQUIRED ? -1 : 0;
     }
+    /* Build the jail root from the resolved job dir so it matches the mount
+     * source; serve.c registers the same subdir (derived from temp_dir) for
+     * cleanup. */
+    if (dcc_fs_jail_root_path(resolved_job_dir, jail_root, sizeof jail_root)
+            != 0) {
+        rs_log_error("fs-jail: job dir path too long to build jail root");
+        return mode == DCC_FS_JAIL_REQUIRED ? -1 : 0;
+    }
 
-    r = dcc_jail_setup(resolved_job_dir, orig_cwd);
+    r = dcc_jail_setup(resolved_job_dir, jail_root, orig_cwd);
     if (r == 0) {
         rs_trace("fs-jail: entered mount-namespace jail for %s",
                  resolved_job_dir);

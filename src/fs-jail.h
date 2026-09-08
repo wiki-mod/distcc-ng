@@ -86,4 +86,17 @@ int dcc_fs_jail_enter(const char *job_dir);
  */
 int dcc_fs_jail_path_within_root(const char *path, const char *root);
 
+/**
+ * What: write the jail-root directory path for job directory @p job_dir into
+ * @p buf (a subdirectory inside @p job_dir); return 0, or -1 if it would not
+ * fit.
+ * Why: the jail root must live inside the per-job temp_dir so the parent
+ * distccd's existing cleanup removes it -- a global mkdtemp would leak one
+ * empty dir per job (after pivot_root the jail root is "/" and cannot self-
+ * remove). Both the jail (src/fs-jail.c) and the cleanup registration
+ * (src/serve.c) derive the path here, so the two never drift.
+ * From: Issue #289.
+ */
+int dcc_fs_jail_root_path(const char *job_dir, char *buf, size_t buflen);
+
 #endif /* _DISTCC_FS_JAIL_H */

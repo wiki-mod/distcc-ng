@@ -854,6 +854,22 @@ static int dcc_run_job(int in_fd,
                 ret = EXIT_OUT_OF_MEMORY;
                 goto out_cleanup;
             }
+
+            /* Register the jail root (a subdir of temp_dir the compiler child
+             * creates) for cleanup here in the parent: after pivot_root the
+             * child cannot remove it itself, and only this daemon child's own
+             * cleanup runs in the right mount namespace to see it. A failed
+             * registration only risks leaking one empty dir, so warn rather
+             * than fail the compile. From: Issue #289. */
+            {
+                char jail_root_path[MAXPATHLEN];
+                if (dcc_fs_jail_root_path(temp_dir, jail_root_path,
+                                          sizeof jail_root_path) == 0) {
+                    if (dcc_add_cleanup(jail_root_path))
+                        rs_log_warning("could not register fs-jail root %s "
+                                       "for cleanup", jail_root_path);
+                }
+            }
         }
     }
 
