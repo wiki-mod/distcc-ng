@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# What: orchestrates every `docker run distcc-ng-verify:ci` verification step
-#   used by .github/workflows/verify-image-build.yml, dispatched by subcommand
-#   ($1): ptrace-selftest, build-test, ccache-redis, samba-configure-dryrun.
-# Why: keeps the YAML a thin orchestrator with no embedded docker-run logic to
+# What: orchestrates this repo's CI verification steps, dispatched by subcommand
+#   ($1). Container image checks for verify-image-build.yml (ptrace-selftest,
+#   build-test, ccache-redis, samba-configure-dryrun, prepare-etc) and one
+#   host-side filesystem-jail happy-path check for c-build.yml (fs-jail-e2e,
+#   which builds distcc-ng and runs a real jailed pump compile on the runner).
+# Why: keeps the YAML workflows thin orchestrators with no embedded logic to
 #   duplicate or drift, and lets the two ptrace-dependent steps share one flag
 #   definition instead of two hand-copied ones.
-# From: Issue #285, PR #528.
+# From: Issue #285, PR #528; Issue #289 (fs-jail-e2e).
 set -euo pipefail
 
 # What: overridable image tag and seccomp profile path; REPO_ROOT prefers
@@ -170,19 +172,101 @@ step_prepare_etc() {
     printf 'ci-runner:x:%s:\n' "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/group"
 }
 
+# What: build distcc-ng and prove one real pump-mode compile succeeds *through*
+#   the filesystem jail (fs-jail = required) on the runner's own root fs. Runs
+#   directly on the host, not in a container (unlike the steps above).
+# Why: the jail's happy path (bind-mounts + pivot_root actually engaging) cannot
+#   run inside the buildtools container, whose overlayfs root fails an
+#   unprivileged-userns bind-mount (EINVAL); ubuntu-latest's ext4 root can. The
+#   proof is not vacuous: serve.c always passes temp_dir as the job dir, so
+#   dcc_fs_jail_enter's no-jail early return is unreachable for a server
+#   compile, and under `required` the compile is refused unless the jail
+#   engaged; with DISTCC_FALLBACK=0 the object can only come from that jailed
+#   server compile, and the daemon's --verbose "entered mount-namespace jail"
+#   trace confirms it engaged.
+# From: Issue #289.
+step_fs_jail_e2e() {
+    # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, which
+    # would make the jail's unshare(CLONE_NEWUSER) fail EPERM; relax it,
+    # tolerating absence on older kernels. The jail is otherwise unprivileged.
+    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+    sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
+
+    local prefix="${RUNNER_TEMP:-/tmp}/distcc-jail-inst"
+    local work="${RUNNER_TEMP:-/tmp}/distcc-jail-work"
+    local log="${RUNNER_TEMP:-/tmp}/distccd-jail.log"
+    local pidfile="${RUNNER_TEMP:-/tmp}/distccd-jail.pid"
+    local port=3633
+
+    # Build and install into a throwaway prefix so distcc/distccd/pump/
+    # include_server resolve each other by their normal installed paths.
+    ( cd "${REPO_ROOT}" \
+        && ./autogen.sh \
+        && ./configure --with-seccomp PYTHON=python3 --prefix="${prefix}" \
+        && make -j"$(nproc)" \
+        && make install )
+    export PATH="${prefix}/bin:${PATH}"
+
+    # fs-jail = required: read from /etc/distcc/distccd.conf at daemon startup
+    # (dcc_seccomp_config_load), so a jail-setup failure refuses the compile
+    # rather than silently running it unjailed.
+    sudo mkdir -p /etc/distcc
+    echo "fs-jail = required" | sudo tee /etc/distcc/distccd.conf >/dev/null
+
+    rm -rf "${work}"; mkdir -p "${work}"
+    printf 'int main(void) { return 0; }\n' > "${work}/hello.c"
+
+    # One daemon, --verbose so the jail's DEBUG-level "entered ... jail" trace
+    # is emitted; killed on exit.
+    distccd --no-detach --daemon --verbose \
+        --log-file "${log}" --pid-file "${pidfile}" \
+        --port "${port}" --allow 127.0.0.1 --enable-tcp-insecure \
+        --lifetime 120 &
+    local daemon_pid=$!
+    # Expand daemon_pid now, not at EXIT, where this local is out of scope.
+    # shellcheck disable=SC2064
+    trap "kill ${daemon_pid} 2>/dev/null || true" EXIT
+
+    # Wait for the listener (bash /dev/tcp needs no extra tools).
+    for _ in $(seq 1 40); do
+        if (exec 3<>/dev/tcp/127.0.0.1/"${port}") 2>/dev/null; then break; fi
+        sleep 0.5
+    done
+
+    # One real pump-mode compile against only this server, no local fallback.
+    export DISTCC_HOSTS="127.0.0.1:${port},cpp,lzo"
+    export DISTCC_FALLBACK=0
+    ( cd "${work}" && pump distcc gcc -c hello.c -o hello.o ) \
+        2> "${work}/compile.err" \
+        || { echo "ERROR: pump distcc compile failed"; cat "${work}/compile.err" "${log}"; exit 1; }
+
+    # Assertion 1: a real object came back. With DISTCC_FALLBACK=0 no local
+    # compile is possible, so this can only be the jailed server's output.
+    [ -s "${work}/hello.o" ] \
+        || { echo "ERROR: no/empty object -- jailed server compile produced no output"; cat "${log}"; exit 1; }
+
+    # Assertion 2: the daemon actually entered the jail for this job. The trace
+    # may land in the daemon log or the client-returned stderr depending on fd
+    # routing, so accept either.
+    grep -q "entered mount-namespace jail" "${log}" "${work}/compile.err" \
+        || { echo "ERROR: no 'entered mount-namespace jail' trace -- compile did not go through the jail"; cat "${log}"; exit 1; }
+
+    echo "OK: real pump-mode compile succeeded through the fs-jail (object non-empty, jail engaged)."
+}
+
 # What: dispatches to the requested verification subcommand.
-# Why: keeps verify-image-build.yml's steps to a single
-#   `bash docker/verify/ci.sh <subcommand>` call each, with no embedded
-#   docker-run logic left in the YAML itself.
-# From: Issue #285, PR #528.
+# Why: keeps the workflows thin orchestrators -- each step is a single
+#   `bash docker/verify/ci.sh <subcommand>` call with no embedded logic.
+# From: Issue #285, PR #528; Issue #289 (fs-jail-e2e).
 case "${1:-}" in
     prepare-etc) step_prepare_etc ;;
     ptrace-selftest) step_ptrace_selftest ;;
     build-test) step_build_test ;;
     ccache-redis) step_ccache_redis ;;
     samba-configure-dryrun) step_samba_configure_dryrun ;;
+    fs-jail-e2e) step_fs_jail_e2e ;;
     *)
-        echo "usage: $0 {prepare-etc|ptrace-selftest|build-test|ccache-redis|samba-configure-dryrun}" >&2
+        echo "usage: $0 {prepare-etc|ptrace-selftest|build-test|ccache-redis|samba-configure-dryrun|fs-jail-e2e}" >&2
         exit 1
         ;;
 esac

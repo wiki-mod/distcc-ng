@@ -637,6 +637,30 @@ jobs:
       # From: Issue #362, PR #434
       - uses: $/.github/actions/distributed-e2e-test
 
+  # What: builds distcc-ng and proves one real pump-mode compile runs through
+  # the filesystem jail (fs-jail = required) on the runner's own root fs.
+  # Why: the jail's happy path needs a non-overlay root the buildtools
+  # container cannot provide (its overlayfs fails an unprivileged-userns
+  # bind-mount); ubuntu-latest's ext4 root can. All logic lives in
+  # docker/verify/ci.sh's fs-jail-e2e subcommand; this job only calls it.
+  # From: Issue #289
+  fs_jail_e2e:
+    name: Filesystem jail happy-path E2E (issue #289)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref }}
+      - uses: $/.github/actions/install-build-deps
+      - name: Filesystem jail happy-path E2E
+        run: bash docker/verify/ci.sh fs-jail-e2e
+
   # What: Opt-in ASan/UBSan sanitizer build; never runs on
   # push/pull_request, only workflow_dispatch/schedule.
   # Why: Unlike make_check's schedule leg, this is not a per-commit gate;
