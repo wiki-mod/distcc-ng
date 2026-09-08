@@ -398,9 +398,12 @@ Samba/Apache E2E work #264 anticipates) to rediscover from scratch.
       take effect" rather than "a second, independent gate is still
       closed." Real verification: after adding `--cap-add=SYS_PTRACE`, if
       the identical error still reproduces verbatim, that itself is the
-      diagnostic signal to add `--security-opt seccomp=unconfined` (or a
-      custom seccomp profile explicitly allowing the denied syscall) rather
-      than re-checking the capability flag again.
+      diagnostic signal to add the narrow verification seccomp profile,
+      `--security-opt seccomp=./docker/verify/seccomp-verify.json` (Docker's
+      default plus one `personality(ADDR_NO_RANDOMIZE)` allow rule), rather
+      than re-checking the capability flag again. Prefer that profile over a
+      blanket `--security-opt seccomp=unconfined`: it keeps the full default
+      filter in force and only unblocks the one call `gdb` needs (issue #285).
 - [ ] **A bind-mounted host checkout owned by a different uid than the
       image's own non-root user needs `docker run --user`, not root.**
       When the bind-mounted checkout's owning uid (e.g. a CI runner's own
@@ -864,9 +867,10 @@ running the packaging tool itself, not by reading the recipe.
       triggered a different way), and fails the same way. This is a
       packaging-sandbox artifact, not a real regression — the actual
       correctness evidence has to come from a real, non-fakeroot,
-      non-root run (with `--cap-add=SYS_PTRACE` and
-      `seccomp=unconfined`, per section 9, if `gdb`-based tests are
-      involved) kept separate from, and not replaced by, whatever the
+      non-root run (with `--cap-add=SYS_PTRACE` and the narrow
+      `seccomp=./docker/verify/seccomp-verify.json` profile, per section 9,
+      if `gdb`-based tests are involved) kept separate from, and not replaced
+      by, whatever the
       packaging tool's own build step reports.
 - [ ] **A packaging tool's automatic split-function ordering can depend
       on the exact order names are listed, not just which names are
