@@ -93,7 +93,6 @@ static int failures;
 static int dcc_probe_userns_bind_mount(void)
 {
     char scratch[PATH_MAX];
-    char src[PATH_MAX];
     char dst[PATH_MAX];
     pid_t pid;
     int status;
@@ -102,13 +101,11 @@ static int dcc_probe_userns_bind_mount(void)
     strcpy(scratch, "/tmp/h_jail_containment_probe.XXXXXX");
     if (mkdtemp(scratch) == NULL)
         return -1;
-    if (snprintf(src, sizeof src, "%s/src", scratch) >= (int) sizeof src ||
-        snprintf(dst, sizeof dst, "%s/dst", scratch) >= (int) sizeof dst) {
+    if (snprintf(dst, sizeof dst, "%s/dst", scratch) >= (int) sizeof dst) {
         rmdir(scratch);
         return -1;
     }
-    if (mkdir(src, 0700) != 0 || mkdir(dst, 0700) != 0) {
-        rmdir(src);
+    if (mkdir(dst, 0700) != 0) {
         rmdir(dst);
         rmdir(scratch);
         return -1;
@@ -116,7 +113,6 @@ static int dcc_probe_userns_bind_mount(void)
 
     pid = fork();
     if (pid < 0) {
-        rmdir(src);
         rmdir(dst);
         rmdir(scratch);
         return -1;
@@ -148,12 +144,18 @@ static int dcc_probe_userns_bind_mount(void)
             _exit(1);
         close(fd);
 
-        _exit(mount(src, dst, NULL, MS_BIND, NULL) == 0 ? 0 : 1);
+        /* Make propagation private, then bind an overlay-backed system root
+         * exactly as dcc_jail_setup() does. Binding a tmpfs path (e.g. a
+         * fresh /tmp dir) would succeed even in an overlay-root container and
+         * mask the real EINVAL the jail hits binding /usr there, giving a
+         * false "testable" and turning a legitimate skip into a failure. */
+        if (mount("/", "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
+            _exit(1);
+        _exit(mount("/usr", dst, NULL, MS_BIND, NULL) == 0 ? 0 : 1);
     }
 
     ok = (waitpid(pid, &status, 0) == pid) && WIFEXITED(status) &&
         WEXITSTATUS(status) == 0;
-    rmdir(src);
     rmdir(dst);
     rmdir(scratch);
     return ok ? 0 : -1;
