@@ -77,18 +77,19 @@ All runs inside `ghcr.io/wiki-mod/distcc-ng-buildtools` (rule 87) unless noted.
   proceeds unjailed, and the compile completes (exit 0) with the output object
   allocated inside `temp_dir` (fail-open and the temp_o/deps relocation of
   plan sections 2.3/2.4 both exercised).
-- [ ] **Jail happy path** (bind-mounts succeed, `pivot_root` engages, compile
-  completes through the jail): NOT yet verified. The buildtools container's
-  root is overlayfs, and bind-mounting an overlay subtree inside an
-  unprivileged user namespace fails with `EINVAL` (`mount --bind` from
-  util-linux fails identically, confirming this is an environment limit, not a
-  code defect). This path needs a runner with a non-overlay root filesystem
-  (a bare Linux host or a non-container CI job); wiring that is tracked as
-  remaining work below. Note: since PR #528 the verify container runs under the
-  narrow `docker/verify/seccomp-verify.json` profile, which blocks
-  `unshare --user --mount` exactly as Docker's default does, so that
-  non-container CI job must request `--security-opt seccomp=unconfined` (or an
-  extended profile) rather than assume the container is unconfined.
+- [x] **Jail happy path** (bind-mounts succeed, `pivot_root` engages, compile
+  completes through the jail): verified in CI by the `fs_jail_e2e` job
+  (`.github/workflows/c-build.yml` -> `docker/verify/ci.sh fs-jail-e2e`). It
+  builds distcc-ng, sets `fs-jail = required`, and runs one real pump-mode
+  compile with `DISTCC_FALLBACK=0`; a non-empty object plus the daemon's
+  `entered mount-namespace jail` trace proves the compile went through an
+  engaged jail (under `required` a server compile is refused unless the jail
+  engaged, and `serve.c` always passes `temp_dir` as the job dir so the
+  no-jail early return is unreachable there). This runs on a non-container
+  `ubuntu-latest` runner because the buildtools container's overlayfs root
+  fails an unprivileged-userns bind-mount with `EINVAL`; the job relaxes
+  Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns` so
+  `unshare(CLONE_NEWUSER)` is permitted.
 
 ### Known behaviour to revisit
 
