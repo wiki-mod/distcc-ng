@@ -148,9 +148,9 @@ enum dcc_protover {
                                   *  version: pump mode's result-header
                                   *  ordering (DOTO, then DOTD) has no slot
                                   *  for DDWO between them without a further
-                                  *  wire-format bump, and split dwarf has
-                                  *  never been wired for server-side cpp in
-                                  *  the first place. The include-server's
+                                  *  wire-format bump -- that slot is what
+                                  *  DCC_VER_6001 adds (see split_dwarf.c).
+                                  *  The include-server's
                                   *  header-closure transfer (NFIL/NAME/FILE)
                                   *  stays LZO-compressed regardless of this
                                   *  version, since it is produced
@@ -160,7 +160,15 @@ enum dcc_protover {
                                   *  negotiated wire protocol version; only
                                   *  the result path (SERR/SOUT/DOTO/DOTD)
                                   *  uses Zstandard for this version. */
-    __DCC_VER_MAX = 5001         /**< canary */
+    DCC_VER_6000 = 6000,        /**< LZO + server-side cpp + external split
+                                  *  DWARF: protocol 3 plus a DDWO result slot
+                                  *  between DOTO and DOTD (issue #398). Gated
+                                  *  by HAVE_SPLIT_DWARF_PUMP; see
+                                  *  src/split_dwarf.c. */
+    DCC_VER_6001 = 6001,        /**< As DCC_VER_6000 but Zstd (protocol 5000
+                                  *  plus the DDWO slot); additionally gated by
+                                  *  HAVE_ZSTD, rejected cleanly without it. */
+    __DCC_VER_MAX = 6002         /**< canary */
 };
 
 

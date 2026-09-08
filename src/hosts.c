@@ -451,15 +451,33 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
      * explicitly too. */
     if (protover != DCC_VER_1 && protover != DCC_VER_2 &&
         protover != DCC_VER_3 && protover != DCC_VER_4000 &&
-        protover != DCC_VER_5000) {
+        protover != DCC_VER_5000
+#ifdef HAVE_SPLIT_DWARF_PUMP
+        && protover != DCC_VER_6000 && protover != DCC_VER_6001
+#endif
+        ) {
+        /* What: 600x (split-DWARF pump) is rejected here when
+         *       HAVE_SPLIT_DWARF_PUMP is off -- a build without the feature
+         *       treats it as any other unknown protocol.
+         * Why: this is the clean cross-version behavior an old/disabled
+         *      server owes a 600x-requesting client (see split_dwarf.c).
+         * From: Issue #398 */
         *compr = DCC_COMPRESS_NONE;
         *cpp_where = DCC_CPP_ON_CLIENT;
         return 1;
     }
 
-    if (protover == 2 || protover == 3) {
+    if (protover == DCC_VER_2 || protover == DCC_VER_3
+#ifdef HAVE_SPLIT_DWARF_PUMP
+        || protover == DCC_VER_6000
+#endif
+        ) {
         *compr = DCC_COMPRESS_LZO1X;
-    } else if (protover == 4000 || protover == 5000) {
+    } else if (protover == DCC_VER_4000 || protover == DCC_VER_5000
+#ifdef HAVE_SPLIT_DWARF_PUMP
+               || protover == DCC_VER_6001
+#endif
+               ) {
 #ifdef HAVE_ZSTD
         *compr = DCC_COMPRESS_ZSTD;
 #else
@@ -481,7 +499,11 @@ int dcc_get_features_from_protover(enum dcc_protover protover,
     } else {
         *compr = DCC_COMPRESS_NONE;
     }
-    if (protover == 3 || protover == 5000) {
+    if (protover == DCC_VER_3 || protover == DCC_VER_5000
+#ifdef HAVE_SPLIT_DWARF_PUMP
+        || protover == DCC_VER_6000 || protover == DCC_VER_6001
+#endif
+        ) {
         *cpp_where = DCC_CPP_ON_SERVER;
     } else {
         *cpp_where = DCC_CPP_ON_CLIENT;

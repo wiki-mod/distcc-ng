@@ -49,12 +49,12 @@ Notes
 -----
 
 Protocol 5000 does not send a DDWO (split dwarf, `-gsplit-dwarf`) token: that
-would need a wire-format slot between DOTO and DOTD that this protocol
-version doesn't define, and split dwarf has never been implemented for
-server-side cpp in any earlier protocol version either (protocol 3 has no
-DDWO token, and protocol 4's DDWO always assumes client-side cpp, i.e. no
-DOTD in the same response). Adding it is a separate future enhancement, not
-part of this version.
+needs a wire-format slot between DOTO and DOTD that this protocol version
+doesn't define. That slot is added by protocol 6001 (see
+doc/protocol-6001.txt), the split-DWARF variant of this protocol; protocol
+5000 itself is unchanged, and its LZO sibling is protocol 6000. A client
+selects 6001 instead of 5000 per job only when the compile actually requests
+an external `.dwo`, so ordinary Zstd pump jobs still negotiate 5000.
 
 As protocol 3's own notes point out, compression of files should ideally be
 independent of whether preprocessing happens on the server or the client --

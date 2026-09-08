@@ -68,6 +68,9 @@ int dcc_show_version(const char *prog)
 #ifdef HAVE_ZSTD
 "\nBuilt with Zstd compression support.\n"
 #endif
+#ifdef HAVE_SPLIT_DWARF_PUMP
+"\nBuilt with split-DWARF pump-mode support.\n"
+#endif
 #ifdef HAVE_AVAHI
 "\nBuilt with Zeroconf support.\n"
 #endif

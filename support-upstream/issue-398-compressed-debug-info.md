@@ -1,10 +1,10 @@
 # `dcc_fix_debug_info()` silently fails to rewrite compressed ELF debug sections
 
 **Fork issue:** [wiki-mod/distcc-ng#398](https://github.com/wiki-mod/distcc-ng/issues/398)
-**Fixed by:** [wiki-mod/distcc-ng#487](https://github.com/wiki-mod/distcc-ng/pull/487)
-**Upstream location:** `src/fix_debug_info.c`, functions `update_section`/`replace_string`/`dcc_fix_debug_info`
-**Checked against upstream commit:** [`1ff5357c`](https://github.com/distcc/distcc/commit/1ff5357cb2dd570501d07114aceb90260059ad3f) (`master`, checked 2026-08-14) -- the same commit that added `.debug_line_str` handling for DWARF 5's `comp_dir` relocation; this fork's copy of the file is otherwise byte-identical to upstream's at this commit (`replace_string`/`update_section` at the same line numbers, 236/362).
-**Searched upstream issues/PRs for:** `SHF_COMPRESSED compressed debug`, `fix_debug_info compressed`, `compressed debug section`, `gz=zlib gdb`, `elf_compress`, `compress-debug-sections` -- no matching report or fix attempt found, open or closed.
+**Fixed by:** [wiki-mod/distcc-ng#487](https://github.com/wiki-mod/distcc-ng/pull/487) (`SHF_COMPRESSED`) and [wiki-mod/distcc-ng#526](https://github.com/wiki-mod/distcc-ng/pull/526) (legacy GNU `.zdebug_*`)
+**Upstream location:** `src/fix_debug_info.c`, functions `update_section`/`replace_string`/`update_debug_info`/`dcc_fix_debug_info`
+**Checked against upstream commit:** [`1ff5357c`](https://github.com/distcc/distcc/commit/1ff5357cb2dd570501d07114aceb90260059ad3f) (`master`, checked 2026-08-14) for the `SHF_COMPRESSED` case; re-confirmed still unfixed on `master` [`8d569d1`](https://github.com/distcc/distcc/commit/8d569d1) (checked 2026-09-07) for the GNU `.zdebug_*` case -- upstream's `update_debug_info()` walks only `.debug_info`/`.debug_str`/`.debug_line_str` (no `.zdebug_*` names) and has no `SHF_COMPRESSED`, `elf_compress`, or `elf_compress_gnu` handling anywhere.
+**Searched upstream issues/PRs for:** `SHF_COMPRESSED compressed debug`, `fix_debug_info compressed`, `compressed debug section`, `gz=zlib gdb`, `elf_compress`, `compress-debug-sections`, `zdebug` -- no matching report or fix attempt found, open or closed.
 
 ## The problem
 
@@ -31,6 +31,16 @@ crosses a size threshold), so it can pass on a short build path and fail
 on a longer, more realistic one -- e.g. a CI runner's deeper workspace
 path, or (in `distccd`'s own case) its server-side temp-directory path
 concatenated with the client's own working directory.
+
+### GNU `.zdebug_*` variant (fork PR #526)
+
+There is a second, older compression form: GNU-style, produced by
+`-Wa,--compress-debug-sections=zlib-gnu`. It carries **no**
+`SHF_COMPRESSED` flag; instead the section is renamed with a `z` prefix
+(`.debug_info` -> `.zdebug_info`) and holds a `ZLIB` magic + size header.
+Upstream is doubly blind to it: `update_debug_info()` never lists any
+`.zdebug_*` name, and even if it did, the raw scan would still see
+compressed bytes. The same silent no-rewrite results.
 
 ## Upstream code (unchanged as of the commit above, upstream)
 
@@ -92,6 +102,15 @@ if (was_compressed) {
 }
 ```
 
+PR #526 extends this: a `.zdebug_*` section (detected by name prefix,
+since it has no `SHF_COMPRESSED` flag) is (de)compressed with
+`elf_compress_gnu()` instead of `elf_compress()`, with the same
+`ELF_CHF_FORCE` retry and the same abort-the-write-on-failed-recompress
+contract; the `.zdebug_*` name is preserved so no rename is needed. The
+three `.zdebug_*` names are added to the section list `update_debug_info_libelf()` walks. This also makes the pre-existing
+`AC_CHECK_FUNCS([elf_compress_gnu])` probe load-bearing (it was checked
+but never called).
+
 `configure.ac` gains a `--with-libelf` probe (`PKG_CHECK_MODULES` plus a
 real `AC_CHECK_FUNCS([elf_compress elf_compress_gnu])` probe, not an
 assumed minimum elfutils version) with graceful degradation to the
@@ -115,5 +134,16 @@ new `GdbCompressedDebugInfo_Case` test (`test/testdistcc.py`, forces
 with the fix, and confirmed `--without-libelf` still builds and links
 cleanly with the prior (raw-path, unfixed-for-compression) behavior
 unchanged.
+
+For the GNU `.zdebug_*` variant (PR #526): built `h_fix_debug_info` from
+the unfixed and fixed trees against a fixture whose `DW_AT_comp_dir` lands
+in `.zdebug_info` (`-gdwarf-4 -gstrict-dwarf -fno-merge-debug-strings
+-Wa,--compress-debug-sections=zlib-gnu`), inside
+`ghcr.io/wiki-mod/distcc-ng-buildtools` on a real host: the unfixed code
+traces `has no ".debug_info" section` and leaves the path unrewritten; the
+fixed code rewrites it, the section stays `.zdebug_info`, and the object
+relinks and runs. Covered end-to-end by a new `FixDebugInfoGnuCompressed_Case` (`test/testdistcc.py`), which skips
+where the toolchain emits no `.zdebug_*` section so it never passes
+vacuously; the plain and `SHF_COMPRESSED` `Gdb_Case`s still pass unchanged.
 
 Full details: [wiki-mod/distcc-ng#398](https://github.com/wiki-mod/distcc-ng/issues/398).
