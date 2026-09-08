@@ -23,6 +23,8 @@
 #ifndef _DISTCC_SANDBOX_CONFIG_H
 #define _DISTCC_SANDBOX_CONFIG_H
 
+#include "fs-jail.h"      /* for enum dcc_fs_jail_mode */
+
 /* Default location of distccd's runtime config file. Originally
  * seccomp.conf (issue #192), renamed to the general daemon-config name
  * once a second, non-seccomp daemon setting was on the horizon (issue
@@ -62,6 +64,13 @@ struct dcc_seccomp_config {
     int require_seccomp;    /* default 0 (false): a --without-seccomp build
                               * runs remote compiles unsandboxed same as
                               * always; true refuses them outright instead */
+
+    /* fs_jail_mode: the filesystem-jail operating mode (issue #289), read
+     * from the `fs-jail` key. Lives in this daemon-config struct rather than
+     * a second parser because distccd.conf is already the one daemon runtime
+     * config file (rule 69 -- reuse, don't duplicate). Default OFF: the jail
+     * is Linux-only and opt-in, so no existing deployment changes behaviour. */
+    enum dcc_fs_jail_mode fs_jail_mode;    /* default DCC_FS_JAIL_OFF */
 
     /* NULL-terminated arrays of syscall names, owned by this struct.
      * Never NULL themselves (an empty list is a single-element array

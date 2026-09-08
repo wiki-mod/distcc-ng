@@ -89,6 +89,8 @@
 #include "dotd.h"
 #include "fix_debug_info.h"
 #include "pathsafety.h"
+#include "fs-jail.h"
+#include "sandbox-config.h"
 #ifdef HAVE_GSSAPI
 #include "auth.h"
 
@@ -772,6 +774,7 @@ static int dcc_run_job(int in_fd,
     char *server_cwd = NULL;
     char *client_cwd = NULL;
     int changed_directory = 0;
+    int jail_active = 0;
 
     gettimeofday(&start, NULL);
 
@@ -830,6 +833,28 @@ static int dcc_run_job(int in_fd,
                           &temp_dir, &client_cwd, &server_cwd)))
             goto out_cleanup;
         changed_directory = 1;
+
+        /* The filesystem jail only wraps a server-side (pump-mode) job's own
+         * temp_dir tree; when it is active, the compiler's output and deps
+         * files must live *inside* temp_dir (below), not in the daemon's
+         * global temp space, or the jailed child's writes would land in its
+         * private mount namespace and be lost to the unjailed parent (the
+         * 0-byte-object bug from issue #289's prototype). Read once here. */
+        jail_active =
+            dcc_seccomp_config_get()->fs_jail_mode != DCC_FS_JAIL_OFF;
+        if (jail_active) {
+            /* deps_fname was allocated in the daemon's global temp space
+             * above (before temp_dir existed); relocate it inside temp_dir
+             * now. The global name was already removed at the top of this
+             * function, so nothing leaks. From: Issue #289. */
+            free(deps_fname);
+            deps_fname = NULL;
+            checked_asprintf(&deps_fname, "%s/distccd_job.deps", temp_dir);
+            if (deps_fname == NULL) {
+                ret = EXIT_OUT_OF_MEMORY;
+                goto out_cleanup;
+            }
+        }
     }
 
     if ((ret = dcc_r_argv(in_fd, "ARGC", "ARGV", &argv)))
@@ -877,8 +902,20 @@ static int dcc_run_job(int in_fd,
     tweaked_argv = NULL;
 
     rs_trace("output file %s", orig_output);
-    if ((ret = dcc_make_tmpnam("distccd", ".o", &temp_o)))
+    if (jail_active) {
+        /* Inside temp_dir, so the jailed compiler's -o write is visible to
+         * the unjailed parent through temp_dir's read-write bind mount. A
+         * fixed name is safe: temp_dir is a fresh per-job directory and the
+         * client's mirrored tree lives under its own sub-paths, never at this
+         * root name. From: Issue #289. */
+        checked_asprintf(&temp_o, "%s/distccd_job.o", temp_dir);
+        if (temp_o == NULL) {
+            ret = EXIT_OUT_OF_MEMORY;
+            goto out_cleanup;
+        }
+    } else if ((ret = dcc_make_tmpnam("distccd", ".o", &temp_o))) {
         goto out_cleanup;
+    }
 
     dwo_fname = dcc_make_dwo_fname(temp_o);
     if (!dwo_fname)
@@ -977,9 +1014,15 @@ static int dcc_run_job(int in_fd,
      * chosen by a remote client, already checked above (whitelist,
      * masquerade, -fplugin/-specs) but still not fully trusted code we
      * are about to exec with the daemon's privileges. */
+    /* jail_job_dir = temp_dir: enter a filesystem jail around the per-job
+     * directory tree for a server-side (pump-mode) compile. temp_dir is NULL
+     * for a plain-mode job (make_temp_dir_and_chdir_for_cpp only sets it when
+     * cpp_where == DCC_CPP_ON_SERVER), so plain jobs pass NULL and are never
+     * jailed -- there is no per-job tree to contain. From: Issue #289. */
     if ((compile_ret = dcc_spawn_child(argv, &cc_pid,
                                        "/dev/null", out_fname, err_fname,
-                                       1 /* sandbox_seccomp */))
+                                       1 /* sandbox_seccomp */,
+                                       temp_dir /* jail_job_dir */))
         || (compile_ret = dcc_collect_child("cc", cc_pid, &status, in_fd))) {
         /* We didn't get around to finding a wait status from the actual
          * compiler */

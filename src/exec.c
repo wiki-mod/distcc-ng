@@ -76,6 +76,7 @@
 #include "hosts.h"
 #include "dopt.h"
 #include "sandbox-seccomp.h"
+#include "fs-jail.h"
 
 const int timeout_null_fd = -1;
 int dcc_job_lifetime = 0;
@@ -84,7 +85,8 @@ static void dcc_inside_child(char **argv,
                              const char *stdin_file,
                              const char *stdout_file,
                              const char *stderr_file,
-                             int sandbox_seccomp) NORETURN;
+                             int sandbox_seccomp,
+                             const char *jail_job_dir) NORETURN;
 
 
 static void dcc_execvp(char **argv) NORETURN;
@@ -332,12 +334,17 @@ static void dcc_execvp(char **argv)
  *        client. Plain local invocations (src/compile.c, src/cpp.c) pass
  *        false: there is nothing to sandbox there, it's a trusted local
  *        build.
+ * @param jail_job_dir If non-NULL, enter a filesystem-namespace jail around
+ *        this per-job server temp directory (see fs-jail.h) before installing
+ *        seccomp -- set only for distccd's own pump-mode compile spawn; NULL
+ *        (no jail) everywhere else.
  **/
 static void dcc_inside_child(char **argv,
                              const char *stdin_file,
                              const char *stdout_file,
                              const char *stderr_file,
-                             int sandbox_seccomp)
+                             int sandbox_seccomp,
+                             const char *jail_job_dir)
 {
     int ret;
 
@@ -380,6 +387,20 @@ static void dcc_inside_child(char **argv,
      * visible */
     if ((ret = dcc_redirect_fds(stdin_file, stdout_file, stderr_file)))
         goto fail;
+
+    /* Enter the filesystem jail, if requested, after fd redirection (the
+     * redirected fds are opened before the jail and survive the namespace
+     * switch) but before seccomp installs its denylist -- the jail needs
+     * unshare/mount/pivot_root, which the denylist then blocks for the
+     * compiler itself post-exec (fs-jail.h explains why the ordering is
+     * load-bearing). A -1 return means fs-jail=required and the jail could
+     * not be established: refuse the compile via the same failure path,
+     * never exec the untrusted compiler outside the containment the admin
+     * demanded. */
+    if (jail_job_dir != NULL && dcc_fs_jail_enter(jail_job_dir) != 0) {
+        ret = EXIT_DISTCC_FAILED;
+        goto fail;
+    }
 
     /* Install the seccomp denylist, if requested, only after every prior
      * step that might still need a syscall the filter could deny (fd
@@ -439,12 +460,16 @@ int dcc_new_pgrp(void)
  *
  * @param sandbox_seccomp Passed straight through to dcc_inside_child(); set
  *        for distccd's own remote-compile spawn (src/serve.c) only.
+ * @param jail_job_dir Passed straight through to dcc_inside_child(); the
+ *        per-job server temp directory for a jailed pump-mode compile, or
+ *        NULL for no jail (every non-distccd spawn).
  **/
 int dcc_spawn_child(char **argv, pid_t *pidptr,
                     const char *stdin_file,
                     const char *stdout_file,
                     const char *stderr_file,
-                    int sandbox_seccomp)
+                    int sandbox_seccomp,
+                    const char *jail_job_dir)
 {
     pid_t pid;
 
@@ -467,7 +492,7 @@ int dcc_spawn_child(char **argv, pid_t *pidptr,
                 rs_trace("Unable to start a new group\n");
         }
         dcc_inside_child(argv, stdin_file, stdout_file, stderr_file,
-                        sandbox_seccomp);
+                        sandbox_seccomp, jail_job_dir);
         /* !! NEVER RETURN FROM HERE !! */
     } else {
         *pidptr = pid;

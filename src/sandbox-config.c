@@ -108,6 +108,21 @@ static void dcc_seccomp_apply_kv(void *cfg_ptr, const char *key,
                             cfg->require_seccomp ? "true" : "false");
         else
             cfg->require_seccomp = parsed;
+    } else if (strcmp(key, "fs-jail") == 0) {
+        /* Tri-state, not a bool: off / optional / required (issue #289 plan
+         * section 53). Parsed here rather than via dcc_config_parse_bool
+         * because the three modes are genuinely distinct fail-open/closed
+         * choices, not a single on/off. */
+        if (strcmp(value, "off") == 0)
+            cfg->fs_jail_mode = DCC_FS_JAIL_OFF;
+        else if (strcmp(value, "optional") == 0)
+            cfg->fs_jail_mode = DCC_FS_JAIL_OPTIONAL;
+        else if (strcmp(value, "required") == 0)
+            cfg->fs_jail_mode = DCC_FS_JAIL_REQUIRED;
+        else
+            rs_log_warning("distccd config: invalid value '%s' for 'fs-jail' "
+                            "(expected off/optional/required); keeping "
+                            "default (off)", value);
     } else if (strcmp(key, "extra-deny") == 0) {
         char **parsed_list = dcc_config_parse_list(value);
         char **old = cfg->extra_deny;
@@ -148,6 +163,7 @@ static void dcc_seccomp_config_defaults(struct dcc_seccomp_config *cfg)
     cfg->deny_network = 0;
     cfg->fail_open = 1;
     cfg->require_seccomp = 0;
+    cfg->fs_jail_mode = DCC_FS_JAIL_OFF;
     cfg->extra_deny = dcc_seccomp_empty_list();
     cfg->allow_override = dcc_seccomp_empty_list();
 }

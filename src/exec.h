@@ -31,7 +31,7 @@ int dcc_redirect_fds(const char *stdin_file,
 
 int dcc_spawn_child(char **argv, pid_t *pidptr,
                     const char *, const char *, const char *,
-                    int sandbox_seccomp);
+                    int sandbox_seccomp, const char *jail_job_dir);
 
 /* if in_fd is timeout_null_fd, means this parameter is not used */
 int dcc_collect_child(const char *what, pid_t pid,

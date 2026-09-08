@@ -101,5 +101,6 @@ int dcc_cpp_maybe(char **argv, char *input_fname, char **cpp_fname,
      * parameter. */
     return dcc_spawn_child(cpp_argv, cpp_pid,
                            "/dev/null", *cpp_fname, NULL,
-                           0 /* sandbox_seccomp */);
+                           0 /* sandbox_seccomp */,
+                           NULL /* no jail: local preprocessor */);
 }
