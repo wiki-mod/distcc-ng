@@ -65,6 +65,14 @@ enum dcc_fs_jail_mode {
  * mirrors dcc_seccomp_sandbox_child()'s exactly -- see the return doc below.
  * From: Issue #289.
  *
+ * Precondition: the current working directory must be a path that still
+ * exists inside the jail (in practice @p job_dir itself, which is bind-mounted
+ * in), because on success the jail restores the caller's cwd after pivot_root.
+ * src/serve.c chdir's into the job temp_dir before forking, so this holds for
+ * the real caller; a standalone caller must chdir into @p job_dir first, or
+ * the post-pivot cwd restore fails and (in mode required) the compile is
+ * refused.
+ *
  * Returns 0 when the jail was entered, or when not entering one is the
  * correct outcome (mode off, non-Linux build, @p job_dir NULL, or mode
  * optional and setup failed -- the last logs a warning and proceeds

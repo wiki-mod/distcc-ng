@@ -277,6 +277,17 @@ int main(void)
     dcc_seccomp_config_load(conf_path);
     unlink(conf_path);
 
+    /* dcc_fs_jail_enter() restores the caller's cwd inside the jail (its final
+     * chdir(orig_cwd)), so the cwd at call time must be a path that still
+     * exists after pivot_root -- i.e. the job dir itself, which is bind-mounted
+     * in. distccd's serve.c chdir's into the job temp_dir before forking; mirror
+     * that here, or the restore chdir fails and the jail is (correctly) refused. */
+    if (chdir(resolved_job_dir) != 0) {
+        fprintf(stderr, "h_jail_containment: chdir(%s) failed: %s\n",
+                resolved_job_dir, strerror(errno));
+        return 1;
+    }
+
     /* dcc_fs_jail_enter()'s 0/-1 return does not itself distinguish a
      * pre-pivot setup failure from a post-pivot one; the namespace probe
      * above already ruled out "this environment can't do it at all", so any
