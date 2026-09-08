@@ -107,7 +107,8 @@ started in the current implementation.
   `.gcno`/PCH/LTO temporaries not yet audited).
 - [x] 2.3 `temp_o` created inside the job root when jailed.
 - [x] 2.4 `deps_fname` created inside the job root when jailed.
-- [ ] 2.5 Controlled `TMPDIR` inside the jail.
+- [x] 2.5 Controlled `/tmp` (fresh private tmpfs) inside the jail; `/dev/shm`
+  likewise (plan section 89).
 - [~] 2.6 Job-root lifecycle (creation/populate reuse existing distccd flow;
   explicit teardown auditing pending).
 
@@ -138,7 +139,9 @@ started in the current implementation.
   `ld.so.conf.d`/`alternatives`), never whole `/etc`.
 
 ### FD, seccomp ordering, immutability
-- [ ] 10 File-descriptor audit / leak tests.
+- [x] 10 File-descriptor hygiene: every inherited fd above stderr is closed
+  before exec (close_range / bounded loop). Dedicated leak *tests* pending
+  (verification phase).
 - [x] 11 Seccomp installed after the jail is built (ordering invariant in
   `dcc_inside_child`).
 - [~] 12 Compiler cannot modify the jail (relies on the seccomp denylist;
@@ -155,8 +158,12 @@ started in the current implementation.
 - [ ] 52/97 Structured jail error codes and diagnosable logging.
 - [ ] 56/57 `dcc_discard_root()` sequence + privilege-drop regression tests.
 - [ ] 64/65/66 CI wiring, performance comparison, deployment/container matrix.
-- [ ] 72-82 Environment and argument attack surface (`LD_PRELOAD`, `-B`,
-  `--sysroot`, `-L`, `-I`, plugins, dynamic library lookup).
+- [~] 72-82 Environment and argument attack surface: `LD_PRELOAD`/
+  `LD_LIBRARY_PATH`/`SSH_AUTH_SOCK` are stripped before exec (73/82/94), and
+  the mount boundary neutralises host-path `-B`/`--sysroot`/`-L`/`-I` (a path
+  not on the allowlist is simply absent in the jail) while `serve.c` already
+  rejects `-fplugin`/`-specs`. A broader env sweep and explicit per-flag
+  argument tests remain (verification phase).
 - [ ] 83-89 ELF security probe, ptrace/proc/signal/IPC/shm containment.
 - [ ] 90-94 Job-dir naming/race/permissions, environment sanitisation.
 - [ ] 55 macOS/FreeBSD backends.

@@ -493,6 +493,16 @@ static int dcc_jail_setup(const char *resolved_job_dir, const char *jail_root,
         return -1;
     }
 
+    /* Strip a small fixed set of environment variables a compile never needs
+     * but that are classic injection / secret-leak vectors, before the exec
+     * inherits them: the dynamic-linker overrides (plan sections 73/82) and
+     * the ssh-agent socket (plan section 94). Deliberately a fixed list, not a
+     * pattern sweep, so a legitimate server-side build variable is never
+     * stripped by accident. */
+    unsetenv("LD_PRELOAD");
+    unsetenv("LD_LIBRARY_PATH");
+    unsetenv("SSH_AUTH_SOCK");
+
     /* Last: drop every inherited fd above stderr so no host handle survives
      * into the compiler. After the point of no return, but a failure to close
      * is not itself a containment breach worth aborting a working jail for. */
