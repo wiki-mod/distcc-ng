@@ -46,6 +46,7 @@
 #include "state.h"
 #include "include_server_if.h"
 #include "emaillog.h"
+#include "split_dwarf.h"
 
 /**
  * @file
@@ -223,13 +224,22 @@ int dcc_retrieve_results(int net_fd,
                                     host->compr)))
             return ret;
         if (host->cpp_where == DCC_CPP_ON_SERVER) {
-            /* Pump mode's result header ends with DOTD (the dependency
-             * file produced by server-side cpp); there is no DDWO slot
-             * after it (see distcc.h's DCC_VER_5000 comment), so this branch
-             * always returns rather than falling through to the DDWO
-             * check below, which is reachable only for DCC_VER_4000 (client-
-             * side cpp never sets cpp_where to DCC_CPP_ON_SERVER, so the
-             * two branches are mutually exclusive). */
+#ifdef HAVE_SPLIT_DWARF_PUMP
+            /* What: DCC_VER_6000/6001 carry a DDWO slot between DOTO and DOTD;
+             *       read it here before DOTD (split_dwarf.c skips an empty one).
+             * Why: keeps the split-DWARF wire handling in its own module while
+             *      this stays a one-line hook in the pump result sequence.
+             * From: Issue #398 */
+            if (dcc_protover_is_split_dwarf_pump(host->protover)
+                && (ret = dcc_retrieve_dwo(net_fd, output_fname, host)))
+                return ret;
+#endif
+            /* Pump mode's result header then ends with DOTD (the dependency
+             * file produced by server-side cpp); this branch reads it and
+             * returns rather than falling through to the DDWO check below,
+             * which is reachable only for DCC_VER_4000 (client-side cpp never
+             * sets cpp_where to DCC_CPP_ON_SERVER, so the two are mutually
+             * exclusive). For DCC_VER_3/5000 no DDWO precedes DOTD at all. */
             if (host->compr == DCC_COMPRESS_ZSTD) {
                 if ((ret = dcc_r_token_2int(net_fd, "DOTD", &len,
                                             &uncompr_len)))

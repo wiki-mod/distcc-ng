@@ -88,6 +88,7 @@
 #include "stringmap.h"
 #include "dotd.h"
 #include "fix_debug_info.h"
+#include "split_dwarf.h"
 #include "pathsafety.h"
 #include "fs-jail.h"
 #include "sandbox-config.h"
@@ -1085,16 +1086,18 @@ static int dcc_run_job(int in_fd,
         }
         if ((ret = dcc_x_file(out_fd, temp_o, "DOTO", compr, NULL)))
             goto out_cleanup;
-        /* Split dwarf (DDWO) stays specific to DCC_VER_4000, not
-         * generalized to "compr == DCC_COMPRESS_ZSTD": DCC_VER_5000's
-         * result header ends with DOTD (see the cpp_where ==
-         * DCC_CPP_ON_SERVER block below), and the client
-         * (dcc_retrieve_results() in clirpc.c) has no DDWO read between
-         * DOTO and DOTD for pump mode -- sending DDWO here for
-         * DCC_VER_5000 would desync the wire. Split dwarf support for
-         * server-side cpp would need its own wire-format slot; that is a
-         * separate enhancement, not part of wiring zstd+pump together. */
-        if (protover == DCC_VER_4000) {
+        /* What: DDWO is sent for DCC_VER_4000 (client-side cpp) and, when
+         *       enabled, for DCC_VER_6000/6001 (server-side cpp split DWARF),
+         *       where it sits between DOTO and the DOTD block below.
+         * Why: plain DCC_VER_3/5000 have no DDWO slot, so sending it there
+         *      would desync the client; dcc_x_file sends a 0-length DDWO when
+         *      the compiler emitted no .dwo (ENOENT -> empty token).
+         * From: Issue #398 */
+        if (protover == DCC_VER_4000
+#ifdef HAVE_SPLIT_DWARF_PUMP
+            || dcc_protover_is_split_dwarf_pump(protover)
+#endif
+            ) {
             if ((ret = dcc_x_file(out_fd, dwo_fname, "DDWO", compr, NULL)))
                 goto out_cleanup;
         }

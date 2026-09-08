@@ -248,6 +248,9 @@ else:
 
 sources = [
     'src/clirpc.c',
+    # clirpc.c calls dcc_retrieve_dwo() under HAVE_SPLIT_DWARF_PUMP; always
+    # compiled here (stub when the feature is off) so the symbol resolves.
+    'src/split_dwarf.c',
     'src/clinet.c',
     'src/state.c',
     'src/srvrpc.c',

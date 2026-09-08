@@ -1,19 +1,21 @@
 #!/bin/bash
-# Runtime self-test for the distcc-ng-verify image's ptrace-dependent tools
-# (gdb, strace, ltrace).
+# What: runtime self-test proving this image's ptrace-dependent tools (gdb,
+#   strace, ltrace, gdb+python3-dbg) really attach to and trace a live process,
+#   not merely exist.
+# Why: docker build's RUN steps run without CAP_SYS_PTRACE and under a seccomp
+#   profile that denies ptrace(2), so only --version-style checks are possible
+#   at build time; a real proof needs a running container (docker run), which is
+#   also why this lives outside the image and re-runs without a rebuild.
+# From: Issue #285.
 #
-# WHY this is a separate script instead of living in the Dockerfile: `docker
-# build`'s RUN steps execute without CAP_SYS_PTRACE and the default seccomp
-# profile denies ptrace(2) regardless of image content, so gdb/strace/ltrace
-# cannot actually attach to or trace anything at image-build time -- only
-# --version-style existence checks are possible there (see the Dockerfile's
-# self-test RUN step). A real functional proof needs a *running* container
-# started with ptrace capability, which only `docker run` can grant. This
-# script is that real functional proof; run it once per built image as part
-# of verification (not part of the image itself, so the image stays minimal
-# and this can be re-run against an already-built image without a rebuild):
+# Run once per built image, under the narrow seccomp profile this repo ships
+# (Docker's default plus one personality(ADDR_NO_RANDOMIZE) allow rule, which
+# lets gdb disable ASLR); set ASLR_MUST_DISABLE=1 to assert that succeeded --
+# see doc/verification-checklist.md:
 #
 #   docker run --rm --cap-add=SYS_PTRACE \
+#     --security-opt seccomp=./docker/verify/seccomp-verify.json \
+#     -e ASLR_MUST_DISABLE=1 \
 #     -v "$(pwd)/docker/verify:/verify:ro" \
 #     <image> bash /verify/selftest-ptrace.sh
 #
@@ -31,6 +33,20 @@ gdb -q -batch -ex 'break main' -ex run -ex continue ./ok_gcc > gdb.log 2>&1 || t
 grep -q 'Breakpoint 1' gdb.log \
   || { echo "ERROR: gdb did not hit the breakpoint"; cat gdb.log; exit 1; }
 echo "OK: gdb hit a real breakpoint"
+
+# What: when the caller passes the narrow profile (ASLR_MUST_DISABLE=1), fail if
+#   gdb still could not disable ASLR.
+# Why: the breakpoint check above passes even when personality(ADDR_NO_RANDOMIZE)
+#   is denied, so without this an absent/broken profile rule goes undetected.
+# From: Issue #285.
+if [ "${ASLR_MUST_DISABLE:-0}" = 1 ]; then
+  if grep -q 'Error disabling address space randomization' gdb.log; then
+    echo "ERROR: gdb could not disable ASLR -- seccomp profile does not allow personality(ADDR_NO_RANDOMIZE)"
+    cat gdb.log
+    exit 1
+  fi
+  echo "OK: gdb disabled ASLR under the narrow seccomp profile"
+fi
 
 # --- strace: must actually trace a real syscall ---
 strace -f -e trace=execve ./ok_gcc > strace.log 2>&1 || true

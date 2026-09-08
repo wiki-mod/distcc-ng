@@ -63,6 +63,7 @@
 #include "emaillog.h"
 #include "dotd.h"
 #include "pathsafety.h"
+#include "split_dwarf.h"
 
 /**
  * This boolean is true iff --scan-includes option is enabled.
@@ -1117,6 +1118,16 @@ dcc_build_somewhere(char *argv[],
     } else {
         cpp_fname = NULL;
         cpp_pid = 0;
+#ifdef HAVE_SPLIT_DWARF_PUMP
+        /* What: upgrade this server-side-cpp job to a split-DWARF protocol
+         *       (3->6000, 5000->6001) when argv requests an external .dwo.
+         * Why: only such a job needs the DDWO wire slot; leaving ordinary
+         *      pump jobs on 3/5000 keeps them working against a stock/old
+         *      distccd, which cleanly rejects an unknown 600x instead.
+         * From: Issue #398 */
+        if (dcc_argv_wants_split_dwarf(argv))
+            host->protover = dcc_split_dwarf_upgrade_protover(host->protover);
+#endif
         /* remotecpp_server_argv may already be processed from a previous bad host */
         if (remotecpp_server_argv == NULL) {
             char *dotd_target = NULL;

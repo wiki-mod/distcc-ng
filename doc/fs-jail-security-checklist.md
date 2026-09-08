@@ -84,7 +84,11 @@ All runs inside `ghcr.io/wiki-mod/distcc-ng-buildtools` (rule 87) unless noted.
   util-linux fails identically, confirming this is an environment limit, not a
   code defect). This path needs a runner with a non-overlay root filesystem
   (a bare Linux host or a non-container CI job); wiring that is tracked as
-  remaining work below.
+  remaining work below. Note: since PR #528 the verify container runs under the
+  narrow `docker/verify/seccomp-verify.json` profile, which blocks
+  `unshare --user --mount` exactly as Docker's default does, so that
+  non-container CI job must request `--security-opt seccomp=unconfined` (or an
+  extended profile) rather than assume the container is unconfined.
 
 ### Known behaviour to revisit
 

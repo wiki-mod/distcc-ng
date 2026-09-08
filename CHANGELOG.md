@@ -22,6 +22,47 @@ See `doc/release-versioning.md` for the full versioning and release process.
   Phase 1 lands the trust model, the `temp_o`/deps relocation that a per-job
   mount namespace requires, and the fail-open/closed modes; the full plan is
   tracked in `doc/fs-jail-security-checklist.md`.
+- **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
+  profile for the verification container -- Docker's default profile plus a
+  single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable
+  ASLR without the "Operation not permitted" warning. Recommended in place of
+  the blanket `--security-opt seccomp=unconfined` (which disables the entire
+  filter); `docker/verify/selftest-ptrace.sh` and `doc/verification-checklist.md`
+  now point at it. Verified: the full ptrace self-test passes under it.
+- **`docker/verify/ci.sh`** (issue #285, PR #528): moves every
+  `docker run distcc-ng-verify:ci` invocation out of
+  `.github/workflows/verify-image-build.yml` into one parametrized,
+  subcommand-dispatched script (`ptrace-selftest`, `build-test`,
+  `ccache-redis`, `samba-configure-dryrun`), so the YAML stays a thin
+  orchestrator with no embedded docker-run logic to duplicate or drift.
+  The two ptrace-dependent steps now share one wrapper function and both
+  actually run under the narrow seccomp profile above -- previously the
+  self-test step ran with no profile at all and the build+test step used
+  the blanket `--security-opt seccomp=unconfined`, so neither recurring CI
+  run was actually exercising the narrow profile this fork ships.
+- **`doc/fs-jail-security-checklist.md`** (issue #285, PR #528): section 2's
+  "Existing CI namespace capability spike" assumed the build+test container
+  still runs `--security-opt seccomp=unconfined`, which is no longer true
+  after the change above -- corrected to say the container now runs under
+  the narrow `seccomp-verify.json` profile, and that issue #289's future
+  `unshare`-based capability spike must explicitly request `unconfined` (or
+  extend the narrow profile) rather than assume it already has it.
+- **Split DWARF in pump mode** (`src/split_dwarf.c`, issue #398): compiling
+  with `-gsplit-dwarf` now works with server-side cpp (pump mode) -- the
+  server-produced external `.dwo` file is returned to the client alongside the
+  object and dependency files. Two new protocol versions carry a `DDWO` result
+  slot between `DOTO` and `DOTD`: `DCC_VER_6000` (LZO) and `DCC_VER_6001`
+  (Zstd). Selected per job only when an external `.dwo` is requested, so
+  ordinary pump jobs stay on protocol 3/5000 and still interoperate with a
+  stock `distccd`. Opt-out build feature (`--disable-split-dwarf-pump`, on by
+  default; `6001` additionally needs zstd).
+- **`dcc_fix_debug_info()` GNU-compressed debug sections** (`src/fix_debug_info.c`,
+  issue #398): the server-side debug-path rewrite now also handles legacy
+  GNU-compressed (`.zdebug_*`) sections via `elf_compress_gnu()`, not only
+  standard `SHF_COMPRESSED` ones. Without this, a pump-mode object built with
+  `-Wa,--compress-debug-sections=zlib-gnu` kept its server-side compilation
+  path baked into the debug info (gdb then couldn't find the source). Also
+  makes the existing `elf_compress_gnu` configure probe load-bearing.
 
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
