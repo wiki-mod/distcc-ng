@@ -22,6 +22,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   ordinary pump jobs stay on protocol 3/5000 and still interoperate with a
   stock `distccd`. Opt-out build feature (`--disable-split-dwarf-pump`, on by
   default; `6001` additionally needs zstd).
+- **`dcc_fix_debug_info()` GNU-compressed debug sections** (`src/fix_debug_info.c`,
+  issue #398): the server-side debug-path rewrite now also handles legacy
+  GNU-compressed (`.zdebug_*`) sections via `elf_compress_gnu()`, not only
+  standard `SHF_COMPRESSED` ones. Without this, a pump-mode object built with
+  `-Wa,--compress-debug-sections=zlib-gnu` kept its server-side compilation
+  path baked into the debug info (gdb then couldn't find the source). Also
+  makes the existing `elf_compress_gnu` configure probe load-bearing.
 
 - **`.github/dependabot.yml`**: every update block now sets `labels:
   [dependencies, no-changelog-needed]`, so `require_changelog` no longer
