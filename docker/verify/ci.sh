@@ -192,6 +192,12 @@ step_fs_jail_e2e() {
     sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
     sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
 
+    # fs-jail's config layer needs --with-seccomp, whose dev package is not in
+    # install-build-deps' default apt list. Install the one jail-specific dep
+    # here rather than duplicating that whole list in the workflow's `with:`.
+    sudo apt-get update -qq
+    sudo apt-get install -y libseccomp-dev
+
     local prefix="${RUNNER_TEMP:-/tmp}/distcc-jail-inst"
     local work="${RUNNER_TEMP:-/tmp}/distcc-jail-work"
     local log="${RUNNER_TEMP:-/tmp}/distccd-jail.log"
