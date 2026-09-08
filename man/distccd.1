@@ -148,6 +148,14 @@ If distccd gets executed as root, change to user USER.
 .B --sysroot SYSROOT
 Search resource file in this directory.
 .TP
+.B --sandbox-config FILE
+Read the sandbox/jail configuration (including the
+.B fs-jail
+key) from
+.IR FILE
+instead of the default
+.IR /etc/distcc/distccd.conf .
+.TP
 .B -a, --allow IPADDR[/MASK]
 Instructs distccd to accept connections from the IP address
 IPADDR.  A CIDR mask length can be supplied optionally after a

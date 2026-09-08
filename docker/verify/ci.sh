@@ -260,6 +260,16 @@ step_fs_jail_e2e() {
         || { echo "ERROR: no 'entered mount-namespace jail' trace -- compile did not go through the jail"; cat "${log}"; exit 1; }
 
     echo "OK: real pump-mode compile succeeded through the fs-jail (object non-empty, jail engaged)."
+
+    # Run the framework's jail test cases too. They NOTRUN in the overlay
+    # buildtools container (normal make check), so this non-overlay runner is
+    # where they execute for real. Assert the case reported OK, not NOTRUN, so
+    # a silent skip cannot make this job pass without exercising the jail.
+    ( cd "${REPO_ROOT}" && make single-test TESTNAME=FsJailCompileHello_Case ) \
+        2>&1 | tee "${work}/jailcase.log"
+    grep -qE "FsJailCompileHello_Case[[:space:]]+OK" "${work}/jailcase.log" \
+        || { echo "ERROR: FsJailCompileHello_Case did not report OK (NOTRUN or FAIL)"; exit 1; }
+    echo "OK: fs-jail testdistcc.py case ran and passed."
 }
 
 # What: dispatches to the requested verification subcommand.

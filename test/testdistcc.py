@@ -1325,6 +1325,47 @@ int main(void) {
         self.assert_equal(msgs, "hello world\n")
 
 
+class FsJailCompilation_Case(CompileHello_Case):
+    """Base for the filesystem-jail tests (issue #289).
+
+    Starts the daemon with `fs-jail = required` supplied through a per-test
+    config via --sandbox-config, so only this test's daemon is jailed and no
+    shared /etc/distcc/distccd.conf is touched. NOTRUN where the host cannot
+    provide what the jail needs -- an unprivileged user+mount namespace with a
+    working bind-mount -- e.g. an overlayfs-root container (EINVAL) or an
+    AppArmor-restricted / old kernel (EPERM). The fs_jail_e2e CI job runs
+    these for real on a non-container ubuntu-latest runner.
+    """
+    def setup(self):
+        if not self._fs_jail_possible():
+            raise comfychair.NotRunError(
+                'fs-jail needs an unprivileged user+mount namespace with a '
+                'working bind-mount, unavailable on this host')
+        self._jail_conf = os.path.abspath('fs-jail-distccd.conf')
+        with open(self._jail_conf, 'w') as f:
+            f.write('fs-jail = required\n')
+        CompileHello_Case.setup(self)
+
+    def _fs_jail_possible(self):
+        # Probe exactly what dcc_jail_setup() needs: an unprivileged
+        # user+mount namespace plus a bind-mount inside it. Mirrors the real
+        # jail's first steps, so a pass here means the daemon's jail can engage.
+        probe = ("unshare --user --map-root-user --mount "
+                 "sh -c 'mount --bind /usr /usr' >/dev/null 2>&1")
+        rc, out, err = self.runcmd_unchecked(probe)
+        return rc == 0
+
+    def daemon_command(self):
+        return (WithDaemon_Case.daemon_command(self) +
+                " --sandbox-config " + _ShellSafe(self._jail_conf))
+
+
+class FsJailCompileHello_Case(FsJailCompilation_Case):
+    """A normal compile must still build and run end-to-end through the jail
+    (the jail is transparent to a legitimate job). Plan sections 13/14."""
+    pass
+
+
 class MasqueradeMode_Case(CompileHello_Case):
     """Test masquerade mode (issue #275).
 
@@ -5163,6 +5204,7 @@ tests = [
          # slow tests below here
          Concurrent_Case,
          HundredFold_Case,
+         FsJailCompileHello_Case,
          BigAssFile_Case]
 
 # On macOS, certain python installations set CPATH. distcc refuses to pump if
