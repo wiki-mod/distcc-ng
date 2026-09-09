@@ -104,21 +104,21 @@ A historical successful result MAY explain why a check exists or how it is perfo
 
 For development verification, record:
 
-Verification date:
+Verification date: 2026-09-09
 
-Verification SHA:
+Verification SHA: e9f384b24cba9d6c346721fbc1b901bd607fbfec
 
-Issue:
+Issue: #531
 
-PR:
+PR: (this PR)
 
-Change scope:
+Change scope: Re-verification of all VER-* and REL-* entries against current_dev at the recorded SHA by reference consistency (all referenced source files, tests, workflows, and CI jobs confirmed present) and status-claim currency (all time-bound and status assertions checked). One stale entry corrected: VER-CONTAINER-09.
 
-Verification environment:
+Verification environment: ghcr.io/wiki-mod/distcc-ng-buildtools on an LXC host; documentation-vs-code consistency checks via git against current_dev.
 
-Verification operator:
+Verification operator: maintainer
 
-Evidence location:
+Evidence location: Issue #531 and this PR's description.
 
 For a release, the release information section below MUST additionally be completed.
 
@@ -1016,7 +1016,7 @@ For Docker verification, `--init` SHOULD be used.
 
 ### **VER-CONTAINER-09** Compressed ELF debug-section limitation
 
-**Type:** Known unfixed implementation limitation and required verification interpretation.
+**Type:** Implementation limitation fixed in the libelf path (#487, #526); retained only in the raw fallback path built without libelf. Required verification interpretation.
 
 **Affected behavior:** `Gdb_Case` and `GdbOpt1-3_Case` in pump mode when the toolchain emits compressed ELF debug sections.
 
@@ -1059,11 +1059,11 @@ For Docker verification, `--init` SHOULD be used.
 35. This behavior is unrelated to the repository's network-level zstd compression work in Issue #101 and uses a different code path.
 36. The defect was independently isolated by building the `TEST` main in `src/fix_debug_info.c` and calling `dcc_fix_debug_info()` directly on a real object with a known compilation directory.
 37. The standalone test reproduced the failure, localizing the problem to the raw-byte rewrite design rather than another `distccd` pipeline stage.
-38. The issue was recorded as not yet fixed when the source checklist was written.
+38. The issue was recorded as not yet fixed when the source checklist was written; it has since been fixed. With `HAVE_LIBELF`, `dcc_fix_debug_info()` decompresses the affected section before the rewrite and recompresses after (#487 for `SHF_COMPRESSED`, #526 for GNU-compressed `.zdebug_*` via `elf_compress_gnu()`). Only the raw fallback path built without libelf retains the limitation.
 
 **Verification requirement:** Any test claiming this path works across toolchains MUST include a path length and toolchain capable of exercising the compressed-section case. A short-path smoke test MUST NOT be treated as sufficient.
 
-**References:** Issue #398, Issue #101.
+**References:** Issue #398, Issue #101, PR #487, PR #526.
 
 ### **VER-CONTAINER-10** Pump-mode coverage must be proven explicitly
 
