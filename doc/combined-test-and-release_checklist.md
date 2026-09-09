@@ -112,7 +112,7 @@ Issue: #531
 
 PR: #532
 
-Change scope: Re-verification of all VER-* and REL-* entries against current_dev at the recorded SHA by reference consistency (all referenced source files, tests, workflows, and CI jobs confirmed present) and status-claim currency (all time-bound and status assertions checked). One stale entry corrected: VER-CONTAINER-09.
+Change scope: Re-verification of all VER-* and REL-* entries against current_dev at the recorded SHA. Method: reference consistency (all referenced source files, tests, workflows, CI jobs, and code identifiers confirmed present at the SHA) and status-claim currency (all time-bound and status assertions checked against current code). No item-by-item re-execution of every entry's procedure was performed; entries whose testable status could be stale were re-run end-to-end in the buildtools container on 2026-09-09: split-DWARF pump-mode (#527), compressed-debug and `.zdebug_*` rewrite (#526, #487), and container gates VER-CONTAINER-01 (SYS_PTRACE capability and the Docker seccomp profile confirmed as independent prerequisites), VER-CONTAINER-08 (real `--init` confirmed required), and VER-CONTAINER-10 (pump coverage proven per-case via `pump-single-test`); all PASS. Corrections: VER-CONTAINER-09 status brought current (limitation fixed in the libelf path by #487 and #526, retained only in the raw fallback path built without libelf); the non-existent test-class shorthand `GdbOpt1-3_Case` resolved to the real classes `GdbOpt1_Case`, `GdbOpt2_Case`, and `GdbOpt3_Case` in VER-CONTAINER-01 and VER-CONTAINER-09.
 
 Verification environment: ghcr.io/wiki-mod/distcc-ng-buildtools on an LXC host; documentation-vs-code consistency checks via git against current_dev.
 
@@ -920,7 +920,7 @@ The following facts were empirically established and are retained because they a
 3. Server-side logs confirmed the remote compiles.
 4. The distributed object was byte-identical to the local-only build.
 5. Rootless Docker successfully managed the custom bridge network and fixed `10.88.0.0/24` subnet from its own namespace.
-6. At commit `caee881d`, rootful `--user "$(id -u):$(id -g)"` and rootless `--user 1000:1000` produced 142 OK, 16 NOTRUN, 0 FAIL with line-for-line identical case-result lists, including `Gdb_Case`, `GdbOpt1-3_Case`, and `GdbPrefixMap_Case`.
+6. At commit `caee881d`, rootful `--user "$(id -u):$(id -g)"` and rootless `--user 1000:1000` produced 142 OK, 16 NOTRUN, 0 FAIL with line-for-line identical case-result lists, including `Gdb_Case`, `GdbOpt1_Case`, `GdbOpt2_Case`, `GdbOpt3_Case`, and `GdbPrefixMap_Case`.
 7. A genuine GitHub `ubuntu-latest` runner was proven capable of running rootless Docker.
 8. On that runner, installation alongside the already-running rootful daemon required `FORCE_ROOTLESS_INSTALL=1`.
 9. Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` required `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
@@ -1018,7 +1018,7 @@ For Docker verification, `--init` SHOULD be used.
 
 **Type:** Implementation limitation fixed in the libelf path (#487, #526); retained only in the raw fallback path built without libelf. Required verification interpretation.
 
-**Affected behavior:** `Gdb_Case` and `GdbOpt1-3_Case` in pump mode when the toolchain emits compressed ELF debug sections.
+**Affected behavior:** `Gdb_Case`, `GdbOpt1_Case`, `GdbOpt2_Case`, and `GdbOpt3_Case` in pump mode when the toolchain emits compressed ELF debug sections.
 
 **Implementation facts:**
 
