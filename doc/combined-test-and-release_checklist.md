@@ -110,7 +110,7 @@ Verification SHA: e9f384b24cba9d6c346721fbc1b901bd607fbfec
 
 Issue: #531
 
-PR: (this PR)
+PR: #532
 
 Change scope: Re-verification of all VER-* and REL-* entries against current_dev at the recorded SHA by reference consistency (all referenced source files, tests, workflows, and CI jobs confirmed present) and status-claim currency (all time-bound and status assertions checked). One stale entry corrected: VER-CONTAINER-09.
 
