@@ -47,6 +47,8 @@ New development verification checks use `VER-*` IDs.
 
 Recertification checks use `RECERT-*` IDs.
 
+Release policy and lifecycle definitions use `POL-*` IDs.
+
 Once assigned:
 
 * an ID MUST NOT be renumbered;
@@ -79,7 +81,7 @@ A field MAY be omitted only when it genuinely has no applicable content.
 
 ## Checklist execution rules
 
-Every applicable item MUST be explicitly classified.
+Every applicable `VER-*` and `REL-*` check MUST be explicitly classified. `POL-*` items are policy and lifecycle definitions, not executable checks, and do not receive an execution state.
 
 Allowed execution states are:
 
@@ -224,15 +226,11 @@ The cut MUST use the normal throwaway promotion flow. `current_dev` itself MUST 
 
 The release branch MUST NOT become a development branch.
 
-A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix.
+A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix, as required by `AGENTS.md` Rule 70.
 
-After the fix reaches `current_dev`, the release candidate MUST again correspond to the updated `current_dev` state before tagging.
+Once the fix has reached `current_dev`, the release branch MUST be re-cut fresh from `current_dev`'s updated tip per Rule 70, rather than developed further on the already-cut branch.
 
-The existing release branch MUST NOT be force-pushed or deleted.
-
-Where updating the already-created release branch can be performed as a normal fast-forward from the corrected `current_dev` history, that operation preserves the no-force-push and no-delete requirements.
-
-A non-fast-forward rewrite, deletion, recreation, or release-only patch MUST NOT be used to simulate a recut.
+The existing release branch MUST NOT be force-pushed or deleted. How a required re-cut is reconciled with that constraint for a specific release is an explicit maintainer decision under Rule 70 and MUST NOT be pre-canonicalized here as a fixed mechanism.
 
 **Verification:** See `REL-PRECUT-07`, `REL-PRECUT-08`, and `REL-PRECUT-10`.
 
@@ -436,7 +434,7 @@ Therefore, merging only the frozen release candidate state can omit the later ch
 
 **Requirement:** The actual release promotion MUST explicitly account for the post-tag changelog commit as required by `REL-PROMO-04`.
 
-The resolution for each release MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
+This MUST NOT be routed around by convention each release. It requires the maintainer's own explicit, justified exception for how that specific release resolves it, applying Rule 70's own "release branch is frozen, patch `current_dev` instead" principle. The resolution MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
 
 PR #461 and PR #463 are real precedents showing one historical resolution path.
 
@@ -446,11 +444,11 @@ They MUST NOT be treated as an automatic template or standing authorization for 
 
 ### **POL-GUARD-01** Existing release tag
 
-**Requirement:** A release MUST NOT be tagged if `vX.Y.Z-NG` already exists.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `vX.Y.Z-NG` already exists) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-02** Version and tag mismatch
 
-**Requirement:** A release MUST NOT be tagged if `configure.ac`'s `AC_INIT` version does not exactly match the intended release tag.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `configure.ac`'s `AC_INIT` version does not exactly match the intended tag) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-03** `master` approval
 
@@ -460,9 +458,7 @@ This requirement is defined by those existing gates and MUST NOT be maintained a
 
 ### **POL-GUARD-04** Release branch and tag history preservation
 
-**Requirement:** An existing `release/*` branch MUST NOT be force-pushed or deleted.
-
-An existing `vX.Y.Z-NG` tag MUST NOT be moved, deleted, or reused.
+**Requirement:** Release branch and tag history preservation is defined by `POL-REF-04` (`release/*` branch: no force-push, no delete) and `POL-REF-05` (`vX.Y.Z-NG` tag: no move, delete, or reuse), and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-05** Every published release requires a real tag
 
@@ -2436,6 +2432,7 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 * [ ] Removing narrative wording has not removed any technical information.
 * [ ] No requirement from the predecessor verification checklist was lost.
 * [ ] No requirement from the predecessor release checklist was lost.
+* [ ] No requirement from the predecessor release-versioning policy was lost.
 * [ ] No requirement has been weakened by wording normalization.
 
 ### **RECERT-26** Final full-list completeness decision
