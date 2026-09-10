@@ -104,21 +104,21 @@ A historical successful result MAY explain why a check exists or how it is perfo
 
 For development verification, record:
 
-Verification date: 2026-09-09
+Verification date:
 
-Verification SHA: e9f384b24cba9d6c346721fbc1b901bd607fbfec
+Verification SHA:
 
-Issue: #531
+Issue:
 
-PR: #532
+PR:
 
-Change scope: Re-verification of all VER-* and REL-* entries against current_dev at the recorded SHA. Method: reference consistency (all referenced source files, tests, workflows, CI jobs, and code identifiers confirmed present at the SHA) and status-claim currency (all time-bound and status assertions checked against current code). No item-by-item re-execution of every entry's procedure was performed; entries whose testable status could be stale were re-run end-to-end in the buildtools container on 2026-09-09: split-DWARF pump-mode (#527), compressed-debug and `.zdebug_*` rewrite (#526, #487), and container gates VER-CONTAINER-01 (SYS_PTRACE capability and the Docker seccomp profile confirmed as independent prerequisites), VER-CONTAINER-08 (real `--init` confirmed required), and VER-CONTAINER-10 (pump coverage proven per-case via `pump-single-test`); all PASS. Corrections: VER-CONTAINER-09 status brought current (limitation fixed in the libelf path by #487 and #526, retained only in the raw fallback path built without libelf); the non-existent test-class shorthand `GdbOpt1-3_Case` resolved to the real classes `GdbOpt1_Case`, `GdbOpt2_Case`, and `GdbOpt3_Case` in VER-CONTAINER-01 and VER-CONTAINER-09.
+Change scope:
 
-Verification environment: ghcr.io/wiki-mod/distcc-ng-buildtools on an LXC host; documentation-vs-code consistency checks via git against current_dev.
+Verification environment:
 
-Verification operator: maintainer
+Verification operator:
 
-Evidence location: Issue #531 and this PR's description.
+Evidence location:
 
 For a release, the release information section below MUST additionally be completed.
 
@@ -2106,30 +2106,20 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 
 ## Last full recertification record
 
-Date:
-
-`current_dev` SHA:
-
-Reviewer:
-
-Independent reviewer:
-
-Tracking issue:
-
-Tracking PR:
-
-Items reviewed:
-
-Items updated:
-
-Items retired:
-
-Items replaced:
-
-New items added:
-
-Unresolved recertification blockers:
-
-Result:
+| Field | Value |
+| --- | --- |
+| Date | 2026-09-10 |
+| `current_dev` SHA | `e9f384b24cba9d6c346721fbc1b901bd607fbfec` |
+| Reviewer | maintainer |
+| Independent reviewer | |
+| Tracking issue | #531 |
+| Tracking PR | #532 |
+| Items reviewed | 110 (70 `VER-*`, 40 `REL-*`) |
+| Items updated | 2 (`VER-CONTAINER-01`, `VER-CONTAINER-09`) |
+| Items retired | 0 |
+| Items replaced | 0 |
+| New items added | 0 |
+| Unresolved recertification blockers | Independent review (`RECERT-01`, `RECERT-26`) pending |
+| Result | |
 
 The `Result` field MUST remain empty or state `NOT FULLY RECERTIFIED` until `RECERT-01` through `RECERT-26` are complete against the exact recorded `current_dev` SHA.
