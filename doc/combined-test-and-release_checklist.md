@@ -15,6 +15,8 @@ It defines:
 
 `doc/release-versioning.md` remains responsible for the mechanical release branch, version, tag, and publication process. This document defines what MUST actually be true and verified.
 
+Stated 2026-09-10: the filesystem jail explored in Issue #289 has not yet been implemented. A separate verification checklist for it is available at `doc/fs-jail-security-checklist.md`.
+
 ## Authority and AGENTS.md
 
 `AGENTS.md` Rule 0 applies at all times.
