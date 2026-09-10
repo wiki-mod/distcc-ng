@@ -16,7 +16,7 @@ Do **not** open a public GitHub issue for security vulnerabilities. Private disc
 | `current_dev` (unreleased) | Active development | N/A |
 | Earlier `-NG` releases | Not maintained | None |
 
-distcc-ng continues distcc's own version numbering with a `-NG` suffix marking this fork's own releases (see `doc/release-versioning.md`). We aim to provide security fixes for the current `master` release line; older releases are not actively maintained.
+distcc-ng continues distcc's own version numbering with a `-NG` suffix marking this fork's own releases (see `doc/combined-test-and-release_checklist.md`). We aim to provide security fixes for the current `master` release line; older releases are not actively maintained.
 
 ## Reporting a Vulnerability
 

@@ -26,7 +26,7 @@ scanned with Trivy, and shipped with an SPDX SBOM.
 ### Pulling
 
 Every release image carries its real, immutable `<version>-NG` tag (e.g.
-`3.6.4-NG`) -- this is the one `doc/release-versioning.md`'s "no release
+`3.6.4-NG`) -- this is the one `doc/combined-test-and-release_checklist.md`'s "no release
 may ever be untagged" policy is actually about, and every immutable
 reference (the GitHub Release, the SBOM, this workflow's own digest pins)
 names that tag specifically. `publish_manifest` (`.github/workflows/

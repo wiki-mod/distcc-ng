@@ -1585,7 +1585,7 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
     A real remote distribution (not just "the resulting binary works",
     which a silent local fallback would also produce) is confirmed by
     grepping the daemon's own independent log for a COMPILE_OK entry, per
-    doc/verification-checklist.md section 3's real-two-host evidence bar --
+    doc/combined-test-and-release_checklist.md VER-DIST's real-two-host evidence bar --
     a trace line or a working binary alone cannot tell these two cases
     apart."""
 
@@ -1663,7 +1663,7 @@ class MarchNativeDispatcherPath_Case(CompileHello_Case):
         # distribution from a silent local fallback (both produce a valid
         # testtmp) -- grepping the daemon's own independent log for
         # COMPILE_OK is the actual proof the compile was distributed, per
-        # doc/verification-checklist.md section 3's real-two-host evidence
+        # doc/combined-test-and-release_checklist.md VER-DIST's real-two-host evidence
         # bar. waitForLogPattern() polls instead of a single read, see
         # LOG_WRITE_TIMEOUT above.
         CompileHello_Case.runtest(self)
@@ -2792,7 +2792,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
         tree lives under it) is commonly mode 0750 and blocks an unrelated
         account like nobody from reaching anything under it at all, no
         matter what the leaf directories are chowned to. Same class of
-        gotcha as doc/verification-checklist.md section 9's root-owned bind
+        gotcha as doc/combined-test-and-release_checklist.md VER-CONTAINER's root-owned bind
         mount note, just triggered by sudo instead of a Docker mount.
         """
         drop_pw = pwd.getpwnam(self.DROP_USER)
@@ -2881,7 +2881,7 @@ class AutogroupNicenessPrivilegeDrop_Case(WithDaemon_Case):
             self.AUTOGROUP_WARNING_TIMEOUT)
 
         # Read /proc/<pid>/autogroup DIRECTLY, per
-        # doc/verification-checklist.md's baseline item on reading real OS
+        # doc/combined-test-and-release_checklist.md's baseline item on reading real OS
         # state rather than trusting a trace/log line as sufficient
         # evidence on its own.
         with open('/proc/%d/autogroup' % pid, 'rt') as f:

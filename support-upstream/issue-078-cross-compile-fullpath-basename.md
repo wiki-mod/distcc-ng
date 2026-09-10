@@ -263,10 +263,10 @@ carried, which showed the pre-`7700663` behavior — a bare-name
 invocation. That behavior no longer exists; see the "Fixed code" section
 above (last snippet) for the current directory-preserving logic itself.
 
-### External-host interop (`doc/verification-checklist.md` section 4)
+### External-host interop (`doc/combined-test-and-release_checklist.md` section 4)
 
 A further Codex review on PR #281 correctly pointed out that this change
-is explicitly named in `doc/verification-checklist.md` section 4's own
+is explicitly named in `doc/combined-test-and-release_checklist.md` section 4's own
 "Relevant to" list (`dcc_gcc_rewrite_fqn` and similar compiler
 masquerade/rewrite logic) and that only local/no-host traces plus
 `make check` had been used as evidence so far — not sufficient for a
@@ -294,7 +294,7 @@ both are byte-identical (`sha256sum`:
 `bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`),
 matching the SHA-256 zlib's own download page publishes for this exact
 release — verified against the upstream project's own published value
-from two independent sources, per `doc/verification-checklist.md`
+from two independent sources, per `doc/combined-test-and-release_checklist.md`
 section 5.
 
 Ran the same two-direction matrix as before, on the same two distinct

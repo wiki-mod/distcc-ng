@@ -1,7 +1,7 @@
 <!--
 Dedicated template for preparing and publishing a real distcc-ng release.
 The canonical release requirements, and the canonical definition of every
-REL-* item ID used below, live in doc/release-checklist.md. This PR body
+REL-* item ID used below, live in doc/combined-test-and-release_checklist.md. This PR body
 records execution state and evidence for one concrete release only.
 -->
 
@@ -29,9 +29,9 @@ If the Candidate SHA changes for any reason, every previously completed evidence
 
 ## Live Release Checklist - Source Of Truth
 
-This table is the single status-bearing execution record for this release. Every row is a stable `REL-*` ID whose canonical definition lives in `doc/release-checklist.md`; this table restates only the imperative and records this release's own execution state and evidence. Findings may be discussed in comments, but the authoritative state must be reflected here so it does not disappear into comment history.
+This table is the single status-bearing execution record for this release. Every row is a stable `REL-*` ID whose canonical definition lives in `doc/combined-test-and-release_checklist.md`; this table restates only the imperative and records this release's own execution state and evidence. Findings may be discussed in comments, but the authoritative state must be reflected here so it does not disappear into comment history.
 
-Do not rewrite or independently redefine a canonical check in this PR. If a check itself needs to change, that is a `doc/release-checklist.md` edit (see Checklist Maintenance below), reflected here only as a status update.
+Do not rewrite or independently redefine a canonical check in this PR. If a check itself needs to change, that is a `doc/combined-test-and-release_checklist.md` edit (see Checklist Maintenance below), reflected here only as a status update.
 
 Allowed status values: `Pending`, `Passed`, `Failed`, `Blocked`, `N/A`.
 - `N/A` requires a concrete rationale.
@@ -40,7 +40,7 @@ Allowed status values: `Pending`, `Passed`, `Failed`, `Blocked`, `N/A`.
 
 ### Mandatory core (every release)
 
-| ID | Item (see `doc/release-checklist.md` for the full definition) | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
+| ID | Item (see `doc/combined-test-and-release_checklist.md` for the full definition) | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
 | --- | --- | --- | --- | --- | --- |
 | REL-GOV-01 | Candidate SHA still matches the intended release candidate | Pending | | | |
 | REL-GOV-02 | No unresolved release blocker remains | Pending | | | |
@@ -54,7 +54,7 @@ Allowed status values: `Pending`, `Passed`, `Failed`, `Blocked`, `N/A`.
 | REL-PRECUT-06 | `master`'s copy of every `release:`-event-triggered workflow matches `current_dev`'s | Pending | | | |
 | REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` | Pending | | | |
 | REL-PRECUT-08 | No unreviewed drift beyond the release branch's stated expected relationship to `current_dev` | Pending | | | |
-| REL-PRECUT-09 | Every commit/PR since the previous tag classified against `doc/verification-checklist.md`'s 9 categories, with real evidence for every touched category | Pending | | | |
+| REL-PRECUT-09 | Every commit/PR since the previous tag classified against `doc/combined-test-and-release_checklist.md`'s VER-* verification categories, with real evidence for every touched category | Pending | | | |
 | REL-PRECUT-10 | `master` has no commits of its own not already on the release branch (`master`'s tip is an ancestor of the release-branch head) | Pending | | | |
 | REL-ART-01a | Container image labels match published image — `distcc-ng` | Pending | | | |
 | REL-ART-01b | Container image labels match published image — `distcc-ng-pump` | Pending | | | |
@@ -170,7 +170,7 @@ Candidate SHA:
 
 ### Verification-Checklist Sweep (REL-PRECUT-09 evidence)
 
-Every commit/PR merged since the previous release tag goes in this table — a complete accounting of the commit range, not just the interesting rows. A commit touching none of `doc/verification-checklist.md`'s 9 categories still gets a row, with category left as "none".
+Every commit/PR merged since the previous release tag goes in this table — a complete accounting of the commit range, not just the interesting rows. A commit touching none of `doc/combined-test-and-release_checklist.md`'s VER-* verification categories still gets a row, with category left as "none".
 
 Commit range: `<previous tag>..<Candidate SHA>`
 
@@ -236,7 +236,7 @@ During this release, did verification discover a gap in the canonical release co
 - [ ] Previously unknown failure class
 - [ ] No checklist gap discovered
 
-Required `doc/release-checklist.md` update (name the new or changed ID explicitly):
+Required `doc/combined-test-and-release_checklist.md` update (name the new or changed ID explicitly):
 
 If a gap is discovered, update the canonical checklist — assign the next unused `REL-*` ID in the relevant family (never reuse or renumber an existing one, same discipline as AGENTS.md rule 64 for rule numbers) — so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
 

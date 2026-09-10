@@ -122,7 +122,7 @@ At least: `src/distcc.h`, `src/hosts.c`, `src/compile.c`, `src/srvrpc.c`, `src/s
 
 ## 11. Verification plan
 
-Beyond a build + `make check`, this changes the wire protocol and distributed behavior, so `doc/verification-checklist.md`'s matching sections apply. Minimum:
+Beyond a build + `make check`, this changes the wire protocol and distributed behavior, so `doc/combined-test-and-release_checklist.md`'s matching sections apply. Minimum:
 
 - LZO split-DWARF pump (`-g -gsplit-dwarf -MD`): protocol 6000 selected, remote compile, non-empty `.o`/`.dwo`/`.d`, skeleton references a usable client-side `.dwo`, debugger/DWARF tool consumes the result.
 - Zstd split-DWARF pump: same, protocol 6001.
@@ -130,7 +130,7 @@ Beyond a build + `make check`, this changes the wire protocol and distributed be
 - Clang modes: `-gsplit-dwarf`, `=split`, `=single`, `-gno-split-dwarf`, mixed ordering — encode/test from observed behavior.
 - Build without Zstd: 6000 works, 6001 rejected cleanly, no accidental Zstd dependency on the LZO path.
 - Real two-container E2E (existing infrastructure, `DISTCC_FALLBACK=0`, independently observable server log proving remote execution).
-- Cross-version compatibility both directions per `doc/verification-checklist.md`; for `600x` itself, an old server cleanly rejecting the unknown protocol is the expected result.
+- Cross-version compatibility both directions per `doc/combined-test-and-release_checklist.md`; for `600x` itself, an old server cleanly rejecting the unknown protocol is the expected result.
 
 All verification evidence must come from `ghcr.io/wiki-mod/distcc-ng-buildtools` or real CI (rule 87), and real CI must be green on the branch before the change is considered ready (rule 78b).
 

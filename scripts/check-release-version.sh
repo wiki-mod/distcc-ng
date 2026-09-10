@@ -1,7 +1,7 @@
 #!/bin/sh
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 #
-# Fail-closed guardrail for cutting a release, per doc/release-versioning.md:
+# Fail-closed guardrail for cutting a release, per doc/combined-test-and-release_checklist.md:
 #   - refuses if the release tag already exists
 #   - refuses if configure.ac's AC_INIT version does not match the tag
 #

@@ -112,7 +112,7 @@ jobs:
         run: bash docker/verify/ci.sh ccache-redis
 
       - name: Real Samba configure dry-run (proves the sizing claim empirically)
-        # Logic lives in docker/verify/ci.sh's step_samba_configure_dryrun() (Issue #285, doc/verification-checklist.md Section 5).
+        # Logic lives in docker/verify/ci.sh's step_samba_configure_dryrun() (Issue #285, doc/combined-test-and-release_checklist.md VER-SOURCE).
         run: bash docker/verify/ci.sh samba-configure-dryrun
 
   # --- Publish, only after a successful build+selftest, never from a PR -----

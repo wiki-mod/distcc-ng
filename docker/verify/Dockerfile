@@ -438,7 +438,7 @@ RUN set -eux; \
 # What: Runs as a fixed non-root `verify` user (uid/gid 1000).
 # Why: A HOST_UID/HOST_GID build-arg was rejected since it would need a
 #   local rebuild per caller uid; `docker run --user $(id -u):$(id -g)`
-#   (doc/verification-checklist.md section 9) solves the same problem
+#   (doc/combined-test-and-release_checklist.md VER-CONTAINER) solves the same problem
 #   against the unmodified published image.
 # From: Issue #264, Issue #286
 RUN useradd --create-home --shell /bin/bash verify

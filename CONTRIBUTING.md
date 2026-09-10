@@ -34,7 +34,7 @@ test/                    # comfychair-based test harness (testdistcc.py — real
                          # daemon+compile tests, not just unit tests)
 packaging/               # RPM/.deb packaging (rpm.spec, rpm.sh, deb.sh)
 docker/release/          # Release container image
-doc/                     # release-versioning.md, release-checklist.md,
+doc/                     # combined-test-and-release_checklist.md,
                          # compatibility-policy.md, protocol docs
 scripts/                 # build-release-packages.sh, check-release-version.sh
 .github/workflows/       # c-build.yml (build+test), package-release.yml (tagged releases),
@@ -131,7 +131,7 @@ earlier git-cliff-based approach, see #122):
    (`Security`/`Fixed`/`Added`/`Documentation`) by a label auto-assigned
    from the PR title via its `autolabeler`. Entries use `#N | title`.
 2. A maintainer publishes that release as part of the existing manual
-   release-cut process (`doc/release-versioning.md`) — unchanged.
+   release-cut process (`doc/combined-test-and-release_checklist.md`) — unchanged.
 3. On that `release: released` event,
    `.github/workflows/changelog-update-on-release.yml` runs
    [`stefanzweifel/changelog-updater-action`](https://github.com/marketplace/actions/changelog-updater)
@@ -182,7 +182,7 @@ make check
 `make check` runs the real test suite (`test/testdistcc.py`, a
 comfychair-based harness with genuine daemon+compile e2e-style tests, not
 just unit tests) — necessary, but on its own only proves you didn't break
-something already covered. See `doc/verification-checklist.md` for what
+something already covered. See `doc/combined-test-and-release_checklist.md` for what
 additional, real evidence a permission/sandbox/distribution/protocol
 change needs beyond a passing build+test.
 
@@ -208,7 +208,7 @@ If the image's baked-in non-root user doesn't already own the bind-mounted
 checkout (your own uid differs from the image's default), add `--user
 "$(id -u):$(id -g)"` and `-e HOME=<a writable path>` to the `docker run`
 above instead of running as the image's default user or as root -- see
-`doc/verification-checklist.md` section 9 for why both flags are needed
+`doc/combined-test-and-release_checklist.md` section 9 for why both flags are needed
 and what breaks without the `HOME` override. If your `make check` run
 needs to exercise `SSHMode_Case` (or anything else calling `getpwuid()`),
 your own uid also needs a resolvable `/etc/passwd`/`/etc/group` entry
@@ -226,7 +226,7 @@ actionlint .github/workflows/*.yml
 
 ## Release process
 
-Release cuts, versioning, and tagging follow `doc/release-versioning.md`.
+Release cuts, versioning, and tagging follow `doc/combined-test-and-release_checklist.md`.
 There is no automated version-bump tooling — the `X.Y.Z` number is always
 a manual maintainer decision, informed by `CHANGELOG.md`'s `[Unreleased]`
 section.

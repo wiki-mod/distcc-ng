@@ -10,7 +10,7 @@ set -euo pipefail
 
 # Downloads a project release tarball plus its detached signature and the
 # project's own published public key, then verifies the signature against
-# the *uncompressed* tarball -- doc/verification-checklist.md section 5's
+# the *uncompressed* tarball -- doc/combined-test-and-release_checklist.md VER-SOURCE's
 # requirement ("verify a downloaded artifact against the upstream project's
 # own published value, not just 'it downloaded without error'"), and the
 # exact method already proven in .github/workflows/verify-image-build.yml's

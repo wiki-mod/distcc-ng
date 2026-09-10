@@ -7,7 +7,7 @@ name: Update CHANGELOG.md on release
 # no manual git-cliff pass needed anymore (see #122, which replaced that
 # approach).
 #
-# Tags are cut from current_dev's tip (doc/release-versioning.md), so the
+# Tags are cut from current_dev's tip (doc/combined-test-and-release_checklist.md), so the
 # published release's commit is on current_dev's history -- this workflow
 # checks out and commits to current_dev explicitly, regardless of which
 # ref GitHub resolves the release event against, since current_dev is
@@ -65,7 +65,7 @@ jobs:
       # `unreleased_compare_url` outputs, which need the real git tag to
       # resolve. `heading-text` is this repo's own X.Y.Z-NG convention
       # (no `v`, matching every existing `## [X.Y.Z-NG]` CHANGELOG.md
-      # section and doc/release-versioning.md) -- confirmed via the
+      # section and doc/combined-test-and-release_checklist.md) -- confirmed via the
       # action's own action.yml that `heading-text` exists specifically to
       # override the heading independently of `latest-version`, defaulting
       # to `latest-version` verbatim when unset (which would otherwise

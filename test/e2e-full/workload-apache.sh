@@ -30,7 +30,7 @@ readonly HTTPD_TARBALL_URL="https://downloads.apache.org/httpd/httpd-${HTTPD_VER
 readonly HTTPD_SIG_URL="https://downloads.apache.org/httpd/httpd-${HTTPD_VERSION}.tar.gz.asc"
 # The ASF's own httpd release-signing keys, published at this stable URL --
 # same "project's own published key" bar as Samba's verification above (see
-# doc/verification-checklist.md section 5).
+# doc/combined-test-and-release_checklist.md VER-SOURCE).
 readonly HTTPD_PUBKEY_URL="https://downloads.apache.org/httpd/KEYS"
 readonly CACHE_DIR="/work/workload/httpd-cache"
 readonly CACHE_MARKER="${CACHE_DIR}/.verified-ok"
