@@ -11,7 +11,7 @@
 # Run once per built image, under the narrow seccomp profile this repo ships
 # (Docker's default plus one personality(ADDR_NO_RANDOMIZE) allow rule, which
 # lets gdb disable ASLR); set ASLR_MUST_DISABLE=1 to assert that succeeded --
-# see doc/verification-checklist.md:
+# see doc/combined-test-and-release_checklist.md:
 #
 #   docker run --rm --cap-add=SYS_PTRACE \
 #     --security-opt seccomp=./docker/verify/seccomp-verify.json \

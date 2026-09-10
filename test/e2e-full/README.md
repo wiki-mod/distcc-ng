@@ -6,8 +6,8 @@ existing quick two-container hello-world-style check, which stays as-is.
 
 ## What it proves
 
-- **Bidirectional native compatibility** (doc/verification-checklist.md
-  section 4): this fork's `-NG` client against a real, independently-built
+- **Bidirectional native compatibility** (doc/combined-test-and-release_checklist.md
+  VER-INTEROP): this fork's `-NG` client against a real, independently-built
   native `distccd` (Debian's own packaged `distccd`), AND a real,
   independently-built native `distcc` client against this fork's `-NG`
   `distccd`. Both directions, both in plain mode and pump mode (Debian ships
@@ -83,7 +83,7 @@ workload) is written into `.github/workflows/nightly-publish.yml` already,
 but is **commented out and explicitly not armed** -- see that file's own
 comment for why turning it on is a separate, not-yet-made decision.
 
-## Reused container lessons (issue #264, doc/verification-checklist.md section 9)
+## Reused container lessons (issue #264, doc/combined-test-and-release_checklist.md VER-CONTAINER)
 
 - `--cap-add=SYS_PTRACE` + `--security-opt seccomp=unconfined` on both
   services in `docker-compose.yml`, carried over directly from

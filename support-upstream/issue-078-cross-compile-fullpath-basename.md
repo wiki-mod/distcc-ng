@@ -263,10 +263,10 @@ carried, which showed the pre-`7700663` behavior — a bare-name
 invocation. That behavior no longer exists; see the "Fixed code" section
 above (last snippet) for the current directory-preserving logic itself.
 
-### External-host interop (`doc/verification-checklist.md` section 4)
+### External-host interop (`doc/combined-test-and-release_checklist.md` VER-INTEROP)
 
 A further Codex review on PR #281 correctly pointed out that this change
-is explicitly named in `doc/verification-checklist.md` section 4's own
+is explicitly named in `doc/combined-test-and-release_checklist.md` VER-INTEROP's own
 "Relevant to" list (`dcc_gcc_rewrite_fqn` and similar compiler
 masquerade/rewrite logic) and that only local/no-host traces plus
 `make check` had been used as evidence so far — not sufficient for a
@@ -275,7 +275,7 @@ wire to a remote host.
 
 **A first attempt at this section (2026-07-22, superseded below) used
 this project's own `src/*.c` files as the compile load.** A subsequent
-Codex review correctly caught that section 4 explicitly requires "an
+Codex review correctly caught that VER-INTEROP explicitly requires "an
 actual third-party C project, not a single hello-world file" — this
 repo's own source is neither a hello-world nor third-party, and using it
 did not satisfy that requirement regardless of the file count or real
@@ -294,8 +294,8 @@ both are byte-identical (`sha256sum`:
 `bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`),
 matching the SHA-256 zlib's own download page publishes for this exact
 release — verified against the upstream project's own published value
-from two independent sources, per `doc/verification-checklist.md`
-section 5.
+from two independent sources, per `doc/combined-test-and-release_checklist.md`
+VER-SOURCE.
 
 Ran the same two-direction matrix as before, on the same two distinct
 real hosts (not the same machine, not WSL2), each already running the

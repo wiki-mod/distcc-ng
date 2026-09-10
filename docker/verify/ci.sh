@@ -129,7 +129,7 @@ step_ccache_redis() {
 #   legitimately prints benign "not found" lines for disabled optional
 #   features, which previously produced a false failure; unaffected by
 #   Codex review comment 2, since this step has no ptrace/seccomp involvement.
-# From: Issue #285, PR #528, doc/verification-checklist.md Section 5.
+# From: Issue #285, PR #528, doc/combined-test-and-release_checklist.md VER-SOURCE.
 step_samba_configure_dryrun() {
     docker run --rm "${IMAGE}" bash -c '
         set -euo pipefail

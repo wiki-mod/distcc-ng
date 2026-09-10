@@ -134,8 +134,8 @@ cat "$check_log"
 # positive on comfychair's own assertEquals failure text quoting gdb's
 # unrelated stderr ("warning: Error disabling address space
 # randomization"), masking the real signal (an actual test FAILURE caused
-# by a container capability/seccomp limitation, doc/verification-
-# checklist.md section 9) behind a misleading "compiler warning" message.
+# by a container capability/seccomp limitation,
+# doc/combined-test-and-release_checklist.md VER-CONTAINER) behind a misleading "compiler warning" message.
 # Anchor on gcc/clang's actual diagnostic line shape instead
 # ("path/file.c:LINE:[COL:] warning: ..."), which test output prose does
 # not incidentally reproduce.

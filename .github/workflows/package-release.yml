@@ -492,7 +492,7 @@ jobs:
           # (github.ref_type == 'tag'), never on a manual/workflow_dispatch
           # test build (which would otherwise clobber `latest` with an
           # untagged, unreleased "manual-N" build). This doesn't relax
-          # doc/release-versioning.md's "no release may ever be untagged"
+          # doc/combined-test-and-release_checklist.md's "no release may ever be untagged"
           # rule: `latest` is a second, additional pointer at the exact
           # same already-versioned manifest, not a replacement for the
           # real <version>-NG tag, which is still what every immutable

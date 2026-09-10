@@ -4,7 +4,7 @@ This is the living verification checklist for Issue #289, the filesystem jail fo
 
 The original detailed implementation plan remains in Issue #289 for historical context. This document is the maintained verification record and release gate.
 
-This checklist follows the repository's `doc/verification-checklist.md` convention: `make check` is necessary but does not prove new behavior. Tests must exercise the claimed behavior directly and record the actual result. See `AGENTS.md` rules 27 and 31 through 32.
+This checklist follows the repository's `doc/combined-test-and-release_checklist.md` convention: `make check` is necessary but does not prove new behavior. Tests must exercise the claimed behavior directly and record the actual result. See `AGENTS.md` rules 27 and 31 through 32.
 
 ## Status vocabulary
 

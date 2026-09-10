@@ -31,7 +31,7 @@ services:
       distccfullnet:
         ipv4_address: 10.89.0.10
     # A real init as PID 1 (Compose's `init: true` runs tini), not `sleep
-    # infinity` directly. doc/verification-checklist.md section 9's
+    # infinity` directly. doc/combined-test-and-release_checklist.md VER-CONTAINER's
     # documented gotcha (PR #375, swept into verify-image-build.yml by
     # PR #377) applies here too: run-bidirectional-e2e.sh starts and
     # `pkill`s distccd in place, once per leg, inside this same long-lived
@@ -45,7 +45,7 @@ services:
     init: true
     cap_add:
       # Reused directly from docker/verify/Dockerfile's own hard-won lesson
-      # (issue #264, doc/verification-checklist.md section 9): needed if a
+      # (issue #264, doc/combined-test-and-release_checklist.md VER-CONTAINER): needed if a
       # failure investigation reaches for gdb/strace inside these containers.
       # Harmless when unused.
       - SYS_PTRACE
