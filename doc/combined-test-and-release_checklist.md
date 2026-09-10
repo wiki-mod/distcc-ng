@@ -2,7 +2,7 @@
 
 This document is the canonical combined checklist for development verification and release readiness.
 
-It combines the requirements previously maintained in `doc/verification-checklist.md` and `doc/release-checklist.md` into one extensible checklist.
+It combines the requirements previously maintained in `doc/verification-checklist.md`, `doc/release-checklist.md`, and `doc/release-versioning.md` into one extensible checklist.
 
 It defines:
 
@@ -13,7 +13,7 @@ It defines:
 5. How this checklist MUST be extended when a new verification class is discovered.
 6. How the complete checklist is periodically recertified against the actual `current_dev` code and repository state.
 
-`doc/release-versioning.md` remains responsible for the mechanical release branch, version, tag, and publication process. This document defines what MUST actually be true and verified.
+This document is the single canonical definition for release versioning, release branch and tag mechanics, development verification, release readiness, publication verification, and promotion requirements.
 
 Stated 2026-09-10: the filesystem jail explored in Issue #289 has not yet been implemented. A separate verification checklist for it is available at `doc/fs-jail-security-checklist.md`.
 
@@ -153,6 +153,340 @@ Tag-triggered release workflow run:
 Published release URL:
 
 Release verification result:
+
+# Release Policy, Versioning, and Lifecycle
+
+This section defines release-version, ref, tag, publication, and lifecycle policy.
+
+`POL-*` items define the release process and its invariants. Existing `REL-*` items later in this document verify that those policies were satisfied for a specific release.
+
+Where a `POL-*` item refers to an existing `REL-*` item, the requirement is defined once and the reference MUST NOT be interpreted as a weaker duplicate.
+
+## Release version policy
+
+### **POL-VER-01** distcc-ng version format
+
+**Requirement:** distcc-ng release versions MUST continue distcc's own version numbering and MUST append the `-NG` suffix to identify a distcc-ng release.
+
+Example:
+
+`3.5.0-NG`
+
+The `X.Y.Z` component remains part of distcc's numbering lineage. The `-NG` suffix identifies this fork's release.
+
+### **POL-VER-02** Manual release-version decision
+
+**Requirement:** The `X.Y.Z` component of the next distcc-ng release MUST be selected manually by the maintainer.
+
+`CHANGELOG.md`'s `[Unreleased]` section MAY inform that decision.
+
+The release version MUST NOT be derived automatically from:
+
+* commit messages;
+* PR titles;
+* Conventional Commit parsing;
+* semantic-release tooling;
+* another automated version-bump mechanism.
+
+No automated version-selection mechanism is part of the current release policy. Introducing one requires an explicit maintainer decision changing this policy.
+
+## Branch and tag model
+
+### **POL-REF-01** `master`
+
+**Meaning:** `master` is the stable, tested branch from which users and package maintainers should build.
+
+**Requirement:** `master` MUST NOT receive direct commits.
+
+It MUST only be updated through an explicit maintainer-approved promotion.
+
+**Verification:** See `REL-PROMO-01` and `REL-PROMO-02`.
+
+### **POL-REF-02** `current_dev`
+
+**Meaning:** `current_dev` is the integration branch and reflects the latest merged development work.
+
+**Mutability:** Mutable.
+
+### **POL-REF-03** `dev/<topic>`
+
+**Meaning:** `dev/<topic>` branches are short-lived per-bugfix or per-feature topic branches.
+
+**Mutability:** Mutable and short-lived.
+
+### **POL-REF-04** `release/X.Y.Z-NG`
+
+**Meaning:** `release/X.Y.Z-NG` is the release candidate branch for one release.
+
+**Requirement:** It MUST originate from `current_dev`.
+
+The cut MUST use the normal throwaway promotion flow. `current_dev` itself MUST NOT be used directly as the release PR head or base.
+
+The release branch MUST NOT become a development branch.
+
+A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix.
+
+After the fix reaches `current_dev`, the release candidate MUST again correspond to the updated `current_dev` state before tagging.
+
+The existing release branch MUST NOT be force-pushed or deleted.
+
+Where updating the already-created release branch can be performed as a normal fast-forward from the corrected `current_dev` history, that operation preserves the no-force-push and no-delete requirements.
+
+A non-fast-forward rewrite, deletion, recreation, or release-only patch MUST NOT be used to simulate a recut.
+
+**Verification:** See `REL-PRECUT-07`, `REL-PRECUT-08`, and `REL-PRECUT-10`.
+
+### **POL-REF-05** `vX.Y.Z-NG` release tag
+
+**Meaning:** `vX.Y.Z-NG` is the actual immutable release marker.
+
+**Requirement:** The tag MUST be created on the release branch HEAD selected for publication.
+
+A release tag:
+
+* MUST be created once;
+* MUST NOT be moved;
+* MUST NOT be deleted;
+* MUST NOT be reused.
+
+Once published work depends on that tag, further changes require a new version rather than retagging the existing version.
+
+## Version reporting
+
+### **POL-REPORT-01** `configure.ac` planned version
+
+**Requirement:** `configure.ac`'s `AC_INIT` version MUST represent the next planned release version.
+
+### **POL-REPORT-02** Development builds MUST be distinguishable from releases
+
+**Applies when:** A build is produced from `current_dev`, `dev/*`, or any commit that is not exactly the commit referenced by the corresponding release tag.
+
+**Requirement:** Such a build MUST NOT report a bare `X.Y.Z-NG` version string that is indistinguishable from the real tagged release.
+
+The reported version SHOULD contain build provenance.
+
+Suitable provenance includes:
+
+`git describe --tags --always --dirty`
+
+or an equivalent suffix such as:
+
+`+dev.<short-sha>`
+
+**Pass criteria:** A development build cannot be mistaken for the immutable release it is heading toward.
+
+### **POL-REPORT-03** Bare release version is tag-exact only
+
+**Requirement:** Only a build from the exact commit referenced by `vX.Y.Z-NG` MAY report the bare release version with no development provenance suffix.
+
+## Canonical release sequence
+
+The release process below is maintainer-driven.
+
+The numbered sequence defines order. Existing `REL-*` items remain the verification gates for the corresponding state.
+
+### **POL-RELEASE-01** Select the release version
+
+**Requirement:** The maintainer MUST select `X.Y.Z-NG` according to `POL-VER-01` and `POL-VER-02`.
+
+The `[Unreleased]` changelog content informs the decision but MUST NOT automatically determine it.
+
+### **POL-RELEASE-02** Cut the release branch
+
+**Requirement:** `release/X.Y.Z-NG` MUST be cut from `current_dev` according to `POL-REF-04`.
+
+The release branch MUST be prepared through the standard throwaway-branch promotion flow.
+
+`current_dev` itself MUST NOT be used directly as the release PR head or base.
+
+### **POL-RELEASE-03** Open the Draft release PR immediately after the cut
+
+**Requirement:** Immediately after the release branch is cut, a Draft PR MUST be opened from:
+
+`release/X.Y.Z-NG`
+
+to:
+
+`master`
+
+using the dedicated release template.
+
+Canonical invocation:
+
+    gh pr create \
+      --repo wiki-mod/distcc-ng \
+      --base master \
+      --head release/X.Y.Z-NG \
+      --draft \
+      --title "chore(release): prepare X.Y.Z-NG" \
+      --body-file .github/PULL_REQUEST_TEMPLATE/create_and_publish_release.md
+
+### **POL-RELEASE-04** Initialize the release PR evidence identity
+
+**Requirement:** Before any release evidence is treated as current, the release PR MUST contain at least:
+
+* previous release tag;
+* Candidate SHA;
+* release branch;
+* expected release tag.
+
+The release PR body MUST remain current whenever the Candidate SHA or verification evidence changes.
+
+Opening the release PR triggers the repository's normal `pull_request` CI.
+
+That CI MUST NOT be treated as evidence that the release-specific RPM, DEB, source archives, SBOM, attestations, or release container artifacts have been built or verified.
+
+The release PR alone does not trigger `.github/workflows/package-release.yml`.
+
+**Verification:** See `REL-GOV-01`, `REL-CI-01`, and the applicable `REL-ART-*` items.
+
+### **POL-RELEASE-05** Pre-tag package and artifact verification
+
+**Applies when:** An applicable release check requires release-package or release-artifact evidence before the real tag exists.
+
+**Requirement:** The real release workflow MUST be dispatched explicitly against the release branch.
+
+Canonical invocation:
+
+    gh workflow run package-release.yml \
+      --repo wiki-mod/distcc-ng \
+      --ref release/X.Y.Z-NG \
+      -f publish_container=false
+
+`publish_container=false` MUST be used when container publication is not required by the applicable verification.
+
+`publish_container=true` MUST only be selected when the applicable release verification specifically requires exercising the container build or push path.
+
+The resulting workflow run MUST be recorded in the release PR.
+
+**Verification:** See `REL-CI-02`, `REL-ART-03`, and other applicable `REL-ART-*` items.
+
+### **POL-RELEASE-06** Run the release-version guardrail
+
+**Requirement:** `scripts/check-release-version.sh` MUST be executed before the release tag is created.
+
+The guardrail MUST fail closed when:
+
+* the intended `vX.Y.Z-NG` tag already exists;
+* `configure.ac`'s `AC_INIT` version does not exactly match the tag about to be created.
+
+A release MUST NOT proceed to tagging while either condition is true.
+
+**Verification:** See `REL-PRECUT-04`.
+
+### **POL-RELEASE-07** Create the immutable release tag
+
+**Requirement:** After all applicable pre-tag release requirements pass, `vX.Y.Z-NG` MUST be created on the selected release branch HEAD.
+
+The tag push triggers `package-release.yml`.
+
+The tag-triggered workflow builds and publishes the real release.
+
+When its `publish_github_release` stage publishes the GitHub Release, the resulting GitHub `release` event drives the release-event automation used by `changelog-update-on-release.yml`.
+
+**Verification:** See `REL-CI-03`, `REL-ART-*`, and `REL-CI-04`.
+
+### **POL-RELEASE-08** Automated changelog finalization
+
+**Requirement:** `changelog-update-on-release.yml` MUST move the released content from `CHANGELOG.md`'s `[Unreleased]` section into a new dated:
+
+`## [X.Y.Z-NG] - YYYY-MM-DD`
+
+section.
+
+This update is created automatically as a new commit on `current_dev`.
+
+It MUST NOT be replaced by a routine manual changelog edit.
+
+Before promotion continues, the workflow's Actions run at the tag timestamp MUST be checked for success.
+
+If the workflow fails, its own `workflow_dispatch` retry path MUST be used rather than manually editing `CHANGELOG.md`.
+
+A manual edit can race the automated update and create conflicting state.
+
+The immutable tagged commit itself does not contain the later reactive dated-section commit.
+
+That is expected because the tag is created before the release-event-driven changelog commit exists.
+
+The release tag MUST NOT be reordered, moved, or recreated to place that later commit underneath it.
+
+**Verification:** See `REL-PRECUT-02`, `REL-CI-04`, `REL-DOC-02`, and `REL-PROMO-04`.
+
+### **POL-RELEASE-09** Advance `current_dev` after tagging
+
+**Requirement:** Execute the version advancement defined by `REL-PROMO-03` immediately after tagging.
+
+This process step is defined by `REL-PROMO-03` and MUST NOT be maintained as a second independent version-bump definition here.
+
+### **POL-RELEASE-10** Promote to `master`
+
+**Requirement:** Promotion to `master` MUST satisfy `REL-PROMO-01` through `REL-PROMO-04`.
+
+Promotion MUST NOT be automatic.
+
+The release-specific approval MUST be explicit.
+
+### **POL-RELEASE-11** Post-release changelog commit and frozen release branch
+
+**Known lifecycle constraint:** The dated changelog commit from `POL-RELEASE-08` lands on `current_dev` after the release tag is created.
+
+The release PR head remains the release branch that represents the release candidate and cannot receive a release-only corrective commit.
+
+Therefore, merging only the frozen release candidate state can omit the later changelog-finalization commit from `master`.
+
+**Requirement:** The actual release promotion MUST explicitly account for the post-tag changelog commit as required by `REL-PROMO-04`.
+
+The resolution for each release MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
+
+PR #461 and PR #463 are real precedents showing one historical resolution path.
+
+They MUST NOT be treated as an automatic template or standing authorization for later releases.
+
+## Release guardrails
+
+### **POL-GUARD-01** Existing release tag
+
+**Requirement:** A release MUST NOT be tagged if `vX.Y.Z-NG` already exists.
+
+### **POL-GUARD-02** Version and tag mismatch
+
+**Requirement:** A release MUST NOT be tagged if `configure.ac`'s `AC_INIT` version does not exactly match the intended release tag.
+
+### **POL-GUARD-03** `master` approval
+
+**Requirement:** A promotion or merge into `master` MUST NOT proceed without the explicit maintainer approval required by `REL-PROMO-01` and the current `AGENTS.md`.
+
+This requirement is defined by those existing gates and MUST NOT be maintained as an independent weaker approval definition here.
+
+### **POL-GUARD-04** Release branch and tag history preservation
+
+**Requirement:** An existing `release/*` branch MUST NOT be force-pushed or deleted.
+
+An existing `vX.Y.Z-NG` tag MUST NOT be moved, deleted, or reused.
+
+### **POL-GUARD-05** Every published release requires a real tag
+
+**Requirement:** Every published GitHub Release MUST correspond to a real `vX.Y.Z-NG` git tag.
+
+A release MUST NOT be published from an ad hoc or manual identifier such as:
+
+`manual-<run-number>`
+
+A manual or `workflow_dispatch` execution MAY build and upload artifacts for testing.
+
+Such a manual execution MUST NOT create or update a GitHub Release unless a real release tag drives the release.
+
+If a stable, `latest`, or equivalent channel pointer is introduced in the future, that channel MUST NOT be moved to an untagged ad hoc release.
+
+Every release MUST retain an unambiguous permanent git reference.
+
+## Release ref retention
+
+### **POL-RET-01** Release branches and tags are retained indefinitely
+
+**Requirement:** All `release/*` branches and all `vX.Y.Z-NG` tags MUST be retained indefinitely.
+
+**Reason:** They preserve the permanent history required to identify and track changes or backports associated with a released version after publication.
 
 # Development and behavioral verification
 
@@ -423,7 +757,7 @@ The resulting artifact can be downloaded through:
 
 `gh api repos/<owner>/<repo>/actions/artifacts/<id>/zip`
 
-A real tag is not required for this verification dispatch. A real published release still requires the real tag defined by `doc/release-versioning.md`.
+A real tag is not required for this verification dispatch. A real published release still requires the real tag defined by `POL-REF-05`.
 
 **Known constraint:** `gh run download` can fail when the artifact ZIP contains a directory and another entry with the same name. In that case the raw artifact ZIP SHOULD be fetched through `gh api` and unpacked directly.
 
@@ -1746,13 +2080,13 @@ Approval from an earlier promotion or another PR MUST NOT be reused.
 
 ### **REL-PROMO-03** Advance current_dev version after tagging
 
-**Requirement:** `current_dev`'s `configure.ac` MUST be bumped to the next planned version immediately after tagging as defined by `doc/release-versioning.md`.
+**Requirement:** `current_dev`'s `configure.ac` MUST be bumped to the next planned version immediately after tagging.
 
 **Reason:** No later build from `current_dev` should continue reporting the version that has already been released.
 
 ### **REL-PROMO-04** Account for automated changelog commit
 
-**Requirement:** The automated `changelog-update-on-release.yml` commit defined by `doc/release-versioning.md` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
+**Requirement:** The automated `changelog-update-on-release.yml` commit defined by `POL-RELEASE-08` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
 
 The frozen release branch cannot receive that post-release commit by design.
 
@@ -2064,6 +2398,17 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 * [ ] No relevant implementation area is known to exist without a matching verification family.
 * [ ] No item is being stretched beyond its actual technical scope to avoid creating a new ID.
 
+### **RECERT-27** Release policy and versioning
+
+* [ ] Every `POL-*` item reviewed against current release policy and mechanics.
+* [ ] Current version-numbering policy confirmed.
+* [ ] Current branch and tag model confirmed.
+* [ ] Current version-reporting policy confirmed.
+* [ ] Current release-sequence steps confirmed against the actual release process.
+* [ ] Current release guardrails confirmed.
+* [ ] Every `POL-*` reference to a `REL-*` item still points to the intended verification gate.
+* [ ] No `POL-*` item silently duplicates or weakens a `REL-*` requirement.
+
 ### **RECERT-24** Complete reference audit
 
 * [ ] Every source file path in this document checked against `current_dev`.
@@ -2124,4 +2469,4 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 | Unresolved recertification blockers | Independent review (`RECERT-01`, `RECERT-26`) pending |
 | Result | |
 
-The `Result` field MUST remain empty or state `NOT FULLY RECERTIFIED` until `RECERT-01` through `RECERT-26` are complete against the exact recorded `current_dev` SHA.
+The `Result` field MUST remain empty or state `NOT FULLY RECERTIFIED` until all `RECERT-*` items are complete against the exact recorded `current_dev` SHA.
