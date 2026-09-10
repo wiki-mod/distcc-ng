@@ -2457,12 +2457,12 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 | Reviewer | maintainer |
 | Independent reviewer | |
 | Tracking issue | #531 |
-| Tracking PR | #532 |
-| Items reviewed | 110 (70 `VER-*`, 40 `REL-*`) |
+| Tracking PR | #534 |
+| Items reviewed | 137 (70 `VER-*`, 40 `REL-*`, 27 `POL-*`) |
 | Items updated | 2 (`VER-CONTAINER-01`, `VER-CONTAINER-09`) |
 | Items retired | 0 |
 | Items replaced | 0 |
-| New items added | 0 |
+| New items added | 28 (27 `POL-*`, `RECERT-27`) |
 | Unresolved recertification blockers | Independent review (`RECERT-01`, `RECERT-26`) pending |
 | Result | |
 
