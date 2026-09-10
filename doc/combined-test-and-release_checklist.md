@@ -2,7 +2,7 @@
 
 This document is the canonical combined checklist for development verification and release readiness.
 
-It combines the requirements previously maintained in `doc/verification-checklist.md`, `doc/release-checklist.md`, and `doc/release-versioning.md` into one extensible checklist.
+It combines development verification, release readiness, and release versioning and lifecycle policy into one extensible checklist.
 
 It defines:
 
