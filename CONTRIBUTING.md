@@ -208,11 +208,11 @@ If the image's baked-in non-root user doesn't already own the bind-mounted
 checkout (your own uid differs from the image's default), add `--user
 "$(id -u):$(id -g)"` and `-e HOME=<a writable path>` to the `docker run`
 above instead of running as the image's default user or as root -- see
-`doc/combined-test-and-release_checklist.md` section 9 for why both flags are needed
+`doc/combined-test-and-release_checklist.md` VER-CONTAINER for why both flags are needed
 and what breaks without the `HOME` override. If your `make check` run
 needs to exercise `SSHMode_Case` (or anything else calling `getpwuid()`),
 your own uid also needs a resolvable `/etc/passwd`/`/etc/group` entry
-inside the container -- section 9's same entry covers the bind-mounted-
+inside the container -- VER-CONTAINER's same entry covers the bind-mounted-
 file fix and links the current, real implementation.
 
 ### Workflow changes

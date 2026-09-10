@@ -7,7 +7,7 @@ existing quick two-container hello-world-style check, which stays as-is.
 ## What it proves
 
 - **Bidirectional native compatibility** (doc/combined-test-and-release_checklist.md
-  section 4): this fork's `-NG` client against a real, independently-built
+  VER-INTEROP): this fork's `-NG` client against a real, independently-built
   native `distccd` (Debian's own packaged `distccd`), AND a real,
   independently-built native `distcc` client against this fork's `-NG`
   `distccd`. Both directions, both in plain mode and pump mode (Debian ships

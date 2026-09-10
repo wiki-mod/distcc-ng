@@ -26,7 +26,7 @@
 #
 # This is exactly the shape of bug #225 in this repo's own history (tested
 # one direction, broken in the other) -- see doc/combined-test-and-release_checklist.md
-# section 4, which this script is the automated form of.
+# VER-INTEROP, which this script is the automated form of.
 #
 # Environment knobs:
 #   WORKLOAD        "samba" (default, the enabled real workload) or
