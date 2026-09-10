@@ -25,7 +25,7 @@ All repository-content-dependent verification evidence in this PR is bound to th
 
 If the Candidate SHA changes for any reason, every previously completed evidence entry that depends on repository content becomes stale and must be reset and re-verified against the new Candidate SHA. Evidence from an older Candidate SHA may only be retained when the corresponding canonical checklist item is demonstrably independent of repository content.
 
-**`Blocked` items specifically:** a content-dependent `Blocked` item resets exactly like `Passed`/`Failed` on a Candidate SHA change. A purely environmental `Blocked` item (its cause has nothing to do with repository content) does not need to reset, but must still be re-attempted at least once against the current Candidate SHA before it can support a release decision — "still blocked" carried forward without a fresh attempt is a stale claim, not a confirmed one.
+**`BLOCKED` items specifically:** a content-dependent `BLOCKED` item resets exactly like `PASS`/`FAIL` on a Candidate SHA change. A purely environmental `BLOCKED` item (its cause has nothing to do with repository content) does not need to reset, but must still be re-attempted at least once against the current Candidate SHA before it can support a release decision — "still blocked" carried forward without a fresh attempt is a stale claim, not a confirmed one.
 
 ## Live Release Checklist - Source Of Truth
 
@@ -33,48 +33,48 @@ This table is the single status-bearing execution record for this release. Every
 
 Do not rewrite or independently redefine a canonical check in this PR. If a check itself needs to change, that is a `doc/combined-test-and-release_checklist.md` edit (see Checklist Maintenance below), reflected here only as a status update.
 
-Allowed status values: `Pending`, `Passed`, `Failed`, `Blocked`, `N/A`.
+Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution states from `doc/combined-test-and-release_checklist.md`). A row stays blank until its check has actually run.
 - `N/A` requires a concrete rationale.
-- `Blocked` requires a matching row in Open Findings / Blockers below naming the cause and required action. A `Blocked` item can never become `Passed` by inference — it must actually run.
-- No row may be `Passed` while an Open Findings / Blockers row still references it as unresolved.
+- `BLOCKED` requires a matching row in Open Findings / Blockers below naming the cause and required action. A `BLOCKED` item can never become `PASS` by inference — it must actually run.
+- No row may be `PASS` while an Open Findings / Blockers row still references it as unresolved.
 
 ### Mandatory core (every release)
 
 | ID | Item (see `doc/combined-test-and-release_checklist.md` for the full definition) | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
 | --- | --- | --- | --- | --- | --- |
-| REL-GOV-01 | Candidate SHA still matches the intended release candidate | Pending | | | |
-| REL-GOV-02 | No unresolved release blocker remains | Pending | | | |
-| REL-GOV-03 | Final AGENTS.md self-check performed (rule 78(c)) | Pending | | | |
-| REL-GOV-04 | Independent review of the finished release PR performed (rule 78(a)) | Pending | | | |
-| REL-PRECUT-01 | `[Unreleased]` reviewed end-to-end against real PR history since last tag | Pending | | | |
-| REL-PRECUT-02 | A real, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section exists for every tag since the last checklist run | Pending | | | |
-| REL-PRECUT-03 | No open unresolved `security`-labeled issue blocking, or a documented maintainer decision to ship anyway | Pending | | | |
-| REL-PRECUT-04 | `scripts/check-release-version.sh` run for real against the intended tag | Pending | | | |
-| REL-PRECUT-05 | Every `support-upstream/` entry since last release has file + README row | Pending | | | |
-| REL-PRECUT-06 | `master`'s copy of every `release:`-event-triggered workflow matches `current_dev`'s | Pending | | | |
-| REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` | Pending | | | |
-| REL-PRECUT-08 | No unreviewed drift beyond the release branch's stated expected relationship to `current_dev` | Pending | | | |
-| REL-PRECUT-09 | Every commit/PR since the previous tag classified against `doc/combined-test-and-release_checklist.md`'s VER-* verification categories, with real evidence for every touched category | Pending | | | |
-| REL-PRECUT-10 | `master` has no commits of its own not already on the release branch (`master`'s tip is an ancestor of the release-branch head) | Pending | | | |
-| REL-ART-01a | Container image labels match published image — `distcc-ng` | Pending | | | |
-| REL-ART-01b | Container image labels match published image — `distcc-ng-pump` | Pending | | | |
-| REL-ART-01c | Container image labels match published image — `distcc-ng-nightly` | Pending | | | |
-| REL-ART-02 | Seccomp compiled in and enforcing, every shipped artifact class | Pending | | | |
-| REL-ART-03 | Built `.rpm`/`.deb` declares dependencies matching real linked libraries | Pending | | | |
-| REL-ART-04a | Real end-to-end distributed compile succeeds — plain | Pending | | | |
-| REL-ART-04b | Real end-to-end distributed compile succeeds — pump | Pending | | | |
-| REL-ART-05 | SBOM attached, confirmed present on the real GitHub Release page | Pending | | | |
-| REL-ART-06 | Build attestation attached, confirmed present on the real GitHub Release page | Pending | | | |
-| REL-CI-01 | Real `pull_request`-triggered CI run exists for this release PR | Pending | | | |
-| REL-CI-02 | Manual pre-tag package/artifact verification run, if used | Pending | | | |
-| REL-CI-03 | Real tag-triggered `package-release.yml` run exists and succeeded | Pending | | | |
-| REL-CI-04 | `release: types: [published]` actually triggered `changelog-update-on-release.yml` | Pending | | | |
-| REL-DOC-01 | `README.md`/`doc/docker.md` quick-start references match what this release publishes | Pending | | | |
-| REL-DOC-02 | Every user-visible change since last release is in `CHANGELOG.md` under a dated section | Pending | | | |
-| REL-PROMO-01 | Explicit, fresh maintainer approval for this specific promotion | Pending | | | |
-| REL-PROMO-02 | `git log master..current_dev` actually read | Pending | | | |
-| REL-PROMO-03 | `current_dev`'s `configure.ac` bumped to next planned version after tagging | Pending | | | |
-| REL-PROMO-04 | Changelog-automation commit landed on `current_dev` and is accounted for in this promotion | Pending | | | |
+| REL-GOV-01 | Candidate SHA still matches the intended release candidate |  | | | |
+| REL-GOV-02 | No unresolved release blocker remains |  | | | |
+| REL-GOV-03 | Final AGENTS.md self-check performed (rule 78(c)) |  | | | |
+| REL-GOV-04 | Independent review of the finished release PR performed (rule 78(a)) |  | | | |
+| REL-PRECUT-01 | `[Unreleased]` reviewed end-to-end against real PR history since last tag |  | | | |
+| REL-PRECUT-02 | A real, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section exists for every tag since the last checklist run |  | | | |
+| REL-PRECUT-03 | No open unresolved `security`-labeled issue blocking, or a documented maintainer decision to ship anyway |  | | | |
+| REL-PRECUT-04 | `scripts/check-release-version.sh` run for real against the intended tag |  | | | |
+| REL-PRECUT-05 | Every `support-upstream/` entry since last release has file + README row |  | | | |
+| REL-PRECUT-06 | `master`'s copy of every `release:`-event-triggered workflow matches `current_dev`'s |  | | | |
+| REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` |  | | | |
+| REL-PRECUT-08 | No unreviewed drift beyond the release branch's stated expected relationship to `current_dev` |  | | | |
+| REL-PRECUT-09 | Every commit/PR since the previous tag classified against `doc/combined-test-and-release_checklist.md`'s VER-* verification categories, with real evidence for every touched category |  | | | |
+| REL-PRECUT-10 | `master` has no commits of its own not already on the release branch (`master`'s tip is an ancestor of the release-branch head) |  | | | |
+| REL-ART-01a | Container image labels match published image — `distcc-ng` |  | | | |
+| REL-ART-01b | Container image labels match published image — `distcc-ng-pump` |  | | | |
+| REL-ART-01c | Container image labels match published image — `distcc-ng-nightly` |  | | | |
+| REL-ART-02 | Seccomp compiled in and enforcing, every shipped artifact class |  | | | |
+| REL-ART-03 | Built `.rpm`/`.deb` declares dependencies matching real linked libraries |  | | | |
+| REL-ART-04a | Real end-to-end distributed compile succeeds — plain |  | | | |
+| REL-ART-04b | Real end-to-end distributed compile succeeds — pump |  | | | |
+| REL-ART-05 | SBOM attached, confirmed present on the real GitHub Release page |  | | | |
+| REL-ART-06 | Build attestation attached, confirmed present on the real GitHub Release page |  | | | |
+| REL-CI-01 | Real `pull_request`-triggered CI run exists for this release PR |  | | | |
+| REL-CI-02 | Manual pre-tag package/artifact verification run, if used |  | | | |
+| REL-CI-03 | Real tag-triggered `package-release.yml` run exists and succeeded |  | | | |
+| REL-CI-04 | `release: types: [published]` actually triggered `changelog-update-on-release.yml` |  | | | |
+| REL-DOC-01 | `README.md`/`doc/docker.md` quick-start references match what this release publishes |  | | | |
+| REL-DOC-02 | Every user-visible change since last release is in `CHANGELOG.md` under a dated section |  | | | |
+| REL-PROMO-01 | Explicit, fresh maintainer approval for this specific promotion |  | | | |
+| REL-PROMO-02 | `git log master..current_dev` actually read |  | | | |
+| REL-PROMO-03 | `current_dev`'s `configure.ac` bumped to next planned version after tagging |  | | | |
+| REL-PROMO-04 | Changelog-automation commit landed on `current_dev` and is accounted for in this promotion |  | | | |
 
 ### Conditional (fill in only rows whose trigger condition applies to this release's actual diff; otherwise mark the whole block `N/A` once, citing the diff command used)
 
@@ -82,13 +82,13 @@ Diff command used to classify this release's change surface (e.g. `git diff --st
 
 | ID | Item | Trigger | Status | Candidate SHA / artifact | Evidence | Notes / N/A rationale |
 | --- | --- | --- | --- | --- | --- | --- |
-| REL-ART-07 | Effective seccomp denylist matches intent | Seccomp/sandbox files or a `distccd`-building Dockerfile stage changed | Pending | | | |
-| REL-ART-08 | Real negative test: denied syscall actually blocked | Same trigger as REL-ART-07 | Pending | | | |
-| REL-ART-09 | Real second-user cross-permission check on a real Unix-permission filesystem | Permission/file-mode-affecting file changed | Pending | | | |
-| REL-ART-10 | Real two-container distribution test | Distribution/compiler-identity code changed | Pending | | | |
-| REL-ART-11 | Published-stage identity re-confirmed via registry API | Any Dockerfile or `package-release.yml` changed | Pending | | | |
-| REL-COMPAT-01 | New hard dependency called out against compatibility policy | A new hard dependency was introduced | Pending | | | |
-| REL-COMPAT-02 | Compatibility-policy platform matrix re-confirmed | Platform-conditional code changed | Pending | | | |
+| REL-ART-07 | Effective seccomp denylist matches intent | Seccomp/sandbox files or a `distccd`-building Dockerfile stage changed |  | | | |
+| REL-ART-08 | Real negative test: denied syscall actually blocked | Same trigger as REL-ART-07 |  | | | |
+| REL-ART-09 | Real second-user cross-permission check on a real Unix-permission filesystem | Permission/file-mode-affecting file changed |  | | | |
+| REL-ART-10 | Real two-container distribution test | Distribution/compiler-identity code changed |  | | | |
+| REL-ART-11 | Published-stage identity re-confirmed via registry API | Any Dockerfile or `package-release.yml` changed |  | | | |
+| REL-COMPAT-01 | New hard dependency called out against compatibility policy | A new hard dependency was introduced |  | | | |
+| REL-COMPAT-02 | Compatibility-policy platform matrix re-confirmed | Platform-conditional code changed |  | | | |
 
 ## CI / Release Pipeline Evidence (evidence appendix — no independent status)
 
@@ -125,7 +125,7 @@ Observed result:
 
 ## PRETAG Evidence (evidence appendix — no independent status)
 
-Every row below must correspond to a `REL-PRECUT-*` ID above. This section carries supporting detail only; set `Passed`/`Failed`/`Blocked`/`N/A` only in the Live Release Checklist.
+Every row below must correspond to a `REL-PRECUT-*` ID above. This section carries supporting detail only; set `PASS`/`FAIL`/`BLOCKED`/`N/A` only in the Live Release Checklist.
 
 Candidate SHA:
 Previous release tag:
@@ -222,7 +222,7 @@ Promotion PR / reference:
 | --- | --- | --- | --- |
 | | | | |
 
-Every row above whose status is `Blocked` must appear here. No checklist row may be `Passed` while a matching Open Findings row remains unresolved.
+Every row above whose status is `BLOCKED` must appear here. No checklist row may be `PASS` while a matching Open Findings row remains unresolved.
 
 ## Checklist Maintenance
 
