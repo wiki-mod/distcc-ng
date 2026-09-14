@@ -147,3 +147,61 @@ setup() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"c-source"* ]]
 }
+
+# =========================================================
+# GOVERNANCE GUARDS (green + red)
+# =========================================================
+
+@test "line-endings guard passes on an LF-only tree" {
+    # What: An LF-only fixture must pass the guard.
+    # Why: Proves the green path, not only the failing one.
+    # From: Issue #479
+    fx="$(mktemp -d)"; printf 'clean line\n' > "${fx}/ok.sh"
+    run ci_guard_line_endings "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "line-endings guard fails closed on a CRLF file" {
+    # What: A CR byte anywhere must fail the guard.
+    # Why: Proves the fail-closed path is reachable.
+    # From: Issue #479
+    fx="$(mktemp -d)"; printf 'bad line\r\n' > "${fx}/crlf.sh"
+    run ci_guard_line_endings "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-EOL-0001"* ]]
+}
+
+@test "full-sha guard passes on a 64-hex digest" {
+    # What: A full 64-hex sha256 is compliant.
+    # Why: Proves the green path for the SHA rule.
+    # From: Issue #479
+    fx="$(mktemp -d)"
+    printf 'image: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"\n' > "${fx}/f.yml"
+    run ci_guard_full_sha "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "full-sha guard fails closed on an abbreviated digest" {
+    # What: A short sha256 must be rejected.
+    # Why: No abbreviations or special SHA forms allowed.
+    # From: Issue #479
+    fx="$(mktemp -d)"; printf 'image: "debian@sha256:fac46bff"\n' > "${fx}/f.yml"
+    run ci_guard_full_sha "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-SHA-0001"* ]]
+}
+
+@test "full-sha guard fails closed on an abbreviated action pin" {
+    # What: A short git SHA on a `uses:` pin must be rejected.
+    # Why: Action pins MUST be full 40-hex SHAs.
+    # From: Issue #479
+    fx="$(mktemp -d)"; printf '      - uses: actions/checkout@abc1234\n' > "${fx}/w.yml"
+    run ci_guard_full_sha "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-SHA-0002"* ]]
+}

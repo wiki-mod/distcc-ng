@@ -224,6 +224,59 @@ ci_cmd_impact() {
 }
 
 # =========================================================
+# GOVERNANCE GUARDS
+# =========================================================
+
+# What: Fail if any file under root contains a CR byte.
+# Why: The repo is LF-only; CRLF breaks shell/heredoc parsing.
+# From: Issue #479
+ci_guard_line_endings() {
+    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 f
+    while IFS= read -r f; do
+        rc=1
+        ci_log "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: ${f}"
+    done < <(grep -rlU "$(printf '\r')" "${root}" 2>/dev/null || true)
+    return "${rc}"
+}
+
+# What: Fail if any sha256 digest is not full 64 lowercase hex.
+# Why: Full-length SHAs only; no abbreviations or special forms.
+# From: Issue #479
+ci_guard_full_sha() {
+    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit
+    while IFS= read -r hit; do
+        [ -n "${hit}" ] || continue
+        rc=1
+        ci_log "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: ${hit}"
+    done < <(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}" 2>/dev/null \
+             | awk -F: 'length($2)!=64 || $2 ~ /[A-F]/ { print }' || true)
+    while IFS= read -r hit; do
+        [ -n "${hit}" ] || continue
+        rc=1
+        ci_log "[CI-ERROR-GUARD-SHA-0002]" "not a full 40-hex action SHA: ${hit}"
+    done < <(grep -rhoE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-fA-F]+([[:space:]]|$)' "${root}" 2>/dev/null \
+             | grep -oE '@[0-9a-fA-F]+' \
+             | grep -vE '^@[0-9a-f]{40}$' || true)
+    return "${rc}"
+}
+
+# What: Run the governance guards over the CI-owned tree.
+# Why: One phase enforces the repo's CI hygiene invariants.
+# From: Issue #479
+ci_cmd_lint() {
+    local rc=0 d
+    ci_guard_line_endings "${CI_REPO_ROOT}/.github" || rc=1
+    ci_guard_line_endings "${CI_REPO_ROOT}/docker" || rc=1
+    # Full-SHA scans only files that may carry pins; scripts carry none
+    # by design (ci.sh reads pins from the SOT, ci.bats holds fixtures).
+    for d in .github/workflows .github/actions .github/yaml docker; do
+        [ -e "${CI_REPO_ROOT}/${d}" ] || continue
+        ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
+    done
+    return "${rc}"
+}
+
+# =========================================================
 # DISPATCH
 # =========================================================
 
@@ -239,6 +292,7 @@ ci_main() {
             case "${command}" in
                 resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
+                lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;
