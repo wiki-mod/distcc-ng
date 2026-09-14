@@ -1,0 +1,103 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Single source of truth for CI build inputs.
+# Why: One machine-readable owner ends version drift.
+# From: Issue #479
+schema: build-manifest/v1
+
+# What: Pinned external base images by full digest.
+# Why: Sole owner of every base-image pin, no per-file copy.
+# From: Issue #479
+base_images:
+  # What: Debian base of the verify/build-tools image.
+  # Why: docker/verify consumes this; one owner only.
+  # From: Issue #479
+  debian_verify: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"
+  # What: Debian base of the release runtime images.
+  # Why: docker/release consumes this; distinct from verify.
+  # From: Issue #479
+  debian_release: "debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
+  # What: Go base that builds the pinned actionlint binary.
+  # Why: verify image's actionlint-builder stage consumes it.
+  # From: Issue #479
+  golang_actionlint: "golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
+
+# What: Pinned external tool/asset versions.
+# Why: Central version owner; consumers never re-pin.
+# From: Issue #479
+external_versions:
+  # What: Samba release used by the source-adequacy check.
+  # Why: verify configure-dryrun downloads exactly this tag.
+  # From: Issue #479
+  samba:
+    version: "4.22.4"
+  # What: actionlint release built into the verify image.
+  # Why: pins the workflow linter to one reproducible build.
+  # From: Issue #479
+  actionlint:
+    version: "1.7.12"
+
+# What: The configure variants CI builds/tests, per OS.
+# Why: One matrix owner; workflows read, never hardcode.
+# From: Issue #479
+build_matrix:
+  variants:
+    # What: Plain ./configure PYTHON=python3 build+make check.
+    # Why: The baseline gate; the only variant run on macOS.
+    # From: Issue #479
+    default:
+      os: ["ubuntu-latest", "macos-latest"]
+    # What: Bundled popt fallback, built with no system libpopt.
+    # Why: Proves the vendored-popt path still compiles.
+    # From: Issue #479
+    popt-fallback:
+      os: ["ubuntu-latest"]
+    # What: Vendored popt/ version and compile check.
+    # Why: Guards the vendored popt source against drift.
+    # From: Issue #479
+    popt-vendor:
+      os: ["ubuntu-latest"]
+    # What: gcov/lcov coverage build with job-summary artifact.
+    # Why: One coverage owner; ubuntu-only toolchain.
+    # From: Issue #479
+    coverage:
+      os: ["ubuntu-latest"]
+    # What: ASan/UBSan sanitizer build, opt-in only.
+    # Why: Not a required gate; runs on dispatch/schedule.
+    # From: Issue #479
+    sanitizer:
+      os: ["ubuntu-latest"]
+      opt_in: true
+
+# What: The shipped release artifacts.
+# Why: One inventory owner for packages and images.
+# From: Issue #479
+release:
+  packages: ["rpm", "deb", "apk"]
+  containers: ["release", "pump", "nightly"]
+
+# What: Diff path-classes and the ci.sh phases they select.
+# Why: DEFAULT=NOOP; a docs-only diff selects no compile.
+# From: Issue #479
+impact_classes:
+  c-source:
+    paths: ["src/**", "**/*.c", "**/*.h", "configure.ac", "Makefile.in"]
+    phases: ["build", "test", "e2e", "coverage", "analyze", "scan"]
+  include-server:
+    paths: ["include_server/**", "**/*.py"]
+    phases: ["build", "test", "analyze"]
+  packaging:
+    paths: ["packaging/**"]
+    phases: ["package"]
+  docker:
+    paths: ["docker/**"]
+    phases: ["container", "verify"]
+  workflows:
+    paths: [".github/workflows/**", ".github/actions/**", ".github/yaml/**"]
+    phases: ["lint"]
+  governance:
+    paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
+    phases: ["lint"]
+  docs:
+    paths: ["**/*.md", "doc/**"]
+    phases: ["doc-lint"]
