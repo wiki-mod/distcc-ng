@@ -128,6 +128,24 @@ setup() {
     [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
 }
 
+@test "release version-check fails on a tag that mismatches configure.ac" {
+    # What: A tag whose version != configure.ac is rejected.
+    # Why: Fail-closed release guardrail (no accidental retag).
+    # From: Issue #479
+    run bash "${BATS_TEST_DIRNAME}/ci.sh" release version-check v99.99.99-NG
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-RELEASE-0003"* ]]
+}
+
+@test "release rejects an unknown subcommand" {
+    # What: An unknown release subcommand fails closed.
+    # Why: Consistent fail-closed dispatch.
+    # From: Issue #479
+    run bash "${BATS_TEST_DIRNAME}/ci.sh" release bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-RELEASE-0005"* ]]
+}
+
 @test "changelog is skipped by the no-changelog-needed label" {
     # What: The opt-out label satisfies the changelog gate.
     # Why: Proves the documented opt-out path.
