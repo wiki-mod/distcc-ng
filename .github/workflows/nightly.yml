@@ -1,0 +1,66 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Nightly build/test/e2e + distcc-ng-nightly:latest publish.
+# Why: Cutover-draft; workflow_dispatch-only until the cutover adds the
+#   schedule trigger and removes legacy nightly-publish.yml.
+# From: Issue #479
+name: Nightly
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NIGHTLY_TAG: nightly
+  IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
+
+jobs:
+  build_test:
+    name: Build + test (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/install-build-deps
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e distributed
+
+  bidirectional_e2e:
+    name: Full bidirectional native-compat E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e full
+
+  publish:
+    name: Publish distcc-ng-nightly:latest
+    needs: [build_test, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/install-packaging-deps
+      - run: bash .github/scripts/ci.sh package
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - run: bash .github/scripts/ci.sh container nightly
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh publish nightly
