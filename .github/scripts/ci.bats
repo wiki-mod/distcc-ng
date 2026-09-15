@@ -95,6 +95,50 @@ setup() {
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+@test "comfychair parse passes on all-OK/NOTRUN output" {
+    # What: A run with only OK/NOTRUN lines passes.
+    # Why: Proves the green parse path.
+    # From: Issue #479
+    log="$(mktemp)"
+    printf '%s\n' "FooCase           OK" "BarCase           NOTRUN, needs root" > "${log}"
+    run _ci_parse_comfychair "${log}"
+    rm -f "${log}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "comfychair parse fails closed on a FAIL line" {
+    # What: Any FAIL case fails the parse.
+    # Why: A failed test must never report green.
+    # From: Issue #479
+    log="$(mktemp)"
+    printf '%s\n' "FooCase           OK" "BarCase           FAIL" > "${log}"
+    run _ci_parse_comfychair "${log}"
+    rm -f "${log}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0002"* ]]
+}
+
+@test "comfychair parse fails closed on zero parsed result lines" {
+    # What: 0/0/0 parsed is a hard failure (rule 66).
+    # Why: An empty parse must not look like a clean pass.
+    # From: Issue #479
+    log="$(mktemp)"
+    printf '%s\n' "build noise, no result lines" > "${log}"
+    run _ci_parse_comfychair "${log}"
+    rm -f "${log}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0001"* ]]
+}
+
+@test "test fails closed on an unknown variant" {
+    # What: An unknown test variant MUST reject.
+    # Why: Fail-closed dispatch across every phase.
+    # From: Issue #479
+    CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" test bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
+}
+
 @test "resolve prints the samba pin from the SOT" {
     # What: resolve proves end-to-end SOT reads.
     # Why: Every later phase depends on this read path.

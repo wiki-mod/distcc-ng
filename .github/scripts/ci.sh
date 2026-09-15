@@ -415,6 +415,110 @@ ci_cmd_build() {
     fi
 }
 
+# What: Parse comfychair make-check output into a verdict.
+# Why: 0/0/0 parsed is a hard fail (rule 66), not a clean pass.
+# From: Issue #479
+_ci_parse_comfychair() {
+    local log="$1" ok notrun failed
+    ok="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "${log}" || true)"
+    notrun="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "${log}" || true)"
+    failed="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" || true)"
+    ci_log "[CI-TEST-SUMMARY]" "OK=${ok} NOTRUN=${notrun} FAILED=${failed}"
+    if [ "$(( ok + notrun + failed ))" -eq 0 ]; then
+        ci_log "[CI-ERROR-TEST-0001]" "parsed zero comfychair result lines"
+        return 1
+    fi
+    if [ "${failed}" -gt 0 ]; then
+        grep -E '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" >&2 || true
+        ci_log "[CI-ERROR-TEST-0002]" "${failed} comfychair case(s) FAILED"
+        return 1
+    fi
+    return 0
+}
+
+# What: Rerun the root-only case, fail on NOTRUN or non-OK.
+# Why: The unprivileged make check leaves it NOTRUN otherwise.
+# From: Issue #479
+_ci_privileged_single_test() {
+    local log="${RUNNER_TEMP:-/tmp}/ci-autogroup.log"
+    sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee "${log}"
+    if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" "${log}"; then
+        ci_log "[CI-ERROR-TEST-0003]" "AutogroupNicenessPrivilegeDrop_Case NOTRUN"
+        return 1
+    fi
+    grep -q "AutogroupNicenessPrivilegeDrop_Case OK" "${log}" \
+        || { ci_log "[CI-ERROR-TEST-0004]" "AutogroupNicenessPrivilegeDrop_Case not OK"; return 1; }
+}
+
+# What: Create the coverage-recording PYTHON wrapper; print its path.
+# Why: Records include_server/*.py into the coverage denominator.
+# From: Issue #479, PR #370
+_ci_coverage_python_wrapper() {
+    local w="${RUNNER_TEMP:-/tmp}/coverage-python-wrapper" py
+    py="$(command -v python3)"
+    cat > "${w}" <<EOF
+#!/bin/sh
+if [ "\$1" = "-c" ]; then
+    exec "${py}" "\$@"
+fi
+exec python3-coverage run --append --source="${CI_REPO_ROOT}/include_server" "\$@"
+EOF
+    chmod +x "${w}"
+    printf '%s\n' "${w}"
+}
+
+# What: Capture C coverage into coverage.info via lcov.
+# Why: Own shipped code only; lzo/ and src/h_*.c removed.
+# From: Issue #479, PR #370
+_ci_coverage_lcov() {
+    lcov --capture --directory . --output-file coverage_raw.info \
+        --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
+    lcov --remove coverage_raw.info '*/lzo/*' '*/src/h_*.c' \
+        --output-file coverage.info --rc branch_coverage=1
+    lcov --list coverage.info --rc branch_coverage=1
+}
+
+# What: Run make check for a variant and verify the result.
+# Why: Folds run-tests.sh parse + c-build.yml per-variant env.
+# From: Issue #479
+ci_cmd_test() {
+    local variant="${1:-default}" log wrapper st=0
+    cd "${CI_REPO_ROOT}"
+    log="${RUNNER_TEMP:-/tmp}/ci-check-${variant}.log"
+    case "${variant}" in
+        popt-vendor)
+            ci_log "[CI-TEST-SKIP]" "popt-vendor has no make-check phase"
+            return 0 ;;
+        sanitizer)
+            ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 \
+                make check > "${log}" 2>&1 || st=$? ;;
+        coverage)
+            wrapper="$(_ci_coverage_python_wrapper)"
+            make check PYTHON="${wrapper}" > "${log}" 2>&1 || st=$? ;;
+        default|popt-fallback)
+            make check > "${log}" 2>&1 || st=$? ;;
+        *)
+            ci_log "[CI-ERROR-TEST-0005]" "unknown variant=\"${variant}\""
+            return 2 ;;
+    esac
+    cat "${log}"
+    if _ci_has_compiler_warning "${log}"; then
+        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (rule 31)" \
+            "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
+        return 1
+    fi
+    _ci_parse_comfychair "${log}" || return 1
+    if [ "${st}" -ne 0 ]; then
+        ci_log "[CI-ERROR-TEST-0006]" "make check exited ${st} for variant=${variant}"
+        return 1
+    fi
+    case "${variant}" in
+        default|coverage) _ci_privileged_single_test || return 1 ;;
+    esac
+    [ "${variant}" = "coverage" ] && _ci_coverage_lcov
+    return 0
+}
+
 # =========================================================
 # DISPATCH
 # =========================================================
@@ -432,6 +536,7 @@ ci_main() {
                 resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
                 build) ci_cmd_build "$@" ;;
+                test) ci_cmd_test "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
