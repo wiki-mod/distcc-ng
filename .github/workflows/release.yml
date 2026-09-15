@@ -1,0 +1,128 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Release pipeline (build/test/e2e/package + multi-arch publish).
+# Why: Cutover-draft; workflow_dispatch-only. DRAFT NEEDS CUTOVER
+#   VERIFICATION on a real tag; Trivy/SBOM and run_attempt digest keying
+#   fold in at cutover, and the tag trigger replaces the legacy pipeline.
+# From: Issue #479
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v3.6.6-NG (must match configure.ac)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build_test:
+    name: Build + test (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/install-build-deps
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e distributed
+
+  package:
+    name: Build release packages
+    needs: [build_test, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/install-packaging-deps
+      - run: bash .github/scripts/ci.sh package
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: distcc-release-packages
+          path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
+
+  build_container:
+    name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
+    needs: [build_test, e2e]
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.platform == 'arm64' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, pump]
+        platform: [amd64, arm64]
+    env:
+      IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ inputs.tag }}-${{ matrix.platform }}
+      VERSION: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - env:
+          VARIANT: ${{ matrix.variant }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bash .github/scripts/ci.sh container "$VARIANT" "$PLATFORM"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
+          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
+
+  publish_manifest:
+    name: Publish ${{ matrix.variant }} multi-arch manifest
+    needs: [build_container]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, pump]
+    env:
+      IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ inputs.tag }}
+    steps:
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-digest-${{ matrix.variant }}-*
+          path: digests
+          merge-multiple: true
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
+
+  github_release:
+    name: Publish GitHub release
+    needs: [package, publish_manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distcc-release-packages
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: bash .github/scripts/ci.sh publish github-release "$TAG"

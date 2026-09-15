@@ -325,7 +325,7 @@ _ci_check_release_version() {
 # Why: Base image ARG comes from the SOT; folds nightly's docker build.
 # From: Issue #479
 ci_cmd_container() {
-    local variant="${1:?variant required}" ref debian
+    local variant="${1:?variant required}" platform="${2:-}" ref debian
     cd "${CI_REPO_ROOT}"
     ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
     debian="$(_ci_sot_scalar base_images.debian_release)"
@@ -337,6 +337,21 @@ ci_cmd_container() {
                 --build-arg "VERSION=nightly" \
                 --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
             docker push "${IMAGE_TAG}" ;;
+        plain|pump)
+            : "${IMAGE_TAG:?IMAGE_TAG required}"
+            : "${platform:?platform required (amd64|arm64)}"
+            local target="runtime"
+            [ "${variant}" = "pump" ] && target="runtime-pump"
+            docker build --platform "linux/${platform}" \
+                --file docker/release/Dockerfile --target "${target}" \
+                --build-arg "DEBIAN_IMAGE=${debian}" \
+                --build-arg "VCS_REF=${ref}" \
+                --build-arg "VERSION=${VERSION:-${ref}}" \
+                --tag "${IMAGE_TAG}" .
+            docker push "${IMAGE_TAG}"
+            local digest
+            digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+            printf '%s\n' "${digest}" > "digest-${variant}-${platform}.txt" ;;
         *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
     esac
 }
@@ -372,14 +387,52 @@ _ci_publish_nightly() {
         --prerelease --latest=false --target "${ref}"
 }
 
+# What: Create the multi-arch manifest from recorded platform digests.
+# Why: amd64 required, arm64 best-effort; latest only on a real tag push.
+# From: Issue #479
+_ci_publish_manifest() {
+    local variant="${1:?variant required}"
+    : "${IMAGE_BASE:?IMAGE_BASE required}"
+    local tags=()
+    tags+=("${IMAGE_BASE}@$(cat "digests/digest-${variant}-amd64.txt")")
+    if [ -f "digests/digest-${variant}-arm64.txt" ]; then
+        tags+=("${IMAGE_BASE}@$(cat "digests/digest-${variant}-arm64.txt")")
+    else
+        ci_log "[CI-PUBLISH]" "no arm64 digest; amd64-only manifest for ${variant}"
+    fi
+    docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}"
+    if [ "${TAG_PUSH:-false}" = "true" ]; then
+        docker buildx imagetools create --tag "${IMAGE_BASE%:*}:latest" "${tags[@]}"
+    fi
+}
+
+# What: Cut the GitHub release for a version tag with built assets.
+# Why: Version-check gates it; assets are the built packages/tarballs.
+# From: Issue #479
+_ci_publish_github_release() {
+    local tag="${1:?tag required}" repo notes
+    repo="${GITHUB_REPOSITORY:-wiki-mod/distcc-ng}"
+    _ci_check_release_version "${tag}" || return 1
+    cd "${CI_REPO_ROOT}"
+    shopt -s nullglob
+    local assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+    notes="$(mktemp)"
+    printf 'distcc-ng %s\n' "${tag}" > "${notes}"
+    gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
+        --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
+}
+
 # What: Publish a release-family artifact set.
-# Why: Outward; nightly folded, real release cut is maintainer-driven.
+# Why: Outward; real release cut/manifest are maintainer-driven.
 # From: Issue #479
 ci_cmd_publish() {
-    local variant="${1:?variant required}"
-    case "${variant}" in
-        nightly) _ci_publish_nightly ;;
-        *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish variant=\"${variant}\""; return 2 ;;
+    local sub="${1:?publish target required}"
+    if [ "$#" -gt 0 ]; then shift; fi
+    case "${sub}" in
+        nightly)        _ci_publish_nightly ;;
+        manifest)       _ci_publish_manifest "$@" ;;
+        github-release) _ci_publish_github_release "$@" ;;
+        *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish target=\"${sub}\""; return 2 ;;
     esac
 }
 
