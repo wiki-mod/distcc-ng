@@ -28,7 +28,7 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest package container publish release gc variables"
+CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc variables"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -275,6 +275,67 @@ ci_cmd_plan() {
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
     bash test/e2e/run-e2e.sh
+}
+
+# =========================================================
+# METADATA CHECKS (PR context)
+# =========================================================
+
+# What: Validate a PR title against the rule-71 taxonomy.
+# Why: Folds check-pr-title-convention.sh; dependabot exempt.
+# From: Issue #479, rule 71
+_ci_check_pr_title() {
+    local title="${1:-${PR_TITLE:-}}"
+    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+        ci_log "[CI-META-TITLE]" "skipped: dependabot[bot] cannot conform"
+        return 0
+    fi
+    local mode="${PR_TITLE_LINT_MODE:-warn}" draft="${PR_DRAFT:-false}"
+    if [ -z "${title}" ]; then
+        ci_log "[CI-ERROR-META-TITLE-0001]" "no PR title provided"
+        return 1
+    fi
+    title="${title%$'\r'}"
+    title="$(printf '%s' "${title}" | sed 's/[[:space:]]*$//')"
+    local types="feat fix docs refactor perf test build ci chore style revert security"
+    local scopes="distcc distccd pump protocol seccomp zstd config packaging docker ci docs scripts tests governance support-upstream"
+    local errs=() t sc subj tsub
+    if [[ "${title}" =~ ^([a-zA-Z]+)(\(([a-z0-9-]+)\))?(!)?:[[:space:]](.+)$ ]]; then
+        t="${BASH_REMATCH[1]}"; sc="${BASH_REMATCH[3]}"; subj="${BASH_REMATCH[5]}"
+        tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        case " ${types} " in *" ${t} "*) ;; *) errs+=("type '${t}' not in: ${types}") ;; esac
+        if [ -n "${sc}" ]; then
+            case " ${scopes} " in *" ${sc} "*) ;; *) errs+=("scope '(${sc})' not a documented area") ;; esac
+        fi
+        [ -n "${tsub}" ] || errs+=("subject is empty")
+    else
+        errs+=("not Conventional-Commit 'type(scope)!: subject'")
+    fi
+    if [ "${#errs[@]}" -eq 0 ]; then
+        ci_log "[CI-META-TITLE]" "OK: ${title}"
+        return 0
+    fi
+    local msg="PR title check failed (rule 71): '${title}'" e
+    for e in "${errs[@]}"; do msg="${msg}; ${e}"; done
+    if [ "${draft}" = "true" ] || [ "${mode}" = "warn" ]; then
+        ci_log "[CI-WARN-META-TITLE]" "${msg} (non-blocking)"
+        return 0
+    fi
+    ci_log "[CI-ERROR-META-TITLE-0002]" "${msg}"
+    return 1
+}
+
+# What: Run the requested PR-metadata check(s).
+# Why: One phase replaces changelog-check.yml's PR-context jobs.
+# From: Issue #479
+ci_cmd_metadata() {
+    local sub="${1:-all}" rc=0
+    case "${sub}" in
+        title) _ci_check_pr_title || rc=1 ;;
+        all)   _ci_check_pr_title || rc=1 ;;
+        *)     ci_log "[CI-ERROR-META-0001]" "unknown metadata check=\"${sub}\""; return 2 ;;
+    esac
+    return "${rc}"
 }
 
 # =========================================================
@@ -606,6 +667,7 @@ ci_main() {
                 test) ci_cmd_test "$@" ;;
                 e2e) ci_cmd_e2e "$@" ;;
                 selftest) ci_cmd_selftest "$@" ;;
+                metadata) ci_cmd_metadata "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac

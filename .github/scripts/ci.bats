@@ -86,6 +86,31 @@ setup() {
 # PHASES
 # =========================================================
 
+@test "pr-title accepts a valid Conventional-Commit title" {
+    # What: A conforming title passes even in block mode.
+    # Why: Proves the green path of the rule-71 taxonomy.
+    # From: Issue #479
+    PR_TITLE_LINT_MODE=block run _ci_check_pr_title "feat(pump): add IPv6 support"
+    [ "${status}" -eq 0 ]
+}
+
+@test "pr-title fails closed on a bad title in block mode" {
+    # What: A non-conforming title fails when enforcement is on.
+    # Why: Proves the fail-closed path.
+    # From: Issue #479
+    PR_TITLE_LINT_MODE=block run _ci_check_pr_title "add some stuff"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
+}
+
+@test "pr-title exempts dependabot" {
+    # What: dependabot titles are skipped, not failed.
+    # Why: It cannot conform; the gate must see an explicit pass.
+    # From: Issue #479
+    PR_AUTHOR="dependabot[bot]" PR_TITLE_LINT_MODE=block run _ci_check_pr_title "Bump foo from 1 to 2"
+    [ "${status}" -eq 0 ]
+}
+
 @test "matrix includes default on both OSes and excludes opt-in sanitizer" {
     # What: The PR matrix is the SOT variants minus opt-in ones.
     # Why: sanitizer is dispatch/schedule-only, never a PR gate.
