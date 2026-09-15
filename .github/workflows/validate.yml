@@ -68,3 +68,12 @@ jobs:
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e
