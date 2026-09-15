@@ -95,6 +95,9 @@ impact_classes:
   workflows:
     paths: [".github/workflows/**", ".github/actions/**", ".github/yaml/**"]
     phases: ["lint"]
+  ci-engine:
+    paths: [".github/scripts/**"]
+    phases: ["selftest", "lint"]
   governance:
     paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
     phases: ["lint"]

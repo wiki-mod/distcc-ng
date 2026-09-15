@@ -28,7 +28,7 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint package container publish release gc variables"
+CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest package container publish release gc variables"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -220,7 +220,43 @@ ci_cmd_resolve() {
 # From: Issue #479
 ci_cmd_impact() {
     local base="${1:?base ref required}" head="${2:?head ref required}"
-    git -C "${CI_REPO_ROOT}" diff --name-only "${base}" "${head}" | _ci_phases_for_paths
+    cd "${CI_REPO_ROOT}"
+    git diff --name-only "${base}" "${head}" | _ci_phases_for_paths
+}
+
+# What: Emit the build matrix JSON (variant x os) from the SOT.
+# Why: One owner feeds strategy.matrix; opt-in variants excluded.
+# From: Issue #479
+ci_cmd_matrix() {
+    local v os first=1 out='{"include":['
+    for v in $(_ci_sot_children build_matrix.variants); do
+        [ "$(_ci_sot_scalar "build_matrix.variants.${v}.opt_in")" = "true" ] && continue
+        for os in $(_ci_sot_list "build_matrix.variants.${v}.os"); do
+            [ "${first}" -eq 1 ] || out="${out},"
+            first=0
+            out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\"}"
+        done
+    done
+    printf '%s]}\n' "${out}"
+}
+
+# What: Write phases/build/matrix outputs for the base..head diff.
+# Why: One command feeds the orchestrator; no logic in the YAML.
+# From: Issue #479
+ci_cmd_plan() {
+    local base="${1:?base ref required}" head="${2:?head ref required}"
+    local phases build=false matrix
+    cd "${CI_REPO_ROOT}"
+    phases="$(git diff --name-only "${base}" "${head}" \
+        | _ci_phases_for_paths | tr '\n' ' ')"
+    phases="${phases% }"
+    case " ${phases} " in *" build "*) build=true ;; esac
+    if [ "${build}" = "true" ]; then matrix="$(ci_cmd_matrix)"; else matrix='{"include":[]}'; fi
+    {
+        printf 'phases=%s\n' "${phases}"
+        printf 'build=%s\n' "${build}"
+        printf 'matrix=%s\n' "${matrix}"
+    } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
 # =========================================================
@@ -327,6 +363,13 @@ ci_guard_orchestrator_only() {
         done < <(_ci_scan_run_blocks "${f}")
     done
     return "${rc}"
+}
+
+# What: Run the ci.bats regression suite in parallel.
+# Why: The engine tests itself when .github/scripts changes.
+# From: Issue #479
+ci_cmd_selftest() {
+    bats --jobs "$(_ci_jobs)" "${CI_SCRIPT_DIR}/ci.bats"
 }
 
 # What: Run the governance guards over the CI-owned tree.
@@ -535,8 +578,11 @@ ci_main() {
             case "${command}" in
                 resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
+                matrix) ci_cmd_matrix "$@" ;;
+                plan) ci_cmd_plan "$@" ;;
                 build) ci_cmd_build "$@" ;;
                 test) ci_cmd_test "$@" ;;
+                selftest) ci_cmd_selftest "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
