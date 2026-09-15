@@ -493,6 +493,10 @@ _ci_parse_comfychair() {
 # Why: The unprivileged make check leaves it NOTRUN otherwise.
 # From: Issue #479
 _ci_privileged_single_test() {
+    if [ "$(uname -s)" != "Linux" ]; then
+        ci_log "[CI-TEST-SKIP]" "autogroup privilege case is Linux-only; skipping on $(uname -s)"
+        return 0
+    fi
     local log="${RUNNER_TEMP:-/tmp}/ci-autogroup.log"
     sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee "${log}"
     if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" "${log}"; then
