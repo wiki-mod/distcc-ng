@@ -1,11 +1,12 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: PR/push entry; runs the CI engine's own regression suite.
-# Why: Verifies ci.sh/ci.bats in real CI before wider rollout.
+# What: PR/push entry; self-test, impact plan, and build/test matrix.
+# Why: One thin orchestrator; all logic lives in ci.sh.
 # From: Issue #479
 name: Validate
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
@@ -23,3 +24,45 @@ jobs:
       - run: sudo apt-get update
       - run: sudo apt-get install -y bats parallel
       - run: bash .github/scripts/ci.sh selftest
+
+  plan:
+    name: Plan (content-based impact matrix)
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      phases: ${{ steps.plan.outputs.phases }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/scripts/ci.sh plan "$BASE" "$HEAD"
+
+  build_test:
+    name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/install-build-deps
+        with:
+          apt: ${{ matrix.apt }}
+      - if: runner.os == 'macOS'
+        env:
+          BREW: ${{ matrix.brew }}
+        run: brew install $BREW
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh test "$VARIANT"
