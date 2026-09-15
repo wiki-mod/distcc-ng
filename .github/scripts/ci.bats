@@ -92,8 +92,8 @@ setup() {
     # From: Issue #479
     run ci_cmd_matrix
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *'{"variant":"default","os":"ubuntu-latest"}'* ]]
-    [[ "${output}" == *'{"variant":"default","os":"macos-latest"}'* ]]
+    [[ "${output}" == *'"variant":"default","os":"ubuntu-latest"'* ]]
+    [[ "${output}" == *'"variant":"default","os":"macos-latest"'* ]]
     [[ "${output}" != *'sanitizer'* ]]
 }
 
