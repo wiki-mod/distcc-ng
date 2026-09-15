@@ -610,7 +610,9 @@ ci_cmd_build() {
     ./autogen.sh
     case "${variant}" in
         default)
-            ./configure CC="$(command -v ccache) cc" \
+            local cc="cc"
+            command -v ccache >/dev/null 2>&1 && cc="$(command -v ccache) cc"
+            ./configure CC="${cc}" \
                 PYTHON="$(command -v python3.13 || command -v python3)" ;;
         popt-fallback)
             ./configure PYTHON="$(command -v python3)" 2>&1 | tee "${log}"
