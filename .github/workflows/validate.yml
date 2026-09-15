@@ -59,7 +59,9 @@ jobs:
       - if: runner.os == 'macOS'
         env:
           BREW: ${{ matrix.brew }}
-        run: brew install $BREW
+        run: |
+          # shellcheck disable=SC2086
+          brew install $BREW
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"
