@@ -249,10 +249,10 @@ ci_cmd_matrix() {
 # Why: One command feeds the orchestrator; no logic in the YAML.
 # From: Issue #479
 ci_cmd_plan() {
-    local base="${1:?base ref required}" head="${2:?head ref required}"
+    local base="${1:-}" head="${2:-HEAD}"
     local phases build=false matrix
     cd "${CI_REPO_ROOT}"
-    if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
+    if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
         # Unknown base (e.g. first push / branch creation): run everything.
         phases="build test e2e coverage analyze scan lint selftest"
     else
