@@ -269,6 +269,14 @@ ci_cmd_plan() {
     } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
+# What: Run the distributed-compile 2-container e2e harness.
+# Why: Proves a compile crosses the network, not local fallback.
+# From: Issue #479
+ci_cmd_e2e() {
+    cd "${CI_REPO_ROOT}"
+    bash test/e2e/run-e2e.sh
+}
+
 # =========================================================
 # GOVERNANCE GUARDS
 # =========================================================
@@ -596,6 +604,7 @@ ci_main() {
                 plan) ci_cmd_plan "$@" ;;
                 build) ci_cmd_build "$@" ;;
                 test) ci_cmd_test "$@" ;;
+                e2e) ci_cmd_e2e "$@" ;;
                 selftest) ci_cmd_selftest "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
