@@ -47,27 +47,33 @@ build_matrix:
     # From: Issue #479
     default:
       os: ["ubuntu-latest", "macos-latest"]
+      apt: "clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
+      brew: "autoconf automake popt python@3.13 python-setuptools ccache zstd"
     # What: Bundled popt fallback, built with no system libpopt.
     # Why: Proves the vendored-popt path still compiles.
     # From: Issue #479
     popt-fallback:
       os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
     # What: Vendored popt/ version and compile check.
     # Why: Guards the vendored popt source against drift.
     # From: Issue #479
     popt-vendor:
       os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
     # What: gcov/lcov coverage build with job-summary artifact.
     # Why: One coverage owner; ubuntu-only toolchain.
     # From: Issue #479
     coverage:
       os: ["ubuntu-latest"]
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage"
     # What: ASan/UBSan sanitizer build, opt-in only.
     # Why: Not a required gate; runs on dispatch/schedule.
     # From: Issue #479
     sanitizer:
       os: ["ubuntu-latest"]
       opt_in: true
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev"
 
 # What: The shipped release artifacts.
 # Why: One inventory owner for packages and images.

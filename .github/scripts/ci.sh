@@ -228,13 +228,18 @@ ci_cmd_impact() {
 # Why: One owner feeds strategy.matrix; opt-in variants excluded.
 # From: Issue #479
 ci_cmd_matrix() {
-    local v os first=1 out='{"include":['
+    local v os first=1 out='{"include":[' apt brew
     for v in $(_ci_sot_children build_matrix.variants); do
         [ "$(_ci_sot_scalar "build_matrix.variants.${v}.opt_in")" = "true" ] && continue
+        apt="$(_ci_sot_scalar "build_matrix.variants.${v}.apt")"
+        brew="$(_ci_sot_scalar "build_matrix.variants.${v}.brew")"
         for os in $(_ci_sot_list "build_matrix.variants.${v}.os"); do
             [ "${first}" -eq 1 ] || out="${out},"
             first=0
-            out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\"}"
+            case "${os}" in
+                macos*) out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\",\"brew\":\"${brew}\"}" ;;
+                *)      out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\",\"apt\":\"${apt}\"}" ;;
+            esac
         done
     done
     printf '%s]}\n' "${out}"
