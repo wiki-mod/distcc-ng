@@ -260,6 +260,31 @@ ci_guard_full_sha() {
     return "${rc}"
 }
 
+# What: Fail if a SOT base-image pin is absent from its Dockerfile.
+# Why: Binds Dependabot's Dockerfile digest bumps to the SOT; no drift.
+# From: Issue #479
+ci_guard_dependabot_consistency() {
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 pair key df sot
+    for pair in \
+        "debian_verify:docker/verify/Dockerfile" \
+        "debian_release:docker/release/Dockerfile" \
+        "golang_actionlint:docker/verify/Dockerfile"; do
+        key="${pair%%:*}"; df="${pair#*:}"
+        [ -f "${root}/${df}" ] || continue
+        sot="$(_ci_sot_scalar "base_images.${key}")"
+        if [ -z "${sot}" ]; then
+            rc=1
+            ci_log "[CI-ERROR-GUARD-DEP-0001]" "SOT missing base_images.${key}"
+            continue
+        fi
+        if ! grep -Fq "${sot}" "${root}/${df}" 2>/dev/null; then
+            rc=1
+            ci_log "[CI-ERROR-GUARD-DEP-0002]" "base_images.${key}=${sot} not present in ${df}"
+        fi
+    done
+    return "${rc}"
+}
+
 # What: Run the governance guards over the CI-owned tree.
 # Why: One phase enforces the repo's CI hygiene invariants.
 # From: Issue #479
@@ -273,6 +298,7 @@ ci_cmd_lint() {
         [ -e "${CI_REPO_ROOT}/${d}" ] || continue
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
+    ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
     return "${rc}"
 }
 

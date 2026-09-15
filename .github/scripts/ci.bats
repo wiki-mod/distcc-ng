@@ -205,3 +205,30 @@ setup() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHA-0002"* ]]
 }
+
+@test "dependabot-consistency passes when SOT and Dockerfile agree" {
+    # What: A SOT pin present verbatim in its Dockerfile passes.
+    # Why: Proves the green path of the anti-drift binding.
+    # From: Issue #479
+    fx="$(mktemp -d)"; mkdir -p "${fx}/docker/verify" "${fx}/.github/yaml"
+    a="$(printf 'a%.0s' {1..64})"; g="$(printf 'b%.0s' {1..64})"
+    printf 'ARG DEBIAN_IMAGE=debian@sha256:%s\nFROM golang@sha256:%s AS actionlint-builder\nFROM ${DEBIAN_IMAGE}\n' "${a}" "${g}" > "${fx}/docker/verify/Dockerfile"
+    printf 'base_images:\n  debian_verify: "debian@sha256:%s"\n  golang_actionlint: "golang@sha256:%s"\n' "${a}" "${g}" > "${fx}/.github/yaml/build-manifest.yml"
+    CI_MANIFEST="${fx}/.github/yaml/build-manifest.yml" run ci_guard_dependabot_consistency "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "dependabot-consistency fails closed when the SOT drifts from the Dockerfile" {
+    # What: A SOT digest absent from its Dockerfile must fail.
+    # Why: Catches a Dependabot bump that did not reach the SOT.
+    # From: Issue #479
+    fx="$(mktemp -d)"; mkdir -p "${fx}/docker/verify" "${fx}/.github/yaml"
+    a="$(printf 'a%.0s' {1..64})"; c="$(printf 'c%.0s' {1..64})"; g="$(printf 'b%.0s' {1..64})"
+    printf 'ARG DEBIAN_IMAGE=debian@sha256:%s\nFROM golang@sha256:%s AS actionlint-builder\nFROM ${DEBIAN_IMAGE}\n' "${a}" "${g}" > "${fx}/docker/verify/Dockerfile"
+    printf 'base_images:\n  debian_verify: "debian@sha256:%s"\n  golang_actionlint: "golang@sha256:%s"\n' "${c}" "${g}" > "${fx}/.github/yaml/build-manifest.yml"
+    CI_MANIFEST="${fx}/.github/yaml/build-manifest.yml" run ci_guard_dependabot_consistency "${fx}"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-DEP-0002"* ]]
+}
