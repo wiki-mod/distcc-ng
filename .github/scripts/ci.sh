@@ -329,8 +329,8 @@ _ci_scan_run_blocks() {
         function flag(r){ print F":"NR": "r }
         { match($0,/^[ ]*/); ind=RLENGTH
           if (inrun && $0 !~ /^[ ]*$/ && ind <= runind) inrun=0
-          if ($0 ~ /^[ ]*run:[ ]*[|>]/) { inrun=1; runind=ind; next }
-          scan = ($0 ~ /^[ ]*run:[ ]/) || inrun
+          if ($0 ~ /^[ ]*(- )?run:[ ]*[|>]/) { inrun=1; runind=ind; next }
+          scan = ($0 ~ /^[ ]*(- )?run:[ ]/) || inrun
           if (!scan) next
           l=$0
           if (l ~ /(^|[;&(| ])(if|for|while|until|case)([ (]|$)/) flag("control-flow keyword")
