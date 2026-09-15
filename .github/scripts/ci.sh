@@ -278,6 +278,59 @@ ci_cmd_e2e() {
 }
 
 # =========================================================
+# PACKAGING / RELEASE
+# =========================================================
+
+# What: Build the source tarball and binary packages (make deb).
+# Why: Folds build-release-packages.sh; fails on a missing tool.
+# From: Issue #479
+ci_cmd_package() {
+    cd "${CI_REPO_ROOT}"
+    local py tool
+    py="$(command -v python3.13 || command -v python3)"
+    for tool in "${py}" pkg-config eu-strip rpmbuild alien fakeroot; do
+        command -v "${tool}" >/dev/null 2>&1 \
+            || { ci_log "[CI-ERROR-PACKAGE-0001]" "missing tool: ${tool}"; return 1; }
+    done
+    ./autogen.sh
+    ./configure PYTHON="${py}" --enable-Werror
+    make -j"${JOBS:-2}" deb
+}
+
+# What: Fail unless a release tag matches configure.ac and is new.
+# Why: Folds check-release-version.sh; fail-closed release guardrail.
+# From: Issue #479
+_ci_check_release_version() {
+    local tag="${1:?tag required}" version configured
+    version="${tag#v}"
+    cd "${CI_REPO_ROOT}"
+    [ -f configure.ac ] || { ci_log "[CI-ERROR-RELEASE-0001]" "no configure.ac"; return 1; }
+    configured="$(sed -n 's/^AC_INIT(\[distcc-ng\],\[\([^]]*\)\].*/\1/p' configure.ac)"
+    [ -n "${configured}" ] || { ci_log "[CI-ERROR-RELEASE-0002]" "cannot parse AC_INIT version"; return 1; }
+    if [ "${configured}" != "${version}" ]; then
+        ci_log "[CI-ERROR-RELEASE-0003]" "configure.ac=${configured} != tag ${tag}"
+        return 1
+    fi
+    if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+        ci_log "[CI-ERROR-RELEASE-0004]" "tag ${tag} already exists"
+        return 1
+    fi
+    ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac and is new"
+}
+
+# What: Release subcommands; version-check is safe, cut is outward.
+# Why: The version guardrail runs anywhere; publishing is maintainer-gated.
+# From: Issue #479
+ci_cmd_release() {
+    local sub="${1:-}"
+    if [ "$#" -gt 0 ]; then shift; fi
+    case "${sub}" in
+        version-check) _ci_check_release_version "$@" ;;
+        *) ci_log "[CI-ERROR-RELEASE-0005]" "unknown release subcommand=\"${sub}\" (version-check)"; return 2 ;;
+    esac
+}
+
+# =========================================================
 # METADATA CHECKS (PR context)
 # =========================================================
 
@@ -716,6 +769,8 @@ ci_main() {
                 e2e) ci_cmd_e2e "$@" ;;
                 selftest) ci_cmd_selftest "$@" ;;
                 metadata) ci_cmd_metadata "$@" ;;
+                package) ci_cmd_package "$@" ;;
+                release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
