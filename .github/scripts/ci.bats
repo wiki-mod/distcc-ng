@@ -86,6 +86,15 @@ setup() {
 # PHASES
 # =========================================================
 
+@test "build fails closed on an unknown variant before touching the tree" {
+    # What: An unknown build variant MUST reject, not autogen.
+    # Why: Fail-closed before running any build step.
+    # From: Issue #479
+    CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" build bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
+}
+
 @test "resolve prints the samba pin from the SOT" {
     # What: resolve proves end-to-end SOT reads.
     # Why: Every later phase depends on this read path.

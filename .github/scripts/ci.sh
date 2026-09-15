@@ -349,6 +349,73 @@ ci_cmd_lint() {
 }
 
 # =========================================================
+# BUILD / TEST
+# =========================================================
+
+# What: True if a build log holds a real gcc/clang warning.
+# Why: Warnings are errors (rule 31); anchored to diag shape.
+# From: Issue #479
+_ci_has_compiler_warning() {
+    grep -qE '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
+}
+
+# What: Compile vendored popt/*.c under this repo's warn flags.
+# Why: popt-vendor proves bundled popt builds Werror-clean.
+# From: Issue #479, Issue #63
+_ci_popt_strict_compile() {
+    local out="${RUNNER_TEMP:-/tmp}/popt-strict-check" f
+    mkdir -p "${out}"
+    local cflags=(-DHAVE_CONFIG_H -D_GNU_SOURCE \
+        "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" \
+        -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
+    for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
+        gcc "${cflags[@]}" -c "${f}" -o "${out}/$(basename "${f}").o"
+    done
+}
+
+# What: Build one configure variant from the SOT matrix.
+# Why: Folds c-build.yml per-variant configure/make, Werror-clean.
+# From: Issue #479
+ci_cmd_build() {
+    local variant="${1:?variant required}" log
+    cd "${CI_REPO_ROOT}"
+    log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
+    case "${variant}" in
+        default|popt-fallback|popt-vendor|coverage|sanitizer) ;;
+        *) ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""; return 2 ;;
+    esac
+    ./autogen.sh
+    case "${variant}" in
+        default)
+            ./configure CC="$(command -v ccache) cc" \
+                PYTHON="$(command -v python3.13 || command -v python3)" ;;
+        popt-fallback)
+            ./configure PYTHON="$(command -v python3)" 2>&1 | tee "${log}"
+            grep -q "system libpopt not found (or disabled); building bundled popt" "${log}" \
+                || { ci_log "[CI-ERROR-BUILD-POPT-0001]" "configure did not fall back to bundled popt (libpopt-dev leaking?)"; return 1; } ;;
+        popt-vendor)
+            ./configure --without-system-popt PYTHON="$(command -v python3)"
+            _ci_popt_strict_compile
+            return 0 ;;
+        coverage)
+            ./configure PYTHON="$(command -v python3)" \
+                CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp ;;
+        sanitizer)
+            ./configure PYTHON="$(command -v python3)" --without-seccomp \
+                CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" ;;
+        *)
+            ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""
+            return 2 ;;
+    esac
+    make 2>&1 | tee "${log}"
+    if _ci_has_compiler_warning "${log}"; then
+        ci_error "[CI-ERROR-BUILD-WARN-0001]" "variant=${variant} compiler warning (rule 31)" \
+            "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
+        return 1
+    fi
+}
+
+# =========================================================
 # DISPATCH
 # =========================================================
 
@@ -364,6 +431,7 @@ ci_main() {
             case "${command}" in
                 resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
+                build) ci_cmd_build "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
