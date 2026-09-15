@@ -111,6 +111,31 @@ setup() {
     [ "${status}" -eq 0 ]
 }
 
+@test "tracking passes with labels and a milestone" {
+    # What: A PR with a label and a milestone passes rule 3.
+    # Why: Proves the green tracking path.
+    # From: Issue #479
+    PR_LABELS="ci" PR_MILESTONE_TITLE="current_dev backlog" run _ci_check_pr_tracking
+    [ "${status}" -eq 0 ]
+}
+
+@test "tracking fails closed without a milestone" {
+    # What: A missing milestone fails rule 3.
+    # Why: Proves the fail-closed tracking path.
+    # From: Issue #479
+    PR_LABELS="ci" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
+}
+
+@test "changelog is skipped by the no-changelog-needed label" {
+    # What: The opt-out label satisfies the changelog gate.
+    # Why: Proves the documented opt-out path.
+    # From: Issue #479
+    PR_LABELS="ci no-changelog-needed" run _ci_check_changelog
+    [ "${status}" -eq 0 ]
+}
+
 @test "matrix includes default on both OSes and excludes opt-in sanitizer" {
     # What: The PR matrix is the SOT variants minus opt-in ones.
     # Why: sanitizer is dispatch/schedule-only, never a PR gate.
