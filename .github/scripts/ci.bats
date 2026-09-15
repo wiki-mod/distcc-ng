@@ -86,6 +86,17 @@ setup() {
 # PHASES
 # =========================================================
 
+@test "matrix includes default on both OSes and excludes opt-in sanitizer" {
+    # What: The PR matrix is the SOT variants minus opt-in ones.
+    # Why: sanitizer is dispatch/schedule-only, never a PR gate.
+    # From: Issue #479
+    run ci_cmd_matrix
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *'{"variant":"default","os":"ubuntu-latest"}'* ]]
+    [[ "${output}" == *'{"variant":"default","os":"macos-latest"}'* ]]
+    [[ "${output}" != *'sanitizer'* ]]
+}
+
 @test "build fails closed on an unknown variant before touching the tree" {
     # What: An unknown build variant MUST reject, not autogen.
     # Why: Fail-closed before running any build step.
