@@ -269,12 +269,15 @@ ci_cmd_plan() {
     } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
-# What: Run the distributed-compile 2-container e2e harness.
-# Why: Proves a compile crosses the network, not local fallback.
+# What: Run the distributed-compile e2e harness (distributed|full).
+# Why: distributed = 2-container; full = bidirectional compat matrix.
 # From: Issue #479
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
-    bash test/e2e/run-e2e.sh
+    case "${1:-distributed}" in
+        full) bash test/e2e-full/run-bidirectional-e2e.sh ;;
+        *)    bash test/e2e/run-e2e.sh ;;
+    esac
 }
 
 # =========================================================
@@ -316,6 +319,68 @@ _ci_check_release_version() {
         return 1
     fi
     ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac and is new"
+}
+
+# What: Build and push a release-family container image.
+# Why: Base image ARG comes from the SOT; folds nightly's docker build.
+# From: Issue #479
+ci_cmd_container() {
+    local variant="${1:?variant required}" ref debian
+    cd "${CI_REPO_ROOT}"
+    ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
+    debian="$(_ci_sot_scalar base_images.debian_release)"
+    case "${variant}" in
+        nightly)
+            docker build --file docker/release/Dockerfile \
+                --build-arg "DEBIAN_IMAGE=${debian}" \
+                --build-arg "VCS_REF=${ref}" \
+                --build-arg "VERSION=nightly" \
+                --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
+            docker push "${IMAGE_TAG}" ;;
+        *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
+    esac
+}
+
+# What: Force-move the floating nightly tag and (re)publish its prerelease.
+# Why: Folds nightly-publish.yml; refuses to move a real v* release tag.
+# From: Issue #479
+_ci_publish_nightly() {
+    cd "${CI_REPO_ROOT}"
+    local tag="${NIGHTLY_TAG:?NIGHTLY_TAG required}" ref repo notes
+    ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
+    repo="${GITHUB_REPOSITORY:-wiki-mod/distcc-ng}"
+    case "${tag}" in
+        v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
+    esac
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+    git tag -f "${tag}"
+    git push -f origin "refs/tags/${tag}"
+    shopt -s nullglob
+    local assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
+    notes="$(mktemp)"
+    {
+        printf 'Automated nightly build of current_dev (%s).\n\n' "${ref}"
+        printf 'Unstable nightly channel -- NOT a real release; overwritten each run.\n\n'
+        printf 'Container image: %s\n' "${IMAGE_TAG:-}"
+    } > "${notes}"
+    if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+        gh release delete "${tag}" --repo "${repo}" --yes
+    fi
+    gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
+        --title "distcc-ng nightly" --notes-file "${notes}" \
+        --prerelease --latest=false --target "${ref}"
+}
+
+# What: Publish a release-family artifact set.
+# Why: Outward; nightly folded, real release cut is maintainer-driven.
+# From: Issue #479
+ci_cmd_publish() {
+    local variant="${1:?variant required}"
+    case "${variant}" in
+        nightly) _ci_publish_nightly ;;
+        *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish variant=\"${variant}\""; return 2 ;;
+    esac
 }
 
 # What: Release subcommands; version-check is safe, cut is outward.
@@ -772,6 +837,8 @@ ci_main() {
                 selftest) ci_cmd_selftest "$@" ;;
                 metadata) ci_cmd_metadata "$@" ;;
                 package) ci_cmd_package "$@" ;;
+                container) ci_cmd_container "$@" ;;
+                publish) ci_cmd_publish "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;

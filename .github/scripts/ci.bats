@@ -137,6 +137,24 @@ setup() {
     [[ "${output}" == *"CI-ERROR-RELEASE-0003"* ]]
 }
 
+@test "container rejects an unimplemented variant" {
+    # What: An unknown container variant fails closed.
+    # Why: Consistent fail-closed dispatch for outward phases.
+    # From: Issue #479
+    run bash "${BATS_TEST_DIRNAME}/ci.sh" container bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
+}
+
+@test "publish nightly refuses to force-move a v* tag" {
+    # What: The nightly publisher must never touch a real release tag.
+    # Why: git push -f on a v* tag would clobber a real release.
+    # From: Issue #479
+    NIGHTLY_TAG="v3.6.6-NG" run _ci_publish_nightly
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0002"* ]]
+}
+
 @test "release rejects an unknown subcommand" {
     # What: An unknown release subcommand fails closed.
     # Why: Consistent fail-closed dispatch.
