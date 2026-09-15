@@ -285,6 +285,50 @@ ci_guard_dependabot_consistency() {
     return "${rc}"
 }
 
+# What: Print orchestrator-only violations in a workflow's run: blocks.
+# Why: AG-CI-023 forbids inline logic; run: calls one command only.
+# From: Issue #479
+_ci_scan_run_blocks() {
+    awk -v F="$1" '
+        function flag(r){ print F":"NR": "r }
+        { match($0,/^[ ]*/); ind=RLENGTH
+          if (inrun && $0 !~ /^[ ]*$/ && ind <= runind) inrun=0
+          if ($0 ~ /^[ ]*run:[ ]*[|>]/) { inrun=1; runind=ind; next }
+          scan = ($0 ~ /^[ ]*run:[ ]/) || inrun
+          if (!scan) next
+          l=$0
+          if (l ~ /(^|[;&(| ])(if|for|while|until|case)([ (]|$)/) flag("control-flow keyword")
+          if (index(l,"&&")) flag("&& chaining")
+          if (index(l,"||")) flag("|| chaining")
+          if (l ~ /;/) flag("; chaining")
+          if (l ~ /\|/ && !index(l,"||")) flag("pipe")
+          if (index(l,"$(")) flag("command substitution")
+          if (index(l,"`")) flag("backtick substitution")
+          if (index(l,"<<")) flag("heredoc")
+          if (l ~ /bash[ ]+-c/) flag("bash -c")
+          if (l ~ /python3?[ ]+-c/) flag("python -c")
+          if (l ~ /(^|[ ])(awk|sed|jq)([ ]|$)/) flag("awk/sed/jq")
+          if (l ~ /set[ ]+-[euo]/) flag("set -e/-u/-o")
+        }
+    ' "$1"
+}
+
+# What: Fail if any given workflow has inline logic in a run: block.
+# Why: New orchestrators must call one command; legacy is exempt (#267 clause).
+# From: Issue #479
+ci_guard_orchestrator_only() {
+    local rc=0 f hit
+    for f in "$@"; do
+        [ -f "${f}" ] || continue
+        while IFS= read -r hit; do
+            [ -n "${hit}" ] || continue
+            rc=1
+            ci_log "[CI-ERROR-GUARD-ORCH-0001]" "${hit}"
+        done < <(_ci_scan_run_blocks "${f}")
+    done
+    return "${rc}"
+}
+
 # What: Run the governance guards over the CI-owned tree.
 # Why: One phase enforces the repo's CI hygiene invariants.
 # From: Issue #479
@@ -299,6 +343,8 @@ ci_cmd_lint() {
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
     ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
+    # Every shipped workflow is an orchestrator; there is no legacy exemption.
+    ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     return "${rc}"
 }
 

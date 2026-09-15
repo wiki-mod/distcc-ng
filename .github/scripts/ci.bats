@@ -232,3 +232,26 @@ setup() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-DEP-0002"* ]]
 }
+
+@test "orchestrator guard passes on a single-command run: step" {
+    # What: `run: bash ci.sh <phase>` is a compliant orchestrator step.
+    # Why: Proves the green path; one command is allowed.
+    # From: Issue #479
+    fx="$(mktemp -d)"
+    printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
+    run ci_guard_orchestrator_only "${fx}/wf.yml"
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "orchestrator guard fails closed on inline logic in a run: block" {
+    # What: A run: block with shell control flow must be rejected.
+    # Why: AG-CI-023 bans inline logic; it belongs in ci.sh.
+    # From: Issue #479
+    fx="$(mktemp -d)"
+    printf 'jobs:\n  x:\n    steps:\n      - run: |\n          if [ -x foo ]; then bar; fi\n' > "${fx}/wf.yml"
+    run ci_guard_orchestrator_only "${fx}/wf.yml"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
+}
