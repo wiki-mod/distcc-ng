@@ -252,9 +252,14 @@ ci_cmd_plan() {
     local base="${1:?base ref required}" head="${2:?head ref required}"
     local phases build=false matrix
     cd "${CI_REPO_ROOT}"
-    phases="$(git diff --name-only "${base}" "${head}" \
-        | _ci_phases_for_paths | tr '\n' ' ')"
-    phases="${phases% }"
+    if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
+        # Unknown base (e.g. first push / branch creation): run everything.
+        phases="build test e2e coverage analyze scan lint selftest"
+    else
+        phases="$(git diff --name-only "${base}" "${head}" \
+            | _ci_phases_for_paths | tr '\n' ' ')"
+        phases="${phases% }"
+    fi
     case " ${phases} " in *" build "*) build=true ;; esac
     if [ "${build}" = "true" ]; then matrix="$(ci_cmd_matrix)"; else matrix='{"include":[]}'; fi
     {
