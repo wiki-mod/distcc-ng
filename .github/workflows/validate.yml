@@ -1,0 +1,25 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: PR/push entry; runs the CI engine's own regression suite.
+# Why: Verifies ci.sh/ci.bats in real CI before wider rollout.
+# From: Issue #479
+name: Validate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [current_dev, master]
+
+permissions:
+  contents: read
+
+jobs:
+  engine-selftest:
+    name: CI engine self-test (ci.bats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y bats parallel
+      - run: bash .github/scripts/ci.sh selftest
