@@ -325,15 +325,63 @@ _ci_check_pr_title() {
     return 1
 }
 
+# What: Enforce PR labels + milestone (rule 3); board best-effort.
+# Why: Folds check-pr-tracking-metadata.sh's always-enforced core.
+# From: Issue #479, rule 3
+_ci_check_pr_tracking() {
+    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+        ci_log "[CI-META-TRACKING]" "skipped: dependabot[bot]"
+        return 0
+    fi
+    local errs=() labels="${PR_LABELS:-}"
+    [ -n "${labels//[[:space:]]/}" ] || errs+=("no labels set")
+    [ -n "${PR_MILESTONE_TITLE:-}" ] || errs+=("no milestone set")
+    if [ "${#errs[@]}" -eq 0 ]; then
+        ci_log "[CI-META-TRACKING]" "OK: labels + milestone set (board best-effort)"
+        return 0
+    fi
+    local msg="PR tracking metadata failed (rule 3)" e
+    for e in "${errs[@]}"; do msg="${msg}; ${e}"; done
+    ci_log "[CI-ERROR-META-TRACKING-0001]" "${msg}"
+    return 1
+}
+
+# What: Require a CHANGELOG.md change or the no-changelog-needed label.
+# Why: Folds require_changelog; PR_LABELS/BASE/HEAD from the workflow.
+# From: Issue #479
+_ci_check_changelog() {
+    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+        ci_log "[CI-META-CHANGELOG]" "skipped: dependabot[bot]"
+        return 0
+    fi
+    case " ${PR_LABELS:-} " in
+        *" no-changelog-needed "*)
+            ci_log "[CI-META-CHANGELOG]" "skipped: no-changelog-needed label"
+            return 0 ;;
+    esac
+    cd "${CI_REPO_ROOT}"
+    if git diff --name-only "${BASE:-}" "${HEAD:-HEAD}" 2>/dev/null | grep -qx 'CHANGELOG.md'; then
+        ci_log "[CI-META-CHANGELOG]" "OK: CHANGELOG.md touched"
+        return 0
+    fi
+    ci_log "[CI-ERROR-META-CHANGELOG-0001]" "no CHANGELOG.md change and no no-changelog-needed label"
+    return 1
+}
+
 # What: Run the requested PR-metadata check(s).
 # Why: One phase replaces changelog-check.yml's PR-context jobs.
 # From: Issue #479
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0
     case "${sub}" in
-        title) _ci_check_pr_title || rc=1 ;;
-        all)   _ci_check_pr_title || rc=1 ;;
-        *)     ci_log "[CI-ERROR-META-0001]" "unknown metadata check=\"${sub}\""; return 2 ;;
+        title)     _ci_check_pr_title || rc=1 ;;
+        tracking)  _ci_check_pr_tracking || rc=1 ;;
+        changelog) _ci_check_changelog || rc=1 ;;
+        all)
+            _ci_check_pr_title || rc=1
+            _ci_check_pr_tracking || rc=1
+            _ci_check_changelog || rc=1 ;;
+        *) ci_log "[CI-ERROR-META-0001]" "unknown metadata check=\"${sub}\""; return 2 ;;
     esac
     return "${rc}"
 }
