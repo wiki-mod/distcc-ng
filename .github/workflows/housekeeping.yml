@@ -1,0 +1,50 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Registry housekeeping (GHCR garbage collection).
+# Why: Cutover-draft; workflow_dispatch-only, dry-run by default.
+#   The scheduled master-heartbeat and OpenSSF-recheck jobs fold in at
+#   cutover (scheduled diagnostics, not merge-blocking).
+# From: Issue #479
+name: Housekeeping
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Which GHCR package to prune"
+        type: choice
+        options:
+          - all
+          - distcc-ng
+          - distcc-ng-pump
+          - distcc-ng-nightly
+          - distcc-ng-buildtools
+          - distcc-ng-e2e
+        default: all
+      dry_run:
+        description: "List what would be deleted without deleting anything"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: housekeeping-gc
+  cancel-in-progress: false
+
+jobs:
+  gc:
+    name: GHCR package cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PACKAGE: ${{ inputs.package }}
+        run: bash .github/scripts/ci.sh gc "$PACKAGE"

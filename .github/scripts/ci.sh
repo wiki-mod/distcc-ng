@@ -395,6 +395,84 @@ ci_cmd_release() {
     esac
 }
 
+# What: Delete or (dry-run) list one stale GHCR package version.
+# Why: DRY_RUN=true only lists; real deletes need delete:packages PAT.
+# From: Issue #479
+_ci_gc_delete_version() {
+    local pkg="$1" id="$2" reason="$3"
+    if [ "${DRY_RUN:-true}" = "true" ]; then
+        echo "[dry-run] would delete ${pkg}#${id} (${reason})"
+    else
+        echo "deleting ${pkg}#${id} (${reason})"
+        gh api --method DELETE "orgs/${OWNER}/packages/container/${pkg}/versions/${id}" --silent
+    fi
+}
+
+# What: Prune stale GHCR versions (untagged + old manual-N builds).
+# Why: Verbatim fold of ghcr-cleanup.sh; never touches real/latest tags.
+# From: Issue #479
+ci_cmd_gc() {
+    : "${GH_TOKEN:?GH_TOKEN required (delete:packages scope when DRY_RUN=false)}"
+    : "${OWNER:?OWNER required, e.g. wiki-mod}"
+    local sel="${1:-all}" pkgs
+    if [ "${sel}" = "all" ]; then
+        pkgs="distcc-ng distcc-ng-pump distcc-ng-nightly distcc-ng-buildtools distcc-ng-e2e"
+    else
+        pkgs="${sel}"
+    fi
+    local DRY_RUN="${DRY_RUN:-true}" KEEP_MANUAL="${KEEP_MANUAL:-2}" KEEP_UNTAGGED="${KEEP_UNTAGGED:-3}"
+    local pkg versions_json all_tags tag raw kept created id digest manual_numbers keep_numbers num
+    for pkg in ${pkgs}; do
+        echo "::group::${pkg}"
+        versions_json="$(gh api --paginate "orgs/${OWNER}/packages/container/${pkg}/versions")"
+        declare -A protected=()
+        all_tags="$(jq -r '.[].metadata.container.tags[]?' <<< "${versions_json}" | sort -u)"
+        while IFS= read -r tag; do
+            [ -z "${tag}" ] && continue
+            raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${pkg}:${tag}" 2>/dev/null)" || continue
+            if grep -q 'manifest\.list\.v2\|image\.index\.v1' <<< "${raw}"; then
+                while IFS= read -r child; do
+                    protected["${child}"]=1
+                done < <(jq -r '.manifests[]?.digest' <<< "${raw}")
+            fi
+        done <<< "${all_tags}"
+        deletable_untagged="$(
+            jq -r '.[] | select((.metadata.container.tags | length) == 0) | [.created_at, .id, .name] | @tsv' <<< "${versions_json}" \
+              | while IFS=$'\t' read -r created id digest; do
+                    [ -z "${id}" ] && continue
+                    if [ -n "${protected[${digest}]+x}" ]; then
+                        echo "SKIP untagged ${digest} (${pkg}#${id}): still referenced by a live multi-arch manifest" >&2
+                        continue
+                    fi
+                    printf '%s\t%s\t%s\n' "${created}" "${id}" "${digest}"
+                done | sort -r
+        )"
+        kept=0
+        while IFS=$'\t' read -r created id digest; do
+            [ -z "${id}" ] && continue
+            kept=$((kept + 1))
+            if [ "${kept}" -le "${KEEP_UNTAGGED}" ]; then
+                echo "KEEP untagged ${digest} (${pkg}#${id}, created ${created})"
+                continue
+            fi
+            _ci_gc_delete_version "${pkg}" "${id}" "untagged ${digest}, created ${created}"
+        done <<< "${deletable_untagged}"
+        manual_numbers="$(jq -r '.[].metadata.container.tags[]?' <<< "${versions_json}" \
+            | sed -nE 's/^manual-([0-9]+)(-amd64|-arm64)?$/\1/p' | sort -un)"
+        keep_numbers="$(printf '%s\n' "${manual_numbers}" | sort -urn | head -n "${KEEP_MANUAL}")"
+        while IFS=$'\t' read -r id tag; do
+            [ -z "${id}" ] && continue
+            num="$(sed -E 's/^manual-([0-9]+).*/\1/' <<< "${tag}")"
+            if grep -qx "${num}" <<< "${keep_numbers}"; then
+                continue
+            fi
+            _ci_gc_delete_version "${pkg}" "${id}" "old manual tag ${tag}"
+        done < <(jq -r '.[] | .id as $id | .metadata.container.tags[]? | select(test("^manual-[0-9]+(-amd64|-arm64)?$")) | [$id, .] | @tsv' <<< "${versions_json}")
+        unset protected
+        echo "::endgroup::"
+    done
+}
+
 # =========================================================
 # METADATA CHECKS (PR context)
 # =========================================================
@@ -839,6 +917,7 @@ ci_main() {
                 package) ci_cmd_package "$@" ;;
                 container) ci_cmd_container "$@" ;;
                 publish) ci_cmd_publish "$@" ;;
+                gc) ci_cmd_gc "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
