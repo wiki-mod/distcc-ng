@@ -236,31 +236,17 @@ setup() {
     [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
-@test "resolve prints the samba pin from the SOT" {
-    # What: resolve proves end-to-end SOT reads.
-    # Why: Every later phase depends on this read path.
-    # From: Issue #479
-    run ci_cmd_resolve
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"samba=4.22.4"* ]]
-}
-
-@test "resolve prints the redis service pin from the SOT" {
-    # What: resolve exposes the ci.sh-managed Redis backend digest.
-    # Why: The version has exactly one owner; no floating tag anywhere.
-    # From: Issue #479
-    run ci_cmd_resolve
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"redis=redis@sha256:"* ]]
-}
-
-@test "resolve prints the ccache heartbeat tag from the SOT" {
-    # What: resolve exposes the pinned ccache tag the heartbeat builds.
-    # Why: heartbeat and control build must read one owner, never a literal.
+@test "resolve prints every external pin from the SOT" {
+    # What: One resolve call proves all end-to-end SOT reads at once.
+    # Why: Every later phase depends on these read paths; no floating literals.
     # From: Issue #479, Issue #81
     run ci_cmd_resolve
     [ "${status}" -eq 0 ]
+    [[ "${output}" == *"debian_verify=debian@sha256:"* ]]
+    [[ "${output}" == *"samba=4.22.4"* ]]
+    [[ "${output}" == *"actionlint=1.7.12"* ]]
     [[ "${output}" == *"ccache_heartbeat=v4.13.6"* ]]
+    [[ "${output}" == *"redis=redis@sha256:"* ]]
 }
 
 @test "report fails closed when GH_TOKEN is unset" {
