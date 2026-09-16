@@ -92,6 +92,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
           REPO: ${{ github.repository }}
           OUTCOME: ${{ needs.heartbeat.result == 'success' && 'success' || 'failure' }}
           SCOPE: weekly ccache heartbeat

@@ -607,8 +607,8 @@ _ci_failed_jobs() {
 # From: Issue #479, Issue #81, PR #476
 _ci_report_board() {
     local issue_url="$1"
-    if [ -z "${PROJECT_PAT:-}" ]; then
-        echo "::warning::PROJECT_PAT not configured; ${issue_url} was not added to the project board."
+    if [ -z "${PROJECT_PAT:-}" ] || [ -z "${PROJECT_OWNER:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
+        echo "::warning::project board PAT/vars not configured; ${issue_url} was not added to the board."
         return 0
     fi
     if [ "${DRY_RUN:-false}" = "true" ]; then
@@ -683,7 +683,7 @@ ci_cmd_report() {
     local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url
     local DRY_RUN="${DRY_RUN:-false}" FAILED_JOBS="${FAILED_JOBS:-}"
     local PROJECT_PAT="${PROJECT_PAT:-}"
-    local PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}" PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
+    local PROJECT_OWNER="${PROJECT_OWNER:-}" PROJECT_NUMBER="${PROJECT_NUMBER:-}"
     # What: Derive FAILED_JOBS from JOBS (name=result lines) when provided.
     # Why: Only failure/cancelled are real; a skip means an upstream dep failed.
     # From: Issue #479, PR #476
