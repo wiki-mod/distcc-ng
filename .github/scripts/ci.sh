@@ -213,6 +213,7 @@ ci_cmd_resolve() {
     printf 'golang_actionlint=%s\n' "$(_ci_sot_scalar base_images.golang_actionlint)"
     printf 'samba=%s\n'           "$(_ci_sot_scalar external_versions.samba.version)"
     printf 'actionlint=%s\n'      "$(_ci_sot_scalar external_versions.actionlint.version)"
+    printf 'ccache_heartbeat=%s\n' "$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
     printf 'redis=%s\n'           "$(_ci_sot_scalar external_services.redis)"
 }
 
@@ -275,8 +276,29 @@ ci_cmd_plan() {
 # From: Issue #479
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
+    local tag
     case "${1:-distributed}" in
         full) bash test/e2e-full/run-bidirectional-e2e.sh ;;
+        heartbeat)
+            # What: Weekly ccache distributed build; tag and floors from the SOT.
+            # Why: A heavier external-project run than the distcc-ng self-compile.
+            # From: Issue #479, Issue #81
+            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
+            export CCACHE_HEARTBEAT_TAG="${tag}"
+            E2E_CLIENT_SCRIPT="test/e2e/client-heartbeat.sh" \
+            E2E_MIN_REMOTE_JOBS="20" \
+            E2E_SCENARIO="ccache weekly heartbeat" \
+            E2E_MAX_ATTEMPTS="2" \
+                bash test/e2e/run-e2e.sh ;;
+        control)
+            # What: Diagnostic plain-compiler ccache build, no distcc involved.
+            # Why: Classifies a heartbeat failure as toolchain versus distribution.
+            # From: Issue #479, Issue #263
+            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
+            export CCACHE_HEARTBEAT_TAG="${tag}"
+            docker compose -f test/e2e/docker-compose.yml build distccd-server
+            docker run --rm -e CCACHE_HEARTBEAT_TAG \
+                distcc-ng-e2e:latest bash test/e2e/control-build.sh ;;
         *)    bash test/e2e/run-e2e.sh ;;
     esac
 }

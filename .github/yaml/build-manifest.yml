@@ -36,6 +36,11 @@ external_versions:
   # From: Issue #479
   actionlint:
     version: "1.7.12"
+  # What: ccache release built by the weekly distributed heartbeat.
+  # Why: One owner; heartbeat and control build must build the same revision.
+  # From: Issue #479, Issue #81
+  ccache_heartbeat:
+    version: "v4.13.6"
 
 # What: Pinned external service images used by CI steps.
 # Why: One owner; full-digest pin, never a floating tag in a workflow.

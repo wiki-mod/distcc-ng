@@ -254,6 +254,15 @@ setup() {
     [[ "${output}" == *"redis=redis@sha256:"* ]]
 }
 
+@test "resolve prints the ccache heartbeat tag from the SOT" {
+    # What: resolve exposes the pinned ccache tag the heartbeat builds.
+    # Why: heartbeat and control build must read one owner, never a literal.
+    # From: Issue #479, Issue #81
+    run ci_cmd_resolve
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"ccache_heartbeat=v4.13.6"* ]]
+}
+
 # =========================================================
 # IMPACT (DEFAULT=NOOP)
 # =========================================================
