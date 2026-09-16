@@ -1,17 +1,22 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Registry housekeeping (GHCR garbage collection).
-# Why: Cutover-draft; workflow_dispatch-only, dry-run by default.
-#   The scheduled master-heartbeat and OpenSSF-recheck jobs fold in at
-#   cutover (scheduled diagnostics, not merge-blocking).
+# What: Scheduled maintenance: GHCR cleanup and the weekly heartbeat.
+# Why: One owner for scheduled housekeeping; all logic lives in ci.sh.
 # From: Issue #479
 name: Housekeeping
 
 on:
   workflow_dispatch:
     inputs:
+      task:
+        description: "Which housekeeping task to run"
+        type: choice
+        options:
+          - gc
+          - heartbeat
+        default: gc
       package:
-        description: "Which GHCR package to prune"
+        description: "Which GHCR package to prune (gc task)"
         type: choice
         options:
           - all
@@ -25,17 +30,20 @@ on:
         description: "List what would be deleted without deleting anything"
         type: boolean
         default: true
+  # The weekly heartbeat schedule is armed at cutover; a schedule only ever
+  # fires from a workflow file already present on the default branch.
 
 permissions:
   contents: read
 
 concurrency:
-  group: housekeeping-gc
+  group: housekeeping-${{ github.event.inputs.task || 'heartbeat' }}
   cancel-in-progress: false
 
 jobs:
   gc:
     name: GHCR package cleanup
+    if: github.event_name == 'workflow_dispatch' && inputs.task == 'gc'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,3 +56,44 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           PACKAGE: ${{ inputs.package }}
         run: bash .github/scripts/ci.sh gc "$PACKAGE"
+
+  heartbeat:
+    name: Weekly distributed ccache heartbeat
+    if: github.event_name == 'schedule' || inputs.task == 'heartbeat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e heartbeat
+
+  control:
+    name: Control build (plain compiler, diagnostic only)
+    if: github.event_name == 'schedule' || inputs.task == 'heartbeat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # What: Runs the plain-compiler control build as a non-gating job.
+    # Why: continue-on-error keeps a control failure from failing the run.
+    # From: Issue #263, Issue #479
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh e2e control
+
+  report:
+    name: Report heartbeat status
+    needs: [heartbeat]
+    if: always() && needs.heartbeat.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ needs.heartbeat.result == 'success' && 'success' || 'failure' }}
+          SCOPE: weekly ccache heartbeat
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report
