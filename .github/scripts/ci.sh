@@ -25,6 +25,11 @@ CI_MANIFEST="${CI_MANIFEST:-${CI_SCRIPT_DIR}/../yaml/build-manifest.yml}"
 # From: Issue #479
 CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 
+# What: Local tag for the locally-built verify/buildtools image.
+# Why: One owner; a build-time tag, not a published version.
+# From: Issue #479
+CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
+
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
@@ -353,6 +358,16 @@ _ci_check_release_version() {
     ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac and is new"
 }
 
+# What: docker build of docker/verify with base+actionlint from the SOT.
+# Why: One owner for the verify build-args; callers add tags/extra args.
+# From: Issue #479
+_ci_build_verify_image() {
+    docker build --file docker/verify/Dockerfile \
+        --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
+        --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
+        "$@"
+}
+
 # What: Build and push a release-family container image.
 # Why: Base image ARG comes from the SOT; folds nightly's docker build.
 # From: Issue #479
@@ -385,16 +400,11 @@ ci_cmd_container() {
             digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
             printf '%s\n' "${digest}" > "digest-${variant}-${platform}.txt" ;;
         verify-image)
-            docker build --file docker/verify/Dockerfile \
-                --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
-                --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
-                --tag "${VERIFY_IMAGE:-distcc-ng-verify:ci}" . ;;
+            _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
         buildtools)
             local short; short="$(git rev-parse --short HEAD)"
             local base="ghcr.io/${OWNER:?OWNER required}/distcc-ng-buildtools"
-            docker build --file docker/verify/Dockerfile \
-                --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
-                --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
+            _ci_build_verify_image \
                 --build-arg "VCS_REF=${ref}" --build-arg "VERSION=${short}" \
                 --tag "${base}:latest" --tag "${base}:${short}" .
             docker push "${base}:latest"
@@ -744,7 +754,7 @@ _ci_docker_run_ptrace() {
 # From: Issue #285, Issue #286, PR #528
 ci_cmd_verify() {
     local sub="${1:?verify subcommand required}"
-    local image="${VERIFY_IMAGE:-distcc-ng-verify:ci}"
+    local image="${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}"
     cd "${CI_REPO_ROOT}"
     case "${sub}" in
         prepare-etc)
