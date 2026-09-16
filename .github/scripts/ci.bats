@@ -271,6 +271,15 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "failed-jobs filter keeps only failure and cancelled" {
+    # What: Only real failures are reported, not upstream-caused skips.
+    # Why: A skipped dependent would otherwise mask the true root cause.
+    # From: Issue #479, PR #476
+    run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "e2e x" ]
+}
+
 # =========================================================
 # IMPACT (DEFAULT=NOOP)
 # =========================================================

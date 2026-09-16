@@ -278,7 +278,13 @@ ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
     local tag
     case "${1:-distributed}" in
-        full) bash test/e2e-full/run-bidirectional-e2e.sh ;;
+        full)
+            # What: CI-bounded bidirectional native-compat E2E (samba subset).
+            # Why: WAF_TARGETS bounds the CI leg to fit the runner timeout.
+            # From: Issue #479, Issue #264
+            WORKLOAD="samba" \
+            WAF_TARGETS="replace,ldb,tdb,talloc,tevent" \
+                bash test/e2e-full/run-bidirectional-e2e.sh ;;
         heartbeat)
             # What: Weekly ccache distributed build; tag and floors from the SOT.
             # Why: A heavier external-project run than the distcc-ng self-compile.
@@ -568,6 +574,20 @@ ci_cmd_gc() {
 # SCHEDULED-CI STATUS REPORT
 # =========================================================
 
+# What: Echo space-separated names of failed/cancelled jobs from pairs.
+# Why: A skip means an upstream dep failed first, not this job.
+# From: Issue #479, PR #476
+_ci_failed_jobs() {
+    local pairs="$1" jname jresult out=""
+    while IFS='=' read -r jname jresult; do
+        [ -z "${jname}" ] && continue
+        case "${jresult}" in
+            failure|cancelled) out="${out} ${jname}" ;;
+        esac
+    done <<< "${pairs}"
+    printf '%s\n' "${out# }"
+}
+
 # What: Add the standing issue to the project board via the project PAT.
 # Why: GH_TOKEN cannot write Projects v2 and the project PAT cannot mutate
 #   issues, so the board touch needs its own token; warn, never fail, when unset.
@@ -651,6 +671,11 @@ ci_cmd_report() {
     local DRY_RUN="${DRY_RUN:-false}" FAILED_JOBS="${FAILED_JOBS:-}"
     local PROJECT_PAT="${PROJECT_PAT:-}"
     local PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}" PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
+    # What: Derive FAILED_JOBS from JOBS (name=result lines) when provided.
+    # Why: Only failure/cancelled are real; a skip means an upstream dep failed.
+    # From: Issue #479, PR #476
+    local JOBS="${JOBS:-}"
+    [ -n "${JOBS}" ] && FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
     existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
         --json number --jq 'sort_by(.number) | .[0].number // empty')"
     if [ "${OUTCOME}" = "success" ]; then
