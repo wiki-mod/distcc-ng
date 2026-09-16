@@ -478,7 +478,7 @@ _ci_gc_delete_version() {
 }
 
 # What: Prune stale GHCR versions (untagged + old manual-N builds).
-# Why: Verbatim fold of ghcr-cleanup.sh; never touches real/latest tags.
+# Why: Never touches real/latest tags; keeps a small untagged rollback set.
 # From: Issue #479
 ci_cmd_gc() {
     : "${GH_TOKEN:?GH_TOKEN required (delete:packages scope when DRY_RUN=false)}"
