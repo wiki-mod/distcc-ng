@@ -276,25 +276,28 @@ ci_cmd_plan() {
 # From: Issue #479
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
-    local tag
+    local tag hb_jobs hb_att waf
     case "${1:-distributed}" in
         full)
             # What: CI-bounded bidirectional native-compat E2E (samba subset).
             # Why: WAF_TARGETS bounds the CI leg to fit the runner timeout.
             # From: Issue #479, Issue #264
+            waf="$(_ci_sot_scalar e2e.full_waf_targets)"
             WORKLOAD="samba" \
-            WAF_TARGETS="replace,ldb,tdb,talloc,tevent" \
+            WAF_TARGETS="${waf}" \
                 bash test/e2e-full/run-bidirectional-e2e.sh ;;
         heartbeat)
             # What: Weekly ccache distributed build; tag and floors from the SOT.
             # Why: A heavier external-project run than the distcc-ng self-compile.
             # From: Issue #479, Issue #81
             tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
+            hb_jobs="$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)"
+            hb_att="$(_ci_sot_scalar e2e.heartbeat_max_attempts)"
             export CCACHE_HEARTBEAT_TAG="${tag}"
             E2E_CLIENT_SCRIPT="test/e2e/client-heartbeat.sh" \
-            E2E_MIN_REMOTE_JOBS="20" \
+            E2E_MIN_REMOTE_JOBS="${hb_jobs}" \
             E2E_SCENARIO="ccache weekly heartbeat" \
-            E2E_MAX_ATTEMPTS="2" \
+            E2E_MAX_ATTEMPTS="${hb_att}" \
                 bash test/e2e/run-e2e.sh ;;
         control)
             # What: Diagnostic plain-compiler ccache build, no distcc involved.
@@ -513,7 +516,7 @@ ci_cmd_gc() {
     : "${OWNER:?OWNER required, e.g. wiki-mod}"
     local sel="${1:-all}" pkgs
     if [ "${sel}" = "all" ]; then
-        pkgs="distcc-ng distcc-ng-pump distcc-ng-nightly distcc-ng-buildtools distcc-ng-e2e"
+        pkgs="$(_ci_sot_list release.ghcr_packages | tr '\n' ' ')"
     else
         pkgs="${sel}"
     fi

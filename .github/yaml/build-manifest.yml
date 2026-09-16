@@ -92,6 +92,18 @@ build_matrix:
 release:
   packages: ["rpm", "deb", "apk"]
   containers: ["release", "pump", "nightly"]
+  # What: Canonical GHCR package names this repo publishes and prunes.
+  # Why: One owner for gc and tag construction; no hardcoded list.
+  # From: Issue #479
+  ghcr_packages: ["distcc-ng", "distcc-ng-pump", "distcc-ng-nightly", "distcc-ng-buildtools", "distcc-ng-e2e"]
+
+# What: Tuning for the distributed-compile E2E harness runs.
+# Why: One owner; heartbeat floors and the full-run target subset.
+# From: Issue #479, Issue #264, Issue #81
+e2e:
+  heartbeat_min_remote_jobs: 20
+  heartbeat_max_attempts: 2
+  full_waf_targets: "replace,ldb,tdb,talloc,tevent"
 
 # What: Diff path-classes and the ci.sh phases they select.
 # Why: DEFAULT=NOOP; a docs-only diff selects no compile.

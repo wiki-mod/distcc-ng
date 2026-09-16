@@ -257,6 +257,18 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "gc package list and e2e tuning come from the SOT" {
+    # What: gc names and heartbeat/full tuning have one owner, not literals.
+    # Why: A hardcoded copy in ci.sh would drift from the manifest.
+    # From: Issue #479
+    run _ci_sot_list release.ghcr_packages
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"distcc-ng-buildtools"* ]]
+    [[ "${output}" == *"distcc-ng-e2e"* ]]
+    [ "$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)" = "20" ]
+    [ "$(_ci_sot_scalar e2e.full_waf_targets)" = "replace,ldb,tdb,talloc,tevent" ]
+}
+
 @test "failed-jobs filter keeps only failure and cancelled" {
     # What: Only real failures are reported, not upstream-caused skips.
     # Why: A skipped dependent would otherwise mask the true root cause.
