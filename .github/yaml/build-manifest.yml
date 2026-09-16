@@ -37,6 +37,12 @@ external_versions:
   actionlint:
     version: "1.7.12"
 
+# What: Pinned external service images used by CI steps.
+# Why: One owner; full-digest pin, never a floating tag in a workflow.
+# From: Issue #479
+external_services:
+  redis: "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+
 # What: The configure variants CI builds/tests, per OS.
 # Why: One matrix owner; workflows read, never hardcode.
 # From: Issue #479

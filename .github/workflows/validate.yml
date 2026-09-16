@@ -77,3 +77,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash .github/scripts/ci.sh e2e
+
+  verify_image:
+    name: Verify container build + self-test
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'verify')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/scripts/ci.sh container verify-image
+      - run: bash .github/scripts/ci.sh verify prepare-etc
+      - run: bash .github/scripts/ci.sh verify ptrace-selftest
+      - run: bash .github/scripts/ci.sh verify build-test
+      - run: bash .github/scripts/ci.sh verify ccache-redis
+      - run: bash .github/scripts/ci.sh verify samba-configure-dryrun
+
+  publish_buildtools:
+    name: Publish distcc-ng-buildtools:latest
+    needs: [plan, verify_image]
+    if: github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - env:
+          OWNER: ${{ github.repository_owner }}
+        run: bash .github/scripts/ci.sh container buildtools

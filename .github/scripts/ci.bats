@@ -245,6 +245,15 @@ setup() {
     [[ "${output}" == *"samba=4.22.4"* ]]
 }
 
+@test "resolve prints the redis service pin from the SOT" {
+    # What: resolve exposes the ci.sh-managed Redis backend digest.
+    # Why: The version has exactly one owner; no floating tag anywhere.
+    # From: Issue #479
+    run ci_cmd_resolve
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"redis=redis@sha256:"* ]]
+}
+
 # =========================================================
 # IMPACT (DEFAULT=NOOP)
 # =========================================================

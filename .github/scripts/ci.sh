@@ -28,7 +28,7 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc variables"
+CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc verify variables"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -213,6 +213,7 @@ ci_cmd_resolve() {
     printf 'golang_actionlint=%s\n' "$(_ci_sot_scalar base_images.golang_actionlint)"
     printf 'samba=%s\n'           "$(_ci_sot_scalar external_versions.samba.version)"
     printf 'actionlint=%s\n'      "$(_ci_sot_scalar external_versions.actionlint.version)"
+    printf 'redis=%s\n'           "$(_ci_sot_scalar external_services.redis)"
 }
 
 # What: Print the phases selected by the base..head diff.
@@ -352,6 +353,21 @@ ci_cmd_container() {
             local digest
             digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
             printf '%s\n' "${digest}" > "digest-${variant}-${platform}.txt" ;;
+        verify-image)
+            docker build --file docker/verify/Dockerfile \
+                --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
+                --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
+                --tag "${VERIFY_IMAGE:-distcc-ng-verify:ci}" . ;;
+        buildtools)
+            local short; short="$(git rev-parse --short HEAD)"
+            local base="ghcr.io/${OWNER:?OWNER required}/distcc-ng-buildtools"
+            docker build --file docker/verify/Dockerfile \
+                --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
+                --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
+                --build-arg "VCS_REF=${ref}" --build-arg "VERSION=${short}" \
+                --tag "${base}:latest" --tag "${base}:${short}" .
+            docker push "${base}:latest"
+            docker push "${base}:${short}" ;;
         *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
     esac
 }
@@ -524,6 +540,143 @@ ci_cmd_gc() {
         unset protected
         echo "::endgroup::"
     done
+}
+
+# =========================================================
+# VERIFY IMAGE (buildtools/verify container)
+# =========================================================
+
+# What: docker run with SYS_PTRACE + this repo's narrow seccomp profile.
+# Why: the two ptrace steps must share one flag set, not drift apart.
+# From: Issue #285, PR #528
+_ci_docker_run_ptrace() {
+    docker run --rm --cap-add=SYS_PTRACE \
+        --security-opt seccomp="${VERIFY_SECCOMP:-${CI_REPO_ROOT}/docker/verify/seccomp-verify.json}" \
+        "$@"
+}
+
+# What: run one verify-image check inside distcc-ng-verify:ci.
+# Why: keeps all verify logic in ci.sh; workflows only call phases.
+# From: Issue #285, Issue #286, PR #528
+ci_cmd_verify() {
+    local sub="${1:?verify subcommand required}"
+    local image="${VERIFY_IMAGE:-distcc-ng-verify:ci}"
+    cd "${CI_REPO_ROOT}"
+    case "${sub}" in
+        prepare-etc)
+            mkdir -p "${RUNNER_TEMP}/verify-etc"
+            docker run --rm "${image}" cat /etc/passwd > "${RUNNER_TEMP}/verify-etc/passwd"
+            docker run --rm "${image}" cat /etc/group > "${RUNNER_TEMP}/verify-etc/group"
+            printf 'ci-runner:x:%s:%s:GitHub Actions runner uid:/tmp/distcc-ng-verify-home:/bin/bash\n' \
+                "$(id -u)" "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/passwd"
+            printf 'ci-runner:x:%s:\n' "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/group" ;;
+        ptrace-selftest)
+            _ci_docker_run_ptrace -e ASLR_MUST_DISABLE=1 \
+                -v "${CI_REPO_ROOT}/docker/verify:/verify:ro" \
+                "${image}" bash /verify/selftest-ptrace.sh ;;
+        build-test)
+            # shellcheck disable=SC2016
+            _ci_docker_run_ptrace \
+                --user "$(id -u):$(id -g)" --init \
+                -v "${CI_REPO_ROOT}:/work/src:rw" \
+                -v "${RUNNER_TEMP}/verify-etc/passwd:/etc/passwd:ro" \
+                -v "${RUNNER_TEMP}/verify-etc/group:/etc/group:ro" \
+                -w /work/src -e HOME=/tmp/distcc-ng-verify-home \
+                "${image}" bash -c '
+                    set -euo pipefail
+                    mkdir -p "$HOME"; id
+                    ./autogen.sh
+                    ./configure PYTHON=python3
+                    make
+                    make check
+                ' ;;
+        ccache-redis)
+            _ci_verify_ccache_redis "${image}" ;;
+        samba-configure-dryrun)
+            # What: Samba version is read from the SOT, passed as an env var.
+            # Why: One owner for the tag; no hardcoded version in the check.
+            # From: Issue #479, Issue #285
+            local samba_ver
+            samba_ver="$(_ci_sot_scalar external_versions.samba.version)"
+            # shellcheck disable=SC2016
+            docker run --rm -e "SAMBA_VERSION=${samba_ver}" "${image}" bash -c '
+                set -euo pipefail
+                cd /tmp
+                wget -q "https://download.samba.org/pub/samba/stable/samba-${SAMBA_VERSION}.tar.gz"
+                wget -q "https://download.samba.org/pub/samba/stable/samba-${SAMBA_VERSION}.tar.asc"
+                wget -q https://download.samba.org/pub/samba/samba-pubkey.asc
+                gpg --batch --import samba-pubkey.asc
+                gunzip -k "samba-${SAMBA_VERSION}.tar.gz"
+                gpg --batch --verify "samba-${SAMBA_VERSION}.tar.asc" "samba-${SAMBA_VERSION}.tar" 2>&1 | tee gpg-verify.log
+                grep -q "Good signature from" gpg-verify.log \
+                  || { echo "::error::Samba tarball signature did not verify"; exit 1; }
+                tar xf "samba-${SAMBA_VERSION}.tar"
+                cd "samba-${SAMBA_VERSION}"
+                if ./configure 2>&1 | tee configure.log; then
+                    echo "Samba ./configure exited 0 -- image inventory sufficient."
+                else
+                    echo "::error::Samba ./configure exited non-zero -- inventory insufficient"; exit 1
+                fi
+            ' ;;
+        *) ci_log "[CI-ERROR-VERIFY-0001]" "unknown verify subcommand=\"${sub}\""; return 2 ;;
+    esac
+}
+
+# What: Block until the SOT-pinned Redis container answers PING, or fail.
+# Why: The ccache builds must not race a not-yet-ready Redis backend.
+# From: Issue #479, Issue #285
+_ci_wait_for_redis() {
+    local cid="$1" tries=0
+    while [ "${tries}" -lt 30 ]; do
+        [ "$(docker exec "${cid}" redis-cli ping 2>/dev/null)" = "PONG" ] && return 0
+        tries=$((tries + 1)); sleep 1
+    done
+    ci_log "[CI-ERROR-VERIFY-0004]" "Redis backend did not become ready within 30s"
+    return 1
+}
+
+# What: prove ccache's Redis remote backend serves a real cross-container hit.
+# Why: a single container's local dir would false-hit without Redis involved.
+# From: Issue #285, Issue #479, PR #528
+_ci_verify_ccache_redis() {
+    local image="$1" redis_image redis_cid rc=0
+    # What: Redis image digest comes from the SOT; ci.sh runs it itself.
+    # Why: One owner for the version; no floating tag in any workflow.
+    # From: Issue #479
+    redis_image="$(_ci_sot_scalar external_services.redis)"
+    redis_cid="$(docker run -d --network host "${redis_image}")"
+    _ci_verify_ccache_build() {
+        # shellcheck disable=SC2016
+        docker run --rm --network host --user "$(id -u):$(id -g)" \
+            -v "${CI_REPO_ROOT}:/work/src:rw" -w /work/src \
+            -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
+            -e HOME=/tmp/ccache-home \
+            "${image}" bash -c '
+                set -euo pipefail
+                mkdir -p "$HOME"; cd /work/src
+                ccache --zero-stats >/dev/null
+                touch src/dopt.c
+                make CC="ccache gcc" src/dopt.o
+                ccache --show-stats
+            ' | tee "$2"
+    }
+    if ! _ci_wait_for_redis "${redis_cid}"; then rc=1; fi
+    if [ "${rc}" -eq 0 ]; then
+        _ci_verify_ccache_build "first (MISS, pushes to Redis)" "${RUNNER_TEMP}/first-run-stats.log" || rc=$?
+    fi
+    if [ "${rc}" -eq 0 ]; then
+        _ci_verify_ccache_build "second (fresh, a Hit can only come from Redis)" "${RUNNER_TEMP}/second-run-stats.log" || rc=$?
+    fi
+    docker rm -f "${redis_cid}" >/dev/null 2>&1 || true
+    if [ "${rc}" -ne 0 ]; then
+        ci_log "[CI-ERROR-VERIFY-0003]" "ccache/Redis verify step failed (rc=${rc})"
+        return "${rc}"
+    fi
+    if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
+        ci_log "[CI-ERROR-VERIFY-0002]" "no ccache hit on the fresh container -- Redis backend did not serve the object"
+        return 1
+    fi
+    echo "Real cache hit confirmed against the SOT-pinned, ci.sh-managed Redis backend."
 }
 
 # =========================================================
@@ -971,6 +1124,7 @@ ci_main() {
                 container) ci_cmd_container "$@" ;;
                 publish) ci_cmd_publish "$@" ;;
                 gc) ci_cmd_gc "$@" ;;
+                verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
