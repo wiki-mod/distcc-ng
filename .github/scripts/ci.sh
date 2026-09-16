@@ -640,11 +640,11 @@ _ci_wait_for_redis() {
 # From: Issue #285, Issue #479, PR #528
 _ci_verify_ccache_redis() {
     local image="$1" redis_image redis_cid rc=0
-    # What: Redis image digest comes from the SOT; ci.sh runs it itself.
-    # Why: One owner for the version; no floating tag in any workflow.
-    # From: Issue #479
+    # What: Redis digest comes from the SOT; ci.sh starts it with a 2g cap.
+    # Why: The ccache-remote-storage workload needs the maintainer's ~2GB budget.
+    # From: Issue #479, Issue #285
     redis_image="$(_ci_sot_scalar external_services.redis)"
-    redis_cid="$(docker run -d --network host "${redis_image}")"
+    redis_cid="$(docker run -d --memory=2g --network host "${redis_image}")"
     _ci_verify_ccache_build() {
         # shellcheck disable=SC2016
         docker run --rm --network host --user "$(id -u):$(id -g)" \
