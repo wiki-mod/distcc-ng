@@ -28,7 +28,7 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc verify variables"
+CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -562,6 +562,140 @@ ci_cmd_gc() {
         unset protected
         echo "::endgroup::"
     done
+}
+
+# =========================================================
+# SCHEDULED-CI STATUS REPORT
+# =========================================================
+
+# What: Add the standing issue to the project board via the project PAT.
+# Why: GH_TOKEN cannot write Projects v2 and the project PAT cannot mutate
+#   issues, so the board touch needs its own token; warn, never fail, when unset.
+# From: Issue #479, Issue #81, PR #476
+_ci_report_board() {
+    local issue_url="$1"
+    if [ -z "${PROJECT_PAT:-}" ]; then
+        echo "::warning::PROJECT_PAT not configured; ${issue_url} was not added to the project board."
+        return 0
+    fi
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        echo "DRY_RUN would run: gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url ${issue_url}"
+        return 0
+    fi
+    GH_TOKEN="${PROJECT_PAT}" gh project item-add "${PROJECT_NUMBER}" \
+        --owner "${PROJECT_OWNER}" --url "${issue_url}" >/dev/null
+}
+
+# What: Echo a mutating command instead of running it when DRY_RUN=true.
+# Why: Lets the file/update/close branch logic run without touching real issues.
+# From: Issue #479, Issue #81
+_ci_report_run() {
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        printf 'DRY_RUN would run:'; printf ' %q' "$@"; printf '\n'
+    else
+        "$@"
+    fi
+}
+
+# What: Assign the Bug issue type to issue $1 unless it already has one.
+# Why: Retrying on every failure self-heals an issue a one-shot attempt missed.
+# From: Issue #479, PR #476
+_ci_report_ensure_bug_type() {
+    local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
+    owner="${REPO%%/*}"
+    name="${REPO##*/}"
+    # shellcheck disable=SC2016
+    issue_query_result="$(gh api graphql -f query='
+      query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          issue(number: $number) { id issueType { name } }
+        }
+      }' -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
+      --jq '.data.repository.issue | .id + " " + (.issueType.name // "-")')"
+    read -r issue_node_id current_type <<<"${issue_query_result}"
+    [ "${current_type}" != "-" ] && return 0
+    # shellcheck disable=SC2016
+    bug_type_id="$(gh api graphql -f query='
+      query($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          issueTypes(first: 20) { nodes { id name } }
+        }
+      }' -F owner="${owner}" -F name="${name}" \
+      --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')"
+    if [ -z "${bug_type_id}" ]; then
+        ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${REPO}"
+        return 1
+    fi
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        echo "DRY_RUN would run: assign Bug type to issue #${issue_number}"
+        return 0
+    fi
+    # shellcheck disable=SC2016
+    gh api graphql -f query='
+      mutation($issueId: ID!, $typeId: ID!) {
+        updateIssue(input: {id: $issueId, issueTypeId: $typeId}) { issue { id } }
+      }' -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
+}
+
+# What: File, update, or close the one standing nightly-broken tracking issue.
+# Why: Every scheduled workflow shares this issue, so a success anywhere closes
+#   what another filed; the next real failure re-files it.
+# From: Issue #479, Issue #81, PR #89, PR #476
+ci_cmd_report() {
+    : "${GH_TOKEN:?GH_TOKEN required}"
+    : "${REPO:?REPO required, e.g. wiki-mod/distcc-ng}"
+    : "${OUTCOME:?OUTCOME required (success|failure)}"
+    : "${SCOPE:?SCOPE required, e.g. 'weekly ccache heartbeat (master)'}"
+    : "${RUN_URL:?RUN_URL required}"
+    local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url
+    local DRY_RUN="${DRY_RUN:-false}" FAILED_JOBS="${FAILED_JOBS:-}"
+    local PROJECT_PAT="${PROJECT_PAT:-}"
+    local PROJECT_OWNER="${PROJECT_OWNER:-wiki-mod}" PROJECT_NUMBER="${PROJECT_NUMBER:-11}"
+    existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
+        --json number --jq 'sort_by(.number) | .[0].number // empty')"
+    if [ "${OUTCOME}" = "success" ]; then
+        if [ -n "${existing}" ]; then
+            _ci_report_ensure_bug_type "${existing}"
+            _ci_report_board "https://github.com/${REPO}/issues/${existing}"
+            echo "success: closing standing ${LABEL} issue #${existing}"
+            _ci_report_run gh issue comment "${existing}" --repo "${REPO}" \
+                --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
+            _ci_report_run gh issue close "${existing}" --repo "${REPO}"
+        else
+            echo "success and no open ${LABEL} issue: nothing to do"
+        fi
+        return 0
+    fi
+    _ci_report_run gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
+        --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
+    detail="${SCOPE} failed in ${RUN_URL}"
+    [ -n "${FAILED_JOBS}" ] && detail="${detail} (failed: ${FAILED_JOBS})"
+    if [ -n "${existing}" ]; then
+        echo "failure: commenting on standing ${LABEL} issue #${existing}"
+        _ci_report_run gh issue comment "${existing}" --repo "${REPO}" \
+            --body "Still failing: ${detail}."
+        _ci_report_ensure_bug_type "${existing}"
+        _ci_report_board "https://github.com/${REPO}/issues/${existing}"
+    else
+        echo "failure: opening a new standing ${LABEL} issue"
+        new_issue_url="$(_ci_report_run gh issue create --repo "${REPO}" --label "${LABEL}" \
+            --title "[${LABEL}] a scheduled CI run is failing" \
+            --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
+
+${detail}.")"
+        if [ "${DRY_RUN}" = "true" ]; then
+            echo "${new_issue_url}"
+            echo "DRY_RUN would run: assign Bug type to the newly created issue"
+            if [ -z "${PROJECT_PAT}" ]; then
+                echo "::warning::PROJECT_PAT not configured; the newly created issue would not be added to the project board."
+            else
+                echo "DRY_RUN would run: gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url <new issue URL>"
+            fi
+        else
+            _ci_report_ensure_bug_type "${new_issue_url##*/}"
+            _ci_report_board "${new_issue_url}"
+        fi
+    fi
 }
 
 # =========================================================
@@ -1146,6 +1280,7 @@ ci_main() {
                 container) ci_cmd_container "$@" ;;
                 publish) ci_cmd_publish "$@" ;;
                 gc) ci_cmd_gc "$@" ;;
+                report) ci_cmd_report "$@" ;;
                 verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;

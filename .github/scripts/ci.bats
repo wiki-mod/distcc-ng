@@ -263,6 +263,14 @@ setup() {
     [[ "${output}" == *"ccache_heartbeat=v4.13.6"* ]]
 }
 
+@test "report fails closed when GH_TOKEN is unset" {
+    # What: report must fail rather than silently skip without credentials.
+    # Why: A silent no-op would hide broken scheduled-status wiring.
+    # From: Issue #479, Issue #81
+    GH_TOKEN="" run ci_cmd_report
+    [ "${status}" -ne 0 ]
+}
+
 # =========================================================
 # IMPACT (DEFAULT=NOOP)
 # =========================================================
