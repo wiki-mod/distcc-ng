@@ -97,3 +97,17 @@ jobs:
           mode: 'code-change'
           sanitizer: ${{ matrix.sanitizer }}
           output-sarif: true
+
+  openssf:
+    name: OpenSSF Baseline recheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: "312"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh scan openssf

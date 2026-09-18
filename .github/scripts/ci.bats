@@ -257,6 +257,18 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "ossf grep helper reports Met, NotMet, and case-insensitive" {
+    # What: The shared baseline grep helper drives many openssf checks.
+    # Why: A wrong Met/NotMet would mis-report a security criterion.
+    # From: Issue #479, Issue #312
+    local fx; fx="$(mktemp)"
+    printf 'has Security Advisory here\n' > "${fx}"
+    [ "$(_ci_ossf_grep "${fx}" 'Security Advisor')" = "Met" ]
+    [ "$(_ci_ossf_grep "${fx}" 'nope-xyz')" = "NotMet" ]
+    [ "$(_ci_ossf_grep "${fx}" 'SECURITY ADVISOR' -i)" = "Met" ]
+    rm -f "${fx}"
+}
+
 @test "gc package list and e2e tuning come from the SOT" {
     # What: gc names and heartbeat/full tuning have one owner, not literals.
     # Why: A hardcoded copy in ci.sh would drift from the manifest.
