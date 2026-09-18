@@ -39,7 +39,10 @@ jobs:
 
   bidirectional_e2e:
     name: Full bidirectional native-compat E2E
+    # The heavy full build runs only on manual dispatch, never the schedule.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash .github/scripts/ci.sh e2e full
@@ -64,3 +67,28 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish nightly
+
+  report:
+    name: Report nightly status
+    needs: [build_test, e2e, publish]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ (needs.build_test.result == 'success' && needs.e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          SCOPE: nightly build+publish (current_dev)
+          JOBS: |
+            build_test=${{ needs.build_test.result }}
+            e2e=${{ needs.e2e.result }}
+            publish=${{ needs.publish.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report
