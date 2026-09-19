@@ -257,6 +257,19 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "variables secret-present writes available true/false" {
+    # What: The secret-presence gate that add-to-project's if: depends on.
+    # Why: GitHub forbids the secrets context in if:, so ci.sh owns the gate.
+    # From: Issue #479, PR #329
+    local out; out="$(mktemp)"
+    GITHUB_OUTPUT="${out}" SECRET_VALUE="x" _ci_variables_secret_present
+    GITHUB_OUTPUT="${out}" SECRET_VALUE="" _ci_variables_secret_present
+    run cat "${out}"
+    [ "${lines[0]}" = "available=true" ]
+    [ "${lines[1]}" = "available=false" ]
+    rm -f "${out}"
+}
+
 @test "ossf grep helper reports Met, NotMet, and case-insensitive" {
     # What: The shared baseline grep helper drives many openssf checks.
     # Why: A wrong Met/NotMet would mis-report a security criterion.

@@ -29,13 +29,8 @@ jobs:
       - name: Check for automation PAT
         id: check-pat
         env:
-          PROJECT_AUTOMATION_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-        run: |
-          if [ -n "$PROJECT_AUTOMATION_PAT" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
+          SECRET_VALUE: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh variables secret-present
 
       - name: Add issue/PR to project board
         if: steps.check-pat.outputs.available == 'true'

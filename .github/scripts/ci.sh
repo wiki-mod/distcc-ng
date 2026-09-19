@@ -737,6 +737,33 @@ ${detail}.")"
 }
 
 # =========================================================
+# VARIABLES (workflow output helpers)
+# =========================================================
+
+# What: Write available=true/false to GITHUB_OUTPUT from SECRET_VALUE.
+# Why: GitHub forbids the secrets context in an if:, so the gate lives here.
+# From: Issue #479, PR #329
+_ci_variables_secret_present() {
+    : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
+    if [ -n "${SECRET_VALUE:-}" ]; then
+        echo "available=true" >> "${GITHUB_OUTPUT}"
+    else
+        echo "available=false" >> "${GITHUB_OUTPUT}"
+    fi
+}
+
+# What: Workflow variable/output helpers dispatch.
+# Why: One owner for the small gate logic GitHub can't express in YAML.
+# From: Issue #479
+ci_cmd_variables() {
+    local sub="${1:?variables subcommand required (secret-present)}"
+    case "${sub}" in
+        secret-present) _ci_variables_secret_present ;;
+        *) ci_log "[CI-ERROR-VARIABLES-0001]" "unknown variables subcommand=\"${sub}\""; return 2 ;;
+    esac
+}
+
+# =========================================================
 # SECURITY SCAN (OpenSSF Baseline recheck)
 # =========================================================
 
@@ -1580,6 +1607,7 @@ ci_main() {
                 gc) ci_cmd_gc "$@" ;;
                 report) ci_cmd_report "$@" ;;
                 scan) ci_cmd_scan "$@" ;;
+                variables) ci_cmd_variables "$@" ;;
                 verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
