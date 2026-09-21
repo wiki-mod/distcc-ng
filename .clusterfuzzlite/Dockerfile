@@ -34,7 +34,7 @@
 # to "refreshed whenever Dependabot's weekly docker-ecosystem scan
 # (.github/dependabot.yml, now covering this directory too) bumps the
 # pinned digest" -- accepted tradeoff, not an oversight.
-FROM gcr.io/oss-fuzz-base/base-builder@sha256:8b4a73d83374b298a0a771eeec9a1d44ceff3416a678b7d7946303389d022aca
+FROM gcr.io/oss-fuzz-base/base-builder@sha256:47bcf5c42c4863af02843d16315014011571e31ece4ac9110a77a2e43949c5d2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       automake \
