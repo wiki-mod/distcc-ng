@@ -33,7 +33,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables"
+CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables action"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -140,6 +140,24 @@ _ci_sot_list() {
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
         | grep -v '^[[:space:]]*$' || true
+}
+
+# What: Read a non-empty value from any dotted SOT path.
+# Why: Generic primitive; all SHA lookups funnel through here.
+# From: Issue #479
+_ci_sot_sha() {
+    local path="${1:-}" val
+    if [ -z "${path}" ]; then
+        ci_log "[CI-ERROR-SOT-0001]" "reason=\"SOT path required\""
+        return 2
+    fi
+    val="$(_ci_sot_scalar "${path}")"
+    if [ -z "${val}" ]; then
+        ci_log "[CI-ERROR-SOT-0002]" \
+            "path=\"${path}\" reason=\"not found in SOT\""
+        return 2
+    fi
+    printf '%s' "${val}"
 }
 
 # =========================================================
@@ -1398,7 +1416,169 @@ ci_cmd_lint() {
     ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
     # Every shipped workflow is an orchestrator; there is no legacy exemption.
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
+    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     return "${rc}"
+}
+
+# =========================================================
+# ACTION RUNNER (ci.sh action)
+# =========================================================
+
+# What: Map an action ref to its action_pins key.
+# Why: Keys are owner/repo; subpath refs share one pin.
+# From: Issue #479
+_ci_action_sot_key() {
+    local ref="$1" p1 p2
+    p1="${ref%%/*}"
+    p2="${ref#*/}"; p2="${p2%%/*}"
+    printf '%s/%s' "${p1}" "${p2}"
+}
+
+# What: Print SOT SHA for an action ref or explicit path.
+# Why: Defaults to action_pins; caller may supply sot-path.
+# From: Issue #479
+_ci_action_sha() {
+    local ref="${1:-}" sot_path="${2:-}" key
+    if [ -z "${ref}" ]; then
+        ci_log "[CI-ERROR-ACTION-0001]" "reason=\"action ref required\""
+        return 2
+    fi
+    if [ -z "${sot_path}" ]; then
+        key="$(_ci_action_sot_key "${ref}")"
+        sot_path="action_pins.${key}"
+    fi
+    _ci_sot_sha "${sot_path}"
+}
+
+# What: Download a GitHub action tarball and extract it.
+# Why: Fetch runs once; run phase reuses the extracted tree.
+# From: Issue #479
+_ci_action_fetch() {
+    local owner="$1" repo="$2" sha="$3" dest="$4"
+    local url="https://api.github.com/repos/${owner}/${repo}/tarball/${sha}"
+    mkdir -p "${dest}"
+    if ! curl -sL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            --retry 3 --max-time 120 \
+            "${url}" \
+        | tar -xz --strip-components=1 -C "${dest}" 2>/dev/null; then
+        ci_log "[CI-ERROR-ACTION-0003]" \
+            "owner=${owner} repo=${repo} sha=${sha} reason=\"fetch/extract failed\""
+        return 2
+    fi
+}
+
+# What: Execute a JavaScript action from a local tree.
+# Why: node dist/index.js + INPUT_* is the GHA JS contract.
+# From: Issue #479
+_ci_action_run_js() {
+    local action_dir="$1" action_yml main
+    action_yml="${action_dir}/action.yml"
+    [ -f "${action_yml}" ] || action_yml="${action_dir}/action.yaml"
+    if [ ! -f "${action_yml}" ]; then
+        ci_log "[CI-ERROR-ACTION-0004]" \
+            "dir=\"${action_dir}\" reason=\"action.yml not found\""
+        return 2
+    fi
+    main=$(awk '
+        /^runs:/ { in_runs=1; next }
+        /^[^ ]/ { in_runs=0 }
+        in_runs && /^[[:space:]]+main:/ {
+            gsub(/^[[:space:]]*main:[[:space:]]*/,"")
+            gsub(/"/,"")
+            print; exit
+        }
+    ' "${action_yml}")
+    if [ -z "${main}" ]; then
+        ci_log "[CI-ERROR-ACTION-0005]" \
+            "action_yml=\"${action_yml}\" reason=\"runs.main not found\""
+        return 2
+    fi
+    GITHUB_ACTION_PATH="${action_dir}" node "${action_dir}/${main}"
+}
+
+# What: Run an external action via its SOT-pinned SHA.
+# Why: Callers never pin; ci.sh reads from SOT and runs.
+# From: Issue #479
+_ci_action_run() {
+    local ref="${1:-}" sot_path="${2:-}" owner repo subpath sha tmp_dir action_dir rc=0
+    if [ -z "${ref}" ]; then
+        ci_log "[CI-ERROR-ACTION-0006]" "reason=\"action run requires a ref\""
+        return 2
+    fi
+    owner="${ref%%/*}"
+    repo="${ref#*/}"; repo="${repo%%/*}"
+    subpath="${ref#*/}"; subpath="${subpath#*/}"
+    [ "${subpath}" = "${repo}" ] && subpath=""
+    sha="$(_ci_action_sha "${ref}" "${sot_path}")" || return 2
+
+    tmp_dir="$(mktemp -d)"
+    _ci_action_fetch "${owner}" "${repo}" "${sha}" "${tmp_dir}" || {
+        rm -rf "${tmp_dir}"; return 2
+    }
+    action_dir="${tmp_dir}"
+    [ -z "${subpath}" ] || action_dir="${tmp_dir}/${subpath}"
+
+    _ci_action_run_js "${action_dir}" || rc=$?
+    rm -rf "${tmp_dir}"
+    return "${rc}"
+}
+
+# What: Actions that may pin inline (structural limits).
+# Why: checkout/osv/fuzz can't use ci.sh action run.
+# From: Issue #479
+_CI_ACTION_PIN_ALLOW="actions/checkout google/osv-scanner-action google/clusterfuzzlite"
+
+# What: Fail on any workflow inline pin outside allow-list.
+# Why: SOT owns all SHAs; unlisted pins drift silently.
+# From: Issue #479
+ci_guard_action_pin_sot() {
+    local rc=0 f line base sha sot_sha key allowed
+    for f in "$@"; do
+        [ -f "${f}" ] || continue
+        while IFS= read -r line; do
+            base=$(printf '%s' "${line}" \
+                   | grep -oE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-f]{40}' \
+                   | sed 's/uses:[[:space:]]*//' | sed 's/@[0-9a-f]*$//')
+            [ -n "${base}" ] || continue
+            sha=$(printf '%s' "${line}" | grep -oE '@[0-9a-f]{40}' | tr -d '@')
+            key="$(_ci_action_sot_key "${base}")"
+            allowed=false
+            for a in ${_CI_ACTION_PIN_ALLOW}; do
+                [ "${key}" = "${a}" ] && allowed=true && break
+            done
+            if ! "${allowed}"; then
+                rc=1
+                ci_log "[CI-ERROR-GUARD-APIN-0001]" \
+                    "file=\"${f}\" action=\"${base}\" reason=\"inline pin; use ci.sh action run\""
+                continue
+            fi
+            sot_sha="$(_ci_sot_sha "action_pins.${key}" 2>/dev/null)" || sot_sha=""
+            if [ -n "${sot_sha}" ] && [ "${sha}" != "${sot_sha}" ]; then
+                rc=1
+                ci_log "[CI-ERROR-GUARD-APIN-0002]" \
+                    "file=\"${f}\" action=\"${key}\" got=${sha} want=${sot_sha} reason=\"drifted from SOT\""
+            fi
+        done < <(grep -n 'uses:.*@[0-9a-f]\{40\}' "${f}" 2>/dev/null || true)
+    done
+    return "${rc}"
+}
+
+# What: Dispatch ci.sh action subcommands.
+# Why: One entry point for all action-runner operations.
+# From: Issue #479
+ci_cmd_action() {
+    local subcmd="${1:-}"
+    [ "$#" -gt 0 ] && shift
+    case "${subcmd}" in
+        run)         _ci_action_run "$@" ;;
+        verify-pins) ci_guard_action_pin_sot \
+                         "${CI_REPO_ROOT}"/.github/workflows/*.yml ;;
+        get-sha)     _ci_action_sha "$@" ;;
+        sot-sha)     _ci_sot_sha "$@" ;;
+        *) ci_not_implemented "action ${subcmd}" "$@" ;;
+    esac
 }
 
 # =========================================================
@@ -1611,6 +1791,7 @@ ci_main() {
                 verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
+                action) ci_cmd_action "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

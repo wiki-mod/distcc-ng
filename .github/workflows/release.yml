@@ -47,14 +47,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/install-packaging-deps
       - run: bash .github/scripts/ci.sh package
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: distcc-release-packages
-          path: |
+      - env:
+          INPUT_NAME: distcc-release-packages
+          INPUT_PATH: |
             distcc-*.tar.gz
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
+        run: bash .github/scripts/ci.sh action run actions/upload-artifact
 
   build_container:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
@@ -81,10 +81,10 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
         run: bash .github/scripts/ci.sh container "$VARIANT" "$PLATFORM"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
-          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
+      - env:
+          INPUT_NAME: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
+          INPUT_PATH: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
+        run: bash .github/scripts/ci.sh action run actions/upload-artifact
 
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest
@@ -102,11 +102,11 @@ jobs:
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: image-digest-${{ matrix.variant }}-*
-          path: digests
-          merge-multiple: true
+      - env:
+          INPUT_PATTERN: image-digest-${{ matrix.variant }}-*
+          INPUT_PATH: digests
+          INPUT_MERGE-MULTIPLE: "true"
+        run: bash .github/scripts/ci.sh action run actions/download-artifact
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
@@ -119,9 +119,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: distcc-release-packages
+      - env:
+          INPUT_NAME: distcc-release-packages
+        run: bash .github/scripts/ci.sh action run actions/download-artifact
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}

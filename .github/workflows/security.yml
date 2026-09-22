@@ -26,10 +26,10 @@ jobs:
         language: [c-cpp, python, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
+      - env:
+          INPUT_LANGUAGES: ${{ matrix.language }}
+          INPUT_QUERIES: security-extended
+        run: bash .github/scripts/ci.sh action run github/codeql-action/init
       - if: matrix.language == 'c-cpp'
         uses: ./.github/actions/install-build-deps
         with:
@@ -38,9 +38,9 @@ jobs:
         env:
           VARIANT: default
         run: bash .github/scripts/ci.sh build "$VARIANT"
-      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-        with:
-          category: "/language:${{ matrix.language }}"
+      - env:
+          INPUT_CATEGORY: /language:${{ matrix.language }}
+        run: bash .github/scripts/ci.sh action run github/codeql-action/analyze
 
   osv-scan:
     name: OSV scan
@@ -61,19 +61,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
-        with:
-          results_file: results.sarif
-          results_format: sarif
-          publish_results: false
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: scorecard-results
-          path: results.sarif
-          retention-days: 5
-      - uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-        with:
-          sarif_file: results.sarif
+      - env:
+          INPUT_RESULTS_FILE: results.sarif
+          INPUT_RESULTS_FORMAT: sarif
+          INPUT_PUBLISH_RESULTS: "false"
+        run: bash .github/scripts/ci.sh action run ossf/scorecard-action
+      - env:
+          INPUT_NAME: scorecard-results
+          INPUT_PATH: results.sarif
+          INPUT_RETENTION-DAYS: "5"
+        run: bash .github/scripts/ci.sh action run actions/upload-artifact
+      - env:
+          INPUT_SARIF_FILE: results.sarif
+        run: bash .github/scripts/ci.sh action run github/codeql-action/upload-sarif
 
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
