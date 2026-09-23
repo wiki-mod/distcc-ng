@@ -301,6 +301,21 @@ ci_cmd_plan() {
     } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
+# What: Write the control-build's toolchain/dist verdict.
+# Why: The raw trace log alone was hard to untangle.
+# From: Issue #263, Issue #479
+_ci_control_build_step_summary() {
+    local st="$1"
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+    if [ "${st}" -eq 0 ]; then
+        printf '## Control build: OK\n\nPlain-compiler ccache build succeeded; a same-run heartbeat failure is a distccd/distribution bug, not a toolchain issue.\n' \
+            >> "${GITHUB_STEP_SUMMARY}"
+    else
+        printf '## Control build: FAILED (exit %s)\n\nThe plain-compiler ccache build itself failed, with no distcc involved; a same-run heartbeat failure is toolchain/ccache-related, not a distccd bug.\n' \
+            "${st}" >> "${GITHUB_STEP_SUMMARY}"
+    fi
+}
+
 # What: Run the distributed-compile e2e harness (distributed|full).
 # Why: distributed = 2-container; full = bidirectional compat matrix.
 # From: Issue #479
@@ -336,8 +351,11 @@ ci_cmd_e2e() {
             tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
             export CCACHE_HEARTBEAT_TAG="${tag}"
             docker compose -f test/e2e/docker-compose.yml build distccd-server
+            local st=0
             docker run --rm -e CCACHE_HEARTBEAT_TAG \
-                distcc-ng-e2e:latest bash test/e2e/control-build.sh ;;
+                distcc-ng-e2e:latest bash test/e2e/control-build.sh || st=$?
+            _ci_control_build_step_summary "${st}"
+            return "${st}" ;;
         *)    bash test/e2e/run-e2e.sh ;;
     esac
 }
@@ -2263,6 +2281,29 @@ _ci_coverage_lcov() {
     lcov --list coverage.info --rc branch_coverage=1
 }
 
+# What: Report include_server/*.py coverage from the run.
+# Why: lcov alone hides Python's coverage.
+# From: Issue #479
+_ci_coverage_python_report() {
+    python3-coverage report --include="${CI_REPO_ROOT}/include_server/*"
+}
+
+# What: Append C+Python coverage to the job summary.
+# Why: No artifact upload; summary page is the readout.
+# From: Issue #479
+_ci_coverage_step_summary() {
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+    local fence
+    fence='```'
+    {
+        printf '## Coverage summary\n\n### C (lcov)\n%s\n' "${fence}"
+        lcov --list coverage.info --rc branch_coverage=1
+        printf '%s\n\n### Python (include_server)\n%s\n' "${fence}" "${fence}"
+        _ci_coverage_python_report
+        printf '%s\n' "${fence}"
+    } >> "${GITHUB_STEP_SUMMARY}"
+}
+
 # What: Run make check for a variant and verify the result.
 # Why: Folds run-tests.sh parse + c-build.yml per-variant env.
 # From: Issue #479
@@ -2300,7 +2341,10 @@ ci_cmd_test() {
     case "${variant}" in
         default|coverage) _ci_privileged_single_test || return 1 ;;
     esac
-    [ "${variant}" = "coverage" ] && _ci_coverage_lcov
+    if [ "${variant}" = "coverage" ]; then
+        _ci_coverage_lcov
+        _ci_coverage_step_summary
+    fi
     return 0
 }
 
