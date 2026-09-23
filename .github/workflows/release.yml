@@ -1,9 +1,7 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Release pipeline (build/test/e2e/package + multi-arch publish).
-# Why: Cutover-draft; workflow_dispatch-only. DRAFT NEEDS CUTOVER
-#   VERIFICATION on a real tag; Trivy/SBOM and run_attempt digest keying
-#   fold in at cutover, and the tag trigger replaces the legacy pipeline.
+# What: Release: build/test/e2e/package/multi-arch publish.
+# Why: workflow_dispatch-only draft; tag trigger pending.
 # From: Issue #479
 name: Release
 
@@ -23,7 +21,7 @@ jobs:
     name: Build + test (default)
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/install-build-deps
       - env:
           VARIANT: default
@@ -36,25 +34,23 @@ jobs:
     name: Distributed compile E2E (2-container)
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e distributed
 
   package:
-    name: Build release packages
+    name: Build packages and publish GitHub release
     needs: [build_test, e2e]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/install-packaging-deps
       - run: bash .github/scripts/ci.sh package
-      - uses: ./.github/actions/actions-upload-artifact-centralized-version
-        with:
-          name: distcc-release-packages
-          path: |
-            distcc-*.tar.gz
-            distcc-*.tar.bz2
-            packaging/*.rpm
-            packaging/*.deb
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: bash .github/scripts/ci.sh publish github-release "$TAG"
 
   build_container:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
@@ -73,7 +69,7 @@ jobs:
       IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ inputs.tag }}-${{ matrix.platform }}
       VERSION: ${{ inputs.tag }}
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}
@@ -81,10 +77,6 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
         run: bash .github/scripts/ci.sh container "$VARIANT" "$PLATFORM"
-      - uses: ./.github/actions/actions-upload-artifact-centralized-version
-        with:
-          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
-          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
 
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest
@@ -102,27 +94,6 @@ jobs:
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}
-      - uses: ./.github/actions/actions-download-artifact-centralized-version
-        with:
-          pattern: image-digest-${{ matrix.variant }}-*
-          path: digests
-          merge-multiple: "true"
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
-
-  github_release:
-    name: Publish GitHub release
-    needs: [package, publish_manifest]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
-      - uses: ./.github/actions/actions-download-artifact-centralized-version
-        with:
-          name: distcc-release-packages
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-        run: bash .github/scripts/ci.sh publish github-release "$TAG"

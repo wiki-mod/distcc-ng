@@ -1,13 +1,24 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Consolidated security scans (CodeQL, OSV, Scorecard, fuzz).
-# Why: Cutover-draft; workflow_dispatch-only until it replaces the
-#   legacy scan workflows (running both would double-upload SARIF).
+# What: Consolidated CodeQL/OSV/Scorecard/fuzz scans.
+# Why: One trigger set feeds every parallel scan job.
 # From: Issue #479
 name: Security
 
 on:
   workflow_dispatch:
+  push:
+    branches: [current_dev, master]
+  pull_request:
+    branches: [current_dev, master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '0 5 * * 0'
+  branch_protection_rule:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -25,30 +36,29 @@ jobs:
       matrix:
         language: [c-cpp, python, actions]
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
-      - uses: ./.github/actions/github-codeql-action-init-centralized-version
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - if: matrix.language == 'c-cpp'
         uses: ./.github/actions/install-build-deps
         with:
           apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
-      - if: matrix.language == 'c-cpp'
-        env:
-          VARIANT: default
-        run: bash .github/scripts/ci.sh build "$VARIANT"
-      - uses: ./.github/actions/github-codeql-action-analyze-centralized-version
-        with:
-          category: /language:${{ matrix.language }}
+      - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" security-extended "codeql-${{ matrix.language }}.sarif"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif" "/language:${{ matrix.language }}"
 
   osv-scan:
     name: OSV scan
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       security-events: write
       contents: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh scan osv osv-results.sarif
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload osv-results.sarif
 
   scorecard:
     name: Scorecard analysis
@@ -58,22 +68,11 @@ jobs:
       security-events: write
       id-token: write
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
-        with:
-          persist-credentials: "false"
-      - uses: ./.github/actions/ossf-scorecard-action-centralized-version
-        with:
-          results-file: results.sarif
-          results-format: sarif
-          publish-results: "false"
-      - uses: ./.github/actions/actions-upload-artifact-centralized-version
-        with:
-          name: scorecard-results
-          path: results.sarif
-          retention-days: "5"
-      - uses: ./.github/actions/github-codeql-action-upload-sarif-centralized-version
-        with:
-          sarif_file: results.sarif
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh scan scorecard results.sarif
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload results.sarif
 
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
@@ -83,28 +82,20 @@ jobs:
       matrix:
         sanitizer: [address]
     steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - name: Build fuzzers (${{ matrix.sanitizer }})
-        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
-        with:
-          language: c
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          sanitizer: ${{ matrix.sanitizer }}
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-build "${{ matrix.sanitizer }}"
       - name: Run fuzzers (${{ matrix.sanitizer }})
-        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 300
-          mode: 'code-change'
-          sanitizer: ${{ matrix.sanitizer }}
-          output-sarif: true
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}" 300 code-change
 
   openssf:
     name: OpenSSF Baseline recheck
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           REPO: ${{ github.repository }}

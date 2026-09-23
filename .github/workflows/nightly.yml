@@ -1,13 +1,20 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
 # What: Nightly build/test/e2e + distcc-ng-nightly:latest publish.
-# Why: Cutover-draft; workflow_dispatch-only until the cutover adds the
-#   schedule trigger and removes legacy nightly-publish.yml.
-# From: Issue #479
+# Why: Always builds current_dev; schedule/dispatch evaluate from
+#   master, so both ci.sh's own fetch and the checkout ref are pinned
+#   to current_dev explicitly rather than following github.sha.
+# From: Issue #479, Issue #81, Issue #500
 name: Nightly
+
+concurrency:
+  group: nightly-publish
+  cancel-in-progress: false
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
 
 permissions:
   contents: read
@@ -21,7 +28,8 @@ jobs:
     name: Build + test (default)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - uses: ./.github/actions/install-build-deps
       - env:
           VARIANT: default
@@ -34,7 +42,8 @@ jobs:
     name: Distributed compile E2E (2-container)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - run: bash .github/scripts/ci.sh e2e distributed
 
   bidirectional_e2e:
@@ -44,7 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 340
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - run: bash .github/scripts/ci.sh e2e full
 
   publish:
@@ -55,10 +65,10 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - uses: ./.github/actions/install-packaging-deps
+      - run: echo "BUILT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - run: bash .github/scripts/ci.sh package
       - uses: ./.github/actions/ghcr-login
         with:
@@ -77,7 +87,8 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - env:
           GH_TOKEN: ${{ github.token }}
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}

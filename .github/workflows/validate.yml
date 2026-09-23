@@ -20,7 +20,7 @@ jobs:
     name: CI engine self-test (ci.bats)
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: sudo apt-get update
       - run: sudo apt-get install -y bats parallel
       - run: bash .github/scripts/ci.sh selftest
@@ -33,9 +33,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       phases: ${{ steps.plan.outputs.phases }}
     steps:
-      - uses: ./.github/actions/actions-checkout-centralized-version
-        with:
-          fetch-depth: "0"
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: plan
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -51,7 +49,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - if: runner.os == 'Linux'
         uses: ./.github/actions/install-build-deps
         with:
@@ -75,7 +73,7 @@ jobs:
     if: contains(needs.plan.outputs.phases, 'e2e')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e
 
   verify_image:
@@ -85,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh container verify-image
       - run: bash .github/scripts/ci.sh verify prepare-etc
       - run: bash .github/scripts/ci.sh verify ptrace-selftest
@@ -102,7 +100,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}

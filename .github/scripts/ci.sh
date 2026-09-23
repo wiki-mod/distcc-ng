@@ -414,10 +414,7 @@ ci_cmd_container() {
                 --build-arg "VCS_REF=${ref}" \
                 --build-arg "VERSION=${VERSION:-${ref}}" \
                 --tag "${IMAGE_TAG}" .
-            docker push "${IMAGE_TAG}"
-            local digest
-            digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
-            printf '%s\n' "${digest}" > "digest-${variant}-${platform}.txt" ;;
+            docker push "${IMAGE_TAG}" ;;
         verify-image)
             _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
         buildtools)
@@ -463,18 +460,17 @@ _ci_publish_nightly() {
         --prerelease --latest=false --target "${ref}"
 }
 
-# What: Create the multi-arch manifest from recorded platform digests.
-# Why: amd64 required, arm64 best-effort; latest only on a real tag push.
+# What: Create the multi-arch manifest from the pushed platform tags.
+# Why: imagetools reads tags from the registry; no artifact handoff.
 # From: Issue #479
 _ci_publish_manifest() {
     local variant="${1:?variant required}"
     : "${IMAGE_BASE:?IMAGE_BASE required}"
-    local tags=()
-    tags+=("${IMAGE_BASE}@$(cat "digests/digest-${variant}-amd64.txt")")
-    if [ -f "digests/digest-${variant}-arm64.txt" ]; then
-        tags+=("${IMAGE_BASE}@$(cat "digests/digest-${variant}-arm64.txt")")
+    local tags=("${IMAGE_BASE}-amd64")
+    if docker buildx imagetools inspect "${IMAGE_BASE}-arm64" >/dev/null 2>&1; then
+        tags+=("${IMAGE_BASE}-arm64")
     else
-        ci_log "[CI-PUBLISH]" "no arm64 digest; amd64-only manifest for ${variant}"
+        ci_log "[CI-PUBLISH]" "no arm64 image; amd64-only manifest for ${variant}"
     fi
     docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}"
     if [ "${TAG_PUSH:-false}" = "true" ]; then
@@ -1437,16 +1433,16 @@ ci_cmd_lint() {
 # Why: No action, no SHA; ci.sh isn't on disk pre-checkout.
 # From: Issue #479
 ci_cmd_checkout() {
-    local depth="${1:-1}"
+    local depth="${1:-1}" ref="${2:-${GITHUB_SHA:-}}"
     : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    : "${GITHUB_SHA:?GITHUB_SHA required}"
+    : "${ref:?ref required (pass one, or set GITHUB_SHA)}"
     git init -q .
     git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
     if [ "${depth}" = "0" ]; then
-        git fetch -q origin "${GITHUB_SHA}"
+        git fetch -q origin "${ref}"
     else
-        git fetch -q --depth="${depth}" origin "${GITHUB_SHA}"
+        git fetch -q --depth="${depth}" origin "${ref}"
     fi
     git checkout -q FETCH_HEAD
 }

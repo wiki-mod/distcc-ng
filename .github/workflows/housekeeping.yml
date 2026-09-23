@@ -30,8 +30,8 @@ on:
         description: "List what would be deleted without deleting anything"
         type: boolean
         default: true
-  # The weekly heartbeat schedule is armed at cutover; a schedule only ever
-  # fires from a workflow file already present on the default branch.
+  schedule:
+    - cron: '0 5 * * 1'
 
 permissions:
   contents: read
@@ -46,7 +46,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.task == 'gc'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e heartbeat
 
   control:
@@ -76,7 +76,7 @@ jobs:
     # From: Issue #263, Issue #479
     continue-on-error: true
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e control
 
   report:
@@ -88,7 +88,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
           GH_TOKEN: ${{ github.token }}
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
