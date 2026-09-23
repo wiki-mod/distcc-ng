@@ -68,7 +68,6 @@ jobs:
       - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - uses: ./.github/actions/install-packaging-deps
-      - run: echo "BUILT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - run: bash .github/scripts/ci.sh package
       - uses: ./.github/actions/ghcr-login
         with:

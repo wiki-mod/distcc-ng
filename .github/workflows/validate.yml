@@ -87,16 +87,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - if: runner.os == 'Linux'
-        uses: ./.github/actions/install-build-deps
+      - uses: ./.github/actions/install-build-deps
         with:
           apt: ${{ matrix.apt }}
-      - if: runner.os == 'macOS'
-        env:
-          BREW: ${{ matrix.brew }}
-        run: |
-          read -ra brew_pkgs <<< "${BREW}"
-          brew install "${brew_pkgs[@]}"
+          brew: ${{ matrix.brew }}
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"

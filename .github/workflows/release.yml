@@ -32,10 +32,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
-        run: |
-          notes="$(mktemp)"
-          printf '%s' "${{ toJSON(github.event.release.body) }}" | jq -r . > "$notes"
-          bash .github/scripts/ci.sh publish changelog "$TAG" "$notes"
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: bash .github/scripts/ci.sh publish changelog "$TAG"
 
   update_draft_release:
     name: Refresh the current_dev draft release

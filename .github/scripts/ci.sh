@@ -619,7 +619,8 @@ _ci_publish_github_release() {
 # Why: Folds two marketplace actions into one git commit.
 # From: Issue #479
 _ci_publish_changelog_update() {
-    local tag="${1:?tag required}" notes_file="${2:?notes file required}"
+    local tag="${1:?tag required}"
+    : "${RELEASE_BODY:?RELEASE_BODY required}"
     local version date tmp
     version="${tag#v}"
     date="$(date -u +%Y-%m-%d)"
@@ -635,8 +636,7 @@ _ci_publish_changelog_update() {
     tmp="$(mktemp)"
     {
         printf '## [%s] - %s\n\n' "${version}" "${date}"
-        cat "${notes_file}"
-        printf '\n'
+        printf '%s\n' "${RELEASE_BODY}"
     } > "${tmp}"
     awk -v insertfile="${tmp}" '
         /<!-- insertion marker -->/ {
@@ -1740,7 +1740,7 @@ ci_guard_dependabot_consistency() {
 }
 
 # What: Print orchestrator-only violations in a workflow's run: blocks.
-# Why: AG-CI-023 forbids inline logic; run: calls one command only.
+# Why: YAML stays an orchestrator; run: calls one ci.sh command only.
 # From: Issue #479
 _ci_scan_run_blocks() {
     awk -v F="$1" '
@@ -1751,6 +1751,10 @@ _ci_scan_run_blocks() {
           scan = ($0 ~ /^[ ]*(- )?run:[ ]/) || inrun
           if (!scan) next
           l=$0
+          # What: Exempt the checkout bootstrap pipe.
+          # Why: ci.sh is not on disk at this exact line.
+          # From: Issue #479
+          if (l ~ /curl -fsSL[^|]*\.github\/scripts\/ci\.sh" \| bash -s -- checkout/) next
           if (l ~ /(^|[;&(| ])(if|for|while|until|case)([ (]|$)/) flag("control-flow keyword")
           if (index(l,"&&")) flag("&& chaining")
           if (index(l,"||")) flag("|| chaining")
