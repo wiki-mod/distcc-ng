@@ -2063,15 +2063,49 @@ _ci_scorecard_bin() {
     printf '%s' "${bin}"
 }
 
-# What: Run Scorecard against this repo, writing a SARIF file.
-# Why: CLI-native flow; no ossf/scorecard-action pin needed.
+# What: Convert Scorecard's own JSON into real SARIF.
+# Why: bare CLI has no --format=sarif (see --help).
+# From: Issue #479
+_ci_scorecard_json_to_sarif() {
+    jq '
+        {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+            version: "2.1.0",
+            runs: [{
+                tool: {
+                    driver: {
+                        name: "scorecard",
+                        informationUri: "https://github.com/ossf/scorecard",
+                        version: .scorecard.version,
+                        rules: [.checks[] | {
+                            id: .name,
+                            name: .name,
+                            shortDescription: {text: .documentation.short},
+                            helpUri: .documentation.url
+                        }] | unique_by(.id)
+                    }
+                },
+                results: [.checks[] | select(.score >= 0 and .score < 10) | {
+                    ruleId: .name,
+                    level: (if .score <= 3 then "warning" else "note" end),
+                    message: {text: ([.reason] + (.details // [])) | join("\n")}
+                }]
+            }]
+        }
+    '
+}
+
+# What: Run Scorecard, convert its JSON to SARIF.
+# Why: No CLI sarif format; ci.sh owns the conversion.
 # From: Issue #479
 ci_cmd_scorecard_scan() {
-    local out="${1:-results.sarif}" bin
+    local out="${1:-results.sarif}" bin json
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     bin="$(_ci_scorecard_bin)" || return 2
+    json="${RUNNER_TEMP:-/tmp}/scorecard-results.json"
     "${bin}" --repo="github.com/${GITHUB_REPOSITORY}" \
-        --format=sarif --show-details > "${out}"
+        --format=json --show-details > "${json}"
+    _ci_scorecard_json_to_sarif < "${json}" > "${out}"
 }
 
 # What: Download+cache the pinned OSV-Scanner CLI; print its path.
