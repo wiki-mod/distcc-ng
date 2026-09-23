@@ -1,6 +1,6 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Scheduled maintenance: GHCR cleanup and the weekly heartbeat.
+# What: Scheduled maintenance: GHCR cleanup, heartbeat, e2e test image.
 # Why: One owner for scheduled housekeeping; all logic lives in ci.sh.
 # From: Issue #479
 name: Housekeeping
@@ -14,6 +14,7 @@ on:
         options:
           - gc
           - heartbeat
+          - e2e-image
         default: gc
       package:
         description: "Which GHCR package to prune (gc task)"
@@ -32,12 +33,19 @@ on:
         default: true
   schedule:
     - cron: '0 5 * * 1'
+    - cron: '0 2 * * *'
+  push:
+    branches: [current_dev]
+    paths: ['test/e2e/Dockerfile']
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['test/e2e/Dockerfile']
 
 permissions:
   contents: read
 
 concurrency:
-  group: housekeeping-${{ github.event.inputs.task || 'heartbeat' }}
+  group: housekeeping-${{ github.event.inputs.task || github.event.schedule || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +67,7 @@ jobs:
 
   heartbeat:
     name: Weekly distributed ccache heartbeat
-    if: github.event_name == 'schedule' || inputs.task == 'heartbeat'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -68,7 +76,7 @@ jobs:
 
   control:
     name: Control build (plain compiler, diagnostic only)
-    if: github.event_name == 'schedule' || inputs.task == 'heartbeat'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # What: Runs the plain-compiler control build as a non-gating job.
@@ -78,6 +86,50 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e control
+
+  e2e_image:
+    name: Build+publish distcc-ng-e2e test image
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') ||
+      inputs.task == 'e2e-image' || github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh container e2e-image
+      - if: github.event_name != 'pull_request'
+        uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - if: github.event_name != 'pull_request'
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: bash .github/scripts/ci.sh publish e2e-image
+
+  report_e2e_image:
+    name: Report e2e-image status
+    needs: [e2e_image]
+    if: always() && needs.e2e_image.result != 'skipped' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ needs.e2e_image.result == 'success' && 'success' || 'failure' }}
+          SCOPE: e2e test image build+publish (distcc-ng-e2e)
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report
 
   report:
     name: Report heartbeat status

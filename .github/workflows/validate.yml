@@ -8,7 +8,7 @@ name: Validate
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, milestoned, demilestoned]
   push:
     branches: [current_dev, master]
   issues:
@@ -20,9 +20,27 @@ permissions:
   contents: read
 
 jobs:
+  metadata:
+    name: PR metadata (title/tracking/changelog)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/ci.sh metadata all
+
   lint:
     name: Static lint (actionlint / shellcheck / guards)
-    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -31,7 +49,9 @@ jobs:
 
   engine-selftest:
     name: CI engine self-test (ci.bats)
-    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -41,7 +61,9 @@ jobs:
 
   plan:
     name: Plan (content-based impact matrix)
-    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.plan.outputs.build }}
@@ -73,8 +95,8 @@ jobs:
         env:
           BREW: ${{ matrix.brew }}
         run: |
-          # shellcheck disable=SC2086
-          brew install $BREW
+          read -ra brew_pkgs <<< "${BREW}"
+          brew install "${brew_pkgs[@]}"
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"

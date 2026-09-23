@@ -25,11 +25,12 @@ scratch by every single test run (`docker compose build`), never
 independently validated. It is now built, validated (via its own embedded
 self-test -- a real distcc-through-distccd compile, checked against the
 daemon's own `COMPILE_OK` log line, not just an existence check), and
-published to GHCR by `.github/workflows/e2e-image-build.yml`.
+published to GHCR by `housekeeping.yml`'s `e2e_image` job
+(`ci.sh container e2e-image` + `ci.sh publish e2e-image`, Issue #479).
 
-**`c-build.yml`, `master-heartbeat.yml`, `nightly-publish.yml`, and
-`package-release.yml` do not pull this image yet** -- they still build
-`Dockerfile` themselves via `docker compose build`/`run-e2e.sh`. Switching
+**`validate.yml`, `nightly.yml`, and `housekeeping.yml`'s own heartbeat do
+not pull this image yet** -- their `ci.sh e2e` phase still builds
+`Dockerfile` itself via `docker compose build`/`run-e2e.sh`. Switching
 them over is a deliberately separate follow-up, not part of the PR that
 added this publish pipeline, because of a real design constraint found in
 review (see below) that the follow-up needs to account for.

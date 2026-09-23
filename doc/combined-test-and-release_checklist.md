@@ -361,7 +361,7 @@ The resulting workflow run MUST be recorded in the release PR.
 
 ### **POL-RELEASE-06** Run the release-version guardrail
 
-**Requirement:** `scripts/check-release-version.sh` MUST be executed before the release tag is created.
+**Requirement:** `.github/scripts/ci.sh release version-check` MUST be executed before the release tag is created.
 
 The guardrail MUST fail closed when:
 
@@ -380,13 +380,13 @@ The tag push triggers `package-release.yml`.
 
 The tag-triggered workflow builds and publishes the real release.
 
-When its `publish_github_release` stage publishes the GitHub Release, the resulting GitHub `release` event drives the release-event automation used by `changelog-update-on-release.yml`.
+When its `publish_github_release` stage publishes the GitHub Release, the resulting GitHub `release` event drives the release-event automation used by `release.yml`'s `update_changelog` job.
 
 **Verification:** See `REL-CI-03`, `REL-ART-*`, and `REL-CI-04`.
 
 ### **POL-RELEASE-08** Automated changelog finalization
 
-**Requirement:** `changelog-update-on-release.yml` MUST move the released content from `CHANGELOG.md`'s `[Unreleased]` section into a new dated:
+**Requirement:** `release.yml`'s `update_changelog` job MUST move the released content from `CHANGELOG.md`'s `[Unreleased]` section into a new dated:
 
 `## [X.Y.Z-NG] - YYYY-MM-DD`
 
@@ -444,11 +444,11 @@ They MUST NOT be treated as an automatic template or standing authorization for 
 
 ### **POL-GUARD-01** Existing release tag
 
-**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `vX.Y.Z-NG` already exists) and MUST NOT be maintained as an independent definition here.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `.github/scripts/ci.sh release version-check` check that refuses tagging when `vX.Y.Z-NG` already exists) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-02** Version and tag mismatch
 
-**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `configure.ac`'s `AC_INIT` version does not exactly match the intended tag) and MUST NOT be maintained as an independent definition here.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `.github/scripts/ci.sh release version-check` check that refuses tagging when `configure.ac`'s `AC_INIT` version does not exactly match the intended tag) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-03** `master` approval
 
@@ -1731,7 +1731,7 @@ The decision MUST identify what is accepted and why.
 
 ### **REL-PRECUT-04** Release-version script
 
-**Requirement:** `scripts/check-release-version.sh` MUST be executed against the intended tag.
+**Requirement:** `.github/scripts/ci.sh release version-check` MUST be executed against the intended tag.
 
 **Invalid evidence:** Reading `configure.ac` and concluding that `AC_INIT` looks correct.
 
@@ -1754,7 +1754,7 @@ The decision MUST identify what is accepted and why.
 
 **Requirement:** `master`'s copy of every workflow whose `release:` event is required for publication or post-publication automation MUST match the required `current_dev` behavior before tagging.
 
-This includes `changelog-update-on-release.yml` and any workflow behavior that `package-release.yml` relies on for release publication identity or related release-event processing.
+This includes `release.yml`'s `update_changelog` job and any other workflow behavior it relies on for release publication identity or related release-event processing.
 
 **Recorded behavior:** GitHub evaluates the relevant `release` event workflow from the repository's default branch, which is `master`, rather than taking that workflow definition from the newly created tag.
 
@@ -1768,7 +1768,7 @@ Issue #460 and PR #467 established that a stale `master` copy can silently preve
 
 Example:
 
-`gh workflow run changelog-update-on-release.yml --repo wiki-mod/distcc-ng --ref current_dev -f tag_name=... -f release_notes=...`
+`bash .github/scripts/ci.sh publish changelog <tag> <notes-file>` (run manually against a checked-out current_dev to retry)
 
 An unqualified `gh workflow run` uses the workflow definition selected from the default branch unless another ref is explicitly supplied.
 
@@ -2034,7 +2034,7 @@ If the release PR CI is `Failed` or `Blocked`, the release branch relationship c
 
 ### **REL-CI-04** Published-release changelog event
 
-**Requirement:** The `release: types: [published]` event MUST actually trigger `changelog-update-on-release.yml` for the real tag.
+**Requirement:** The `release: types: [published]` event MUST actually trigger `release.yml`'s `update_changelog` job for the real tag.
 
 This item cannot pass while `REL-PRECUT-06` fails because stale default-branch workflow content can prevent the event processing required by the release.
 
@@ -2082,7 +2082,7 @@ Approval from an earlier promotion or another PR MUST NOT be reused.
 
 ### **REL-PROMO-04** Account for automated changelog commit
 
-**Requirement:** The automated `changelog-update-on-release.yml` commit defined by `POL-RELEASE-08` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
+**Requirement:** The automated `release.yml`'s `update_changelog` job commit defined by `POL-RELEASE-08` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
 
 The frozen release branch cannot receive that post-release commit by design.
 

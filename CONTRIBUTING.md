@@ -121,30 +121,29 @@ know where to look. At minimum, each pull request should cover:
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/)
 format, but you don't hand-edit its release sections yourself — it's
-maintained fully automatically by a three-step chain (this replaced an
-earlier git-cliff-based approach, see #122):
+maintained fully automatically by a three-step chain, entirely owned by
+`.github/scripts/ci.sh` (Issue #479; no marketplace actions):
 
-1. **`release-drafter`** (`.github/release-drafter.yml`,
-   `.github/workflows/release-drafter.yml`) auto-maintains a draft GitHub
-   Release (visible in the Releases tab), refreshed on every push to
-   `current_dev`, zero manual trigger. PRs are categorized
-   (`Security`/`Fixed`/`Added`/`Documentation`) by a label auto-assigned
-   from the PR title via its `autolabeler`. Entries use `#N | title`.
+1. `ci.sh publish draft-release` (`release.yml`'s `update_draft_release`
+   job) auto-maintains a draft GitHub Release (visible in the Releases
+   tab), refreshed on every push to `current_dev`, zero manual trigger.
+   PRs are categorized (`Security`/`Fixed`/`Added`/`Documentation`) from
+   their Conventional-Commit title type (`security`/`fix`/`feat`/`docs`),
+   the same taxonomy the PR-title convention already enforces — no
+   separate autolabeler regex. Entries use `#N | title`.
 2. A maintainer publishes that release as part of the existing manual
    release-cut process (`doc/combined-test-and-release_checklist.md`) — unchanged.
-3. On that `release: released` event,
-   `.github/workflows/changelog-update-on-release.yml` runs
-   [`stefanzweifel/changelog-updater-action`](https://github.com/marketplace/actions/changelog-updater)
-   to insert the release's notes as a new dated section into
-   `CHANGELOG.md`, then
-   [`stefanzweifel/git-auto-commit-action`](https://github.com/stefanzweifel/git-auto-commit-action)
-   commits it to `current_dev` (tags are cut from `current_dev`'s tip, so
-   that's always where the update belongs).
+3. On that `release: published` event, `release.yml`'s `update_changelog`
+   job runs `ci.sh publish changelog` to insert the release's notes as a
+   new dated section into `CHANGELOG.md` and commit it to `current_dev`
+   (tags are cut from `current_dev`'s tip, so that's always where the
+   update belongs). `published` (not `released`) fires reliably for a
+   release-drafter-style draft-to-public transition.
 
-What you as a contributor still need to do: the `changelog-check` CI job
-currently requires every PR to either touch `CHANGELOG.md` directly (an
-entry under `[Unreleased]`) or carry the `no-changelog-needed` label —
-don't treat that gate as a formality to route around.
+What you as a contributor still need to do: `validate.yml`'s `metadata`
+job requires every PR to either touch `CHANGELOG.md` directly (an entry
+under `[Unreleased]`) or carry the `no-changelog-needed` label — don't
+treat that gate as a formality to route around.
 
 ## Code comments
 

@@ -13,8 +13,8 @@ set -euo pipefail
 # What: Absolute directory of this script, if it has one.
 # Why: curl|bash bootstrap has no BASH_SOURCE; must not crash.
 # From: Issue #479
-CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" \
-    2>/dev/null && pwd || pwd)"
+CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+CI_SCRIPT_DIR="${CI_SCRIPT_DIR:-$(pwd)}"
 
 # What: Path to the single source-of-truth manifest.
 # Why: One machine-readable owner for versions and matrix.
@@ -169,12 +169,14 @@ _ci_sot_sha() {
 # Why: The SOT owns patterns; this owns the matching semantics.
 # From: Issue #479
 _ci_glob_match() {
-    local pat="$1" path="$2"
-    # What: Native case globbing; pat must stay unquoted here.
-    # Why: A quoted pattern would make '*' literal, not wild.
+    local pat="$1" path="$2" re
+    # What: Escape regex metachars, then turn '*' runs into '.*'.
+    # Why: =~ needs a real regex; case/[[ == both warn on this use.
     # From: Issue #479
-    case "${path}" in ${pat}) return 0 ;; esac
-    return 1
+    re="${pat//\*/$'\x01'}"
+    re="$(printf '%s' "${re}" | sed 's/[.^$+?()[\]{}|]/\\&/g')"
+    re="${re//$'\x01'/.*}"
+    [[ "${path}" =~ ^${re}$ ]]
 }
 
 # What: Print the impact classes matched by the paths on stdin.
@@ -421,6 +423,8 @@ ci_cmd_container() {
             docker push "${IMAGE_TAG}" ;;
         verify-image)
             _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
+        e2e-image)
+            docker build --file test/e2e/Dockerfile --tag distcc-ng-e2e:selftest . ;;
         buildtools)
             local short; short="$(git rev-parse --short HEAD)"
             local base="ghcr.io/${OWNER:?OWNER required}/distcc-ng-buildtools"
@@ -482,6 +486,85 @@ _ci_publish_manifest() {
     fi
 }
 
+# What: Print sha/run_id/attempt of the newest :latest tag.
+# Why: Multiple :latest tags can exist; max run wins race.
+# From: Issue #479
+_ci_e2e_image_published_sibling() {
+    local owner="$1" api_output api_status tags
+    api_output="$(gh api "orgs/${owner}/packages/container/distcc-ng-e2e/versions" \
+        --paginate --jq \
+        '.[] | select(.metadata.container.tags != null) | select(.metadata.container.tags | index("latest")) | .metadata.container.tags[]' \
+        2>&1)" && api_status=0 || api_status=$?
+    if [ "${api_status}" -ne 0 ]; then
+        printf '%s' "${api_output}" | grep -qi 'HTTP 404' && return 0
+        ci_log "[CI-ERROR-PUBLISH-0002]" "GHCR query failed: ${api_output}"
+        return 1
+    fi
+    tags="${api_output}"
+    local t fields sha run_id run_attempt best_sha="" best_id=0 best_attempt=0
+    while IFS= read -r t; do
+        [ -n "${t}" ] || continue
+        fields="$(printf '%s' "${t}" \
+            | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $1, $3, $4}')"
+        [ -n "${fields}" ] || continue
+        read -r sha run_id run_attempt <<< "${fields}"
+        if [ "${run_id}" -gt "${best_id}" ] || \
+           { [ "${run_id}" -eq "${best_id}" ] && [ "${run_attempt}" -gt "${best_attempt}" ]; }; then
+            best_sha="${sha}"; best_id="${run_id}"; best_attempt="${run_attempt}"
+        fi
+    done <<< "${tags}"
+    printf '%s %s %s\n' "${best_sha}" "${best_id}" "${best_attempt}"
+}
+
+# What: Push the e2e image tag; race-safely move :latest.
+# Why: Folds e2e-image-build.yml; ancestry beats run order.
+# From: Issue #479
+_ci_publish_e2e_image() {
+    : "${OWNER:?OWNER required}"
+    : "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
+    : "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}"
+    local base="ghcr.io/${OWNER}/distcc-ng-e2e" built_sha build_date tag
+    built_sha="$(git rev-parse HEAD)"
+    build_date="$(date -u +%Y%m%d)"
+    tag="${built_sha}-${build_date}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+    docker tag distcc-ng-e2e:selftest "${base}:${tag}"
+    docker push "${base}:${tag}"
+
+    local sibling pub_sha pub_id pub_attempt should_move=false
+    sibling="$(_ci_e2e_image_published_sibling "${OWNER}")" || return 1
+    read -r pub_sha pub_id pub_attempt <<< "${sibling}"
+    if [ -z "${pub_sha}" ]; then
+        should_move=true
+    else
+        local pub_full_sha ancestor_rc
+        pub_full_sha="$(git rev-parse "${pub_sha}")" || {
+            ci_log "[CI-ERROR-PUBLISH-0003]" "published tag ${pub_sha} unresolvable"
+            return 1
+        }
+        if [ "${pub_full_sha}" = "${built_sha}" ]; then
+            if [ "${GITHUB_RUN_ID}" -gt "${pub_id}" ] || \
+               { [ "${GITHUB_RUN_ID}" -eq "${pub_id}" ] && [ "${GITHUB_RUN_ATTEMPT}" -ge "${pub_attempt}" ]; }; then
+                should_move=true
+            fi
+        else
+            ancestor_rc=0
+            git merge-base --is-ancestor "${pub_full_sha}" "${built_sha}" || ancestor_rc=$?
+            if [ "${ancestor_rc}" -eq 0 ]; then
+                should_move=true
+            elif [ "${ancestor_rc}" -gt 1 ]; then
+                ci_log "[CI-ERROR-PUBLISH-0004]" "merge-base check failed (${ancestor_rc})"
+                return 1
+            fi
+        fi
+    fi
+    if [ "${should_move}" = "true" ]; then
+        docker tag distcc-ng-e2e:selftest "${base}:latest"
+        docker push "${base}:latest"
+    else
+        ci_log "[CI-INFO-PUBLISH-0001]" "built ${built_sha} not newer than published ${pub_sha}; skip :latest"
+    fi
+}
+
 # What: Cut the GitHub release for a version tag with built assets.
 # Why: Version-check gates it; assets are the built packages/tarballs.
 # From: Issue #479
@@ -498,6 +581,97 @@ _ci_publish_github_release() {
         --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
 }
 
+# What: Add a CHANGELOG.md section; commit to current_dev.
+# Why: Folds two marketplace actions into one git commit.
+# From: Issue #479
+_ci_publish_changelog_update() {
+    local tag="${1:?tag required}" notes_file="${2:?notes file required}"
+    local version date tmp
+    version="${tag#v}"
+    date="$(date -u +%Y-%m-%d)"
+    cd "${CI_REPO_ROOT}"
+    grep -qF '<!-- insertion marker -->' CHANGELOG.md || {
+        ci_log "[CI-ERROR-PUBLISH-0005]" "CHANGELOG.md insertion marker not found"
+        return 1
+    }
+    tmp="$(mktemp)"
+    {
+        printf '## [%s] - %s\n\n' "${version}" "${date}"
+        cat "${notes_file}"
+        printf '\n'
+    } > "${tmp}"
+    awk -v insertfile="${tmp}" '
+        /<!-- insertion marker -->/ {
+            print
+            print ""
+            while ((getline line < insertfile) > 0) print line
+            next
+        }
+        { print }
+    ' CHANGELOG.md > CHANGELOG.md.new
+    mv CHANGELOG.md.new CHANGELOG.md
+    rm -f "${tmp}"
+    git config user.name "github-actions[bot]"
+    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    git add CHANGELOG.md
+    git commit -m "CHANGELOG.md: add ${tag}"
+    git push origin HEAD:current_dev
+}
+
+# What: Append a category section if it has any items.
+# Why: Shared by every category in the draft release body.
+# From: Issue #479
+_ci_draft_release_append() {
+    local -n out_ref="$1" heading="$2"
+    shift 2
+    [ "$#" -eq 0 ] && return 0
+    out_ref="${out_ref}### ${heading}
+$(printf '%s\n' "$@")
+"
+}
+
+# What: Rebuild the draft release from PR titles + rule 71.
+# Why: Category comes from rule 71's type prefix, not regex.
+# From: Issue #479
+_ci_publish_draft_release() {
+    : "${GH_TOKEN:?GH_TOKEN required}"
+    : "${REPO:?REPO required}"
+    local since since_date pr_json number title category
+    local security=() bug=() enhancement=() documentation=()
+    since="$(gh release list --repo "${REPO}" --exclude-drafts \
+        --exclude-pre-releases --json tagName,publishedAt \
+        --jq 'sort_by(.publishedAt) | last | .publishedAt // empty')"
+    since_date="${since:-2000-01-01}"
+    pr_json="$(gh pr list --repo "${REPO}" --state merged --base current_dev \
+        --search "merged:>=${since_date}" --json number,title --limit 200)"
+    while IFS=$'\t' read -r number title; do
+        [ -n "${number}" ] || continue
+        category="$(_ci_pr_category_label "${title}")"
+        case "${category}" in
+            security)      security+=("* #${number} | ${title}") ;;
+            bug)           bug+=("* #${number} | ${title}") ;;
+            enhancement)   enhancement+=("* #${number} | ${title}") ;;
+            documentation) documentation+=("* #${number} | ${title}") ;;
+        esac
+    done < <(printf '%s' "${pr_json}" | jq -r '.[] | [.number, .title] | @tsv')
+
+    local body=""
+    _ci_draft_release_append body "Security" "${security[@]}"
+    _ci_draft_release_append body "Fixed" "${bug[@]}"
+    _ci_draft_release_append body "Added" "${enhancement[@]}"
+    _ci_draft_release_append body "Documentation" "${documentation[@]}"
+
+    local notes; notes="$(mktemp)"
+    printf '%s' "${body}" > "${notes}"
+    if gh release view draft-current_dev --repo "${REPO}" >/dev/null 2>&1; then
+        gh release edit draft-current_dev --repo "${REPO}" --notes-file "${notes}"
+    else
+        gh release create draft-current_dev --repo "${REPO}" --draft \
+            --title "Next release (draft)" --notes-file "${notes}" \
+            --target current_dev
+    fi
+}
+
 # What: Publish a release-family artifact set.
 # Why: Outward; real release cut/manifest are maintainer-driven.
 # From: Issue #479
@@ -508,6 +682,9 @@ ci_cmd_publish() {
         nightly)        _ci_publish_nightly ;;
         manifest)       _ci_publish_manifest "$@" ;;
         github-release) _ci_publish_github_release "$@" ;;
+        e2e-image)      _ci_publish_e2e_image ;;
+        changelog)      _ci_publish_changelog_update "$@" ;;
+        draft-release)  _ci_publish_draft_release ;;
         *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish target=\"${sub}\""; return 2 ;;
     esac
 }
@@ -653,26 +830,25 @@ _ci_report_run() {
 # Why: Retrying on every failure self-heals an issue a one-shot attempt missed.
 # From: Issue #479, PR #476
 _ci_report_ensure_bug_type() {
+    : "${REPO:?REPO required}"
     local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
     owner="${REPO%%/*}"
     name="${REPO##*/}"
-    # shellcheck disable=SC2016
-    issue_query_result="$(gh api graphql -f query='
-      query($owner: String!, $name: String!, $number: Int!) {
-        repository(owner: $owner, name: $name) {
-          issue(number: $number) { id issueType { name } }
+    issue_query_result="$(gh api graphql -f query="
+      query(\$owner: String!, \$name: String!, \$number: Int!) {
+        repository(owner: \$owner, name: \$name) {
+          issue(number: \$number) { id issueType { name } }
         }
-      }' -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
+      }" -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
       --jq '.data.repository.issue | .id + " " + (.issueType.name // "-")')"
     read -r issue_node_id current_type <<<"${issue_query_result}"
     [ "${current_type}" != "-" ] && return 0
-    # shellcheck disable=SC2016
-    bug_type_id="$(gh api graphql -f query='
-      query($owner: String!, $name: String!) {
-        repository(owner: $owner, name: $name) {
+    bug_type_id="$(gh api graphql -f query="
+      query(\$owner: String!, \$name: String!) {
+        repository(owner: \$owner, name: \$name) {
           issueTypes(first: 20) { nodes { id name } }
         }
-      }' -F owner="${owner}" -F name="${name}" \
+      }" -F owner="${owner}" -F name="${name}" \
       --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')"
     if [ -z "${bug_type_id}" ]; then
         ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${REPO}"
@@ -682,11 +858,10 @@ _ci_report_ensure_bug_type() {
         echo "DRY_RUN would run: assign Bug type to issue #${issue_number}"
         return 0
     fi
-    # shellcheck disable=SC2016
-    gh api graphql -f query='
-      mutation($issueId: ID!, $typeId: ID!) {
-        updateIssue(input: {id: $issueId, issueTypeId: $typeId}) { issue { id } }
-      }' -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
+    gh api graphql -f query="
+      mutation(\$issueId: ID!, \$typeId: ID!) {
+        updateIssue(input: {id: \$issueId, issueTypeId: \$typeId}) { issue { id } }
+      }" -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
 }
 
 # What: File, update, or close the one standing nightly-broken tracking issue.
@@ -828,12 +1003,26 @@ _ci_labeler_simple_rules() {
     ' "${CI_REPO_ROOT}/.github/labeler.yml"
 }
 
-# What: Apply path-based labels to a PR from labeler.yml + its diff.
-# Why: Replaces actions/labeler; reuses labeler.yml as the config SOT.
+# What: Map a Commit type prefix to a category label.
+# Why: rule 71 already structures titles; no regex needed.
+# From: Issue #479
+_ci_pr_category_label() {
+    local title="$1" type=""
+    [[ "${title}" =~ ^([a-zA-Z]+) ]] && type="${BASH_REMATCH[1]}"
+    case "${type}" in
+        security) printf 'security' ;;
+        fix)      printf 'bug' ;;
+        feat)     printf 'enhancement' ;;
+        docs)     printf 'documentation' ;;
+    esac
+}
+
+# What: Apply path- and title-based labels to a PR.
+# Why: Replaces both actions/labeler and release-drafter.
 # From: Issue #479
 _ci_variables_label_pr() {
     : "${PR_NUMBER:?PR_NUMBER required}"
-    local files label pat labels=()
+    local files label pat labels=() category
     files="$(gh pr diff "${PR_NUMBER}" --name-only)"
     if _ci_labeler_documentation_match "${files}"; then
         labels+=("documentation")
@@ -842,8 +1031,12 @@ _ci_variables_label_pr() {
         [ -n "${label}" ] || continue
         _ci_labeler_glob_matches_any "${pat}" "${files}" && labels+=("${label}")
     done < <(_ci_labeler_simple_rules)
+    if _ci_metadata_fetch_live; then
+        category="$(_ci_pr_category_label "${PR_TITLE:-}")"
+        [ -n "${category}" ] && labels+=("${category}")
+    fi
     if [ "${#labels[@]}" -gt 0 ]; then
-        gh pr edit "${PR_NUMBER}" --add-label "$(IFS=,; echo "${labels[*]}")"
+        gh pr edit "${PR_NUMBER}" --add-label "$(IFS=,; printf '%s' "${labels[*]}")"
     fi
 }
 
@@ -1065,7 +1258,7 @@ _ci_scan_openssf() {
     if [ -n "${regressed_keys}" ]; then
         regressed_block="## REGRESSED -- was Met on the previous recheck, now NotMet
 
-$(echo "${regressed_keys}" | sed 's/^/- /')
+- ${regressed_keys//$'\n'/$'\n'- }
 
 These were excluded from the proposal links; investigate before re-proposing them."
     fi
@@ -1160,21 +1353,20 @@ ci_cmd_verify() {
                 -v "${CI_REPO_ROOT}/docker/verify:/verify:ro" \
                 "${image}" bash /verify/selftest-ptrace.sh ;;
         build-test)
-            # shellcheck disable=SC2016
             _ci_docker_run_ptrace \
                 --user "$(id -u):$(id -g)" --init \
                 -v "${CI_REPO_ROOT}:/work/src:rw" \
                 -v "${RUNNER_TEMP}/verify-etc/passwd:/etc/passwd:ro" \
                 -v "${RUNNER_TEMP}/verify-etc/group:/etc/group:ro" \
                 -w /work/src -e HOME=/tmp/distcc-ng-verify-home \
-                "${image}" bash -c '
+                "${image}" bash -c "
                     set -euo pipefail
-                    mkdir -p "$HOME"; id
+                    mkdir -p \"\${HOME}\"; id
                     ./autogen.sh
                     ./configure PYTHON=python3
                     make
                     make check
-                ' ;;
+                " ;;
         ccache-redis)
             _ci_verify_ccache_redis "${image}" ;;
         samba-configure-dryrun)
@@ -1183,26 +1375,24 @@ ci_cmd_verify() {
             # From: Issue #479, Issue #285
             local samba_ver
             samba_ver="$(_ci_sot_scalar external_versions.samba.version)"
-            # shellcheck disable=SC2016
-            docker run --rm -e "SAMBA_VERSION=${samba_ver}" "${image}" bash -c '
+            docker run --rm -e "SAMBA_VERSION=${samba_ver}" "${image}" bash -c "
                 set -euo pipefail
                 cd /tmp
-                wget -q "https://download.samba.org/pub/samba/stable/samba-${SAMBA_VERSION}.tar.gz"
-                wget -q "https://download.samba.org/pub/samba/stable/samba-${SAMBA_VERSION}.tar.asc"
+                wget -q \"https://download.samba.org/pub/samba/stable/samba-\${SAMBA_VERSION}.tar.gz\"
+                wget -q \"https://download.samba.org/pub/samba/stable/samba-\${SAMBA_VERSION}.tar.asc\"
                 wget -q https://download.samba.org/pub/samba/samba-pubkey.asc
                 gpg --batch --import samba-pubkey.asc
-                gunzip -k "samba-${SAMBA_VERSION}.tar.gz"
-                gpg --batch --verify "samba-${SAMBA_VERSION}.tar.asc" "samba-${SAMBA_VERSION}.tar" 2>&1 | tee gpg-verify.log
-                grep -q "Good signature from" gpg-verify.log \
-                  || { echo "::error::Samba tarball signature did not verify"; exit 1; }
-                tar xf "samba-${SAMBA_VERSION}.tar"
-                cd "samba-${SAMBA_VERSION}"
+                gunzip -k \"samba-\${SAMBA_VERSION}.tar.gz\"
+                gpg --batch --verify \"samba-\${SAMBA_VERSION}.tar.asc\" \"samba-\${SAMBA_VERSION}.tar\" 2>&1 | tee gpg-verify.log
+                grep -q \"Good signature from\" gpg-verify.log || { echo \"::error::Samba tarball signature did not verify\"; exit 1; }
+                tar xf \"samba-\${SAMBA_VERSION}.tar\"
+                cd \"samba-\${SAMBA_VERSION}\"
                 if ./configure 2>&1 | tee configure.log; then
-                    echo "Samba ./configure exited 0 -- image inventory sufficient."
+                    echo \"Samba ./configure exited 0 -- image inventory sufficient.\"
                 else
-                    echo "::error::Samba ./configure exited non-zero -- inventory insufficient"; exit 1
+                    echo \"::error::Samba ./configure exited non-zero -- inventory insufficient\"; exit 1
                 fi
-            ' ;;
+            " ;;
         *) ci_log "[CI-ERROR-VERIFY-0001]" "unknown verify subcommand=\"${sub}\""; return 2 ;;
     esac
 }
@@ -1231,19 +1421,18 @@ _ci_verify_ccache_redis() {
     redis_image="$(_ci_sot_scalar external_services.redis)"
     redis_cid="$(docker run -d --memory=2g --network host "${redis_image}")"
     _ci_verify_ccache_build() {
-        # shellcheck disable=SC2016
         docker run --rm --network host --user "$(id -u):$(id -g)" \
             -v "${CI_REPO_ROOT}:/work/src:rw" -w /work/src \
             -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
             -e HOME=/tmp/ccache-home \
-            "${image}" bash -c '
+            "${image}" bash -c "
                 set -euo pipefail
-                mkdir -p "$HOME"; cd /work/src
+                mkdir -p \"\${HOME}\"; cd /work/src
                 ccache --zero-stats >/dev/null
                 touch src/dopt.c
-                make CC="ccache gcc" src/dopt.o
+                make CC=\"ccache gcc\" src/dopt.o
                 ccache --show-stats
-            ' | tee "$2"
+            " | tee "$2"
     }
     if ! _ci_wait_for_redis "${redis_cid}"; then rc=1; fi
     if [ "${rc}" -eq 0 ]; then
@@ -1320,8 +1509,9 @@ _ci_check_pr_tracking() {
         ci_log "[CI-META-TRACKING]" "skipped: dependabot[bot]"
         return 0
     fi
-    local errs=() labels="${PR_LABELS:-}"
-    [ -n "${labels//[[:space:]]/}" ] || errs+=("no labels set")
+    local errs=()
+    local pr_labels="${PR_LABELS:-}"
+    [ -n "${pr_labels//[[:space:]]/}" ] || errs+=("no labels set")
     [ -n "${PR_MILESTONE_TITLE:-}" ] || errs+=("no milestone set")
     if [ "${#errs[@]}" -eq 0 ]; then
         ci_log "[CI-META-TRACKING]" "OK: labels + milestone set (board best-effort)"
@@ -1355,11 +1545,30 @@ _ci_check_changelog() {
     return 1
 }
 
-# What: Run the requested PR-metadata check(s).
-# Why: One phase replaces changelog-check.yml's PR-context jobs.
+# What: Fetch one PR's live title/labels/milestone/author.
+# Why: An event snapshot can go stale (rule 3/71).
+# From: Issue #479
+_ci_metadata_fetch_live() {
+    : "${PR_NUMBER:?PR_NUMBER required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    local json
+    json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+        --json title,labels,milestone,isDraft,author)" || return 2
+    PR_TITLE="$(printf '%s' "${json}" | jq -r '.title')"
+    PR_LABELS="$(printf '%s' "${json}" | jq -r '[.labels[].name] | join(" ")')"
+    PR_MILESTONE_TITLE="$(printf '%s' "${json}" | jq -r '.milestone.title // ""')"
+    PR_DRAFT="$(printf '%s' "${json}" | jq -r '.isDraft')"
+    PR_AUTHOR="$(printf '%s' "${json}" | jq -r '.author.login')"
+}
+
+# What: Runs metadata check(s); fetches live PR data first.
+# Why: Replaces changelog-check.yml's PR-context jobs.
 # From: Issue #479
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0
+    if [ -n "${PR_NUMBER:-}" ]; then
+        _ci_metadata_fetch_live || return 2
+    fi
     case "${sub}" in
         title)     _ci_check_pr_title || rc=1 ;;
         tracking)  _ci_check_pr_tracking || rc=1 ;;
@@ -1486,33 +1695,35 @@ ci_cmd_selftest() {
     bats --jobs "$(_ci_jobs)" "${CI_SCRIPT_DIR}/ci.bats"
 }
 
-# What: Run the governance guards over the CI-owned tree.
-# Why: One phase enforces the repo's CI hygiene invariants.
-# From: Issue #479
 # What: Run a command inside the published buildtools image.
 # Why: uid-matched, read-only; shared by every lint check.
 # From: Issue #479
 _ci_lint_buildtools_run() {
     docker run --rm --user "$(id -u):$(id -g)" \
         -v "${CI_REPO_ROOT}:/work:ro" -w /work \
-        ghcr.io/wiki-mod/distcc-ng-buildtools:latest bash -c "$1"
+        ghcr.io/wiki-mod/distcc-ng-buildtools:latest "$@"
 }
 
 # What: Lint every workflow file with actionlint.
-# Why: No release.yml exemption; that was cargo-dist-only.
+# Why: File list built on the host; no nested-shell expansion.
 # From: Issue #479
 _ci_lint_actionlint() {
-    _ci_lint_buildtools_run \
-        'actionlint -color $(find .github/workflows -name "*.yml" -type f)'
+    local files=()
+    while IFS= read -r f; do files+=("${f}"); done \
+        < <(cd "${CI_REPO_ROOT}" && find .github/workflows -name "*.yml" -type f)
+    _ci_lint_buildtools_run actionlint -color "${files[@]}"
 }
 
-# What: Shellcheck this repo's own scripts/ shell scripts.
-# Why: scripts/ survives until each is folded/deleted.
+# What: Shellcheck ci.sh, this repo's one real shell script now.
+# Why: scripts/*.sh is gone; every phase moved into ci.sh itself.
 # From: Issue #479
 _ci_lint_shellcheck() {
-    _ci_lint_buildtools_run 'shellcheck scripts/*.sh'
+    _ci_lint_buildtools_run shellcheck .github/scripts/ci.sh
 }
 
+# What: Run the governance guards over the CI-owned tree.
+# Why: One phase enforces the repo's CI hygiene invariants.
+# From: Issue #479
 ci_cmd_lint() {
     local rc=0 d
     ci_guard_line_endings "${CI_REPO_ROOT}/.github" || rc=1

@@ -78,5 +78,5 @@ runs:
       env:
         BREW_PACKAGES: ${{ inputs.brew }}
       run: |
-        # shellcheck disable=SC2086
-        brew install $BREW_PACKAGES
+        read -ra brew_pkgs <<< "${BREW_PACKAGES}"
+        brew install "${brew_pkgs[@]}"

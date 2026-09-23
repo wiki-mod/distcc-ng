@@ -394,6 +394,23 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "pr category: maps rule-71 types to release-drafter labels" {
+    # What: feat/fix/docs/security map to their changelog category.
+    # Why: Replaces release-drafter's autolabeler regex entirely.
+    # From: Issue #479
+    [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
+    [ "$(_ci_pr_category_label 'fix(protocol): correct frame bug')" = "bug" ]
+    [ "$(_ci_pr_category_label 'docs(governance): add rule')" = "documentation" ]
+    [ "$(_ci_pr_category_label 'security(config): patch leak')" = "security" ]
+}
+
+@test "pr category: an uncategorized type prints nothing" {
+    # What: chore/refactor/etc. get no changelog category label.
+    # Why: Matches release-drafter.yml's original 4-category scope.
+    # From: Issue #479
+    [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
+}
+
 # =========================================================
 # GOVERNANCE GUARDS (green + red)
 # =========================================================

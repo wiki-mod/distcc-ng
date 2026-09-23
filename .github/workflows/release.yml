@@ -1,7 +1,7 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Release: build/test/e2e/package/multi-arch publish.
-# Why: workflow_dispatch-only draft; tag trigger pending.
+# What: Release: build/test/package/publish/changelog/draft.
+# Why: Tag cut is dispatch-only; draft/changelog are live.
 # From: Issue #479
 name: Release
 
@@ -12,13 +12,47 @@ on:
         description: "Release tag, e.g. v3.6.6-NG (must match configure.ac)"
         required: true
         type: string
+  release:
+    types: [published]
+  push:
+    branches: [current_dev]
 
 permissions:
   contents: read
 
 jobs:
+  update_changelog:
+    name: Insert release notes into CHANGELOG.md
+    if: github.event_name == 'release' && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          notes="$(mktemp)"
+          printf '%s' "${{ toJSON(github.event.release.body) }}" | jq -r . > "$notes"
+          bash .github/scripts/ci.sh publish changelog "$TAG" "$notes"
+
+  update_draft_release:
+    name: Refresh the current_dev draft release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/ci.sh publish draft-release
+
   build_test:
     name: Build + test (default)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -32,6 +66,7 @@ jobs:
 
   e2e:
     name: Distributed compile E2E (2-container)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -40,6 +75,7 @@ jobs:
   package:
     name: Build packages and publish GitHub release
     needs: [build_test, e2e]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,6 +91,7 @@ jobs:
   build_container:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
     needs: [build_test, e2e]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.platform == 'arm64' }}
     permissions:
@@ -81,6 +118,7 @@ jobs:
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest
     needs: [build_container]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       packages: write
