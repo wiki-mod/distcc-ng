@@ -2179,6 +2179,21 @@ ci_cmd_build() {
             "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
         return 1
     fi
+    [ "${variant}" = "popt-fallback" ] && _ci_popt_fallback_smoke_test
+}
+
+# What: Prove the bundled-popt distccd binary parses real options.
+# Why: A poptGetContext()/poptGetNextOpt() regression compiles fine.
+# From: Issue #479
+_ci_popt_fallback_smoke_test() {
+    local help opt
+    help="$(./distccd --help 2>&1)"
+    for opt in --jobs --nice --listen --daemon --log-file --allow --user --port; do
+        printf '%s' "${help}" | grep -qF -- "${opt}" || {
+            ci_log "[CI-ERROR-BUILD-POPT-0002]" "distccd --help missing ${opt}"
+            return 1
+        }
+    done
 }
 
 # What: Parse comfychair make-check output into a verdict.

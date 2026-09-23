@@ -172,7 +172,7 @@ impact_classes:
     phases: ["lint"]
   ci-engine:
     paths: [".github/scripts/**"]
-    phases: ["selftest", "lint"]
+    phases: ["selftest", "lint", "container", "verify"]
   governance:
     paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
     phases: ["lint"]
