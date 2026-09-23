@@ -14,6 +14,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '0 5 * * 0'
+    - cron: '0 6 1,15 * *'
   branch_protection_rule:
 
 concurrency:
@@ -26,6 +27,7 @@ permissions:
 jobs:
   codeql:
     name: Analyze (${{ matrix.language }})
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -46,6 +48,7 @@ jobs:
 
   osv-scan:
     name: OSV scan
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -60,6 +63,7 @@ jobs:
 
   scorecard:
     name: Scorecard analysis
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,6 +78,7 @@ jobs:
 
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -88,7 +93,7 @@ jobs:
 
   openssf:
     name: OpenSSF Baseline recheck
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 1,15 * *'
     runs-on: ubuntu-latest
     permissions:
       contents: read
