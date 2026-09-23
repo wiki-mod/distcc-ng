@@ -360,6 +360,40 @@ setup() {
     [[ "${output}" == *"c-source"* ]]
 }
 
+@test "glob match: a prefix.* pattern matches its real extension" {
+    # What: Regression test for the fallback-match bug.
+    # Why: case needs pat unquoted or '*' becomes literal.
+    # From: Issue #479
+    run _ci_glob_match "src/config-parser.*" "src/config-parser.c"
+    [ "${status}" -eq 0 ]
+}
+
+@test "glob match: a prefix.* pattern rejects an unrelated file" {
+    # What: The fix must not make the matcher always-true.
+    # Why: A false positive would mislabel unrelated PRs.
+    # From: Issue #479
+    run _ci_glob_match "src/config-parser.*" "src/unrelated.c"
+    [ "${status}" -ne 0 ]
+}
+
+@test "labeler: documentation label matches doc/** and non-CHANGELOG .md" {
+    # What: Mirrors labeler's any:/negation for one label.
+    # Why: Two earlier configs got this negation wrong.
+    # From: Issue #479
+    run _ci_labeler_documentation_match $'doc/foo.md\nsrc/bar.c'
+    [ "${status}" -eq 0 ]
+    run _ci_labeler_documentation_match "README.md"
+    [ "${status}" -eq 0 ]
+}
+
+@test "labeler: documentation label excludes a CHANGELOG.md-only diff" {
+    # What: CHANGELOG.md alone must not fire this label.
+    # Why: Almost every PR touches it; not a real doc PR.
+    # From: Issue #479
+    run _ci_labeler_documentation_match "CHANGELOG.md"
+    [ "${status}" -ne 0 ]
+}
+
 # =========================================================
 # GOVERNANCE GUARDS (green + red)
 # =========================================================

@@ -11,6 +11,10 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [current_dev, master]
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened, synchronize]
 
 permissions:
   contents: read
@@ -18,6 +22,7 @@ permissions:
 jobs:
   engine-selftest:
     name: CI engine self-test (ci.bats)
+    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -27,6 +32,7 @@ jobs:
 
   plan:
     name: Plan (content-based impact matrix)
+    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.plan.outputs.build }}
@@ -107,3 +113,31 @@ jobs:
       - env:
           OWNER: ${{ github.repository_owner }}
         run: bash .github/scripts/ci.sh container buildtools
+
+  variables:
+    name: Repo automation (labeler + project board)
+    if: github.event_name == 'issues' || github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/ci.sh variables label-pr
+      - name: Check for automation PAT
+        id: check-pat
+        env:
+          SECRET_VALUE: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh variables secret-present
+      - if: steps.check-pat.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          ITEM_URL: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}
+        run: bash .github/scripts/ci.sh variables add-to-project

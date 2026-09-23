@@ -170,11 +170,11 @@ _ci_sot_sha() {
 # From: Issue #479
 _ci_glob_match() {
     local pat="$1" path="$2"
-    case "${pat}" in
-        '**/*.'*) case "${path}" in *".${pat##*.}") return 0 ;; *) return 1 ;; esac ;;
-        *'/**')   case "${path}" in "${pat%/**}"/*) return 0 ;; *) return 1 ;; esac ;;
-        *)        [ "${path}" = "${pat}" ] ;;
-    esac
+    # What: Native case globbing; pat must stay unquoted here.
+    # Why: A quoted pattern would make '*' literal, not wild.
+    # From: Issue #479
+    case "${path}" in ${pat}) return 0 ;; esac
+    return 1
 }
 
 # What: Print the impact classes matched by the paths on stdin.
@@ -771,13 +771,91 @@ _ci_variables_secret_present() {
     fi
 }
 
+# What: Add an issue/PR to the org project board via gh CLI.
+# Why: Replaces actions/add-to-project; gh project item-add is native.
+# From: Issue #479
+_ci_variables_add_to_project() {
+    : "${PROJECT_OWNER:?PROJECT_OWNER required}"
+    : "${PROJECT_NUMBER:?PROJECT_NUMBER required}"
+    : "${ITEM_URL:?ITEM_URL required}"
+    gh project item-add "${PROJECT_NUMBER}" --owner "${PROJECT_OWNER}" --url "${ITEM_URL}"
+}
+
+# What: True if a changed file is under doc/ or a non-CHANGELOG .md.
+# Why: Mirrors labeler.yml's documentation label's any:/negation rule.
+# From: Issue #479
+_ci_labeler_documentation_match() {
+    local files="$1" f
+    while IFS= read -r f; do
+        case "${f}" in doc/*) return 0 ;; esac
+        case "${f}" in *.md) [ "${f}" != "CHANGELOG.md" ] && return 0 ;; esac
+    done <<< "${files}"
+    return 1
+}
+
+# What: True if pat matches any line of files (one per line).
+# Why: Shared by every simple labeler rule; herestring avoids a subshell.
+# From: Issue #479
+_ci_labeler_glob_matches_any() {
+    local pat="$1" files="$2" f
+    while IFS= read -r f; do
+        _ci_glob_match "${pat}" "${f}" && return 0
+    done <<< "${files}"
+    return 1
+}
+
+# What: Print "label glob" lines for labeler.yml's simple OR rules.
+# Why: One purpose-built reader; only documentation needs any:/negation.
+# From: Issue #479
+_ci_labeler_simple_rules() {
+    awk '
+        /^documentation:$/ { label = ""; collecting = 0; next }
+        /^[a-z_-]+:$/ { label = $0; sub(/:$/, "", label); collecting = 0; next }
+        label == "" { next }
+        /any-glob-to-any-file:/ {
+            rest = $0
+            sub(/.*any-glob-to-any-file:[[:space:]]*/, "", rest)
+            gsub(/"/, "", rest)
+            if (rest != "") { print label, rest; collecting = 0 } else { collecting = 1 }
+            next
+        }
+        collecting && /^[[:space:]]*-[[:space:]]*"/ {
+            val = $0; gsub(/^[[:space:]]*-[[:space:]]*"|"[[:space:]]*$/, "", val)
+            print label, val
+            next
+        }
+        { collecting = 0 }
+    ' "${CI_REPO_ROOT}/.github/labeler.yml"
+}
+
+# What: Apply path-based labels to a PR from labeler.yml + its diff.
+# Why: Replaces actions/labeler; reuses labeler.yml as the config SOT.
+# From: Issue #479
+_ci_variables_label_pr() {
+    : "${PR_NUMBER:?PR_NUMBER required}"
+    local files label pat labels=()
+    files="$(gh pr diff "${PR_NUMBER}" --name-only)"
+    if _ci_labeler_documentation_match "${files}"; then
+        labels+=("documentation")
+    fi
+    while read -r label pat; do
+        [ -n "${label}" ] || continue
+        _ci_labeler_glob_matches_any "${pat}" "${files}" && labels+=("${label}")
+    done < <(_ci_labeler_simple_rules)
+    if [ "${#labels[@]}" -gt 0 ]; then
+        gh pr edit "${PR_NUMBER}" --add-label "$(IFS=,; echo "${labels[*]}")"
+    fi
+}
+
 # What: Workflow variable/output helpers dispatch.
 # Why: One owner for the small gate logic GitHub can't express in YAML.
 # From: Issue #479
 ci_cmd_variables() {
-    local sub="${1:?variables subcommand required (secret-present)}"
+    local sub="${1:?variables subcommand required}"
     case "${sub}" in
-        secret-present) _ci_variables_secret_present ;;
+        secret-present)  _ci_variables_secret_present ;;
+        add-to-project)  _ci_variables_add_to_project ;;
+        label-pr)        _ci_variables_label_pr ;;
         *) ci_log "[CI-ERROR-VARIABLES-0001]" "unknown variables subcommand=\"${sub}\""; return 2 ;;
     esac
 }
