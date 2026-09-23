@@ -2197,7 +2197,9 @@ ci_cmd_build() {
             "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
         return 1
     fi
-    [ "${variant}" = "popt-fallback" ] && _ci_popt_fallback_smoke_test
+    if [ "${variant}" = "popt-fallback" ]; then
+        _ci_popt_fallback_smoke_test || return 1
+    fi
 }
 
 # What: Prove the bundled-popt distccd binary parses real options.

@@ -92,6 +92,9 @@ jobs:
     if: >-
       (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') ||
       inputs.task == 'e2e-image' || github.event_name == 'push' || github.event_name == 'pull_request'
+    concurrency:
+      group: e2e-image-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
