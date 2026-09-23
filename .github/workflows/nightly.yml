@@ -36,6 +36,20 @@ jobs:
           VARIANT: default
         run: bash .github/scripts/ci.sh test "$VARIANT"
 
+  sanitizer:
+    name: Build + test (sanitizer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.sanitizer.apt
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
   e2e:
     name: Distributed compile E2E (2-container)
     runs-on: ubuntu-latest
