@@ -38,7 +38,7 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - if: matrix.language == 'c-cpp'
-        run: bash .github/scripts/ci.sh install apt "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+        run: bash .github/scripts/ci.sh install sot-apt security.codeql_cpp_apt
       - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" security-extended "codeql-${{ matrix.language }}.sarif"
       - env:
           GH_TOKEN: ${{ github.token }}

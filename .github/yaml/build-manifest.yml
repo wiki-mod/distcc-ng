@@ -131,6 +131,18 @@ release:
   # From: Issue #362, Issue #479
   packaging_apt: "autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien"
 
+# What: apt packages CodeQL needs for a c-cpp build.
+# Why: One owner; security.yml installs this first.
+# From: Issue #479
+security:
+  codeql_cpp_apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+
+# What: apt packages the engine self-test job needs.
+# Why: One owner; validate.yml installs this first.
+# From: Issue #479
+ci_engine:
+  selftest_apt: "bats parallel"
+
 # What: Tuning for the distributed-compile E2E harness runs.
 # Why: One owner for heartbeat floors and full-run targets.
 # From: Issue #479, Issue #264, Issue #81
