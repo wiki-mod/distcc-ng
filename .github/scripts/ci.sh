@@ -2281,6 +2281,6 @@ ci_main() {
 # What: Run the dispatcher only on direct execution.
 # Why: Lets ci.bats source the functions to test them.
 # From: Issue #479
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+if [ "${BASH_SOURCE[0]:-${0}}" = "${0}" ]; then
     ci_main "$@"
 fi
