@@ -2047,6 +2047,7 @@ ci_cmd_clusterfuzzlite_build() {
     docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
         -e LANGUAGE=c -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
         -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore -e LOW_DISK_SPACE=True \
+        -e WORKSPACE=/tmp/cfl-workspace -e "REPOSITORY=${GITHUB_REPOSITORY#*/}" \
         "${image}"
 }
 
@@ -2060,6 +2061,7 @@ ci_cmd_clusterfuzzlite_run() {
         -e FUZZ_SECONDS="${fuzz_seconds}" -e MODE="${mode}" \
         -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
         -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore \
+        -e WORKSPACE=/tmp/cfl-workspace -e "REPOSITORY=${GITHUB_REPOSITORY#*/}" \
         -e LOW_DISK_SPACE=True -e OUTPUT_SARIF=true \
         "${image}"
 }
