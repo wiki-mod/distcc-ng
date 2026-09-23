@@ -1,9 +1,7 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Nightly build/test/e2e + distcc-ng-nightly:latest publish.
-# Why: Always builds current_dev; schedule/dispatch evaluate from
-#   master, so both ci.sh's own fetch and the checkout ref are pinned
-#   to current_dev explicitly rather than following github.sha.
+# What: Nightly build/test/e2e, nightly:latest publish.
+# Why: schedule/dispatch resolve github.sha to master.
 # From: Issue #479, Issue #81, Issue #500
 name: Nightly
 
@@ -30,7 +28,7 @@ jobs:
     steps:
       - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
-      - uses: ./.github/actions/install-build-deps
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
       - env:
           VARIANT: default
         run: bash .github/scripts/ci.sh build "$VARIANT"
@@ -67,7 +65,7 @@ jobs:
     steps:
       - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
-      - uses: ./.github/actions/install-packaging-deps
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
       - uses: ./.github/actions/ghcr-login
         with:

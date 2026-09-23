@@ -126,6 +126,10 @@ release:
   # Why: One owner for gc/tag construction; no hardcode.
   # From: Issue #479
   ghcr_packages: ["distcc-ng", "distcc-ng-pump", "distcc-ng-nightly", "distcc-ng-buildtools", "distcc-ng-e2e"]
+  # What: apt packages to build the real .rpm/.deb packages.
+  # Why: One owner; nightly/release both install this.
+  # From: Issue #362, Issue #479
+  packaging_apt: "autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien"
 
 # What: Tuning for the distributed-compile E2E harness runs.
 # Why: One owner for heartbeat floors and full-run targets.

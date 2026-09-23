@@ -1,6 +1,6 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: PR/push entry; self-test, impact plan, and build/test matrix.
+# What: PR/push entry; self-test, plan, build/test matrix.
 # Why: One thin orchestrator; all logic lives in ci.sh.
 # From: Issue #479
 name: Validate
@@ -87,10 +87,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - uses: ./.github/actions/install-build-deps
-        with:
-          apt: ${{ matrix.apt }}
-          brew: ${{ matrix.brew }}
+      - if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: ${{ matrix.apt }}
+        run: bash .github/scripts/ci.sh install apt "${APT_PACKAGES}"
+      - if: runner.os == 'macOS' && matrix.brew != ''
+        env:
+          BREW_PACKAGES: ${{ matrix.brew }}
+        run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"

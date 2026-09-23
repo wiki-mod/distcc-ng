@@ -34,7 +34,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables"
+CI_COMMANDS="checkout plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables install"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -1844,6 +1844,52 @@ ci_cmd_lint() {
 }
 
 # =========================================================
+# INSTALL (apt/brew dependency installers; shared by composite actions)
+# =========================================================
+
+# What: apt-get update+install with a bounded 2x3-minute retry.
+# Why: ubuntu-latest's default mirror has hung indefinitely.
+# From: Issue #493, Issue #479
+_ci_apt_install() {
+    local packages="${1:?package list required}" max_attempts=2 attempt=1
+    while true; do
+        if sudo timeout -k 10s 3m bash -c "apt-get update && apt-get install -y ${packages}"; then
+            return 0
+        fi
+        if [ "${attempt}" -ge "${max_attempts}" ]; then
+            ci_log "[CI-ERROR-INSTALL-0001]" "apt install failed after ${max_attempts} attempts"
+            return 1
+        fi
+        ci_log "[CI-INSTALL-APT]" "attempt ${attempt} failed or timed out, retrying"
+        attempt=$((attempt + 1))
+        sleep 10
+    done
+}
+
+# What: brew install for a space-separated package list.
+# Why: brew is preinstalled; no retry needed here.
+# From: Issue #479
+_ci_brew_install() {
+    local packages="${1:?package list required}"
+    local -a pkgs
+    read -ra pkgs <<< "${packages}"
+    brew install "${pkgs[@]}"
+}
+
+# What: Dispatch apt|brew|sot-apt dependency installation.
+# Why: One owner; workflows call this, never raw apt/brew.
+# From: Issue #479
+ci_cmd_install() {
+    local kind="${1:?apt, brew, or sot-apt required}" arg="${2:?argument required}"
+    case "${kind}" in
+        apt)     _ci_apt_install "${arg}" ;;
+        brew)    _ci_brew_install "${arg}" ;;
+        sot-apt) _ci_apt_install "$(_ci_sot_scalar "${arg}")" ;;
+        *) ci_log "[CI-ERROR-INSTALL-0002]" "unknown install kind=\"${kind}\""; return 2 ;;
+    esac
+}
+
+# =========================================================
 # CHECKOUT (bootstrap; must not depend on the repo or SOT)
 # =========================================================
 
@@ -1870,9 +1916,9 @@ ci_cmd_checkout() {
 # =========================================================
 
 # What: Files allowed their own SHA (no CLI/OIDC option).
-# Why: harden-runner/attest-build-provenance need real GHA.
+# Why: harden-runner needs a real in-GHA eBPF agent.
 # From: Issue #479
-_CI_ACTION_PIN_ALLOWFILES=".github/actions/harden-runner/action.yml .github/actions/attest-build-provenance/action.yml"
+_CI_ACTION_PIN_ALLOWFILES=".github/actions/harden-runner/action.yml"
 
 # What: Fail if any file but the SOT/allow-files has a pin.
 # Why: SOT is the only owner; ci.sh runs tools itself.
@@ -2280,6 +2326,7 @@ ci_main() {
                 verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
+                install) ci_cmd_install "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

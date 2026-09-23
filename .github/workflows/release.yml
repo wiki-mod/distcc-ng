@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - uses: ./.github/actions/install-build-deps
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
       - env:
           VARIANT: default
         run: bash .github/scripts/ci.sh build "$VARIANT"
@@ -78,24 +78,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - uses: ./.github/actions/install-packaging-deps
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
       - env:
           OUT: distcc-ng-${{ inputs.tag }}.spdx.json
         run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
-      - uses: ./.github/actions/attest-build-provenance
-        with:
-          subject-path: |
-            distcc-*.tar.gz
-            distcc-*.tar.bz2
-            packaging/*.rpm
-            packaging/*.deb
-            distcc-ng-*.spdx.json
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
