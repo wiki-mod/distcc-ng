@@ -246,6 +246,10 @@ setup() {
     [[ "${output}" == *"samba=4.22.4"* ]]
     [[ "${output}" == *"actionlint=1.7.12"* ]]
     [[ "${output}" == *"ccache_heartbeat=v4.13.6"* ]]
+    [[ "${output}" == *"codeql_cli=v2.27.0"* ]]
+    [[ "${output}" == *"scorecard=v5.5.0"* ]]
+    [[ "${output}" == *"osv_scanner=v2.6.0"* ]]
+    [[ "${output}" == *"clusterfuzzlite=v1"* ]]
     [[ "${output}" == *"redis=redis@sha256:"* ]]
 }
 

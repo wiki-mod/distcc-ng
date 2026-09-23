@@ -41,24 +41,32 @@ external_versions:
   # From: Issue #479, Issue #81
   ccache_heartbeat:
     version: "v4.13.6"
+  # What: CodeQL CLI bundle downloaded and run directly by ci.sh.
+  # Why: No marketplace action; codeql-action tag names its own bundle.
+  # From: Issue #479
+  codeql_cli:
+    version: "v2.27.0"
+  # What: OSSF Scorecard CLI release run directly by ci.sh.
+  # Why: No marketplace action; replaces ossf/scorecard-action.
+  # From: Issue #479
+  scorecard:
+    version: "v5.5.0"
+  # What: OSV-Scanner CLI release run directly by ci.sh.
+  # Why: No marketplace action; replaces google/osv-scanner-action.
+  # From: Issue #479
+  osv_scanner:
+    version: "v2.6.0"
+  # What: ClusterFuzzLite step image tag ci.sh runs via docker.
+  # Why: No marketplace Docker action; same image, own docker run.
+  # From: Issue #479
+  clusterfuzzlite:
+    version: "v1"
 
 # What: Pinned external service images used by CI steps.
 # Why: One owner; full-digest pin, never a floating tag in a workflow.
 # From: Issue #479
 external_services:
   redis: "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
-
-# What: The single owner of every GitHub Action SHA pin used by CI.
-# Why: One place for action versions; a guard binds each workflow uses: to it.
-# From: Issue #479
-action_pins:
-  actions/checkout: "3d3c42e5aac5ba805825da76410c181273ba90b1"
-  actions/upload-artifact: "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-  actions/download-artifact: "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-  github/codeql-action: "1c5b675653bb5c22dbe9b12b556ec555138e09fd"
-  google/osv-scanner-action: "a345acffa64b0eaede81a3d9aae6141214d9c8fc"
-  ossf/scorecard-action: "2d1146689b8cda280b9bc96326124645441f03bc"
-  google/clusterfuzzlite: "884713a6c30a92e5e8544c39945cd7cb630abcd1"
 
 # What: The configure variants CI builds/tests, per OS.
 # Why: One matrix owner; workflows read, never hardcode.

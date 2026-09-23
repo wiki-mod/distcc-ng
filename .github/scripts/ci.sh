@@ -238,6 +238,10 @@ ci_cmd_resolve() {
     printf 'samba=%s\n'           "$(_ci_sot_scalar external_versions.samba.version)"
     printf 'actionlint=%s\n'      "$(_ci_sot_scalar external_versions.actionlint.version)"
     printf 'ccache_heartbeat=%s\n' "$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
+    printf 'codeql_cli=%s\n'      "$(_ci_sot_scalar external_versions.codeql_cli.version)"
+    printf 'scorecard=%s\n'       "$(_ci_sot_scalar external_versions.scorecard.version)"
+    printf 'osv_scanner=%s\n'     "$(_ci_sot_scalar external_versions.osv_scanner.version)"
+    printf 'clusterfuzzlite=%s\n' "$(_ci_sot_scalar external_versions.clusterfuzzlite.version)"
     printf 'redis=%s\n'           "$(_ci_sot_scalar external_services.redis)"
 }
 
