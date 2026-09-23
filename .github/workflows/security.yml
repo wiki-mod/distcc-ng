@@ -44,7 +44,7 @@ jobs:
       - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" security-extended "codeql-${{ matrix.language }}.sarif"
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif" "/language:${{ matrix.language }}"
+        run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif"
 
   osv-scan:
     name: OSV scan

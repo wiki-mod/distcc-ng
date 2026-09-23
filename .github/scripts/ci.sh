@@ -1951,21 +1951,21 @@ ci_cmd_codeql_scan() {
             ;;
     esac
     "${bin}" database analyze "${db}" "${pack}" \
-        --format=sarif-latest --output="${out}" --download || return 2
+        --format=sarif-latest --output="${out}" --download \
+        --sarif-category="/language:${lang}" || return 2
 }
 
 # What: Upload one SARIF file via the code-scanning API.
 # Why: Replaces codeql-action/upload-sarif; no marketplace action.
 # From: Issue #479
 ci_cmd_sarif_upload() {
-    local file="${1:?sarif file required}" category="${2:-}" payload
+    local file="${1:?sarif file required}" payload
     : "${GH_TOKEN:?GH_TOKEN required}"
     payload="$(gzip -c "${file}" | base64 -w0)"
     gh api "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
         -f "commit_sha=${GITHUB_SHA}" \
         -f "ref=${GITHUB_REF}" \
-        -f "sarif=${payload}" \
-        -f "category=${category}" >/dev/null
+        -f "sarif=${payload}" >/dev/null
 }
 
 # What: Download+cache the pinned Scorecard CLI; print its path.
@@ -2045,8 +2045,8 @@ ci_cmd_clusterfuzzlite_build() {
     local sanitizer="${1:-address}" image
     image="$(_ci_clusterfuzzlite_image build)" || return 2
     docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
-        -e LANGUAGE=c -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=github \
-        -e LOW_DISK_SPACE=True \
+        -e LANGUAGE=c -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
+        -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore -e LOW_DISK_SPACE=True \
         "${image}"
 }
 
@@ -2058,7 +2058,8 @@ ci_cmd_clusterfuzzlite_run() {
     image="$(_ci_clusterfuzzlite_image run)" || return 2
     docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
         -e FUZZ_SECONDS="${fuzz_seconds}" -e MODE="${mode}" \
-        -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=github \
+        -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
+        -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore \
         -e LOW_DISK_SPACE=True -e OUTPUT_SARIF=true \
         "${image}"
 }
