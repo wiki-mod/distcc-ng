@@ -25,11 +25,11 @@ jobs:
       matrix:
         language: [c-cpp, python, actions]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - env:
-          INPUT_LANGUAGES: ${{ matrix.language }}
-          INPUT_QUERIES: security-extended
-        run: bash .github/scripts/ci.sh action run github/codeql-action/init
+      - uses: ./.github/actions/actions-checkout-centralized-version
+      - uses: ./.github/actions/github-codeql-action-init-centralized-version
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
       - if: matrix.language == 'c-cpp'
         uses: ./.github/actions/install-build-deps
         with:
@@ -38,9 +38,9 @@ jobs:
         env:
           VARIANT: default
         run: bash .github/scripts/ci.sh build "$VARIANT"
-      - env:
-          INPUT_CATEGORY: /language:${{ matrix.language }}
-        run: bash .github/scripts/ci.sh action run github/codeql-action/analyze
+      - uses: ./.github/actions/github-codeql-action-analyze-centralized-version
+        with:
+          category: /language:${{ matrix.language }}
 
   osv-scan:
     name: OSV scan
@@ -58,22 +58,22 @@ jobs:
       security-events: write
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
         with:
-          persist-credentials: false
-      - env:
-          INPUT_RESULTS_FILE: results.sarif
-          INPUT_RESULTS_FORMAT: sarif
-          INPUT_PUBLISH_RESULTS: "false"
-        run: bash .github/scripts/ci.sh action run ossf/scorecard-action
-      - env:
-          INPUT_NAME: scorecard-results
-          INPUT_PATH: results.sarif
-          INPUT_RETENTION-DAYS: "5"
-        run: bash .github/scripts/ci.sh action run actions/upload-artifact
-      - env:
-          INPUT_SARIF_FILE: results.sarif
-        run: bash .github/scripts/ci.sh action run github/codeql-action/upload-sarif
+          persist-credentials: "false"
+      - uses: ./.github/actions/ossf-scorecard-action-centralized-version
+        with:
+          results-file: results.sarif
+          results-format: sarif
+          publish-results: "false"
+      - uses: ./.github/actions/actions-upload-artifact-centralized-version
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: "5"
+      - uses: ./.github/actions/github-codeql-action-upload-sarif-centralized-version
+        with:
+          sarif_file: results.sarif
 
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
@@ -104,7 +104,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - env:
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           REPO: ${{ github.repository }}

@@ -20,7 +20,7 @@ jobs:
     name: CI engine self-test (ci.bats)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - run: sudo apt-get update
       - run: sudo apt-get install -y bats parallel
       - run: bash .github/scripts/ci.sh selftest
@@ -33,9 +33,9 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       phases: ${{ steps.plan.outputs.phases }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
         with:
-          fetch-depth: 0
+          fetch-depth: "0"
       - id: plan
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}

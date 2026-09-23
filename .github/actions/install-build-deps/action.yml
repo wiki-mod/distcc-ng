@@ -1,17 +1,15 @@
 name: Install build/test apt dependencies
 description: >-
-  Shared apt package list (issue #362 item 6) for building distcc-ng and
-  running make check -- c-build.yml's Linux matrix leg, nightly-publish.yml,
-  and package-release.yml all needed the exact same list kept in sync by
-  hand. A duplicated dependency list drifts silently: a package added for a
-  new build requirement in one file and not the other produces a failure
-  only in the workflow nobody edited. The apt path (issue #493) retries
-  through a bounded per-attempt timeout instead of ConorMacBride/
-  install-package's single, unretried `apt update` -- GitHub-hosted
-  ubuntu-latest's default mirror has twice hung indefinitely and burned a
-  whole job timeout with nothing to show for it. The brew path (macOS
-  matrix legs, only c-build.yml uses it) is unaffected and still goes
-  through ConorMacBride/install-package unchanged.
+  Shared apt/brew package list (issue #362 item 6, Issue #479) for
+  building distcc-ng and running make check. A duplicated dependency list
+  drifts silently: a package added for a new build requirement in one
+  file and not the other produces a failure only in the workflow nobody
+  edited. The apt path (issue #493) retries through a bounded
+  per-attempt timeout, since GitHub-hosted ubuntu-latest's default mirror
+  has twice hung indefinitely and burned a whole job timeout with
+  nothing to show for it. Both apt and brew run as plain shell (Issue
+  #479's zero-SHA-outside-SOT rule; ConorMacBride/install-package
+  provided no capability plain apt-get/brew doesn't already have).
 
 inputs:
   # What: The default apt list includes libelf-dev.
@@ -71,7 +69,14 @@ runs:
           attempt=$((attempt + 1))
           sleep 10
         done
-    - if: runner.os == 'macOS'
-      uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1.1.0
-      with:
-        brew: ${{ inputs.brew }}
+    # What: Installs the brew input's package list via plain brew.
+    # Why: No SHA-pinned action needed; brew is preinstalled on macOS
+    #   runners and needs no retry logic (issue #493 was apt-specific).
+    # From: Issue #479
+    - if: runner.os == 'macOS' && inputs.brew != ''
+      shell: bash
+      env:
+        BREW_PACKAGES: ${{ inputs.brew }}
+      run: |
+        # shellcheck disable=SC2086
+        brew install $BREW_PACKAGES

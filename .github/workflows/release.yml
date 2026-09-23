@@ -23,7 +23,7 @@ jobs:
     name: Build + test (default)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - uses: ./.github/actions/install-build-deps
       - env:
           VARIANT: default
@@ -36,7 +36,7 @@ jobs:
     name: Distributed compile E2E (2-container)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - run: bash .github/scripts/ci.sh e2e distributed
 
   package:
@@ -44,17 +44,17 @@ jobs:
     needs: [build_test, e2e]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - uses: ./.github/actions/install-packaging-deps
       - run: bash .github/scripts/ci.sh package
-      - env:
-          INPUT_NAME: distcc-release-packages
-          INPUT_PATH: |
+      - uses: ./.github/actions/actions-upload-artifact-centralized-version
+        with:
+          name: distcc-release-packages
+          path: |
             distcc-*.tar.gz
             distcc-*.tar.bz2
             packaging/*.rpm
             packaging/*.deb
-        run: bash .github/scripts/ci.sh action run actions/upload-artifact
 
   build_container:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
@@ -73,7 +73,7 @@ jobs:
       IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ inputs.tag }}-${{ matrix.platform }}
       VERSION: ${{ inputs.tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/actions-checkout-centralized-version
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}
@@ -81,10 +81,10 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
         run: bash .github/scripts/ci.sh container "$VARIANT" "$PLATFORM"
-      - env:
-          INPUT_NAME: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
-          INPUT_PATH: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
-        run: bash .github/scripts/ci.sh action run actions/upload-artifact
+      - uses: ./.github/actions/actions-upload-artifact-centralized-version
+        with:
+          name: image-digest-${{ matrix.variant }}-${{ matrix.platform }}
+          path: digest-${{ matrix.variant }}-${{ matrix.platform }}.txt
 
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest
@@ -102,11 +102,11 @@ jobs:
       - uses: ./.github/actions/ghcr-login
         with:
           token: ${{ github.token }}
-      - env:
-          INPUT_PATTERN: image-digest-${{ matrix.variant }}-*
-          INPUT_PATH: digests
-          INPUT_MERGE-MULTIPLE: "true"
-        run: bash .github/scripts/ci.sh action run actions/download-artifact
+      - uses: ./.github/actions/actions-download-artifact-centralized-version
+        with:
+          pattern: image-digest-${{ matrix.variant }}-*
+          path: digests
+          merge-multiple: "true"
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
@@ -118,10 +118,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - env:
-          INPUT_NAME: distcc-release-packages
-        run: bash .github/scripts/ci.sh action run actions/download-artifact
+      - uses: ./.github/actions/actions-checkout-centralized-version
+      - uses: ./.github/actions/actions-download-artifact-centralized-version
+        with:
+          name: distcc-release-packages
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}

@@ -10,10 +10,11 @@ set -euo pipefail
 # CONSTANTS
 # =========================================================
 
-# What: Absolute directory of this script.
-# Why: Locate the SOT manifest regardless of caller CWD.
+# What: Absolute directory of this script, if it has one.
+# Why: curl|bash bootstrap has no BASH_SOURCE; must not crash.
 # From: Issue #479
-CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" \
+    2>/dev/null && pwd || pwd)"
 
 # What: Path to the single source-of-truth manifest.
 # Why: One machine-readable owner for versions and matrix.
@@ -33,7 +34,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables action"
+CI_COMMANDS="checkout plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -1034,9 +1035,16 @@ EOF
 # Why: One phase owner; codeql/osv/scorecard/fuzz are pure workflow actions.
 # From: Issue #479, Issue #312
 ci_cmd_scan() {
-    local sub="${1:?scan target required (openssf)}"
+    local sub="${1:?scan target required}"
+    [ "$#" -gt 0 ] && shift
     case "${sub}" in
-        openssf) _ci_scan_openssf ;;
+        openssf)             _ci_scan_openssf ;;
+        codeql)               ci_cmd_codeql_scan "$@" ;;
+        sarif-upload)         ci_cmd_sarif_upload "$@" ;;
+        scorecard)            ci_cmd_scorecard_scan "$@" ;;
+        osv)                  ci_cmd_osv_scan "$@" ;;
+        clusterfuzzlite-build) ci_cmd_clusterfuzzlite_build "$@" ;;
+        clusterfuzzlite-run)   ci_cmd_clusterfuzzlite_run "$@" ;;
         *) ci_log "[CI-ERROR-SCAN-0001]" "unknown scan target=\"${sub}\""; return 2 ;;
     esac
 }
@@ -1416,169 +1424,224 @@ ci_cmd_lint() {
     ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
     # Every shipped workflow is an orchestrator; there is no legacy exemption.
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
-    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
+    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml \
+        "${CI_REPO_ROOT}"/.github/actions/*/action.yml || rc=1
     return "${rc}"
 }
 
 # =========================================================
-# ACTION RUNNER (ci.sh action)
+# CHECKOUT (bootstrap; must not depend on the repo or SOT)
 # =========================================================
 
-# What: Map an action ref to its action_pins key.
-# Why: Keys are owner/repo; subpath refs share one pin.
+# What: Fetch+checkout the triggering commit via plain git.
+# Why: No action, no SHA; ci.sh isn't on disk pre-checkout.
 # From: Issue #479
-_ci_action_sot_key() {
-    local ref="$1" p1 p2
-    p1="${ref%%/*}"
-    p2="${ref#*/}"; p2="${p2%%/*}"
-    printf '%s/%s' "${p1}" "${p2}"
+ci_cmd_checkout() {
+    local depth="${1:-1}"
+    : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    : "${GITHUB_SHA:?GITHUB_SHA required}"
+    git init -q .
+    git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+    if [ "${depth}" = "0" ]; then
+        git fetch -q origin "${GITHUB_SHA}"
+    else
+        git fetch -q --depth="${depth}" origin "${GITHUB_SHA}"
+    fi
+    git checkout -q FETCH_HEAD
 }
 
-# What: Print SOT SHA for an action ref or explicit path.
-# Why: Defaults to action_pins; caller may supply sot-path.
+# =========================================================
+# ACTION-PIN GUARD (build-manifest.yml is the sole SHA owner)
+# =========================================================
+
+# What: The one file allowed its own SHA (no CLI/docker substitute).
+# Why: harden-runner is a runner-level eBPF agent, not a callable tool.
 # From: Issue #479
-_ci_action_sha() {
-    local ref="${1:-}" sot_path="${2:-}" key
-    if [ -z "${ref}" ]; then
-        ci_log "[CI-ERROR-ACTION-0001]" "reason=\"action ref required\""
-        return 2
-    fi
-    if [ -z "${sot_path}" ]; then
-        key="$(_ci_action_sot_key "${ref}")"
-        sot_path="action_pins.${key}"
-    fi
-    _ci_sot_sha "${sot_path}"
-}
+_CI_ACTION_PIN_ALLOWFILE=".github/actions/harden-runner/action.yml"
 
-# What: Download a GitHub action tarball and extract it.
-# Why: Fetch runs once; run phase reuses the extracted tree.
-# From: Issue #479
-_ci_action_fetch() {
-    local owner="$1" repo="$2" sha="$3" dest="$4"
-    local url="https://api.github.com/repos/${owner}/${repo}/tarball/${sha}"
-    mkdir -p "${dest}"
-    if ! curl -sL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            --retry 3 --max-time 120 \
-            "${url}" \
-        | tar -xz --strip-components=1 -C "${dest}" 2>/dev/null; then
-        ci_log "[CI-ERROR-ACTION-0003]" \
-            "owner=${owner} repo=${repo} sha=${sha} reason=\"fetch/extract failed\""
-        return 2
-    fi
-}
-
-# What: Execute a JavaScript action from a local tree.
-# Why: node dist/index.js + INPUT_* is the GHA JS contract.
-# From: Issue #479
-_ci_action_run_js() {
-    local action_dir="$1" action_yml main
-    action_yml="${action_dir}/action.yml"
-    [ -f "${action_yml}" ] || action_yml="${action_dir}/action.yaml"
-    if [ ! -f "${action_yml}" ]; then
-        ci_log "[CI-ERROR-ACTION-0004]" \
-            "dir=\"${action_dir}\" reason=\"action.yml not found\""
-        return 2
-    fi
-    main=$(awk '
-        /^runs:/ { in_runs=1; next }
-        /^[^ ]/ { in_runs=0 }
-        in_runs && /^[[:space:]]+main:/ {
-            gsub(/^[[:space:]]*main:[[:space:]]*/,"")
-            gsub(/"/,"")
-            print; exit
-        }
-    ' "${action_yml}")
-    if [ -z "${main}" ]; then
-        ci_log "[CI-ERROR-ACTION-0005]" \
-            "action_yml=\"${action_yml}\" reason=\"runs.main not found\""
-        return 2
-    fi
-    GITHUB_ACTION_PATH="${action_dir}" node "${action_dir}/${main}"
-}
-
-# What: Run an external action via its SOT-pinned SHA.
-# Why: Callers never pin; ci.sh reads from SOT and runs.
-# From: Issue #479
-_ci_action_run() {
-    local ref="${1:-}" sot_path="${2:-}" owner repo subpath sha tmp_dir action_dir rc=0
-    if [ -z "${ref}" ]; then
-        ci_log "[CI-ERROR-ACTION-0006]" "reason=\"action run requires a ref\""
-        return 2
-    fi
-    owner="${ref%%/*}"
-    repo="${ref#*/}"; repo="${repo%%/*}"
-    subpath="${ref#*/}"; subpath="${subpath#*/}"
-    [ "${subpath}" = "${repo}" ] && subpath=""
-    sha="$(_ci_action_sha "${ref}" "${sot_path}")" || return 2
-
-    tmp_dir="$(mktemp -d)"
-    _ci_action_fetch "${owner}" "${repo}" "${sha}" "${tmp_dir}" || {
-        rm -rf "${tmp_dir}"; return 2
-    }
-    action_dir="${tmp_dir}"
-    [ -z "${subpath}" ] || action_dir="${tmp_dir}/${subpath}"
-
-    _ci_action_run_js "${action_dir}" || rc=$?
-    rm -rf "${tmp_dir}"
-    return "${rc}"
-}
-
-# What: Actions that may pin inline (structural limits).
-# Why: checkout/osv/fuzz can't use ci.sh action run.
-# From: Issue #479
-_CI_ACTION_PIN_ALLOW="actions/checkout google/osv-scanner-action google/clusterfuzzlite"
-
-# What: Fail on any workflow inline pin outside allow-list.
-# Why: SOT owns all SHAs; unlisted pins drift silently.
+# What: Fail if any file but the SOT (or the allow-file) has a pin.
+# Why: SOT is the only version owner; ci.sh runs tools itself.
 # From: Issue #479
 ci_guard_action_pin_sot() {
-    local rc=0 f line base sha sot_sha key allowed
+    local rc=0 f rel
     for f in "$@"; do
         [ -f "${f}" ] || continue
-        while IFS= read -r line; do
-            base=$(printf '%s' "${line}" \
-                   | grep -oE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-f]{40}' \
-                   | sed 's/uses:[[:space:]]*//' | sed 's/@[0-9a-f]*$//')
-            [ -n "${base}" ] || continue
-            sha=$(printf '%s' "${line}" | grep -oE '@[0-9a-f]{40}' | tr -d '@')
-            key="$(_ci_action_sot_key "${base}")"
-            allowed=false
-            for a in ${_CI_ACTION_PIN_ALLOW}; do
-                [ "${key}" = "${a}" ] && allowed=true && break
-            done
-            if ! "${allowed}"; then
-                rc=1
-                ci_log "[CI-ERROR-GUARD-APIN-0001]" \
-                    "file=\"${f}\" action=\"${base}\" reason=\"inline pin; use ci.sh action run\""
-                continue
-            fi
-            sot_sha="$(_ci_sot_sha "action_pins.${key}" 2>/dev/null)" || sot_sha=""
-            if [ -n "${sot_sha}" ] && [ "${sha}" != "${sot_sha}" ]; then
-                rc=1
-                ci_log "[CI-ERROR-GUARD-APIN-0002]" \
-                    "file=\"${f}\" action=\"${key}\" got=${sha} want=${sot_sha} reason=\"drifted from SOT\""
-            fi
-        done < <(grep -n 'uses:.*@[0-9a-f]\{40\}' "${f}" 2>/dev/null || true)
+        rel="${f#"${CI_REPO_ROOT}"/}"
+        [ "${rel}" = "${_CI_ACTION_PIN_ALLOWFILE}" ] && continue
+        if grep -qE '@[0-9a-f]{40}' "${f}" 2>/dev/null; then
+            rc=1
+            ci_log "[CI-ERROR-GUARD-APIN-0001]" \
+                "file=\"${f}\" reason=\"SHA pin outside SOT\""
+        fi
     done
     return "${rc}"
 }
 
-# What: Dispatch ci.sh action subcommands.
-# Why: One entry point for all action-runner operations.
+# =========================================================
+# SECURITY TOOLS (own CLI invocations; no marketplace actions)
+# =========================================================
+
+# What: Download+cache the pinned CodeQL CLI; print its path.
+# Why: Own invocation, no JS action; version owned by SOT.
 # From: Issue #479
-ci_cmd_action() {
-    local subcmd="${1:-}"
-    [ "$#" -gt 0 ] && shift
-    case "${subcmd}" in
-        run)         _ci_action_run "$@" ;;
-        verify-pins) ci_guard_action_pin_sot \
-                         "${CI_REPO_ROOT}"/.github/workflows/*.yml ;;
-        get-sha)     _ci_action_sha "$@" ;;
-        sot-sha)     _ci_sot_sha "$@" ;;
-        *) ci_not_implemented "action ${subcmd}" "$@" ;;
+_ci_codeql_bin() {
+    local ver dest bin
+    ver="$(_ci_sot_scalar external_versions.codeql_cli.version)" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/codeql-${ver}"
+    bin="${dest}/codeql/codeql"
+    if [ ! -x "${bin}" ]; then
+        mkdir -p "${dest}"
+        curl -fsSL --retry 3 \
+            "https://github.com/github/codeql-action/releases/download/codeql-bundle-${ver}/codeql-bundle-linux64.tar.gz" \
+            | tar -xz -C "${dest}" || return 2
+    fi
+    printf '%s' "${bin}"
+}
+
+# What: Map language+suite to a CodeQL query-pack reference.
+# Why: One mapping; callers pass a plain suite name like init did.
+# From: Issue #479
+_ci_codeql_query_pack() {
+    local lang="$1" suite="${2:-security-extended}"
+    case "${lang}" in
+        c-cpp)  printf 'codeql/cpp-queries:codeql-suites/cpp-%s.qls' "${suite}" ;;
+        python) printf 'codeql/python-queries:codeql-suites/python-%s.qls' "${suite}" ;;
+        *)      printf 'codeql/%s-queries' "${lang}" ;;
     esac
+}
+
+# What: Create a CodeQL DB and analyze it into a SARIF file.
+# Why: CLI-native flow; c-cpp traces the repo's own build command.
+# From: Issue #479
+ci_cmd_codeql_scan() {
+    local lang="${1:?language required}" suite="${2:-security-extended}" \
+        out="${3:-results-${1}.sarif}" bin db pack
+    bin="$(_ci_codeql_bin)" || return 2
+    db="${RUNNER_TEMP:-/tmp}/codeql-db-${lang}"
+    pack="$(_ci_codeql_query_pack "${lang}" "${suite}")"
+    rm -rf "${db}"
+    case "${lang}" in
+        c-cpp)
+            "${bin}" database create "${db}" --language=cpp \
+                --source-root=. \
+                --command="bash .github/scripts/ci.sh build default" || return 2
+            ;;
+        *)
+            "${bin}" database create "${db}" --language="${lang}" \
+                --source-root=. || return 2
+            ;;
+    esac
+    "${bin}" database analyze "${db}" "${pack}" \
+        --format=sarif-latest --output="${out}" --download || return 2
+}
+
+# What: Upload one SARIF file via the code-scanning API.
+# Why: Replaces codeql-action/upload-sarif; no marketplace action.
+# From: Issue #479
+ci_cmd_sarif_upload() {
+    local file="${1:?sarif file required}" category="${2:-}" payload
+    : "${GH_TOKEN:?GH_TOKEN required}"
+    payload="$(gzip -c "${file}" | base64 -w0)"
+    gh api "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+        -f "commit_sha=${GITHUB_SHA}" \
+        -f "ref=${GITHUB_REF}" \
+        -f "sarif=${payload}" \
+        -f "category=${category}" >/dev/null
+}
+
+# What: Download+cache the pinned Scorecard CLI; print its path.
+# Why: Own invocation, no marketplace action; version owned by SOT.
+# From: Issue #479
+_ci_scorecard_bin() {
+    local ver dest bin
+    ver="$(_ci_sot_scalar external_versions.scorecard.version)" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/scorecard-${ver}"
+    bin="${dest}/scorecard"
+    if [ ! -x "${bin}" ]; then
+        mkdir -p "${dest}"
+        curl -fsSL --retry 3 \
+            "https://github.com/ossf/scorecard/releases/download/${ver}/scorecard_${ver#v}_linux_amd64.tar.gz" \
+            | tar -xz -C "${dest}" || return 2
+    fi
+    printf '%s' "${bin}"
+}
+
+# What: Run Scorecard against this repo, writing a SARIF file.
+# Why: CLI-native flow; no ossf/scorecard-action pin needed.
+# From: Issue #479
+ci_cmd_scorecard_scan() {
+    local out="${1:-results.sarif}" bin
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    bin="$(_ci_scorecard_bin)" || return 2
+    "${bin}" --repo="github.com/${GITHUB_REPOSITORY}" \
+        --format=sarif --show-details > "${out}"
+}
+
+# What: Download+cache the pinned OSV-Scanner CLI; print its path.
+# Why: Own invocation, no reusable workflow; version owned by SOT.
+# From: Issue #479
+_ci_osv_scanner_bin() {
+    local ver dest bin
+    ver="$(_ci_sot_scalar external_versions.osv_scanner.version)" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/osv-scanner-${ver}"
+    bin="${dest}/osv-scanner"
+    if [ ! -x "${bin}" ]; then
+        mkdir -p "${dest}"
+        curl -fsSL --retry 3 -o "${bin}" \
+            "https://github.com/google/osv-scanner/releases/download/${ver}/osv-scanner_linux_amd64"
+        chmod +x "${bin}"
+    fi
+    printf '%s' "${bin}"
+}
+
+# What: Scan the repo with OSV-Scanner, writing a SARIF file.
+# Why: CLI-native flow; no osv-scanner-action reusable workflow.
+# From: Issue #479
+ci_cmd_osv_scan() {
+    local out="${1:-osv-results.sarif}" bin rc=0
+    bin="$(_ci_osv_scanner_bin)" || return 2
+    "${bin}" scan source --format=sarif --output="${out}" -r . || rc=$?
+    # osv-scanner exit 1-126 means "vulnerabilities found", not a tool
+    # failure; only 127+ (general/non-result error) is a real failure.
+    if [ "${rc}" -ge 127 ]; then
+        ci_log "[CI-ERROR-SCAN-0002]" "tool=osv-scanner exit=${rc} reason=\"scan failed\""
+        return 2
+    fi
+}
+
+# What: Print the pinned ClusterFuzzLite step image for a step.
+# Why: One lookup; build/run share the SOT-owned image tag.
+# From: Issue #479
+_ci_clusterfuzzlite_image() {
+    local step="${1:?build or run required}" tag
+    tag="$(_ci_sot_scalar external_versions.clusterfuzzlite.version)" || return 2
+    printf 'gcr.io/oss-fuzz-base/clusterfuzzlite-%s-fuzzers:%s' "${step}" "${tag}"
+}
+
+# What: Run the ClusterFuzzLite build-fuzzers step via docker.
+# Why: Own docker run, no marketplace Docker action; SOT-pinned tag.
+# From: Issue #479
+ci_cmd_clusterfuzzlite_build() {
+    local sanitizer="${1:-address}" image
+    image="$(_ci_clusterfuzzlite_image build)" || return 2
+    docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
+        -e LANGUAGE=c -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=github \
+        -e LOW_DISK_SPACE=True \
+        "${image}"
+}
+
+# What: Run the ClusterFuzzLite run-fuzzers step via docker.
+# Why: Own docker run, no marketplace Docker action; SOT-pinned tag.
+# From: Issue #479
+ci_cmd_clusterfuzzlite_run() {
+    local sanitizer="${1:-address}" fuzz_seconds="${2:-300}" mode="${3:-code-change}" image
+    image="$(_ci_clusterfuzzlite_image run)" || return 2
+    docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
+        -e FUZZ_SECONDS="${fuzz_seconds}" -e MODE="${mode}" \
+        -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=github \
+        -e LOW_DISK_SPACE=True -e OUTPUT_SARIF=true \
+        "${image}"
 }
 
 # =========================================================
@@ -1770,6 +1833,10 @@ ci_main() {
     if [ "$#" -gt 0 ]; then shift; fi
     case " ${CI_COMMANDS} " in
         *" ${command} "*)
+            if [ "${command}" = "checkout" ]; then
+                ci_cmd_checkout "$@"
+                return "$?"
+            fi
             ci_require_manifest || return "$?"
             case "${command}" in
                 resolve) ci_cmd_resolve "$@" ;;
@@ -1791,7 +1858,6 @@ ci_main() {
                 verify) ci_cmd_verify "$@" ;;
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
-                action) ci_cmd_action "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;
