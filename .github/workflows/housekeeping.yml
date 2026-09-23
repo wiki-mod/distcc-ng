@@ -1,7 +1,7 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Scheduled maintenance: GHCR cleanup, heartbeat, e2e test image.
-# Why: One owner for scheduled housekeeping; all logic lives in ci.sh.
+# What: Scheduled GHCR cleanup, heartbeat, e2e image builds.
+# Why: One owner for housekeeping; logic lives in ci.sh.
 # From: Issue #479
 name: Housekeeping
 
@@ -79,8 +79,8 @@ jobs:
     if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # What: Runs the plain-compiler control build as a non-gating job.
-    # Why: continue-on-error keeps a control failure from failing the run.
+    # What: Plain-compiler control build, non-gating.
+    # Why: keeps a control failure from failing the run.
     # From: Issue #263, Issue #479
     continue-on-error: true
     steps:
@@ -99,7 +99,13 @@ jobs:
       packages: write
     steps:
       - uses: $/.github/actions/harden-runner
-      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      # What: pull_request checks out its own ref.
+      # Why: else hides the PR's own Dockerfile diff.
+      # From: Issue #479
+      - if: github.event_name == 'pull_request'
+        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: github.event_name != 'pull_request'
+        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - run: bash .github/scripts/ci.sh container e2e-image
       - if: github.event_name != 'pull_request'
         uses: ./.github/actions/ghcr-login

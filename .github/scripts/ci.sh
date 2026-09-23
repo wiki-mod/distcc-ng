@@ -628,6 +628,10 @@ _ci_publish_changelog_update() {
         ci_log "[CI-ERROR-PUBLISH-0005]" "CHANGELOG.md insertion marker not found"
         return 1
     }
+    if grep -qF "## [${version}]" CHANGELOG.md; then
+        ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: ${tag} section already present"
+        return 0
+    fi
     tmp="$(mktemp)"
     {
         printf '## [%s] - %s\n\n' "${version}" "${date}"
