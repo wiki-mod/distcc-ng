@@ -2011,7 +2011,8 @@ _ci_osv_scanner_bin() {
 ci_cmd_osv_scan() {
     local out="${1:-osv-results.sarif}" bin rc=0
     bin="$(_ci_osv_scanner_bin)" || return 2
-    "${bin}" scan source --format=sarif --output="${out}" -r . || rc=$?
+    "${bin}" scan source --format=sarif --output-file="${out}" \
+        --allow-no-lockfiles -r . || rc=$?
     # osv-scanner exit 1-126 means "vulnerabilities found", not a tool
     # failure; only 127+ (general/non-result error) is a real failure.
     if [ "${rc}" -ge 127 ]; then
