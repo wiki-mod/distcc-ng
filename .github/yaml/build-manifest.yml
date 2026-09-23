@@ -26,6 +26,11 @@ base_images:
 # Why: Central version owner; consumers never re-pin.
 # From: Issue #479
 external_versions:
+  # What: The vendored popt/ tree's expected identity.
+  # Why: vendor-check compares it to POPT_VERSION.
+  # From: Issue #479
+  popt_vendor:
+    version: "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)"
   # What: Samba release used by the source-adequacy check.
   # Why: verify configure-dryrun downloads exactly this tag.
   # From: Issue #479

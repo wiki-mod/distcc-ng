@@ -2141,7 +2141,7 @@ _ci_has_compiler_warning() {
     grep -qE '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
 }
 
-# What: Compile vendored popt/*.c under this repo's warn flags.
+# What: Compile vendored popt/*.c under this repo's flags.
 # Why: popt-vendor proves bundled popt builds Werror-clean.
 # From: Issue #479, Issue #63
 _ci_popt_strict_compile() {
@@ -2153,6 +2153,40 @@ _ci_popt_strict_compile() {
     for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
         gcc "${cflags[@]}" -c "${f}" -o "${out}/$(basename "${f}").o"
     done
+}
+
+# What: Verify the vendored popt/ tree has 3 CVE fixes.
+# Why: A silent revert to a pre-fix snapshot would compile fine.
+# From: Issue #479
+_ci_popt_cve_fingerprint_check() {
+    local want got rc=0
+    want="$(_ci_sot_scalar external_versions.popt_vendor.version)"
+    got="$(cat popt/POPT_VERSION 2>/dev/null || true)"
+    if [ "${got}" != "${want}" ]; then
+        ci_log "[CI-ERROR-POPT-CVE-0001]" "POPT_VERSION mismatch: got=\"${got}\" want=\"${want}\""
+        rc=1
+    fi
+    grep -q "poptJlu32lpair" popt/poptint.h || {
+        ci_log "[CI-ERROR-POPT-CVE-0002]" "poptint.h missing poptJlu32lpair"
+        rc=1
+    }
+    { [ -f popt/findme.c ] || [ -f popt/findme.h ]; } && {
+        ci_log "[CI-ERROR-POPT-CVE-0003]" "findme.c/findme.h present (pre-fix tree)"
+        rc=1
+    }
+    grep -q "con->os - con->optionStack + 1) == POPT_OPTION_DEPTH" popt/popt.c || {
+        ci_log "[CI-ERROR-POPT-CVE-0004]" "poptStuffArgs missing the depth guard (CVE-2026-18739)"
+        rc=1
+    }
+    grep -q "calloc" popt/poptconfig.c || {
+        ci_log "[CI-ERROR-POPT-CVE-0005]" "poptconfig.c missing the calloc-args fix"
+        rc=1
+    }
+    [ "$(grep -c 'maxargvlen = argvlen \* 2;' popt/poptparse.c)" -eq 2 ] || {
+        ci_log "[CI-ERROR-POPT-CVE-0006]" "poptparse.c missing the doubling fix (CVE-2026-18743)"
+        rc=1
+    }
+    return "${rc}"
 }
 
 # What: Build one configure variant from the SOT matrix.
@@ -2179,6 +2213,7 @@ ci_cmd_build() {
                 || { ci_log "[CI-ERROR-BUILD-POPT-0001]" "configure did not fall back to bundled popt (libpopt-dev leaking?)"; return 1; } ;;
         popt-vendor)
             ./configure --without-system-popt PYTHON="$(command -v python3)"
+            _ci_popt_cve_fingerprint_check || return 1
             _ci_popt_strict_compile
             return 0 ;;
         coverage)
@@ -2202,8 +2237,8 @@ ci_cmd_build() {
     fi
 }
 
-# What: Prove the bundled-popt distccd binary parses real options.
-# Why: A poptGetContext()/poptGetNextOpt() regression compiles fine.
+# What: Prove the bundled-popt binary parses real options.
+# Why: A poptGetNextOpt() regression compiles fine.
 # From: Issue #479
 _ci_popt_fallback_smoke_test() {
     local help opt
