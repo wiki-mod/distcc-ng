@@ -12,6 +12,11 @@ on:
         description: "Release tag, e.g. v3.6.6-NG (must match configure.ac)"
         required: true
         type: string
+      release_notes:
+        description: "Set only to manually retry a failed CHANGELOG.md insert for `tag`"
+        required: false
+        type: string
+        default: ""
   release:
     types: [published]
   push:
@@ -23,7 +28,9 @@ permissions:
 jobs:
   update_changelog:
     name: Insert release notes into CHANGELOG.md
-    if: github.event_name == 'release' && github.event.release.prerelease == false
+    if: >-
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_notes != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,13 +38,13 @@ jobs:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-          RELEASE_BODY: ${{ github.event.release.body }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          RELEASE_BODY: ${{ github.event_name == 'release' && github.event.release.body || inputs.release_notes }}
         run: bash .github/scripts/ci.sh publish changelog "$TAG"
 
   update_draft_release:
     name: Refresh the current_dev draft release
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
