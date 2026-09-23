@@ -172,6 +172,9 @@ impact_classes:
   docker:
     paths: ["docker/**"]
     phases: ["container", "verify"]
+  fuzz:
+    paths: ["src/**", "test/fuzz/**", ".clusterfuzzlite/**"]
+    phases: ["fuzz"]
   workflows:
     paths: [".github/workflows/**", ".github/actions/**", ".github/yaml/**"]
     phases: ["lint"]

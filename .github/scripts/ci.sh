@@ -34,7 +34,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables install"
+CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables install"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -254,6 +254,20 @@ ci_cmd_impact() {
     local base="${1:?base ref required}" head="${2:?head ref required}"
     cd "${CI_REPO_ROOT}"
     git diff --name-only "${base}" "${head}" | _ci_phases_for_paths
+}
+
+# What: Write hit=true/false for one impact class.
+# Why: One command; no pipe/&& chain lives in the calling workflow.
+# From: Issue #479
+ci_cmd_impact_hit() {
+    local class="${1:?class required}" base="${2:?base ref required}" head="${3:?head ref required}"
+    : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
+    cd "${CI_REPO_ROOT}"
+    if git diff --name-only "${base}" "${head}" | _ci_classify_paths | grep -qx "${class}"; then
+        echo "hit=true" >> "${GITHUB_OUTPUT}"
+    else
+        echo "hit=false" >> "${GITHUB_OUTPUT}"
+    fi
 }
 
 # What: Emit the build matrix JSON (variant x os) from the SOT.
@@ -2405,6 +2419,7 @@ ci_main() {
             case "${command}" in
                 resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
+                impact-hit) ci_cmd_impact_hit "$@" ;;
                 matrix) ci_cmd_matrix "$@" ;;
                 plan) ci_cmd_plan "$@" ;;
                 build) ci_cmd_build "$@" ;;

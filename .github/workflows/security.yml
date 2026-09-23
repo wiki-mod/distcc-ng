@@ -85,10 +85,18 @@ jobs:
       matrix:
         sanitizer: [address]
     steps:
-      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - name: Build fuzzers (${{ matrix.sanitizer }})
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: relevant
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/ci.sh impact-hit fuzz "$BASE" "$HEAD"
+      - if: github.event_name != 'pull_request' || steps.relevant.outputs.hit == 'true'
+        name: Build fuzzers (${{ matrix.sanitizer }})
         run: bash .github/scripts/ci.sh scan clusterfuzzlite-build "${{ matrix.sanitizer }}"
-      - name: Run fuzzers (${{ matrix.sanitizer }})
+      - if: github.event_name != 'pull_request' || steps.relevant.outputs.hit == 'true'
+        name: Run fuzzers (${{ matrix.sanitizer }})
         run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}" 300 code-change
 
   openssf:
