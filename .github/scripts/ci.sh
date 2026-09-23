@@ -1489,6 +1489,30 @@ ci_cmd_selftest() {
 # What: Run the governance guards over the CI-owned tree.
 # Why: One phase enforces the repo's CI hygiene invariants.
 # From: Issue #479
+# What: Run a command inside the published buildtools image.
+# Why: uid-matched, read-only; shared by every lint check.
+# From: Issue #479
+_ci_lint_buildtools_run() {
+    docker run --rm --user "$(id -u):$(id -g)" \
+        -v "${CI_REPO_ROOT}:/work:ro" -w /work \
+        ghcr.io/wiki-mod/distcc-ng-buildtools:latest bash -c "$1"
+}
+
+# What: Lint every workflow file with actionlint.
+# Why: No release.yml exemption; that was cargo-dist-only.
+# From: Issue #479
+_ci_lint_actionlint() {
+    _ci_lint_buildtools_run \
+        'actionlint -color $(find .github/workflows -name "*.yml" -type f)'
+}
+
+# What: Shellcheck this repo's own scripts/ shell scripts.
+# Why: scripts/ survives until each is folded/deleted.
+# From: Issue #479
+_ci_lint_shellcheck() {
+    _ci_lint_buildtools_run 'shellcheck scripts/*.sh'
+}
+
 ci_cmd_lint() {
     local rc=0 d
     ci_guard_line_endings "${CI_REPO_ROOT}/.github" || rc=1
@@ -1504,6 +1528,8 @@ ci_cmd_lint() {
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml \
         "${CI_REPO_ROOT}"/.github/actions/*/action.yml || rc=1
+    _ci_lint_actionlint || rc=1
+    _ci_lint_shellcheck || rc=1
     return "${rc}"
 }
 
