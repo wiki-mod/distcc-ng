@@ -79,10 +79,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
+      - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/install-packaging-deps
       - run: bash .github/scripts/ci.sh package
+      - env:
+          OUT: distcc-ng-${{ inputs.tag }}.spdx.json
+        run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
+      - uses: ./.github/actions/attest-build-provenance
+        with:
+          subject-path: |
+            distcc-*.tar.gz
+            distcc-*.tar.bz2
+            packaging/*.rpm
+            packaging/*.deb
+            distcc-ng-*.spdx.json
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
@@ -92,7 +106,10 @@ jobs:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
     needs: [build_test, e2e]
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs_on }}
+    # amd64/arm64 must be a real matrix axis (not bare `include` entries):
+    # an include entry missing an existing axis key overwrites that key
+    # for every generated job in list order, not just its own combination.
     continue-on-error: ${{ matrix.platform == 'arm64' }}
     permissions:
       contents: read
@@ -102,10 +119,16 @@ jobs:
       matrix:
         variant: [plain, pump]
         platform: [amd64, arm64]
+        include:
+          - platform: amd64
+            runs_on: ubuntu-latest
+          - platform: arm64
+            runs_on: ubuntu-24.04-arm
     env:
       IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ inputs.tag }}-${{ matrix.platform }}
       VERSION: ${{ inputs.tag }}
     steps:
+      - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - uses: ./.github/actions/ghcr-login
         with:
@@ -113,7 +136,12 @@ jobs:
       - env:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
-        run: bash .github/scripts/ci.sh container "$VARIANT" "$PLATFORM"
+        run: bash .github/scripts/ci.sh container build "$VARIANT" "$PLATFORM"
+      - run: bash .github/scripts/ci.sh scan trivy "$IMAGE_TAG"
+      - env:
+          OUT: distcc-ng-${{ matrix.variant }}-${{ inputs.tag }}-${{ matrix.platform }}.spdx.json
+        run: bash .github/scripts/ci.sh scan sbom "$IMAGE_TAG" "$OUT"
+      - run: bash .github/scripts/ci.sh container push "$IMAGE_TAG"
 
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest

@@ -90,7 +90,7 @@ setup() {
     # What: A conforming title passes even in block mode.
     # Why: Proves the green path of the rule-71 taxonomy.
     # From: Issue #479
-    PR_TITLE_LINT_MODE=block run _ci_check_pr_title "feat(pump): add IPv6 support"
+    PR_TITLE="feat(pump): add IPv6 support" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 0 ]
 }
 
@@ -98,7 +98,7 @@ setup() {
     # What: A non-conforming title fails when enforcement is on.
     # Why: Proves the fail-closed path.
     # From: Issue #479
-    PR_TITLE_LINT_MODE=block run _ci_check_pr_title "add some stuff"
+    PR_TITLE="add some stuff" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
@@ -107,7 +107,7 @@ setup() {
     # What: dependabot titles are skipped, not failed.
     # Why: It cannot conform; the gate must see an explicit pass.
     # From: Issue #479
-    PR_AUTHOR="dependabot[bot]" PR_TITLE_LINT_MODE=block run _ci_check_pr_title "Bump foo from 1 to 2"
+    PR_AUTHOR="dependabot[bot]" PR_TITLE="Bump foo from 1 to 2" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 0 ]
 }
 

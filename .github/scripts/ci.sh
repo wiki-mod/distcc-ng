@@ -362,6 +362,20 @@ ci_cmd_package() {
     make -j"${JOBS:-2}" deb
 }
 
+# What: Generate an SBOM for the just-built source tarball.
+# Why: OSPS-QA-02.02; scans the exact asset a release ships.
+# From: Issue #479
+_ci_package_sbom() {
+    local out="${1:?output file required}" tarball
+    cd "${CI_REPO_ROOT}"
+    tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
+    [ -n "${tarball}" ] || {
+        ci_log "[CI-ERROR-PACKAGE-0002]" "no distcc-*.tar.gz found"
+        return 1
+    }
+    ci_cmd_sbom "${tarball}" "${out}"
+}
+
 # What: Fail unless a release tag matches configure.ac and is new.
 # Why: Folds check-release-version.sh; fail-closed release guardrail.
 # From: Issue #479
@@ -397,7 +411,12 @@ _ci_build_verify_image() {
 # Why: Base image ARG comes from the SOT; folds nightly's docker build.
 # From: Issue #479
 ci_cmd_container() {
-    local variant="${1:?variant required}" platform="${2:-}" ref debian
+    local first="${1:?variant or build/push required}"
+    if [ "${first}" = "build" ] || [ "${first}" = "push" ]; then
+        _ci_container_release "$@"
+        return
+    fi
+    local variant="${first}" platform="${2:-}" ref debian
     cd "${CI_REPO_ROOT}"
     ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
     debian="$(_ci_sot_scalar base_images.debian_release)"
@@ -408,18 +427,6 @@ ci_cmd_container() {
                 --build-arg "VCS_REF=${ref}" \
                 --build-arg "VERSION=nightly" \
                 --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
-            docker push "${IMAGE_TAG}" ;;
-        plain|pump)
-            : "${IMAGE_TAG:?IMAGE_TAG required}"
-            : "${platform:?platform required (amd64|arm64)}"
-            local target="runtime"
-            [ "${variant}" = "pump" ] && target="runtime-pump"
-            docker build --platform "linux/${platform}" \
-                --file docker/release/Dockerfile --target "${target}" \
-                --build-arg "DEBIAN_IMAGE=${debian}" \
-                --build-arg "VCS_REF=${ref}" \
-                --build-arg "VERSION=${VERSION:-${ref}}" \
-                --tag "${IMAGE_TAG}" .
             docker push "${IMAGE_TAG}" ;;
         verify-image)
             _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
@@ -434,6 +441,33 @@ ci_cmd_container() {
             docker push "${base}:latest"
             docker push "${base}:${short}" ;;
         *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
+    esac
+}
+
+# What: Build (no push) or push a release plain/pump image.
+# Why: Trivy scan needs the built, unpushed image.
+# From: Issue #479
+_ci_container_release() {
+    local action="$1" variant platform ref debian target
+    cd "${CI_REPO_ROOT}"
+    case "${action}" in
+        build)
+            variant="${2:?variant required}"
+            platform="${3:?platform required (amd64|arm64)}"
+            : "${IMAGE_TAG:?IMAGE_TAG required}"
+            ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
+            debian="$(_ci_sot_scalar base_images.debian_release)"
+            target="runtime"
+            [ "${variant}" = "pump" ] && target="runtime-pump"
+            docker build --platform "linux/${platform}" \
+                --file docker/release/Dockerfile --target "${target}" \
+                --build-arg "DEBIAN_IMAGE=${debian}" \
+                --build-arg "VCS_REF=${ref}" \
+                --build-arg "VERSION=${VERSION:-${ref}}" \
+                --tag "${IMAGE_TAG}" . ;;
+        push)
+            local image_tag="${2:?image tag required}"
+            docker push "${image_tag}" ;;
     esac
 }
 
@@ -1302,6 +1336,60 @@ EOF
     fi
 }
 
+# What: Download+cache the pinned Trivy CLI; print its path.
+# Why: No marketplace action; version owned by SOT.
+# From: Issue #479
+_ci_trivy_bin() {
+    local ver dest bin
+    ver="$(_ci_sot_scalar external_versions.trivy.version)" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/trivy-${ver}"
+    bin="${dest}/trivy"
+    if [ ! -x "${bin}" ]; then
+        mkdir -p "${dest}"
+        curl -fsSL --retry 3 \
+            "https://github.com/aquasecurity/trivy/releases/download/${ver}/trivy_${ver#v}_Linux-64bit.tar.gz" \
+            | tar -xz -C "${dest}" || return 2
+    fi
+    printf '%s' "${bin}"
+}
+
+# What: Scan a local image ref for HIGH/CRITICAL vulns.
+# Why: Folds trivy-action; scans before any registry push.
+# From: Issue #479
+ci_cmd_trivy_scan() {
+    local image_ref="${1:?image ref required}" bin
+    bin="$(_ci_trivy_bin)" || return 2
+    "${bin}" image --scanners vuln,secret --severity HIGH,CRITICAL \
+        --ignore-unfixed --ignorefile "${CI_REPO_ROOT}/.trivyignore.yaml" \
+        --exit-code 1 --timeout 10m "${image_ref}"
+}
+
+# What: Download+cache the pinned Syft CLI; print its path.
+# Why: No marketplace action; version owned by SOT.
+# From: Issue #479
+_ci_syft_bin() {
+    local ver dest bin
+    ver="$(_ci_sot_scalar external_versions.syft.version)" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/syft-${ver}"
+    bin="${dest}/syft"
+    if [ ! -x "${bin}" ]; then
+        mkdir -p "${dest}"
+        curl -fsSL --retry 3 \
+            "https://github.com/anchore/syft/releases/download/${ver}/syft_${ver#v}_linux_amd64.tar.gz" \
+            | tar -xz -C "${dest}" || return 2
+    fi
+    printf '%s' "${bin}"
+}
+
+# What: Generate an SPDX-JSON SBOM for an image/path.
+# Why: Folds anchore/sbom-action; OSPS-QA-02.02 baseline.
+# From: Issue #479
+ci_cmd_sbom() {
+    local target="${1:?image ref or path required}" out="${2:?output file required}" bin
+    bin="$(_ci_syft_bin)" || return 2
+    "${bin}" "${target}" -o "spdx-json=${out}"
+}
+
 # What: Security scan dispatch (currently the OpenSSF baseline recheck).
 # Why: One phase owner; codeql/osv/scorecard/fuzz are pure workflow actions.
 # From: Issue #479, Issue #312
@@ -1316,6 +1404,9 @@ ci_cmd_scan() {
         osv)                  ci_cmd_osv_scan "$@" ;;
         clusterfuzzlite-build) ci_cmd_clusterfuzzlite_build "$@" ;;
         clusterfuzzlite-run)   ci_cmd_clusterfuzzlite_run "$@" ;;
+        trivy)                 ci_cmd_trivy_scan "$@" ;;
+        sbom)                  ci_cmd_sbom "$@" ;;
+        package-sbom)          _ci_package_sbom "$@" ;;
         *) ci_log "[CI-ERROR-SCAN-0001]" "unknown scan target=\"${sub}\""; return 2 ;;
     esac
 }
@@ -1461,7 +1552,7 @@ _ci_verify_ccache_redis() {
 # Why: Folds check-pr-title-convention.sh; dependabot exempt.
 # From: Issue #479, rule 71
 _ci_check_pr_title() {
-    local title="${1:-${PR_TITLE:-}}"
+    local title="${PR_TITLE:-}"
     if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
         ci_log "[CI-META-TITLE]" "skipped: dependabot[bot] cannot conform"
         return 0
@@ -1770,20 +1861,24 @@ ci_cmd_checkout() {
 # ACTION-PIN GUARD (build-manifest.yml is the sole SHA owner)
 # =========================================================
 
-# What: The one file allowed its own SHA (no CLI/docker substitute).
-# Why: harden-runner is a runner-level eBPF agent, not a callable tool.
+# What: Files allowed their own SHA (no CLI/OIDC option).
+# Why: harden-runner/attest-build-provenance need real GHA.
 # From: Issue #479
-_CI_ACTION_PIN_ALLOWFILE=".github/actions/harden-runner/action.yml"
+_CI_ACTION_PIN_ALLOWFILES=".github/actions/harden-runner/action.yml .github/actions/attest-build-provenance/action.yml"
 
-# What: Fail if any file but the SOT (or the allow-file) has a pin.
-# Why: SOT is the only version owner; ci.sh runs tools itself.
+# What: Fail if any file but the SOT/allow-files has a pin.
+# Why: SOT is the only owner; ci.sh runs tools itself.
 # From: Issue #479
 ci_guard_action_pin_sot() {
-    local rc=0 f rel
+    local rc=0 f rel allowed a
     for f in "$@"; do
         [ -f "${f}" ] || continue
         rel="${f#"${CI_REPO_ROOT}"/}"
-        [ "${rel}" = "${_CI_ACTION_PIN_ALLOWFILE}" ] && continue
+        allowed=false
+        for a in ${_CI_ACTION_PIN_ALLOWFILES}; do
+            [ "${rel}" = "${a}" ] && allowed=true && break
+        done
+        "${allowed}" && continue
         if grep -qE '@[0-9a-f]{40}' "${f}" 2>/dev/null; then
             rc=1
             ci_log "[CI-ERROR-GUARD-APIN-0001]" \

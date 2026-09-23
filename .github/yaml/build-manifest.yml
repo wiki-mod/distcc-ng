@@ -18,7 +18,7 @@ base_images:
   # From: Issue #479
   debian_release: "debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
   # What: Go base that builds the pinned actionlint binary.
-  # Why: verify image's actionlint-builder stage consumes it.
+  # Why: verify's actionlint-builder stage consumes it.
   # From: Issue #479
   golang_actionlint: "golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
 
@@ -36,34 +36,44 @@ external_versions:
   # From: Issue #479
   actionlint:
     version: "1.7.12"
-  # What: ccache release built by the weekly distributed heartbeat.
-  # Why: One owner; heartbeat and control build must build the same revision.
+  # What: ccache release built by the weekly heartbeat.
+  # Why: heartbeat/control build the same revision.
   # From: Issue #479, Issue #81
   ccache_heartbeat:
     version: "v4.13.6"
-  # What: CodeQL CLI bundle downloaded and run directly by ci.sh.
-  # Why: No marketplace action; codeql-action tag names its own bundle.
+  # What: CodeQL CLI bundle, downloaded/run by ci.sh.
+  # Why: codeql-action's tag names its own bundle.
   # From: Issue #479
   codeql_cli:
     version: "v2.27.0"
   # What: OSSF Scorecard CLI release run directly by ci.sh.
-  # Why: No marketplace action; replaces ossf/scorecard-action.
+  # Why: Replaces ossf/scorecard-action.
   # From: Issue #479
   scorecard:
     version: "v5.5.0"
   # What: OSV-Scanner CLI release run directly by ci.sh.
-  # Why: No marketplace action; replaces google/osv-scanner-action.
+  # Why: Replaces google/osv-scanner-action.
   # From: Issue #479
   osv_scanner:
     version: "v2.6.0"
-  # What: ClusterFuzzLite step image tag ci.sh runs via docker.
-  # Why: No marketplace Docker action; same image, own docker run.
+  # What: ClusterFuzzLite step image ci.sh runs via docker.
+  # Why: No Docker action; own docker run, same image.
   # From: Issue #479
   clusterfuzzlite:
     version: "v1"
+  # What: Trivy CLI release run directly by ci.sh.
+  # Why: Replaces aquasecurity/trivy-action.
+  # From: Issue #479
+  trivy:
+    version: "v0.74.0"
+  # What: Syft CLI release ci.sh runs for SBOM gen.
+  # Why: Replaces anchore/sbom-action.
+  # From: Issue #479
+  syft:
+    version: "v1.52.0"
 
 # What: Pinned external service images used by CI steps.
-# Why: One owner; full-digest pin, never a floating tag in a workflow.
+# Why: Full-digest pin, never a floating tag anywhere.
 # From: Issue #479
 external_services:
   redis: "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
@@ -73,14 +83,14 @@ external_services:
 # From: Issue #479
 build_matrix:
   variants:
-    # What: Plain ./configure PYTHON=python3 build+make check.
+    # What: Plain configure PYTHON=python3, make check.
     # Why: The baseline gate; the only variant run on macOS.
     # From: Issue #479
     default:
       os: ["ubuntu-latest", "macos-latest"]
       apt: "clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
       brew: "autoconf automake popt python@3.13 python-setuptools ccache zstd"
-    # What: Bundled popt fallback, built with no system libpopt.
+    # What: Bundled popt fallback, no system libpopt.
     # Why: Proves the vendored-popt path still compiles.
     # From: Issue #479
     popt-fallback:
@@ -92,7 +102,7 @@ build_matrix:
     popt-vendor:
       os: ["ubuntu-latest"]
       apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
-    # What: gcov/lcov coverage build with job-summary artifact.
+    # What: gcov/lcov coverage build, job-summary output.
     # Why: One coverage owner; ubuntu-only toolchain.
     # From: Issue #479
     coverage:
@@ -112,13 +122,13 @@ build_matrix:
 release:
   packages: ["rpm", "deb", "apk"]
   containers: ["release", "pump", "nightly"]
-  # What: Canonical GHCR package names this repo publishes and prunes.
-  # Why: One owner for gc and tag construction; no hardcoded list.
+  # What: Canonical GHCR package names this repo owns.
+  # Why: One owner for gc/tag construction; no hardcode.
   # From: Issue #479
   ghcr_packages: ["distcc-ng", "distcc-ng-pump", "distcc-ng-nightly", "distcc-ng-buildtools", "distcc-ng-e2e"]
 
 # What: Tuning for the distributed-compile E2E harness runs.
-# Why: One owner; heartbeat floors and the full-run target subset.
+# Why: One owner for heartbeat floors and full-run targets.
 # From: Issue #479, Issue #264, Issue #81
 e2e:
   heartbeat_min_remote_jobs: 20
