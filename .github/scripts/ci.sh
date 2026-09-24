@@ -330,12 +330,19 @@ _ci_control_build_step_summary() {
     fi
 }
 
+# What: Count a server log's COMPILE_OK lines from one client address.
+# Why: One owner; test/e2e and test/e2e-full both need this exact check.
+# From: Issue #479, Issue #264, PR #544
+_ci_e2e_count_compile_ok() {
+    local server_log="$1" addr_re="$2"
+    grep -Ec "client: ${addr_re}:[0-9]+ COMPILE_OK" "${server_log}" || true
+}
+
 # What: One up/build/verify attempt of the 2-container e2e harness.
 # Why: The retry loop below owns teardown; this owns one real result.
 # From: Issue #479, PR #544
 _ci_e2e_run_attempt() {
     local scenario="$1" min_remote_jobs="$2" server_log="$3"
-    local remote_ok_re='client: 10\.88\.0\.[0-9]+:[0-9]+ COMPILE_OK'
     local client_rc=0
     echo "== Bringing up client+server and running the distributed build =="
     docker compose up --build --abort-on-container-exit \
@@ -347,7 +354,7 @@ _ci_e2e_run_attempt() {
     echo "== Verifying real distribution from the server log =="
     docker compose logs --no-color distccd-server > "${server_log}" 2>&1
     local remote_jobs
-    remote_jobs="$(grep -Ec "${remote_ok_re}" "${server_log}" || true)"
+    remote_jobs="$(_ci_e2e_count_compile_ok "${server_log}" '10\.88\.0\.[0-9]+')"
     echo "server reported ${remote_jobs} successful remote compile(s) from the client subnet"
     if [ "${remote_jobs}" -lt "${min_remote_jobs}" ]; then
         echo "ERROR: expected at least ${min_remote_jobs} remote compiles from the" \
@@ -401,6 +408,119 @@ _ci_e2e_run() {
     )
 }
 
+# What: Tear down the bidirectional stack and its scratch dir.
+# Why: Named (not nested) so trap EXIT calls a reachable function.
+# From: Issue #479, Issue #264, PR #544
+_ci_e2e_bidir_cleanup() {
+    local workdir="$1"
+    echo "== Tearing down the bidirectional E2E stack =="
+    docker compose exec -T ng-node bash -c 'pkill distccd || true' 2>/dev/null || true
+    docker compose exec -T native-node bash -c 'pkill distccd || true' 2>/dev/null || true
+    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -rf "${workdir}"
+}
+
+# What: One leg of the bidirectional matrix (one direction, one mode).
+# Why: Starts/stops its own distccd; always independently log-verified.
+# From: Issue #479, Issue #264, PR #544
+_ci_e2e_bidir_leg() {
+    local leg_id="$1" leg_label="$2" server_service="$3" server_ip="$4"
+    local client_service="$5" client_ip="$6" mode="$7" workdir="$8"
+    local remote_log="/tmp/distccd-${mode}.log"
+    local local_log="${workdir}/${leg_id}.log"
+
+    echo
+    echo "=============================================================="
+    echo "== Leg: ${leg_label} (mode=${mode}) =="
+    echo "=============================================================="
+
+    echo "-- Starting distccd on ${server_service} (${server_ip}) --"
+    docker compose exec -T -d "${server_service}" bash -c "
+        rm -f ${remote_log}
+        distccd --no-detach --daemon --verbose --log-file=${remote_log} \
+          --port 3632 --allow 10.89.0.0/24 --jobs ${DAEMON_JOBS:-$(nproc)}
+    "
+    for _ in $(seq 1 20); do
+        docker compose exec -T "${server_service}" test -f "${remote_log}" && break
+        sleep 0.5
+    done
+
+    local client_rc=0
+    local src_dir="/work/workload/${leg_id}"
+    echo "-- Running real ${WORKLOAD:-samba} build on ${client_service}, distributing to ${server_ip}:3632 --"
+    docker compose exec -T \
+        -e "DISTCC_HOSTS=${server_ip}:3632" \
+        -e "DISTCC_FALLBACK=0" \
+        -e "DISTCC_VERBOSE=1" \
+        "${client_service}" \
+        bash "${WORKLOAD_SCRIPT:?WORKLOAD_SCRIPT required}" "${mode}" "${src_dir}" ${WAF_TARGETS:+"${WAF_TARGETS}"} \
+        > "${local_log}" 2>&1 || client_rc=$?
+
+    echo "-- Stopping distccd on ${server_service} --"
+    docker compose cp "${server_service}:${remote_log}" "${local_log}.server" 2>/dev/null || true
+    docker compose exec -T "${server_service}" bash -c 'pkill distccd || true'
+
+    if [ "${client_rc}" -ne 0 ]; then
+        echo "::error::${leg_label} (mode=${mode}): client build exited ${client_rc}" >&2
+        tail -n 100 "${local_log}" >&2
+        return 1
+    fi
+
+    local expected_objects
+    expected_objects="$(tail -n 1 "${local_log}" | tr -dc '0-9')"
+    if [ -z "${expected_objects}" ] || [ "${expected_objects}" -le 0 ]; then
+        echo "::error::${leg_label} (mode=${mode}): could not read a real compiled-object count from the workload script's output" >&2
+        tail -n 20 "${local_log}" >&2
+        return 1
+    fi
+
+    local remote_jobs
+    remote_jobs="$(_ci_e2e_count_compile_ok "${local_log}.server" "${client_ip//./\\.}")"
+    echo "${leg_label} (mode=${mode}): built ${expected_objects} real objects; server log shows ${remote_jobs} COMPILE_OK from ${client_ip}"
+
+    if [ "${remote_jobs}" -lt "${expected_objects}" ]; then
+        echo "::error::${leg_label} (mode=${mode}): server log shows only ${remote_jobs} COMPILE_OK, fewer than the ${expected_objects} objects the build actually produced -- distribution did not fully happen." >&2
+        return 1
+    fi
+
+    echo "PASS: ${leg_label} (mode=${mode})"
+}
+
+# What: Full bidirectional native-compat matrix (direction A/B x plain/pump).
+# Why: Folds test/e2e-full/run-bidirectional-e2e.sh (issue #264).
+# From: Issue #479, Issue #264, PR #544
+_ci_e2e_bidirectional_run() {
+    local workload="${WORKLOAD:-samba}"
+    case "${workload}" in
+        samba)  WORKLOAD_SCRIPT="/e2e-scripts/workload-samba.sh" ;;
+        apache) WORKLOAD_SCRIPT="/e2e-scripts/workload-apache.sh" ;;
+        *) ci_log "[CI-ERROR-E2E-0001]" "unknown WORKLOAD='${workload}' (expected samba or apache)"; return 1 ;;
+    esac
+    local ng_ip="10.89.0.10" native_ip="10.89.0.20"
+    local workdir; workdir="$(mktemp -d)"
+    local overall_rc=0 mode
+    ( cd "${CI_REPO_ROOT}/test/e2e-full"
+      export WORKLOAD="${workload}" WORKLOAD_SCRIPT DAEMON_JOBS="${DAEMON_JOBS:-$(nproc)}"
+      trap '_ci_e2e_bidir_cleanup "${workdir}"' EXIT
+      echo "== Building the ng (throwaway, current checkout) and native (stable, apt-installed) images =="
+      docker compose build
+      echo "== Bringing the two-container stack up =="
+      docker compose up -d
+      for mode in plain pump; do
+          _ci_e2e_bidir_leg "dirA_${mode}" "Direction A (ng client -> native server) ${mode}" \
+              native-node "${native_ip}" ng-node "${ng_ip}" "${mode}" "${workdir}" || overall_rc=1
+          _ci_e2e_bidir_leg "dirB_${mode}" "Direction B (native client -> ng server) ${mode}" \
+              ng-node "${ng_ip}" native-node "${native_ip}" "${mode}" "${workdir}" || overall_rc=1
+      done
+      if [ "${overall_rc}" -ne 0 ]; then
+          echo "FAILED: one or more legs of the bidirectional native-compatibility matrix did not pass -- see the ::error:: lines above." >&2
+          exit 1
+      fi
+      echo
+      echo "SUCCESS: all four legs of the bidirectional native-compatibility matrix (direction A/B x plain/pump) passed, workload=${workload}."
+    )
+}
+
 # What: Run the distributed-compile e2e harness (distributed|full).
 # Why: distributed = 2-container; full = bidirectional compat matrix.
 # From: Issue #479
@@ -415,7 +535,7 @@ ci_cmd_e2e() {
             waf="$(_ci_sot_scalar e2e.full_waf_targets)"
             WORKLOAD="samba" \
             WAF_TARGETS="${waf}" \
-                bash test/e2e-full/run-bidirectional-e2e.sh ;;
+                _ci_e2e_bidirectional_run ;;
         heartbeat)
             # What: Weekly ccache distributed build; tag and floors from the SOT.
             # Why: A heavier external-project run than the distcc-ng self-compile.

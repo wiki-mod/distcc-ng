@@ -175,6 +175,21 @@ setup() {
     [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
 }
 
+@test "e2e compile-ok counter matches only the given client address" {
+    # What: One counter serves both the subnet and single-IP callers.
+    # Why: test/e2e and test/e2e-full need the exact same log check.
+    # From: Issue #479, Issue #264, PR #544
+    local log; log="$(mktemp)"
+    {
+        printf 'distccd[1] (dcc_job_summary) client: 10.89.0.10:48058 COMPILE_OK exit:0\n'
+        printf 'distccd[2] (dcc_job_summary) client: 10.89.0.20:48059 COMPILE_OK exit:0\n'
+        printf 'distccd[3] (dcc_job_summary) client: 10.89.0.10:48060 COMPILE_OK exit:0\n'
+    } > "${log}"
+    [ "$(_ci_e2e_count_compile_ok "${log}" '10\.89\.0\.10')" = "2" ]
+    [ "$(_ci_e2e_count_compile_ok "${log}" '10\.89\.0\.20')" = "1" ]
+    rm -f "${log}"
+}
+
 @test "publish nightly refuses to force-move a v* tag" {
     # What: The nightly publisher must never touch a real release tag.
     # Why: git push -f on a v* tag would clobber a real release.
