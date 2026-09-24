@@ -16,6 +16,16 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
+# What: Cancel a superseded run when a newer commit/event supersedes it.
+# Why: Legacy's c-build.yml/changelog-check.yml both had this; dropped
+#   during the rewrite's consolidation into this one file (found by
+#   checking the same pattern release.yml just needed against every
+#   sibling workflow, not assumed fine because nothing complained yet).
+# From: Issue #479, PR #544
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
