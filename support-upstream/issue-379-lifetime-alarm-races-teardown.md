@@ -39,7 +39,7 @@ def daemon_lifetime(self):
     return 300
 ```
 
-All four values (default and the three per-case overrides) raised 5x across the board: 60s/120s/120s/300s → 300s/600s/600s/1500s. `BigAssFile_Case`'s new 1500s value stays comfortably under this fork's own `c-build.yml` 15-minute `make_check` job timeout, so even a genuine leak (teardown never running at all) is still caught inside the job's own window rather than only by the runner being torn down at the job timeout.
+All four values (default and the three per-case overrides) raised 5x across the board: 60s/120s/120s/300s → 300s/600s/600s/1500s. `BigAssFile_Case`'s new 1500s value stays comfortably under `validate.yml`'s `build_test` job's timeout (no explicit `timeout-minutes` is set, so it uses GitHub Actions' own 360-minute default), so even a genuine leak (teardown never running at all) is still caught inside the job's own window rather than only by the runner being torn down at the job timeout.
 
 ## Empirical verification
 
