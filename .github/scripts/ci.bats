@@ -140,7 +140,7 @@ setup() {
 
 @test "board check skips for a fork PR even with a PAT configured" {
     # What: A fork PR skips the board lookup entirely.
-    # Why: GitHub withholds the PAT from fork PR runs regardless.
+    # Why: GitHub withholds the PAT from fork PR runs anyway.
     # From: Issue #479, PR #544
     PROJECT_PAT="dummy" PROJECT_OWNER="wiki-mod" PROJECT_NUMBER="11" \
         PR_IS_FORK="true" run _ci_check_pr_board

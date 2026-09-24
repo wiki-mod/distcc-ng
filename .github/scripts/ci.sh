@@ -504,8 +504,7 @@ _ci_container_release() {
 }
 
 # What: Wire GH_TOKEN into git's own credential helper.
-# Why: ci_cmd_checkout adds an unauthenticated remote; plain
-#   `git push` has no credentials without this.
+# Why: ci_cmd_checkout's remote has no credentials at all.
 # From: Issue #479, PR #544
 _ci_git_auth_setup() {
     : "${GH_TOKEN:?GH_TOKEN required}"
@@ -1642,25 +1641,26 @@ _ci_check_pr_title() {
     return 1
 }
 
-# What: Enforce PR labels + milestone (rule 3); board best-effort.
-# Why: Folds check-pr-tracking-metadata.sh's always-enforced core.
-# From: Issue #479, rule 3
-# What: True if PR_URL is a project #PROJECT_NUMBER item.
-# Why: AG-GH-002 needs a real membership check, not best-effort.
+# What: True if this PR is a member of the target project.
+# Why: Queried from the PR side; no board-size page limit.
 # From: Issue #479, PR #544
 _ci_pr_on_project_board() {
-    local project_number="${PROJECT_NUMBER:?PROJECT_NUMBER required}"
-    local project_owner="${PROJECT_OWNER:?PROJECT_OWNER required}"
-    local out
-    out="$(GH_TOKEN="${PROJECT_PAT:?PROJECT_PAT required}" gh project item-list \
-        "${project_number}" --owner "${project_owner}" \
-        --format json --limit 200)" || return 2
-    printf '%s' "${out}" | jq -e --arg url "${PR_URL:?PR_URL required}" \
-        '.items[]? | select(.content.url == $url)' >/dev/null
+    : "${PROJECT_PAT:?PROJECT_PAT required}"
+    : "${PROJECT_NUMBER:?PROJECT_NUMBER required}"
+    : "${PROJECT_OWNER:?PROJECT_OWNER required}"
+    : "${PR_NUMBER:?PR_NUMBER required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    local title items
+    title="$(GH_TOKEN="${PROJECT_PAT}" gh project view "${PROJECT_NUMBER}" \
+        --owner "${PROJECT_OWNER}" --format json --jq '.title')" || return 2
+    items="$(GH_TOKEN="${PROJECT_PAT}" gh pr view "${PR_NUMBER}" \
+        --repo "${GITHUB_REPOSITORY}" --json projectItems)" || return 2
+    printf '%s' "${items}" | jq -e --arg t "${title}" \
+        '.projectItems[]? | select(.title == $t)' >/dev/null
 }
 
-# What: AG-GH-002 project-board sub-check (hard-fail once a PAT exists).
-# Why: A configured PAT must be enforced, not merely best-effort.
+# What: Board sub-check; fails once a PAT is set.
+# Why: AG-GH-002 requires hard-fail, not best-effort.
 # From: Issue #479, PR #544
 _ci_check_pr_board() {
     if [ -z "${PROJECT_PAT:-}" ]; then
@@ -1685,8 +1685,8 @@ _ci_check_pr_board() {
     return 1
 }
 
-# What: Labels/milestone/project-board checks (AGENTS.md AG-GH-002).
-# Why: Board is blocking once PROJECT_AUTOMATION_PAT is configured.
+# What: Labels/milestone/board checks per AG-GH-002.
+# Why: Board fails once the PAT is configured.
 # From: Issue #479, PR #544
 _ci_check_pr_tracking() {
     if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
@@ -1730,7 +1730,7 @@ _ci_check_changelog() {
     return 1
 }
 
-# What: Fetch one PR's live title/labels/milestone/author/board fields.
+# What: Fetch one PR's live title/labels/tracking fields.
 # Why: An event snapshot can go stale (rule 3/71).
 # From: Issue #479
 _ci_metadata_fetch_live() {
@@ -1738,13 +1738,12 @@ _ci_metadata_fetch_live() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local json
     json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
-        --json title,labels,milestone,isDraft,author,url,isCrossRepository)" || return 2
+        --json title,labels,milestone,isDraft,author,isCrossRepository)" || return 2
     PR_TITLE="$(printf '%s' "${json}" | jq -r '.title')"
     PR_LABELS="$(printf '%s' "${json}" | jq -r '[.labels[].name] | join(" ")')"
     PR_MILESTONE_TITLE="$(printf '%s' "${json}" | jq -r '.milestone.title // ""')"
     PR_DRAFT="$(printf '%s' "${json}" | jq -r '.isDraft')"
     PR_AUTHOR="$(printf '%s' "${json}" | jq -r '.author.login')"
-    PR_URL="$(printf '%s' "${json}" | jq -r '.url')"
     PR_IS_FORK="$(printf '%s' "${json}" | jq -r '.isCrossRepository')"
 }
 

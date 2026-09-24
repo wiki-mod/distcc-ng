@@ -95,9 +95,8 @@ jobs:
         run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
       - env:
           # What: Publish with a real PAT, not github.token.
-          # Why: A GITHUB_TOKEN-authored release event never fires
-          #   update_changelog's release: trigger (issue #460 Finding 2).
-          # From: Issue #479, PR #544
+          # Why: github.token releases never fire release: events.
+          # From: Issue #479, PR #544, Issue #460
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           TAG: ${{ inputs.tag }}
         run: bash .github/scripts/ci.sh publish github-release "$TAG"
