@@ -37,7 +37,10 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - env:
-          GH_TOKEN: ${{ github.token }}
+          # What: Push with the PAT, not github.token.
+          # Why: current_dev's ruleset has no bot bypass actor.
+          # From: Issue #479, PR #544, Issue #460
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
           RELEASE_BODY: ${{ github.event_name == 'release' && github.event.release.body || inputs.release_notes }}
         run: bash .github/scripts/ci.sh publish changelog "$TAG"
