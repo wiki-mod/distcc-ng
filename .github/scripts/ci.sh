@@ -503,6 +503,15 @@ _ci_container_release() {
     esac
 }
 
+# What: Wire GH_TOKEN into git's own credential helper.
+# Why: ci_cmd_checkout adds an unauthenticated remote; plain
+#   `git push` has no credentials without this.
+# From: Issue #479, PR #544
+_ci_git_auth_setup() {
+    : "${GH_TOKEN:?GH_TOKEN required}"
+    gh auth setup-git
+}
+
 # What: Force-move the floating nightly tag and (re)publish its prerelease.
 # Why: Folds nightly-publish.yml; refuses to move a real v* release tag.
 # From: Issue #479
@@ -517,6 +526,7 @@ _ci_publish_nightly() {
     git config user.name "github-actions[bot]"
     git config user.email "github-actions[bot]@users.noreply.github.com"
     git tag -f "${tag}"
+    _ci_git_auth_setup
     git push -f origin "refs/tags/${tag}"
     shopt -s nullglob
     local assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
@@ -686,6 +696,7 @@ _ci_publish_changelog_update() {
     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
     git add CHANGELOG.md
     git commit -m "CHANGELOG.md: add ${tag}"
+    _ci_git_auth_setup
     git push origin HEAD:current_dev
 }
 

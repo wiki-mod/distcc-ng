@@ -94,7 +94,11 @@ jobs:
           OUT: distcc-ng-${{ inputs.tag }}.spdx.json
         run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
       - env:
-          GH_TOKEN: ${{ github.token }}
+          # What: Publish with a real PAT, not github.token.
+          # Why: A GITHUB_TOKEN-authored release event never fires
+          #   update_changelog's release: trigger (issue #460 Finding 2).
+          # From: Issue #479, PR #544
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           TAG: ${{ inputs.tag }}
         run: bash .github/scripts/ci.sh publish github-release "$TAG"
 
