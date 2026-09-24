@@ -166,6 +166,34 @@ setup() {
     [[ "${output}" == *"CI-ERROR-RELEASE-0003"* ]]
 }
 
+@test "release version-check require_new=false accepts an already-pushed tag" {
+    # What: POL-RELEASE-07's post-push check must not reject its own tag.
+    # Why: The tag genuinely exists by the time this runs for real.
+    # From: Issue #479, PR #544
+    fx="$(mktemp -d)"
+    ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
+      printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
+      git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
+    CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG false
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"CI-RELEASE"*"OK"* ]]
+}
+
+@test "release version-check require_new=true still rejects an existing tag" {
+    # What: The pre-tag dispatch path keeps refusing a collision.
+    # Why: require_new's default must stay true, unchanged behavior.
+    # From: Issue #479, PR #544
+    fx="$(mktemp -d)"
+    ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
+      printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
+      git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
+    CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
+}
+
 @test "container rejects an unimplemented variant" {
     # What: An unknown container variant fails closed.
     # Why: Consistent fail-closed dispatch for outward phases.

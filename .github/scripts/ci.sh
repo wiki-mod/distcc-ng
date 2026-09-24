@@ -599,11 +599,11 @@ _ci_package_sbom() {
     ci_cmd_sbom "${tarball}" "${out}"
 }
 
-# What: Fail unless a release tag matches configure.ac and is new.
-# Why: Folds check-release-version.sh; fail-closed release guardrail.
-# From: Issue #479
+# What: Fail unless a release tag matches configure.ac (POL-RELEASE-05/07).
+# Why: require_new=false for a real, already-pushed tag; true pre-tag.
+# From: Issue #479, PR #544
 _ci_check_release_version() {
-    local tag="${1:?tag required}" version configured
+    local tag="${1:?tag required}" require_new="${2:-true}" version configured
     version="${tag#v}"
     cd "${CI_REPO_ROOT}"
     [ -f configure.ac ] || { ci_log "[CI-ERROR-RELEASE-0001]" "no configure.ac"; return 1; }
@@ -613,11 +613,11 @@ _ci_check_release_version() {
         ci_log "[CI-ERROR-RELEASE-0003]" "configure.ac=${configured} != tag ${tag}"
         return 1
     fi
-    if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    if [ "${require_new}" = "true" ] && git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
         ci_log "[CI-ERROR-RELEASE-0004]" "tag ${tag} already exists"
         return 1
     fi
-    ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac and is new"
+    ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac"
 }
 
 # What: docker build of docker/verify with base+actionlint from the SOT.
