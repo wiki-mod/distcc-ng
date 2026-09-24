@@ -36,16 +36,16 @@ packaging/               # RPM/.deb packaging (rpm.spec, rpm.sh, deb.sh)
 docker/release/          # Release container image
 doc/                     # combined-test-and-release_checklist.md,
                          # compatibility-policy.md, protocol docs
-scripts/                 # build-release-packages.sh, check-release-version.sh
-.github/workflows/       # c-build.yml (build+test), package-release.yml (tagged releases),
-                         # changelog-check.yml, actionlint.yml
+.github/scripts/ci.sh    # the one CI engine (build/test/scan/package/publish/...)
+.github/workflows/       # validate.yml, security.yml, release.yml, nightly.yml,
+                         # housekeeping.yml -- thin orchestrators, all calling ci.sh
 ```
 
 Build system is autoconf/automake (`configure.ac`/`Makefile.in`) — a
 deliberate choice, not an oversight; a Meson migration was investigated
 and not (yet) adopted (see the tracking issue for the full feasibility
 analysis). Don't assume a build-system change is safe to make casually —
-see `AGENTS.md` rule 53.
+see `AGENTS.md` rule `[AG-COMP-001]`.
 
 ### A few design notes worth knowing before you dig in
 
