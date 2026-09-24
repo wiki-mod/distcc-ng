@@ -113,7 +113,7 @@ jobs:
   verify_image:
     name: Verify container build + self-test
     needs: plan
-    if: contains(needs.plan.outputs.phases, 'verify')
+    if: contains(needs.plan.outputs.phases, 'verify') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -128,7 +128,9 @@ jobs:
   publish_buildtools:
     name: Publish distcc-ng-buildtools:latest
     needs: [plan, verify_image]
-    if: github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')
+    if: >-
+      (github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
