@@ -30,8 +30,8 @@ published to GHCR by `housekeeping.yml`'s `e2e_image` job
 (`ci.sh container e2e-image` + `ci.sh publish e2e-image`, Issue #479).
 
 **`validate.yml`, `nightly.yml`, and `housekeeping.yml`'s own heartbeat do
-not pull this image yet** -- their `ci.sh e2e` phase still builds
-`Dockerfile` itself via `docker compose build`/`run-e2e.sh`. Switching
+not pull this image yet** -- their `ci.sh e2e` phase (`_ci_e2e_run`) still
+builds `Dockerfile` itself via `docker compose build`. Switching
 them over is a deliberately separate follow-up, not part of the PR that
 added this publish pipeline, because of a real design constraint found in
 review (see below) that the follow-up needs to account for.

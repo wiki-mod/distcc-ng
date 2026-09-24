@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
 # Shared helpers for the full bidirectional native-compatibility E2E test
-# (issue #264). Sourced by workload-samba.sh, workload-apache.sh, and
-# run-bidirectional-e2e.sh -- kept in one place so the artifact-verification
-# and log-counting logic isn't duplicated (and can't silently drift) between
-# the two workload scripts or between CI and a manual host run.
+# (issue #264). Sourced by workload-samba.sh and workload-apache.sh -- kept
+# in one place so the artifact-verification logic isn't duplicated (and
+# can't silently drift) between the two workload scripts or between CI and
+# a manual host run. The orchestrator itself (formerly
+# run-bidirectional-e2e.sh) is ci.sh's _ci_e2e_bidirectional_run; its own
+# log-counting helper is _ci_e2e_count_compile_ok, not this file.
 
 set -euo pipefail
 
@@ -61,7 +63,7 @@ fetch_and_verify_tarball() {
 # correctly (confirmed via the server's own COMPILE_OK log), only the
 # shutdown handshake afterward blocks. Since this test's containers are
 # always torn down right after each leg regardless (see
-# run-bidirectional-e2e.sh's cleanup trap), an include server left running
+# ci.sh's _ci_e2e_bidir_cleanup), an include server left running
 # past `--shutdown`'s timeout is harmless here -- `timeout` bounds the wait
 # so this script doesn't hang the whole run over a shutdown handshake this
 # script isn't testing.
@@ -81,23 +83,4 @@ run_pump_build() {
     timeout 15 distcc-pump --shutdown >/dev/null 2>&1 || true
     return "${build_rc}"
   fi
-}
-
-# distccd's per-job summary for a successful compile is
-#   "... client: <ip>:<port> COMPILE_OK ..."
-# (see dcc_job_summary in src/serve.c and STATS_COMPILE_OK in src/stats.c,
-# identically true of Debian's own distccd package -- same upstream lineage,
-# same log line format). Counting only lines attributable to the expected
-# client subnet proves both that jobs completed AND that they arrived over
-# the network from that specific client, not a localhost self-connection --
-# the exact pattern test/e2e/run-e2e.sh already uses for the quick check.
-#
-# Args: <server_log_file> <client_ip>
-# Prints the count to stdout. Uses grep -c (not `grep | grep -q`, which under
-# `set -o pipefail` would report failure on the very match it's looking for).
-count_compile_ok() {
-  local server_log="$1" client_ip="$2"
-  # Dots escaped so they are literal, not regex "any character".
-  local pattern="client: ${client_ip//./\\.}:[0-9]+ COMPILE_OK"
-  grep -Ec "${pattern}" "${server_log}" || true
 }

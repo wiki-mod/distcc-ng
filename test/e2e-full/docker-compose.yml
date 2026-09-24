@@ -5,10 +5,11 @@
 # maintainer's design calls for two separate containers rather than one.
 #
 # Neither service declares a `command`: both stay up on `sleep infinity`
-# (see the Dockerfile) so run-bidirectional-e2e.sh can `docker compose exec`
-# into either one, in either server or client role, per leg of the matrix --
-# a fixed command/healthcheck per service would not fit a script that flips
-# which side runs distccd across the four legs (direction A/B x plain/pump).
+# (see the Dockerfile) so ci.sh's _ci_e2e_bidirectional_run can
+# `docker compose exec` into either one, in either server or client role,
+# per leg of the matrix -- a fixed command/healthcheck per service would not
+# fit logic that flips which side runs distccd across the four legs
+# (direction A/B x plain/pump).
 #
 # Subnet is deliberately different from test/e2e/docker-compose.yml's
 # 10.88.0.0/24 so both harnesses could in principle run concurrently on the
@@ -24,7 +25,7 @@ services:
     # lib.sh/workload-*.sh live on the host, not baked into either image
     # (see the Dockerfile's own header comment on why workload source stays
     # out of the image) -- mounted read-only into both containers so
-    # run-bidirectional-e2e.sh's `docker compose exec` calls can run them.
+    # ci.sh's `docker compose exec` calls can run them.
     volumes:
       - ./:/e2e-scripts:ro
     networks:
@@ -33,7 +34,7 @@ services:
     # A real init as PID 1 (Compose's `init: true` runs tini), not `sleep
     # infinity` directly. doc/combined-test-and-release_checklist.md VER-CONTAINER's
     # documented gotcha (PR #375, swept into verify-image-build.yml by
-    # PR #377) applies here too: run-bidirectional-e2e.sh starts and
+    # PR #377) applies here too: ci.sh's _ci_e2e_bidir_leg starts and
     # `pkill`s distccd in place, once per leg, inside this same long-lived
     # container -- without a real reaper, each leg's distccd (and any
     # worker child that outlives its own SIGTERM slightly) gets reparented

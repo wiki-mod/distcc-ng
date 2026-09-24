@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Apache httpd workload for the full bidirectional E2E test (issue #264) --
-# NOT invoked by default. run-bidirectional-e2e.sh's WORKLOAD variable
-# defaults to "samba" (the larger/more demanding real-world dependency
+# NOT invoked by default. ci.sh's _ci_e2e_bidirectional_run's WORKLOAD
+# variable defaults to "samba" (the larger/more demanding real-world dependency
 # surface, see docker/verify/Dockerfile's own sizing research); this script
 # exists so switching to (or adding) Apache httpd as the workload is a
 # one-line change (WORKLOAD=apache) rather than a rewrite -- and so the

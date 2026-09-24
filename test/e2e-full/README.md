@@ -33,18 +33,23 @@ existing quick two-container hello-world-style check, which stays as-is.
   `docker/release/Dockerfile`'s base image).
 - `docker-compose.yml` -- brings both containers up idle (`sleep infinity`);
   the orchestrator flips which one runs `distccd` per leg.
-- `lib.sh` -- shared tarball-fetch+GPG-verify and server-log-counting
-  helpers.
+- `lib.sh` -- shared tarball-fetch+GPG-verify helpers for the workload
+  scripts.
 - `workload-samba.sh` / `workload-apache.sh` -- one real workload script
   each, same shape, only one enabled by default (see WORKLOAD above).
-- `run-bidirectional-e2e.sh` -- orchestrator: builds both images, runs all
-  four legs (direction A/B x plain/pump), tears the stack down always.
+
+The orchestrator itself -- builds both images, runs all four legs
+(direction A/B x plain/pump), tears the stack down always -- is
+`.github/scripts/ci.sh`'s `_ci_e2e_bidirectional_run` (dispatched via
+`ci.sh e2e full`), not a script in this directory. It used to be
+`run-bidirectional-e2e.sh` here; folded into `ci.sh` per issue #479's
+one-engine-owns-the-orchestration rewrite.
 
 ## Running it
 
 ```bash
-cd test/e2e-full
-WORKLOAD=samba bash run-bidirectional-e2e.sh
+cd /path/to/distcc-ng
+WORKLOAD=samba bash .github/scripts/ci.sh e2e full
 ```
 
 Needs Docker + the Compose plugin. No other host-side dependency -- both
@@ -76,8 +81,8 @@ wired into `nightly.yml`'s `bidirectional_e2e` job exists so the
 distribute, the server-log check is real) can be proven on every manual
 dispatch, scoped via `WAF_TARGETS` to fit a GitHub-hosted runner's
 practical time budget; a human or agent with access to a beefier host
-runs the same `run-bidirectional-e2e.sh` there, unscoped, for the real
-full-scale evidence.
+runs the same `ci.sh e2e full` there, unscoped, for the real full-scale
+evidence.
 
 A weekly scheduled run of this (Fridays, `WORKLOAD=apache` as the lighter
 workload) was previously planned as a commented-out, not-yet-armed cron
