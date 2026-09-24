@@ -644,6 +644,7 @@ _ci_publish_github_release() {
     notes="$(mktemp)"
     printf 'distcc-ng %s\n' "${tag}" > "${notes}"
     gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
+        --target "${GITHUB_SHA:?GITHUB_SHA required}" \
         --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
 }
 

@@ -83,7 +83,7 @@ distcc-ng does not commit or otherwise store long-lived credentials in the repos
 
 ## Verifying Release Artifacts
 
-**Status (Issue #479 CI rewrite, in progress):** build-provenance attestation for tagged releases is temporarily unavailable while the release pipeline (`.github/workflows/release.yml`) is being reworked; the previous implementation's `actions/attest-build-provenance` step was removed pending a decision on how to reintroduce it without violating the rewrite's action-pin ownership rules. This section describes the previous and intended behavior; do not rely on `gh attestation verify` succeeding for a release cut during this transition.
+**Status:** build-provenance attestation for tagged releases is temporarily unavailable while `.github/workflows/release.yml` is being reworked (Issue #479). This section describes the previous and intended behavior; do not rely on `gh attestation verify` succeeding for a release cut during this transition.
 
 When active, every tagged release is accompanied by a real [Sigstore](https://www.sigstore.dev/) build-provenance attestation, generated via [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) for each release asset. This lets a downstream user verify both that an artifact was not tampered with after being built (integrity) and that it was actually built by this repository's own GitHub Actions workflow rather than by some other party claiming to be this project (authenticity/author identity).
 
