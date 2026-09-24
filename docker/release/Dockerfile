@@ -68,11 +68,15 @@ FROM ${DEBIAN_IMAGE} AS runtime
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG CREATED=unknown
 
 LABEL org.opencontainers.image.title="distcc-ng" \
       org.opencontainers.image.description="distcc-ng runtime image." \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}"
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.source="https://github.com/wiki-mod/distcc-ng" \
+      org.opencontainers.image.licenses="GPL-2.0-or-later"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work
@@ -122,11 +126,15 @@ FROM ${DEBIAN_IMAGE} AS runtime-pump
 
 ARG VCS_REF=unknown
 ARG VERSION=allinkl
+ARG CREATED=unknown
 
 LABEL org.opencontainers.image.title="distcc-ng-pump" \
       org.opencontainers.image.description="distcc-ng runtime image with pump mode (server-side preprocessing via the Python include-server) enabled." \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}"
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.source="https://github.com/wiki-mod/distcc-ng" \
+      org.opencontainers.image.licenses="GPL-2.0-or-later"
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /work

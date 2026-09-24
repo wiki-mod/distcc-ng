@@ -458,6 +458,7 @@ ci_cmd_container() {
                 --build-arg "DEBIAN_IMAGE=${debian}" \
                 --build-arg "VCS_REF=${ref}" \
                 --build-arg "VERSION=nightly" \
+                --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                 --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
             docker push "${IMAGE_TAG}" ;;
         verify-image)
@@ -496,6 +497,7 @@ _ci_container_release() {
                 --build-arg "DEBIAN_IMAGE=${debian}" \
                 --build-arg "VCS_REF=${ref}" \
                 --build-arg "VERSION=${VERSION:-${ref}}" \
+                --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                 --tag "${IMAGE_TAG}" . ;;
         push)
             local image_tag="${2:?image tag required}"
