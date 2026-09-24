@@ -128,6 +128,15 @@ setup() {
     [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
 }
 
+@test "tracking is non-blocking on a draft PR" {
+    # What: A draft PR with missing metadata still passes.
+    # Why: AG-WF-009; ready_for_review re-checks it for real.
+    # From: Issue #479, PR #544
+    PR_LABELS="" PR_MILESTONE_TITLE="" PR_DRAFT="true" run _ci_check_pr_tracking
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"draft, non-blocking"* ]]
+}
+
 @test "board check skips when PROJECT_AUTOMATION_PAT is unset" {
     # What: No PAT degrades to a skip, not a failure.
     # Why: AG-GH-002's own documented exception.
@@ -316,6 +325,16 @@ setup() {
     [[ "${output}" == *"distcc-ng-e2e"* ]]
     [ "$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)" = "20" ]
     [ "$(_ci_sot_scalar e2e.full_waf_targets)" = "replace,ldb,tdb,talloc,tevent" ]
+}
+
+@test "project board owner/number default from the SOT" {
+    # What: No workflow Variable is required for a fixed board identity.
+    # Why: One owner (the SOT), not a repo Variable nobody set.
+    # From: Issue #236, Issue #479, PR #544
+    unset PROJECT_OWNER PROJECT_NUMBER
+    _ci_project_board_defaults
+    [ "${PROJECT_OWNER}" = "wiki-mod" ]
+    [ "${PROJECT_NUMBER}" = "11" ]
 }
 
 @test "failed-jobs filter keeps only failure and cancelled" {

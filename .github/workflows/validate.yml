@@ -152,17 +152,19 @@ jobs:
 
   required_gate:
     # What: One stable name over a content-based, skippable matrix.
-    # Why: A branch ruleset can't require a per-leg matrix context.
+    # Why: metadata-only events must not report a build that never ran.
     # From: Issue #479, PR #544
     name: Validate (required)
-    needs: [metadata, lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]
-    if: always()
+    needs: [lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]
+    if: >-
+      always() &&
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
           JOBS: |
-            metadata=${{ needs.metadata.result }}
             lint=${{ needs.lint.result }}
             engine-selftest=${{ needs['engine-selftest'].result }}
             plan=${{ needs.plan.result }}

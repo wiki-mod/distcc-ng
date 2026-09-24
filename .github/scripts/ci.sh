@@ -897,14 +897,22 @@ ci_cmd_gate() {
     ci_log "[CI-GATE]" "all jobs passed or were skipped"
 }
 
+# What: Fill PROJECT_OWNER/PROJECT_NUMBER from the SOT if unset.
+# Why: One owner for the board identity; no repo Variable needed.
+# From: Issue #236, Issue #479, PR #544
+_ci_project_board_defaults() {
+    PROJECT_OWNER="${PROJECT_OWNER:-$(_ci_sot_scalar project_board.owner)}"
+    PROJECT_NUMBER="${PROJECT_NUMBER:-$(_ci_sot_scalar project_board.number)}"
+}
+
 # What: Add the standing issue to the project board via the project PAT.
-# Why: GH_TOKEN cannot write Projects v2 and the project PAT cannot mutate
-#   issues, so the board touch needs its own token; warn, never fail, when unset.
+# Why: Only GH_TOKEN's own board touch needs a real project scope.
 # From: Issue #479, Issue #81, PR #476
 _ci_report_board() {
     local issue_url="$1"
-    if [ -z "${PROJECT_PAT:-}" ] || [ -z "${PROJECT_OWNER:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
-        echo "::warning::project board PAT/vars not configured; ${issue_url} was not added to the board."
+    _ci_project_board_defaults
+    if [ -z "${PROJECT_PAT:-}" ]; then
+        echo "::warning::PROJECT_AUTOMATION_PAT not configured; ${issue_url} was not added to the board."
         return 0
     fi
     if [ "${DRY_RUN:-false}" = "true" ]; then
@@ -1050,9 +1058,8 @@ _ci_variables_secret_present() {
 # Why: Replaces actions/add-to-project; gh project item-add is native.
 # From: Issue #479
 _ci_variables_add_to_project() {
-    : "${PROJECT_OWNER:?PROJECT_OWNER required}"
-    : "${PROJECT_NUMBER:?PROJECT_NUMBER required}"
     : "${ITEM_URL:?ITEM_URL required}"
+    _ci_project_board_defaults
     gh project item-add "${PROJECT_NUMBER}" --owner "${PROJECT_OWNER}" --url "${ITEM_URL}"
 }
 
@@ -1686,10 +1693,7 @@ _ci_check_pr_board() {
         ci_log "[CI-META-BOARD]" "skipped: PROJECT_AUTOMATION_PAT not configured"
         return 0
     fi
-    if [ -z "${PROJECT_OWNER:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
-        ci_log "[CI-META-BOARD]" "skipped: PROJECT_BOARD_OWNER/PROJECT_BOARD_NUMBER vars not configured"
-        return 0
-    fi
+    _ci_project_board_defaults
     if [ "${PR_IS_FORK:-false}" = "true" ]; then
         ci_log "[CI-META-BOARD]" "skipped: fork PR, PAT withheld by GitHub"
         return 0
@@ -1723,6 +1727,10 @@ _ci_check_pr_tracking() {
     fi
     local msg="PR tracking metadata failed (AG-GH-002)" e
     for e in "${errs[@]}"; do msg="${msg}; ${e}"; done
+    if [ "${PR_DRAFT:-false}" = "true" ]; then
+        ci_log "[CI-META-TRACKING]" "draft, non-blocking: ${msg}"
+        return 0
+    fi
     ci_log "[CI-ERROR-META-TRACKING-0001]" "${msg}"
     return 1
 }
@@ -1923,8 +1931,8 @@ _ci_lint_actionlint() {
     _ci_lint_buildtools_run actionlint -color "${files[@]}"
 }
 
-# What: Shellcheck ci.sh, this repo's one real shell script now.
-# Why: scripts/*.sh is gone; every phase moved into ci.sh itself.
+# What: Shellcheck ci.sh, this repo's real shell engine.
+# Why: test/e2e*/*.sh stay explicitly out of scope.
 # From: Issue #479
 _ci_lint_shellcheck() {
     _ci_lint_buildtools_run shellcheck .github/scripts/ci.sh

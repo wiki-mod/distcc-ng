@@ -136,6 +136,13 @@ release:
   # From: Issue #362, Issue #479
   packaging_apt: "autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien"
 
+# What: The repo's GitHub Projects (v2) board identity.
+# Why: One owner; no repo Variables needed for a fixed value.
+# From: Issue #236, Issue #479, PR #544
+project_board:
+  owner: "wiki-mod"
+  number: "11"
+
 # What: apt packages CodeQL needs for a c-cpp build.
 # Why: One owner; security.yml installs this first.
 # From: Issue #479
