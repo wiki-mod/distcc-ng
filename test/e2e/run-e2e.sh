@@ -32,9 +32,9 @@ readonly SCENARIO="${E2E_SCENARIO:-distcc-ng self-compile}"
 readonly MIN_REMOTE_JOBS="${E2E_MIN_REMOTE_JOBS:-5}"
 
 # Attempts before a failure is treated as final. Defaults to 1 (no retry) so
-# existing callers that don't set this -- notably c-build.yml's per-push
-# distributed_e2e job -- keep surfacing a flake immediately rather than having
-# it silently absorbed. The weekly ccache heartbeat (master-heartbeat.yml)
+# existing callers that don't set this -- notably validate.yml's e2e job --
+# keep surfacing a flake immediately rather than having it silently
+# absorbed. The weekly ccache heartbeat (housekeeping.yml's heartbeat job)
 # raises this via the environment to ride out a one-off network/container
 # flake; a failure that reproduces on every attempt still exits non-zero, so a
 # real, reproducible distcc bug is never hidden by the retry.

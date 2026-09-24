@@ -58,7 +58,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       procps \
       # --- distcc-ng's own configure-time build deps (`ng` stage builds
       #     this repo from source -- same list as docker/verify/Dockerfile
-      #     and c-build.yml's install-package apt list, kept in sync) ---
+      #     and build-manifest.yml's build_matrix.variants.default.apt,
+      #     kept in sync) ---
       autoconf \
       automake \
       libtool \

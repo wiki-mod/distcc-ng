@@ -6,10 +6,10 @@
 # surface, see docker/verify/Dockerfile's own sizing research); this script
 # exists so switching to (or adding) Apache httpd as the workload is a
 # one-line change (WORKLOAD=apache) rather than a rewrite -- and so the
-# lighter, disabled-by-default weekly schedule (see
-# .github/workflows/nightly-publish.yml's commented-out cron block) has a
-# real, already-written script to use once that schedule is ever armed,
-# without inventing one from scratch at that point.
+# lighter, weekly Apache-workload schedule once discussed for
+# nightly.yml's bidirectional_e2e job (not currently present, see
+# test/e2e-full/README.md) has a real, already-written script to use if
+# that schedule is ever added, without inventing one from scratch then.
 #
 # Same shape as workload-samba.sh: real tarball fetch + signature
 # verification, a fresh per-leg extraction, a real distcc/pump-distributed

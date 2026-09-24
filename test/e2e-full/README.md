@@ -49,8 +49,8 @@ WORKLOAD=samba bash run-bidirectional-e2e.sh
 
 Needs Docker + the Compose plugin. No other host-side dependency -- both
 images carry everything they need (this is why the CI job (see
-`.github/workflows/nightly-publish.yml`) needs no extra `apt`/package steps
-beyond `docker compose build`).
+`.github/workflows/nightly.yml`'s `bidirectional_e2e` job) needs no extra
+`apt`/package steps beyond `docker compose build`).
 
 ### Scoping a bounded run (`WAF_TARGETS`)
 
@@ -71,17 +71,20 @@ jobs. The intended way to run the *full, unrestricted* Samba build is
 **agent-driven on the project's own hosts** (the real SSH-reachable Docker
 hosts this project already uses for verification work), not raw
 GitHub-hosted Actions compute for the heavy lift -- the GitHub Actions job
-wired into `nightly-publish.yml` exists so the *mechanism* (both images
-build, both directions/modes actually distribute, the server-log check is
-real) can be proven on every manual dispatch, scoped via `WAF_TARGETS` to
-fit a GitHub-hosted runner's practical time budget; a human or agent with
-access to a beefier host runs the same `run-bidirectional-e2e.sh` there,
-unscoped, for the real full-scale evidence.
+wired into `nightly.yml`'s `bidirectional_e2e` job exists so the
+*mechanism* (both images build, both directions/modes actually
+distribute, the server-log check is real) can be proven on every manual
+dispatch, scoped via `WAF_TARGETS` to fit a GitHub-hosted runner's
+practical time budget; a human or agent with access to a beefier host
+runs the same `run-bidirectional-e2e.sh` there, unscoped, for the real
+full-scale evidence.
 
-A weekly schedule (Fridays 02:00 CET, `WORKLOAD=apache` as the lighter
-workload) is written into `.github/workflows/nightly-publish.yml` already,
-but is **commented out and explicitly not armed** -- see that file's own
-comment for why turning it on is a separate, not-yet-made decision.
+A weekly scheduled run of this (Fridays, `WORKLOAD=apache` as the lighter
+workload) was previously planned as a commented-out, not-yet-armed cron
+in the old `nightly-publish.yml`; that placeholder did not carry over
+into the rewritten `nightly.yml` and would need to be reintroduced
+deliberately if still wanted -- not itself a regression, since it was
+never live, but flagged here so the idea isn't lost.
 
 ## Reused container lessons (issue #264, doc/combined-test-and-release_checklist.md VER-CONTAINER)
 

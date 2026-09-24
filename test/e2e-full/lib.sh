@@ -13,10 +13,10 @@ set -euo pipefail
 # the *uncompressed* tarball -- doc/combined-test-and-release_checklist.md VER-SOURCE's
 # requirement ("verify a downloaded artifact against the upstream project's
 # own published value, not just 'it downloaded without error'"), and the
-# exact method already proven in .github/workflows/verify-image-build.yml's
-# "Real Samba configure dry-run" step for Samba specifically. Exits non-zero
-# (not a silent warning) on any verification failure, per AGENTS.md rule 66:
-# a signature check that "usually passes" must be a hard gate, not advisory.
+# exact method already proven in ci.sh's `verify samba-configure-dryrun`
+# case for Samba specifically. Exits non-zero (not a silent warning) on
+# any verification failure, per AGENTS.md rule `[AG-VAL-001]`: a
+# signature check that "usually passes" must be a hard gate, not advisory.
 #
 # Args: <tarball_url> <sig_url> <pubkey_url> <dest_dir>
 fetch_and_verify_tarball() {

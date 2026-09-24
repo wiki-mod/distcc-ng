@@ -7,11 +7,12 @@ by `docker-compose.yml` -- see that file's own comments for why (byte-
 identical toolchains on both sides).
 
 Used by:
-- `c-build.yml`'s `Distributed compile E2E (2-container)` job, on every push
-  (client workload: `client-build.sh`, distcc-ng's own source tree).
-- `master-heartbeat.yml`'s weekly `ccache_heartbeat` job (client workload:
+- `validate.yml`'s `Distributed compile E2E (2-container)` job, when the
+  content-based impact plan selects the `e2e` phase (client workload:
+  `client-build.sh`, distcc-ng's own source tree).
+- `housekeeping.yml`'s weekly `heartbeat` job (client workload:
   `client-heartbeat.sh`, ccache's own source).
-- `nightly-publish.yml`/`package-release.yml`'s own `distributed_e2e` gates.
+- `nightly.yml`/`release.yml`'s own `e2e` jobs.
 
 Not to be confused with `test/e2e-full/` (Samba/Apache bidirectional
 native-compatibility test, issue #264) or `docker/verify/` (the general
@@ -41,8 +42,8 @@ review (see below) that the follow-up needs to account for.
 *at image-build time*. That's fine for `client-heartbeat.sh` (clones
 ccache fresh at container-*run*-time, unrelated to what's baked into
 `/work`), but it is **not** fine for `client-build.sh`'s self-compile
-workload (`c-build.yml`/`nightly-publish.yml`/`package-release.yml`'s own
-`distributed_e2e` gates): if those switch to pulling this daily-rebuilt
+workload (`validate.yml`/`nightly.yml`/`release.yml`'s own `e2e` jobs):
+if those switch to pulling this daily-rebuilt
 image as-is, the self-compile test would silently compile whatever source
 was baked in at the last daily rebuild -- not the actual commit/PR/tag
 under test -- letting the distribution gate pass without ever exercising
@@ -62,7 +63,7 @@ scheduled workflows use) rather than sitting undetected for weeks. Note:
 GitHub only honors a workflow's `schedule` trigger from the copy on the
 default branch (`master`) -- this daily rebuild has no effect until the
 next `current_dev`->`master` promotion, same structural limitation as
-`nightly-publish.yml`/`master-heartbeat.yml` (see issue #81's history).
+`nightly.yml`/`housekeeping.yml` (see issue #81's history).
 
 ## Pulling the published image
 

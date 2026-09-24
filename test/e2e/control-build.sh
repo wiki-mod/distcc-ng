@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Diagnostic-only control build for the weekly ccache heartbeat (see
-# .github/workflows/master-heartbeat.yml's ccache_control_build job and issue
-# #263, where a real ccache_heartbeat failure took real effort to trace back
+# housekeeping.yml's control job / ci.sh's e2e control case, and issue
+# #263, where a real heartbeat failure took real effort to trace back
 # to a compiler-version problem rather than a distcc-ng bug). Builds the same
 # pinned ccache source directly with this image's plain compiler -- no
 # distcc, no distccd, no network hop, nothing distributed at all. Runs inside

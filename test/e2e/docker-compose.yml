@@ -56,8 +56,8 @@ services:
       DISTCC_FALLBACK: "0"
       DISTCC_VERBOSE: "1"
       # Forwarded from the host so client-heartbeat.sh and the diagnostic
-      # control-build.sh (run separately, see master-heartbeat.yml's
-      # ccache_control_build job) always build the same pinned ccache tag.
+      # control-build.sh (run separately, see housekeeping.yml's control
+      # job) always build the same pinned ccache tag.
       # Empty/unset for callers that don't set it (e.g. the plain
       # distcc-ng self-compile in client-build.sh, which ignores it) --
       # client-heartbeat.sh falls back to its own default in that case.

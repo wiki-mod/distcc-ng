@@ -126,7 +126,7 @@ fi
 # dependency surface satisfies) -- duplicating waf's own dependency
 # resolution just to pre-compute an exact static number would be a second,
 # parallel, drift-prone implementation of logic waf already owns (see
-# AGENTS.md rule 69 on not re-implementing existing logic under a new name).
+# AGENTS.md rule `[AG-CODE-004]` on not re-implementing existing logic under a new name).
 # The object count is still "known in advance of the server-log check" in the
 # sense the design requires: it is computed from the real build BEFORE the
 # server log is consulted, so a build that silently fell back to local
