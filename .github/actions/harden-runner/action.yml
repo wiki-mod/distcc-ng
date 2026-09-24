@@ -21,7 +21,8 @@ description: >-
   later `actions/checkout`, so `$/` resolves against whatever this action
   looks like on master for those triggers. This file must exist and stay
   in sync on both master and current_dev, same one-off-exception pattern
-  as ghcr-cleanup.yml/codeql.yml (see PR #426/#428/#429).
+  as any other schedule/dispatch-triggered workflow file, e.g.
+  nightly.yml/security.yml (see PR #426/#428/#429).
 
 runs:
   using: composite
