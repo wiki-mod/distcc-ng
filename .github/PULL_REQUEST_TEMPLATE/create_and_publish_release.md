@@ -49,7 +49,7 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution
 | REL-PRECUT-01 | `[Unreleased]` reviewed end-to-end against real PR history since last tag |  | | | |
 | REL-PRECUT-02 | A real, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section exists for every tag since the last checklist run |  | | | |
 | REL-PRECUT-03 | No open unresolved `security`-labeled issue blocking, or a documented maintainer decision to ship anyway |  | | | |
-| REL-PRECUT-04 | `scripts/check-release-version.sh` run for real against the intended tag |  | | | |
+| REL-PRECUT-04 | `.github/scripts/ci.sh release version-check` run for real against the intended tag |  | | | |
 | REL-PRECUT-05 | Every `support-upstream/` entry since last release has file + README row |  | | | |
 | REL-PRECUT-06 | `master`'s copy of every `release:`-event-triggered workflow matches `current_dev`'s |  | | | |
 | REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` |  | | | |

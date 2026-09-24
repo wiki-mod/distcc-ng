@@ -5,8 +5,8 @@
 # docker/verify/Dockerfile (51 real Debian build-deps vs. Apache httpd's 20 --
 # see that Dockerfile's own header comment). This is the ENABLED workload;
 # workload-apache.sh is the flagged-off alternative kept in sync so switching
-# is a one-line change (see run-bidirectional-e2e.sh's WORKLOAD variable),
-# not a rewrite.
+# is a one-line change (see ci.sh's _ci_e2e_bidirectional_run, WORKLOAD
+# variable), not a rewrite.
 #
 # Run inside the CLIENT container for a given leg of the bidirectional
 # matrix. Fetches+verifies the real Samba release tarball once (cached), then
@@ -28,9 +28,9 @@
 #
 # Prints the number of real distinct compiled objects produced (used by the
 # orchestrator as the known-in-advance floor the server's own log must meet
-# or exceed -- see lib.sh's count_compile_ok and this script's own comment
-# below on why an object count, not a static pre-build guess, is the honest
-# "known count" here) to stdout as the LAST line.
+# or exceed -- see ci.sh's _ci_e2e_count_compile_ok and this script's own
+# comment below on why an object count, not a static pre-build guess, is the
+# honest "known count" here) to stdout as the LAST line.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -126,7 +126,7 @@ fi
 # dependency surface satisfies) -- duplicating waf's own dependency
 # resolution just to pre-compute an exact static number would be a second,
 # parallel, drift-prone implementation of logic waf already owns (see
-# AGENTS.md rule 69 on not re-implementing existing logic under a new name).
+# AGENTS.md rule `[AG-CODE-004]` on not re-implementing existing logic under a new name).
 # The object count is still "known in advance of the server-log check" in the
 # sense the design requires: it is computed from the real build BEFORE the
 # server log is consulted, so a build that silently fell back to local

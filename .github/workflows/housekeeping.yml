@@ -1,0 +1,162 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Scheduled GHCR cleanup, heartbeat, e2e image builds.
+# Why: One owner for housekeeping; logic lives in ci.sh.
+# From: Issue #479
+name: Housekeeping
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Which housekeeping task to run"
+        type: choice
+        options:
+          - gc
+          - heartbeat
+          - e2e-image
+        default: gc
+      package:
+        description: "Which GHCR package to prune (gc task)"
+        type: choice
+        options:
+          - all
+          - distcc-ng
+          - distcc-ng-pump
+          - distcc-ng-nightly
+          - distcc-ng-buildtools
+          - distcc-ng-e2e
+        default: all
+      dry_run:
+        description: "List what would be deleted without deleting anything"
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 5 * * 1'
+    - cron: '0 2 * * *'
+  push:
+    branches: [current_dev]
+    paths: ['test/e2e/Dockerfile']
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['test/e2e/Dockerfile']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: housekeeping-${{ github.event.inputs.task || github.event.schedule || github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  gc:
+    name: GHCR package cleanup
+    if: github.event_name == 'workflow_dispatch' && inputs.task == 'gc'
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PACKAGE: ${{ inputs.package }}
+        run: bash .github/scripts/ci.sh gc "$PACKAGE"
+
+  heartbeat:
+    name: Weekly distributed ccache heartbeat
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e heartbeat
+
+  control:
+    name: Control build (plain compiler, diagnostic only)
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # What: Plain-compiler control build, non-gating.
+    # Why: keeps a control failure from failing the run.
+    # From: Issue #263, Issue #479
+    continue-on-error: true
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e control
+
+  e2e_image:
+    name: Build+publish distcc-ng-e2e test image
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') ||
+      inputs.task == 'e2e-image' || github.event_name == 'push' || github.event_name == 'pull_request'
+    concurrency:
+      group: e2e-image-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      # What: pull_request checks out its own ref.
+      # Why: else hides the PR's own Dockerfile diff.
+      # From: Issue #479
+      - if: github.event_name == 'pull_request'
+        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: github.event_name != 'pull_request'
+        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh container e2e-image
+      - if: github.event_name != 'pull_request'
+        uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - if: github.event_name != 'pull_request'
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: bash .github/scripts/ci.sh publish e2e-image
+
+  report_e2e_image:
+    name: Report e2e-image status
+    needs: [e2e_image]
+    if: always() && needs.e2e_image.result != 'skipped' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ needs.e2e_image.result == 'success' && 'success' || 'failure' }}
+          SCOPE: e2e test image build+publish (distcc-ng-e2e)
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report
+
+  report:
+    name: Report heartbeat status
+    needs: [heartbeat]
+    if: always() && needs.heartbeat.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ needs.heartbeat.result == 'success' && 'success' || 'failure' }}
+          SCOPE: weekly ccache heartbeat
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report

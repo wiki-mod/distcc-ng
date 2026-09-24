@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
 # Apache httpd workload for the full bidirectional E2E test (issue #264) --
-# NOT invoked by default. run-bidirectional-e2e.sh's WORKLOAD variable
-# defaults to "samba" (the larger/more demanding real-world dependency
+# NOT invoked by default. ci.sh's _ci_e2e_bidirectional_run's WORKLOAD
+# variable defaults to "samba" (the larger/more demanding real-world dependency
 # surface, see docker/verify/Dockerfile's own sizing research); this script
 # exists so switching to (or adding) Apache httpd as the workload is a
 # one-line change (WORKLOAD=apache) rather than a rewrite -- and so the
-# lighter, disabled-by-default weekly schedule (see
-# .github/workflows/nightly-publish.yml's commented-out cron block) has a
-# real, already-written script to use once that schedule is ever armed,
-# without inventing one from scratch at that point.
+# lighter, weekly Apache-workload schedule once discussed for
+# nightly.yml's bidirectional_e2e job (not currently present, see
+# test/e2e-full/README.md) has a real, already-written script to use if
+# that schedule is ever added, without inventing one from scratch then.
 #
 # Same shape as workload-samba.sh: real tarball fetch + signature
 # verification, a fresh per-leg extraction, a real distcc/pump-distributed

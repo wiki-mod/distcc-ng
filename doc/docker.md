@@ -8,9 +8,11 @@
 
 ## Release images (`docker/release/`)
 
-Built and pushed to GHCR by `.github/workflows/package-release.yml` on
-every tagged release (or a manual `workflow_dispatch` with
-`publish_container: true`). Two separately-published variants, from the
+Built and pushed to GHCR by `.github/workflows/release.yml`'s
+`build_container`/`publish_manifest` jobs, run as part of a manual
+`workflow_dispatch` release cut (there is no separate publish flag --
+dispatching the workflow always builds and publishes the containers
+alongside the packages). Two separately-published variants, from the
 same `Dockerfile` via different build targets:
 
 - **`ghcr.io/wiki-mod/distcc-ng`** (`--target runtime`): plain
@@ -29,8 +31,8 @@ Every release image carries its real, immutable `<version>-NG` tag (e.g.
 `3.6.4-NG`) -- this is the one `doc/combined-test-and-release_checklist.md`'s "no release
 may ever be untagged" policy is actually about, and every immutable
 reference (the GitHub Release, the SBOM, this workflow's own digest pins)
-names that tag specifically. `publish_manifest` (`.github/workflows/
-package-release.yml`) *additionally* moves a floating `:latest` tag to
+names that tag specifically. `publish_manifest` (`.github/workflows/release.yml`) *additionally*
+moves a floating `:latest` tag to
 each real tagged release, as a convenience pointer at the same
 already-versioned content -- not a replacement for the version tag, and
 only ever moved on a real tag push, never a manual test build:
@@ -45,7 +47,7 @@ docker pull ghcr.io/wiki-mod/distcc-ng-pump:<version>-NG
 For this fork's own bleeding-edge `current_dev` branch instead of a stable
 release (Firefox Nightly-style, not for production), there's also
 `ghcr.io/wiki-mod/distcc-ng-nightly:latest`, rebuilt daily (see
-`.github/workflows/nightly-publish.yml`).
+`.github/workflows/nightly.yml`).
 
 ### Running as a server
 
@@ -87,10 +89,12 @@ build itself fails if any tool is missing or non-functional.
 docker pull ghcr.io/wiki-mod/distcc-ng-buildtools:latest
 ```
 
-Published automatically by `.github/workflows/verify-image-build.yml`'s
-`publish` job on every push to `current_dev` that touches `docker/verify/**`
-(after `build_and_selftest` proves the image still works), and on a manual
-`workflow_dispatch` run -- never from a pull request. `:latest` is a moving
+Published automatically by `.github/workflows/validate.yml`'s
+`publish_buildtools` job on every push to `current_dev`/`master` whose
+content-based impact classification selects the `verify` phase (a
+`docker/verify/**` or `.github/scripts/**` change -- after `verify_image`
+proves the image still works), and on a manual `workflow_dispatch` run --
+never from a pull request. `:latest` is a moving
 tag (same channel philosophy as `distcc-ng-nightly`); each publish is also
 tagged with the short commit SHA it was built from, for pinning to an exact
 revision.

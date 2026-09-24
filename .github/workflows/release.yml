@@ -1,0 +1,222 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Release: verify/package/publish/changelog/draft.
+# Why: A real vX.Y.Z-NG tag triggers the real release (POL-RELEASE-07);
+#   dispatch is a pre-tag verification-only dry run (POL-RELEASE-05).
+# From: Issue #479, PR #544
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify, e.g. v3.6.6-NG (must match configure.ac). This does NOT create the tag or publish a release -- push the tag for that."
+        required: true
+        type: string
+      publish_container:
+        description: "Also build+scan+push the container images during this dry run (still no GitHub Release, no tag)"
+        required: false
+        type: boolean
+        default: false
+      release_notes:
+        description: "Set only to manually retry a failed CHANGELOG.md insert for `tag`"
+        required: false
+        type: string
+        default: ""
+  release:
+    types: [published]
+  push:
+    branches: [current_dev]
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version_check:
+    name: Verify release tag matches configure.ac
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - env:
+          # What: Dispatch checks a not-yet-pushed tag; push checks its own.
+          # Why: POL-RELEASE-05 (pre-tag) vs POL-RELEASE-07 (real tag exists).
+          # From: Issue #479, PR #544
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REQUIRE_NEW: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+        run: bash .github/scripts/ci.sh release version-check "$TAG" "$REQUIRE_NEW"
+
+  update_changelog:
+    name: Insert release notes into CHANGELOG.md
+    if: >-
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_notes != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - env:
+          # What: Push with the PAT, not github.token.
+          # Why: current_dev's ruleset has no bot bypass actor.
+          # From: Issue #479, PR #544, Issue #460
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          RELEASE_BODY: ${{ github.event_name == 'release' && github.event.release.body || inputs.release_notes }}
+        run: bash .github/scripts/ci.sh publish changelog "$TAG"
+
+  update_draft_release:
+    name: Refresh the current_dev draft release
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/current_dev') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/ci.sh publish draft-release
+
+  build_test:
+    name: Build + test (default)
+    needs: [version_check]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    needs: [version_check]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e distributed
+
+  package:
+    name: Build packages, SBOM, and (real tag only) publish the release
+    needs: [version_check, build_test, e2e]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+      - env:
+          OUT: distcc-ng-${{ env.TAG }}.spdx.json
+        run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
+      - if: github.event_name == 'push'
+        env:
+          # What: Publish with a real PAT, not github.token.
+          # Why: github.token releases never fire release: events.
+          # From: Issue #479, PR #544, Issue #460
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+        run: bash .github/scripts/ci.sh publish github-release "$TAG"
+
+  build_container:
+    name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
+    needs: [version_check, build_test, e2e]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ${{ matrix.runs_on }}
+    # amd64/arm64 must be a real matrix axis (not bare `include` entries):
+    # an include entry missing an existing axis key overwrites that key
+    # for every generated job in list order, not just its own combination.
+    continue-on-error: ${{ matrix.platform == 'arm64' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, pump]
+        platform: [amd64, arm64]
+        include:
+          - platform: amd64
+            runs_on: ubuntu-latest
+          - platform: arm64
+            runs_on: ubuntu-24.04-arm
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}-${{ matrix.platform }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      # What: Real push happens on a real tag, or an explicit opt-in dry run.
+      # Why: POL-RELEASE-05's publish_container input; else build+scan only.
+      # From: Issue #479, PR #544
+      SHOULD_PUSH: ${{ github.event_name == 'push' || inputs.publish_container == true }}
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: env.SHOULD_PUSH == 'true'
+        uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - env:
+          VARIANT: ${{ matrix.variant }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bash .github/scripts/ci.sh container build "$VARIANT" "$PLATFORM"
+      - run: bash .github/scripts/ci.sh scan trivy "$IMAGE_TAG"
+      - env:
+          OUT: distcc-ng-${{ matrix.variant }}-${{ env.TAG }}-${{ matrix.platform }}.spdx.json
+        run: bash .github/scripts/ci.sh scan sbom "$IMAGE_TAG" "$OUT"
+      - if: env.SHOULD_PUSH == 'true'
+        run: bash .github/scripts/ci.sh container push "$IMAGE_TAG"
+
+  publish_manifest:
+    name: Publish ${{ matrix.variant }} multi-arch manifest
+    needs: [build_container]
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_container == true)
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, pump]
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      # What: Only a real tag push moves the floating :latest manifest.
+      # Why: A dispatch dry run must never look like the newest release.
+      # From: Issue #479, PR #544
+      TAG_PUSH: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh publish manifest "$VARIANT"

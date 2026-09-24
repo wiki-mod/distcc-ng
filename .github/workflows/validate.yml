@@ -1,0 +1,213 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: PR/push entry; self-test, plan, build/test matrix.
+# Why: One thin orchestrator; all logic lives in ci.sh.
+# From: Issue #479
+name: Validate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, milestoned, demilestoned]
+  push:
+    branches: [current_dev, master]
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# What: Cancel a superseded run when a newer commit/event supersedes it.
+# Why: Legacy's c-build.yml/changelog-check.yml both had this; dropped
+#   during the rewrite's consolidation into this one file (found by
+#   checking the same pattern release.yml just needed against every
+#   sibling workflow, not assumed fine because nothing complained yet).
+# From: Issue #479, PR #544
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: PR metadata (title/tracking/changelog)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # What: PAT for the AG-GH-002 board sub-check only.
+          # Why: github.token above cannot read Projects v2.
+          # From: Issue #479, PR #544
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+        run: bash .github/scripts/ci.sh metadata all
+
+  lint:
+    name: Static lint (actionlint / shellcheck / guards)
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh lint
+
+  engine-selftest:
+    name: CI engine self-test (ci.bats)
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt ci_engine.selftest_apt
+      - run: bash .github/scripts/ci.sh selftest
+
+  plan:
+    name: Plan (content-based impact matrix)
+    if: >-
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      phases: ${{ steps.plan.outputs.phases }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: plan
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash .github/scripts/ci.sh plan "$BASE" "$HEAD"
+
+  build_test:
+    name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: ${{ matrix.apt }}
+        run: bash .github/scripts/ci.sh install apt "${APT_PACKAGES}"
+      - if: runner.os == 'macOS' && matrix.brew != ''
+        env:
+          BREW_PACKAGES: ${{ matrix.brew }}
+        run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e
+
+  verify_image:
+    name: Verify container build + self-test
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'verify') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh container verify-image
+      - run: bash .github/scripts/ci.sh verify prepare-etc
+      - run: bash .github/scripts/ci.sh verify ptrace-selftest
+      - run: bash .github/scripts/ci.sh verify build-test
+      - run: bash .github/scripts/ci.sh verify ccache-redis
+      - run: bash .github/scripts/ci.sh verify samba-configure-dryrun
+
+  publish_buildtools:
+    name: Publish distcc-ng-buildtools:latest
+    needs: [plan, verify_image]
+    if: >-
+      (github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - env:
+          OWNER: ${{ github.repository_owner }}
+        run: bash .github/scripts/ci.sh container buildtools
+
+  required_gate:
+    # What: One stable name over a content-based, skippable matrix.
+    # Why: metadata-only events must not report a build that never ran.
+    # From: Issue #479, PR #544
+    name: Validate (required)
+    needs: [lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]
+    if: >-
+      always() &&
+      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
+      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          JOBS: |
+            lint=${{ needs.lint.result }}
+            engine-selftest=${{ needs['engine-selftest'].result }}
+            plan=${{ needs.plan.result }}
+            build_test=${{ needs.build_test.result }}
+            e2e=${{ needs.e2e.result }}
+            verify_image=${{ needs.verify_image.result }}
+            publish_buildtools=${{ needs.publish_buildtools.result }}
+        run: bash .github/scripts/ci.sh gate
+
+  variables:
+    name: Repo automation (labeler + project board)
+    if: github.event_name == 'issues' || github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/ci.sh variables label-pr
+      - name: Check for automation PAT
+        id: check-pat
+        env:
+          SECRET_VALUE: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh variables secret-present
+      - if: steps.check-pat.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          ITEM_URL: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}
+        run: bash .github/scripts/ci.sh variables add-to-project

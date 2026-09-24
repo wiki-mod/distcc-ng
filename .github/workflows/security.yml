@@ -1,0 +1,117 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Consolidated CodeQL/OSV/Scorecard/fuzz scans.
+# Why: One trigger set feeds every parallel scan job.
+# From: Issue #479
+name: Security
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [current_dev, master]
+  pull_request:
+    branches: [current_dev, master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '0 5 * * 0'
+    - cron: '0 6 1,15 * *'
+  branch_protection_rule:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: Analyze (${{ matrix.language }})
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [c-cpp, python, actions]
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: matrix.language == 'c-cpp'
+        run: bash .github/scripts/ci.sh install sot-apt security.codeql_cpp_apt
+      - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" security-extended "codeql-${{ matrix.language }}.sarif"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif"
+
+  osv-scan:
+    name: OSV scan
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      security-events: write
+      contents: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh scan osv osv-results.sarif
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload osv-results.sarif
+
+  scorecard:
+    name: Scorecard analysis
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GITHUB_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan scorecard results.sarif
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload results.sarif
+
+  clusterfuzzlite:
+    name: ClusterFuzzLite fuzzing
+    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: relevant
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/ci.sh impact-hit fuzz "$BASE" "$HEAD"
+      - if: github.event_name != 'pull_request' || steps.relevant.outputs.hit == 'true'
+        name: Build fuzzers (${{ matrix.sanitizer }})
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-build "${{ matrix.sanitizer }}"
+      - if: github.event_name != 'pull_request' || steps.relevant.outputs.hit == 'true'
+        name: Run fuzzers (${{ matrix.sanitizer }})
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}" 300 code-change
+
+  openssf:
+    name: OpenSSF Baseline recheck
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 1,15 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: "312"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh scan openssf

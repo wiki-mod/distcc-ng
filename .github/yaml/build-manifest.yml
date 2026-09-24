@@ -1,0 +1,196 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Single source of truth for CI build inputs.
+# Why: One machine-readable owner ends version drift.
+# From: Issue #479
+schema: build-manifest/v1
+
+# What: Pinned external base images by full digest.
+# Why: Sole owner of every base-image pin, no per-file copy.
+# From: Issue #479
+base_images:
+  # What: Debian base of the verify/build-tools image.
+  # Why: docker/verify consumes this; one owner only.
+  # From: Issue #479
+  debian_verify: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"
+  # What: Debian base of the release runtime images.
+  # Why: docker/release consumes this; distinct from verify.
+  # From: Issue #479
+  debian_release: "debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
+  # What: Go base that builds the pinned actionlint binary.
+  # Why: verify's actionlint-builder stage consumes it.
+  # From: Issue #479
+  golang_actionlint: "golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
+
+# What: Pinned external tool/asset versions.
+# Why: Central version owner; consumers never re-pin.
+# From: Issue #479
+external_versions:
+  # What: The vendored popt/ tree's expected identity.
+  # Why: vendor-check compares it to POPT_VERSION.
+  # From: Issue #479
+  popt_vendor:
+    version: "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)"
+  # What: Samba release used by the source-adequacy check.
+  # Why: verify configure-dryrun downloads exactly this tag.
+  # From: Issue #479
+  samba:
+    version: "4.22.4"
+  # What: actionlint release built into the verify image.
+  # Why: pins the workflow linter to one reproducible build.
+  # From: Issue #479
+  actionlint:
+    version: "1.7.12"
+  # What: ccache release built by the weekly heartbeat.
+  # Why: heartbeat/control build the same revision.
+  # From: Issue #479, Issue #81
+  ccache_heartbeat:
+    version: "v4.13.6"
+  # What: CodeQL CLI bundle, downloaded/run by ci.sh.
+  # Why: codeql-action's tag names its own bundle.
+  # From: Issue #479
+  codeql_cli:
+    version: "v2.27.0"
+  # What: OSSF Scorecard CLI release run directly by ci.sh.
+  # Why: Replaces ossf/scorecard-action.
+  # From: Issue #479
+  scorecard:
+    version: "v5.5.0"
+  # What: OSV-Scanner CLI release run directly by ci.sh.
+  # Why: Replaces google/osv-scanner-action.
+  # From: Issue #479
+  osv_scanner:
+    version: "v2.6.0"
+  # What: ClusterFuzzLite step image ci.sh runs via docker.
+  # Why: No Docker action; own docker run, same image.
+  # From: Issue #479
+  clusterfuzzlite:
+    version: "v1"
+  # What: Trivy CLI release run directly by ci.sh.
+  # Why: Replaces aquasecurity/trivy-action.
+  # From: Issue #479
+  trivy:
+    version: "v0.74.0"
+  # What: Syft CLI release ci.sh runs for SBOM gen.
+  # Why: Replaces anchore/sbom-action.
+  # From: Issue #479
+  syft:
+    version: "v1.52.0"
+
+# What: Pinned external service images used by CI steps.
+# Why: Full-digest pin, never a floating tag anywhere.
+# From: Issue #479
+external_services:
+  redis: "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+
+# What: The configure variants CI builds/tests, per OS.
+# Why: One matrix owner; workflows read, never hardcode.
+# From: Issue #479
+build_matrix:
+  variants:
+    # What: Plain configure PYTHON=python3, make check.
+    # Why: The baseline gate; the only variant run on macOS.
+    # From: Issue #479
+    default:
+      os: ["ubuntu-latest", "macos-latest"]
+      apt: "clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
+      brew: "autoconf automake popt python@3.13 python-setuptools ccache zstd"
+    # What: Bundled popt fallback, no system libpopt.
+    # Why: Proves the vendored-popt path still compiles.
+    # From: Issue #479
+    popt-fallback:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+    # What: Vendored popt/ version and compile check.
+    # Why: Guards the vendored popt source against drift.
+    # From: Issue #479
+    popt-vendor:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+    # What: gcov/lcov coverage build, job-summary output.
+    # Why: One coverage owner; ubuntu-only toolchain.
+    # From: Issue #479
+    coverage:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage"
+    # What: ASan/UBSan sanitizer build, opt-in only.
+    # Why: Not a required gate; runs on dispatch/schedule.
+    # From: Issue #479
+    sanitizer:
+      os: ["ubuntu-latest"]
+      opt_in: true
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev"
+
+# What: The shipped release artifacts.
+# Why: One inventory owner for packages and images.
+# From: Issue #479
+release:
+  packages: ["rpm", "deb", "apk"]
+  containers: ["release", "pump", "nightly"]
+  # What: Canonical GHCR package names this repo owns.
+  # Why: One owner for gc/tag construction; no hardcode.
+  # From: Issue #479
+  ghcr_packages: ["distcc-ng", "distcc-ng-pump", "distcc-ng-nightly", "distcc-ng-buildtools", "distcc-ng-e2e"]
+  # What: apt packages to build the real .rpm/.deb packages.
+  # Why: One owner; nightly/release both install this.
+  # From: Issue #362, Issue #479
+  packaging_apt: "autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien"
+
+# What: The repo's GitHub Projects (v2) board identity.
+# Why: One owner; no repo Variables needed for a fixed value.
+# From: Issue #236, Issue #479, PR #544
+project_board:
+  owner: "wiki-mod"
+  number: "11"
+
+# What: apt packages CodeQL needs for a c-cpp build.
+# Why: One owner; security.yml installs this first.
+# From: Issue #479
+security:
+  codeql_cpp_apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+
+# What: apt packages the engine self-test job needs.
+# Why: One owner; validate.yml installs this first.
+# From: Issue #479
+ci_engine:
+  selftest_apt: "bats parallel"
+
+# What: Tuning for the distributed-compile E2E harness runs.
+# Why: One owner for heartbeat floors and full-run targets.
+# From: Issue #479, Issue #264, Issue #81
+e2e:
+  heartbeat_min_remote_jobs: 20
+  heartbeat_max_attempts: 2
+  full_waf_targets: "replace,ldb,tdb,talloc,tevent"
+
+# What: Diff path-classes and the ci.sh phases they select.
+# Why: DEFAULT=NOOP; a docs-only diff selects no compile.
+# From: Issue #479
+impact_classes:
+  c-source:
+    paths: ["src/**", "**/*.c", "**/*.h", "configure.ac", "Makefile.in"]
+    phases: ["build", "test", "e2e", "coverage", "analyze", "scan"]
+  include-server:
+    paths: ["include_server/**", "**/*.py"]
+    phases: ["build", "test", "analyze"]
+  packaging:
+    paths: ["packaging/**"]
+    phases: ["package"]
+  docker:
+    paths: ["docker/**"]
+    phases: ["container", "verify"]
+  fuzz:
+    paths: ["src/**", "test/fuzz/**", ".clusterfuzzlite/**"]
+    phases: ["fuzz"]
+  workflows:
+    paths: [".github/workflows/**", ".github/actions/**", ".github/yaml/**"]
+    phases: ["lint"]
+  ci-engine:
+    paths: [".github/scripts/**"]
+    phases: ["selftest", "lint", "container", "verify"]
+  governance:
+    paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
+    phases: ["lint"]
+  docs:
+    paths: ["**/*.md", "doc/**"]
+    phases: ["doc-lint"]

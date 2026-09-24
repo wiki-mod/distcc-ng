@@ -1,0 +1,116 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Nightly build/test/e2e, nightly:latest publish.
+# Why: schedule/dispatch resolve github.sha to master.
+# From: Issue #479, Issue #81, Issue #500
+name: Nightly
+
+concurrency:
+  group: nightly-publish
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: read
+
+env:
+  NIGHTLY_TAG: nightly
+  IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
+
+jobs:
+  build_test:
+    name: Build + test (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  sanitizer:
+    name: Build + test (sanitizer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.sanitizer.apt
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh e2e distributed
+
+  bidirectional_e2e:
+    name: Full bidirectional native-compat E2E
+    # The heavy full build runs only on manual dispatch, never the schedule.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh e2e full
+
+  publish:
+    name: Publish distcc-ng-nightly:latest
+    needs: [build_test, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+      - uses: ./.github/actions/ghcr-login
+        with:
+          token: ${{ github.token }}
+      - run: bash .github/scripts/ci.sh container nightly
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh publish nightly
+
+  report:
+    name: Report nightly status
+    needs: [build_test, e2e, publish]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: $/.github/actions/harden-runner
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
+          REPO: ${{ github.repository }}
+          OUTCOME: ${{ (needs.build_test.result == 'success' && needs.e2e.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          SCOPE: nightly build+publish (current_dev)
+          JOBS: |
+            build_test=${{ needs.build_test.result }}
+            e2e=${{ needs.e2e.result }}
+            publish=${{ needs.publish.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/ci.sh report
