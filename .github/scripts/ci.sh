@@ -330,6 +330,77 @@ _ci_control_build_step_summary() {
     fi
 }
 
+# What: One up/build/verify attempt of the 2-container e2e harness.
+# Why: The retry loop below owns teardown; this owns one real result.
+# From: Issue #479, PR #544
+_ci_e2e_run_attempt() {
+    local scenario="$1" min_remote_jobs="$2" server_log="$3"
+    local remote_ok_re='client: 10\.88\.0\.[0-9]+:[0-9]+ COMPILE_OK'
+    local client_rc=0
+    echo "== Bringing up client+server and running the distributed build =="
+    docker compose up --build --abort-on-container-exit \
+        --exit-code-from distcc-client || client_rc=$?
+    if [ "${client_rc}" -ne 0 ]; then
+        echo "ERROR: client build container exited with status ${client_rc}" >&2
+        return 1
+    fi
+    echo "== Verifying real distribution from the server log =="
+    docker compose logs --no-color distccd-server > "${server_log}" 2>&1
+    local remote_jobs
+    remote_jobs="$(grep -Ec "${remote_ok_re}" "${server_log}" || true)"
+    echo "server reported ${remote_jobs} successful remote compile(s) from the client subnet"
+    if [ "${remote_jobs}" -lt "${min_remote_jobs}" ]; then
+        echo "ERROR: expected at least ${min_remote_jobs} remote compiles from the" \
+             "client subnet, saw ${remote_jobs} -- the build likely fell back to" \
+             "local compilation instead of distributing." >&2
+        return 1
+    fi
+    echo "SUCCESS: ${scenario} validated (${remote_jobs} remote jobs from the client subnet)"
+}
+
+# What: Dump the server log tail, tear the stack down, drop the tmpfile.
+# Why: Named (not nested) so a trap EXIT calls a genuinely reachable
+#   function; a function only ever defined inside a subshell reads as
+#   dead code to static analysis.
+# From: Issue #479, PR #544
+_ci_e2e_run_cleanup() {
+    local server_log="$1"
+    echo "== distccd-server log (tail) =="
+    docker compose logs --no-color distccd-server 2>/dev/null | tail -n 100 || true
+    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -f "${server_log}"
+}
+
+# What: Two-container distributed-compile e2e, with retry and teardown.
+# Why: Folds test/e2e/run-e2e.sh; docker compose needs its own cwd.
+# From: Issue #479, PR #544
+_ci_e2e_run() {
+    local client_script="${E2E_CLIENT_SCRIPT:-test/e2e/client-build.sh}"
+    local scenario="${E2E_SCENARIO:-distcc-ng self-compile}"
+    local min_remote_jobs="${E2E_MIN_REMOTE_JOBS:-5}"
+    local max_attempts="${E2E_MAX_ATTEMPTS:-1}"
+    local server_log; server_log="$(mktemp)"
+    ( cd "${CI_REPO_ROOT}/test/e2e"
+      export E2E_CLIENT_SCRIPT="${client_script}"
+      trap '_ci_e2e_run_cleanup "${server_log}"' EXIT
+      echo "== Scenario: ${scenario} (client script: ${client_script}) =="
+      attempt=1
+      while :; do
+          echo "== Attempt ${attempt}/${max_attempts} =="
+          if _ci_e2e_run_attempt "${scenario}" "${min_remote_jobs}" "${server_log}"; then
+              exit 0
+          fi
+          if [ "${attempt}" -ge "${max_attempts}" ]; then
+              echo "ERROR: ${scenario} failed on attempt ${attempt}/${max_attempts} -- not retrying further, this is a real failure." >&2
+              exit 1
+          fi
+          echo "== Attempt ${attempt}/${max_attempts} failed; tearing the stack down and retrying =="
+          docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+          attempt=$((attempt + 1))
+      done
+    )
+}
+
 # What: Run the distributed-compile e2e harness (distributed|full).
 # Why: distributed = 2-container; full = bidirectional compat matrix.
 # From: Issue #479
@@ -357,7 +428,7 @@ ci_cmd_e2e() {
             E2E_MIN_REMOTE_JOBS="${hb_jobs}" \
             E2E_SCENARIO="ccache weekly heartbeat" \
             E2E_MAX_ATTEMPTS="${hb_att}" \
-                bash test/e2e/run-e2e.sh ;;
+                _ci_e2e_run ;;
         control)
             # What: Diagnostic plain-compiler ccache build, no distcc involved.
             # Why: Classifies a heartbeat failure as toolchain versus distribution.
@@ -370,7 +441,7 @@ ci_cmd_e2e() {
                 distcc-ng-e2e:latest bash test/e2e/control-build.sh || st=$?
             _ci_control_build_step_summary "${st}"
             return "${st}" ;;
-        *)    bash test/e2e/run-e2e.sh ;;
+        *)    _ci_e2e_run ;;
     esac
 }
 
