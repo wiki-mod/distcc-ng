@@ -150,6 +150,28 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: bash .github/scripts/ci.sh container buildtools
 
+  required_gate:
+    # What: One stable name over a content-based, skippable matrix.
+    # Why: A branch ruleset can't require a per-leg matrix context.
+    # From: Issue #479, PR #544
+    name: Validate (required)
+    needs: [metadata, lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          JOBS: |
+            metadata=${{ needs.metadata.result }}
+            lint=${{ needs.lint.result }}
+            engine-selftest=${{ needs['engine-selftest'].result }}
+            plan=${{ needs.plan.result }}
+            build_test=${{ needs.build_test.result }}
+            e2e=${{ needs.e2e.result }}
+            verify_image=${{ needs.verify_image.result }}
+            publish_buildtools=${{ needs.publish_buildtools.result }}
+        run: bash .github/scripts/ci.sh gate
+
   variables:
     name: Repo automation (labeler + project board)
     if: github.event_name == 'issues' || github.event_name == 'pull_request_target'

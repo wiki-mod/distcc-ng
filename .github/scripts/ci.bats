@@ -327,6 +327,23 @@ setup() {
     [ "${output}" = "e2e x" ]
 }
 
+@test "gate passes when every job succeeded or was skipped" {
+    # What: A NOOP/skipped matrix leg must not fail the gate.
+    # Why: Content-based impact selection skips whole jobs.
+    # From: Issue #479, PR #544
+    JOBS="$(printf 'build=success\ne2e=skipped\n')" run ci_cmd_gate
+    [ "${status}" -eq 0 ]
+}
+
+@test "gate fails closed when a real job failed" {
+    # What: A real failure/cancelled entry fails the gate.
+    # Why: This is the one stable required-check name over the matrix.
+    # From: Issue #479, PR #544
+    JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
+}
+
 # =========================================================
 # IMPACT (DEFAULT=NOOP)
 # =========================================================

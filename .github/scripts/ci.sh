@@ -34,7 +34,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report verify variables install"
+CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -876,6 +876,25 @@ _ci_failed_jobs() {
         esac
     done <<< "${pairs}"
     printf '%s\n' "${out# }"
+}
+
+# =========================================================
+# REQUIRED-CHECK GATE (one stable name over a skippable matrix)
+# =========================================================
+
+# What: Fail if JOBS has any real failure/cancelled entry.
+# Why: A matrix/impact-skipped job has no fixed context name
+#   a branch ruleset can require; this one name always reports.
+# From: Issue #479, PR #544
+ci_cmd_gate() {
+    : "${JOBS:?JOBS required}"
+    local failed
+    failed="$(_ci_failed_jobs "${JOBS}")"
+    if [ -n "${failed}" ]; then
+        ci_log "[CI-ERROR-GATE-0001]" "failed: ${failed}"
+        return 1
+    fi
+    ci_log "[CI-GATE]" "all jobs passed or were skipped"
 }
 
 # What: Add the standing issue to the project board via the project PAT.
@@ -2525,6 +2544,7 @@ ci_main() {
                 publish) ci_cmd_publish "$@" ;;
                 gc) ci_cmd_gc "$@" ;;
                 report) ci_cmd_report "$@" ;;
+                gate) ci_cmd_gate "$@" ;;
                 scan) ci_cmd_scan "$@" ;;
                 variables) ci_cmd_variables "$@" ;;
                 verify) ci_cmd_verify "$@" ;;
