@@ -128,6 +128,26 @@ setup() {
     [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
 }
 
+@test "board check skips when PROJECT_AUTOMATION_PAT is unset" {
+    # What: No PAT degrades to a skip, not a failure.
+    # Why: AG-GH-002's own documented exception.
+    # From: Issue #479, PR #544
+    unset PROJECT_PAT
+    run _ci_check_pr_board
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"CI-META-BOARD"* ]]
+}
+
+@test "board check skips for a fork PR even with a PAT configured" {
+    # What: A fork PR skips the board lookup entirely.
+    # Why: GitHub withholds the PAT from fork PR runs regardless.
+    # From: Issue #479, PR #544
+    PROJECT_PAT="dummy" PROJECT_OWNER="wiki-mod" PROJECT_NUMBER="11" \
+        PR_IS_FORK="true" run _ci_check_pr_board
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"fork PR"* ]]
+}
+
 @test "release version-check fails on a tag that mismatches configure.ac" {
     # What: A tag whose version != configure.ac is rejected.
     # Why: Fail-closed release guardrail (no accidental retag).

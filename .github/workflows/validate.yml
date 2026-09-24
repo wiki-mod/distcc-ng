@@ -34,6 +34,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          # What: PAT for the AG-GH-002 board sub-check only.
+          # Why: github.token above cannot read Projects v2.
+          # From: Issue #479, PR #544
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
         run: bash .github/scripts/ci.sh metadata all
 
   lint:

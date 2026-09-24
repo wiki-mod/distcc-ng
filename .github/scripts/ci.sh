@@ -1093,8 +1093,9 @@ _ci_pr_category_label() {
 # From: Issue #479
 _ci_variables_label_pr() {
     : "${PR_NUMBER:?PR_NUMBER required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local files label pat labels=() category
-    files="$(gh pr diff "${PR_NUMBER}" --name-only)"
+    files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)"
     if _ci_labeler_documentation_match "${files}"; then
         labels+=("documentation")
     fi
@@ -1107,7 +1108,8 @@ _ci_variables_label_pr() {
         [ -n "${category}" ] && labels+=("${category}")
     fi
     if [ "${#labels[@]}" -gt 0 ]; then
-        gh pr edit "${PR_NUMBER}" --add-label "$(IFS=,; printf '%s' "${labels[*]}")"
+        gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+            --add-label "$(IFS=,; printf '%s' "${labels[*]}")"
     fi
 }
 
@@ -1632,6 +1634,49 @@ _ci_check_pr_title() {
 # What: Enforce PR labels + milestone (rule 3); board best-effort.
 # Why: Folds check-pr-tracking-metadata.sh's always-enforced core.
 # From: Issue #479, rule 3
+# What: True if PR_URL is a project #PROJECT_NUMBER item.
+# Why: AG-GH-002 needs a real membership check, not best-effort.
+# From: Issue #479, PR #544
+_ci_pr_on_project_board() {
+    local project_number="${PROJECT_NUMBER:?PROJECT_NUMBER required}"
+    local project_owner="${PROJECT_OWNER:?PROJECT_OWNER required}"
+    local out
+    out="$(GH_TOKEN="${PROJECT_PAT:?PROJECT_PAT required}" gh project item-list \
+        "${project_number}" --owner "${project_owner}" \
+        --format json --limit 200)" || return 2
+    printf '%s' "${out}" | jq -e --arg url "${PR_URL:?PR_URL required}" \
+        '.items[]? | select(.content.url == $url)' >/dev/null
+}
+
+# What: AG-GH-002 project-board sub-check (hard-fail once a PAT exists).
+# Why: A configured PAT must be enforced, not merely best-effort.
+# From: Issue #479, PR #544
+_ci_check_pr_board() {
+    if [ -z "${PROJECT_PAT:-}" ]; then
+        ci_log "[CI-META-BOARD]" "skipped: PROJECT_AUTOMATION_PAT not configured"
+        return 0
+    fi
+    if [ -z "${PROJECT_OWNER:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
+        ci_log "[CI-META-BOARD]" "skipped: PROJECT_BOARD_OWNER/PROJECT_BOARD_NUMBER vars not configured"
+        return 0
+    fi
+    if [ "${PR_IS_FORK:-false}" = "true" ]; then
+        ci_log "[CI-META-BOARD]" "skipped: fork PR, PAT withheld by GitHub"
+        return 0
+    fi
+    local board_status=0
+    _ci_pr_on_project_board || board_status=$?
+    case "${board_status}" in
+        0) ci_log "[CI-META-BOARD]" "OK: on project board #${PROJECT_NUMBER}"; return 0 ;;
+        2) ci_log "[CI-ERROR-META-BOARD-0001]" "project-board lookup failed (token invalid/expired?)" ;;
+        *) ci_log "[CI-ERROR-META-BOARD-0002]" "not on project board #${PROJECT_NUMBER} (${PROJECT_OWNER})" ;;
+    esac
+    return 1
+}
+
+# What: Labels/milestone/project-board checks (AGENTS.md AG-GH-002).
+# Why: Board is blocking once PROJECT_AUTOMATION_PAT is configured.
+# From: Issue #479, PR #544
 _ci_check_pr_tracking() {
     if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
         ci_log "[CI-META-TRACKING]" "skipped: dependabot[bot]"
@@ -1641,11 +1686,12 @@ _ci_check_pr_tracking() {
     local pr_labels="${PR_LABELS:-}"
     [ -n "${pr_labels//[[:space:]]/}" ] || errs+=("no labels set")
     [ -n "${PR_MILESTONE_TITLE:-}" ] || errs+=("no milestone set")
+    _ci_check_pr_board || errs+=("not on project board")
     if [ "${#errs[@]}" -eq 0 ]; then
-        ci_log "[CI-META-TRACKING]" "OK: labels + milestone set (board best-effort)"
+        ci_log "[CI-META-TRACKING]" "OK: labels + milestone + board set"
         return 0
     fi
-    local msg="PR tracking metadata failed (rule 3)" e
+    local msg="PR tracking metadata failed (AG-GH-002)" e
     for e in "${errs[@]}"; do msg="${msg}; ${e}"; done
     ci_log "[CI-ERROR-META-TRACKING-0001]" "${msg}"
     return 1
@@ -1673,7 +1719,7 @@ _ci_check_changelog() {
     return 1
 }
 
-# What: Fetch one PR's live title/labels/milestone/author.
+# What: Fetch one PR's live title/labels/milestone/author/board fields.
 # Why: An event snapshot can go stale (rule 3/71).
 # From: Issue #479
 _ci_metadata_fetch_live() {
@@ -1681,12 +1727,14 @@ _ci_metadata_fetch_live() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local json
     json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
-        --json title,labels,milestone,isDraft,author)" || return 2
+        --json title,labels,milestone,isDraft,author,url,isCrossRepository)" || return 2
     PR_TITLE="$(printf '%s' "${json}" | jq -r '.title')"
     PR_LABELS="$(printf '%s' "${json}" | jq -r '[.labels[].name] | join(" ")')"
     PR_MILESTONE_TITLE="$(printf '%s' "${json}" | jq -r '.milestone.title // ""')"
     PR_DRAFT="$(printf '%s' "${json}" | jq -r '.isDraft')"
     PR_AUTHOR="$(printf '%s' "${json}" | jq -r '.author.login')"
+    PR_URL="$(printf '%s' "${json}" | jq -r '.url')"
+    PR_IS_FORK="$(printf '%s' "${json}" | jq -r '.isCrossRepository')"
 }
 
 # What: Runs metadata check(s); fetches live PR data first.
