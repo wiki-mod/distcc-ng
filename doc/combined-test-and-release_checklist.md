@@ -779,7 +779,7 @@ Relevant changes include `src/arg.c`'s `dcc_scan_args()`, host selection, fallba
 
 **Pass criteria:** The server's own independent log confirms the expected remote compile behavior.
 
-`ci.sh`'s `_ci_e2e_run_attempt` demonstrates the relevant pattern by checking server-side `COMPILE_OK` entries associated with the client subnet address.
+`ci.sh e2e` implements this check: it counts server-side `COMPILE_OK` entries from the client network against a floor set per mode in `build-manifest.yml`.
 
 **Invalid evidence:** The client alone claiming that the compile was remote.
 

@@ -20,7 +20,7 @@ changes.
 | `security.yml` | `push`/`pull_request` (`current_dev`/`master`), `workflow_dispatch`, `schedule` (`0 5 * * 0` weekly, `0 6 1,15 * *` monthly), `branch_protection_rule` | CodeQL (matrix `c-cpp`/`python`/`actions`), OSV-Scanner, OpenSSF Scorecard, ClusterFuzzLite fuzzing (path-filtered on `pull_request` via content-based impact classification), and the OpenSSF Best Practices Baseline recheck (`workflow_dispatch`/monthly cron only) |
 | `release.yml` | `push` (`v*` tags, `current_dev`), `workflow_dispatch` (`tag`, `publish_container`, `release_notes`), `release: published` | A `v*` tag push is the real release (POL-RELEASE-07): version check, build+test, e2e, packages+SBOM, `gh release create`, container build+scan+push, multi-arch manifest incl. `:latest`. `workflow_dispatch` is the pre-tag dry run (POL-RELEASE-05): same path without a GitHub Release, containers pushed only with `publish_container=true`, `:latest` never moved. `release: published` inserts the notes into `CHANGELOG.md`; a `current_dev` push refreshes the draft release. |
 | `nightly.yml` | `workflow_dispatch`, `schedule` (`0 4 * * *`) | Builds+tests the `default` and `sanitizer` variants against `current_dev`, runs distributed e2e (plus the full bidirectional e2e on manual dispatch only), publishes `distcc-ng-nightly:latest`, and reports status |
-| `housekeeping.yml` | `workflow_dispatch` (`task` choice), `schedule` (`0 5 * * 1` heartbeat, `0 2 * * *` e2e image), `push`/`pull_request` path-filtered `test/e2e/Dockerfile` | GHCR package pruning (`gc`), the weekly distributed ccache heartbeat plus its non-gating plain-compiler control build, and building+publishing the `distcc-ng-e2e` test image |
+| `housekeeping.yml` | `workflow_dispatch` (`task` choice), `schedule` (`0 5 * * 1`) | GHCR package pruning (`gc`), and the weekly distributed ccache heartbeat plus its non-gating plain-compiler control build |
 
 ## Cross-reference matrix
 
@@ -41,23 +41,38 @@ at all (enforced by `ci_guard_orchestrator_only`). All shared logic,
 including labeler rules, project-board add, standing-issue reporting,
 apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`.
 
-**GHCR image namespace** -- five package names, no tag overlap:
+**GHCR image namespace** -- four published package names, no tag overlap:
 
 | Image | Published by | Consumed by |
 |---|---|---|
 | `distcc-ng`, `distcc-ng-pump` | `release.yml`'s `build_container`/`publish_manifest` | end users only |
 | `distcc-ng-nightly` | `nightly.yml`'s `publish` job | end users only |
-| `distcc-ng-buildtools` | `validate.yml`'s `publish_buildtools` job | referenced by CI itself (every `_ci_lint_buildtools_run`/verification call) |
-| `distcc-ng-e2e` | `housekeeping.yml`'s `e2e_image` job | `ci.sh e2e`'s distributed-compile harness |
+| `distcc-ng-buildtools` | `validate.yml`'s `publish_buildtools` job | CI itself: every lint run, and the toolchain base of the e2e images |
 
-**Path-filter overlap**: `housekeeping.yml`'s `e2e_image` job and
-`security.yml`'s `clusterfuzzlite` job are the only two with any
-path-based gating on `pull_request` (a literal `paths:` filter for the
-former, content-based `impact_classes.fuzz` classification for the
-latter). Every other `pull_request`-triggered job runs on any PR touching
-`current_dev`/`master`, with `validate.yml`'s `plan` job then selecting
-which of `build_test`/`e2e`/`verify_image` actually do real work based on
-the diff (a docs-only PR selects none of them).
+`distcc-ng-e2e` is no longer published; it stays in
+`release.ghcr_packages` only so `ci.sh gc` can prune its existing versions.
+
+**Path-based gating**: `security.yml`'s `clusterfuzzlite` job and
+`validate.yml`'s `plan` job both gate on the content-based
+`impact_classes` in `build-manifest.yml`; no workflow uses a literal
+`paths:` filter. A docs-only PR selects no build, test, or e2e work.
+
+## Distributed-compile e2e (`ci.sh e2e <mode>`)
+
+One harness, defined per mode in `build-manifest.yml` (`e2e.modes`):
+
+| Mode | Legs (client:server) | Passes | Workload | Floor | Run by |
+|---|---|---|---|---|---|
+| `distributed` | `ng:ng` | plain, pump | `self-compile` | 5 | `validate.yml` (when planned), `nightly.yml`, `release.yml` |
+| `heartbeat` | `ng:ng` | plain | `ccache` | 20 | `housekeeping.yml` weekly |
+| `full` | `ng:native`, `native:ng` | plain, pump | `samba` (bounded `waf` targets) | `objects` | `nightly.yml` manual dispatch |
+
+- `ng` is this checkout, built into `test/e2e/Dockerfile`'s `ng` stage; `native` is Debian's packaged `distcc`/`distcc-pump` (`native` stage). Both stages build on `distcc-ng-buildtools`, the one owner of the toolchain, and each stage is a single `ci.sh image <target>` call with the checkout bind-mounted for that step only.
+- Every leg and pass starts a fresh `distccd` server, runs the workload in a fresh client container (`ci.sh workload ...`, checkout mounted read-only), and then counts `COMPILE_OK` lines in the server's own log from the client network. The build passes only if that count reaches the floor; `objects` means the number of `.o` files the build itself produced. A distcc-ng server additionally must log no warning-or-worse line.
+- `ci.sh e2e control` builds the same ccache revision with the plain compiler only; a failure there points at the toolchain rather than distribution.
+- `full` is too heavy for every PR. The CI run is bounded by `e2e.modes.full.extra`; an unbounded run is the same command on a larger host with `extra` set to `""` in a local copy of the manifest.
+
+Run locally with Docker: `bash .github/scripts/ci.sh e2e distributed` (or `heartbeat`, `full`, `control`).
 
 ## Schedule collisions
 
@@ -65,7 +80,6 @@ All `cron:` schedules, sorted (UTC):
 
 | Time | Day pattern | Workflow | Job |
 |---|---|---|---|
-| 02:00 | daily | `housekeeping.yml` | `e2e_image` |
 | 04:00 | daily | `nightly.yml` | `build_test`/`sanitizer`/`e2e`/`publish`/`report` |
 | 05:00 | Sun | `security.yml` | `codeql`/`osv-scan`/`scorecard`/`clusterfuzzlite` |
 | 05:00 | Mon | `housekeeping.yml` | `heartbeat`/`control`/`report` |

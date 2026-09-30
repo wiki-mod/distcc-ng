@@ -31,10 +31,15 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # From: Issue #479
 CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 
+# What: The published buildtools image lint and e2e build on.
+# Why: One owner; the e2e images take it as their toolchain.
+# From: Issue #479, PR #544
+CI_BUILDTOOLS_IMAGE="ghcr.io/wiki-mod/distcc-ng-buildtools:latest"
+
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden"
+CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -360,238 +365,428 @@ _ci_control_build_step_summary() {
     fi
 }
 
-# What: Count a server log's COMPILE_OK lines from one client address.
-# Why: One owner; test/e2e and test/e2e-full both need this exact check.
+# What: Count server-log COMPILE_OK from clients in a CIDR.
+# Why: Server-side proof of remote compiles, not fallback.
 # From: Issue #479, Issue #264, PR #544
 _ci_e2e_count_compile_ok() {
-    local server_log="$1" addr_re="$2"
-    grep -Ec "client: ${addr_re}:[0-9]+ COMPILE_OK" "${server_log}" || true
+    local log="$1" cidr="$2"
+    if [ ! -r "${log}" ]; then
+        ci_log "[CI-ERROR-E2E-0002]" "server log ${log} is not readable"
+        return 2
+    fi
+    awk -v cidr="${cidr}" '
+        function ip2n(ip,  p) { split(ip, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+        BEGIN {
+            split(cidr, c, "/"); bits = (c[2] == "" ? 32 : c[2] + 0)
+            size = 2 ^ (32 - bits); lo = int(ip2n(c[1]) / size) * size
+        }
+        match($0, /client: [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+ COMPILE_OK/) {
+            ip = substr($0, RSTART + 8, RLENGTH - 8); sub(/:.*/, "", ip)
+            n = ip2n(ip)
+            if (n >= lo && n < lo + size) k++
+        }
+        END { print k + 0 }
+    ' "${log}"
 }
 
-# What: One up/build/verify attempt of the 2-container e2e harness.
-# Why: The retry loop below owns teardown; this owns one real result.
+# What: Fail if a distcc-ng server logged a warning line.
+# Why: A daemon warning never reaches the client's exit code.
 # From: Issue #479, PR #544
-_ci_e2e_run_attempt() {
-    local scenario="$1" min_remote_jobs="$2" server_log="$3"
-    local client_rc=0
-    echo "== Bringing up client+server and running the distributed build =="
-    docker compose up --build --abort-on-container-exit \
-        --exit-code-from distcc-client || client_rc=$?
-    if [ "${client_rc}" -ne 0 ]; then
-        echo "ERROR: client build container exited with status ${client_rc}" >&2
+_ci_e2e_check_server_warnings() {
+    local log="$1"
+    if grep -Eq 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' "${log}"; then
+        ci_log "[CI-ERROR-E2E-0015]" "distcc-ng distccd logged warning-or-worse lines:"
+        grep -E 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' "${log}" >&2
         return 1
     fi
-    echo "== Verifying real distribution from the server log =="
-    docker compose logs --no-color distccd-server > "${server_log}" 2>&1
-    local remote_jobs
-    remote_jobs="$(_ci_e2e_count_compile_ok "${server_log}" '10\.88\.0\.[0-9]+')"
-    echo "server reported ${remote_jobs} successful remote compile(s) from the client subnet"
-    if [ "${remote_jobs}" -lt "${min_remote_jobs}" ]; then
-        echo "ERROR: expected at least ${min_remote_jobs} remote compiles from the" \
-             "client subnet, saw ${remote_jobs} -- the build likely fell back to" \
-             "local compilation instead of distributing." >&2
-        return 1
-    fi
-    echo "SUCCESS: ${scenario} validated (${remote_jobs} remote jobs from the client subnet)"
 }
 
-# What: Dump the server log tail, tear the stack down, drop the tmpfile.
-# Why: Named (not nested) so a trap EXIT calls a genuinely reachable
-#   function; a function only ever defined inside a subshell reads as
-#   dead code to static analysis.
+# What: Log each harness container's tail, remove it all.
+# Why: A leaked stack breaks the next run; so it must fail.
 # From: Issue #479, PR #544
-_ci_e2e_run_cleanup() {
-    local server_log="$1"
-    echo "== distccd-server log (tail) =="
-    docker compose logs --no-color distccd-server 2>/dev/null | tail -n 100 || true
-    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-    rm -f "${server_log}"
-}
-
-# What: Two-container distributed-compile e2e, with retry and teardown.
-# Why: Folds test/e2e/run-e2e.sh; docker compose needs its own cwd.
-# From: Issue #479, PR #544
-_ci_e2e_run() {
-    local client_script="${E2E_CLIENT_SCRIPT:-test/e2e/client-build.sh}"
-    local scenario="${E2E_SCENARIO:-distcc-ng self-compile}"
-    local min_remote_jobs="${E2E_MIN_REMOTE_JOBS:-5}"
-    local max_attempts="${E2E_MAX_ATTEMPTS:-1}"
-    local server_log; server_log="$(mktemp)"
-    ( cd "${CI_REPO_ROOT}/test/e2e"
-      export E2E_CLIENT_SCRIPT="${client_script}"
-      trap '_ci_e2e_run_cleanup "${server_log}"' EXIT
-      echo "== Scenario: ${scenario} (client script: ${client_script}) =="
-      attempt=1
-      while :; do
-          echo "== Attempt ${attempt}/${max_attempts} =="
-          if _ci_e2e_run_attempt "${scenario}" "${min_remote_jobs}" "${server_log}"; then
-              exit 0
-          fi
-          if [ "${attempt}" -ge "${max_attempts}" ]; then
-              echo "ERROR: ${scenario} failed on attempt ${attempt}/${max_attempts} -- not retrying further, this is a real failure." >&2
-              exit 1
-          fi
-          echo "== Attempt ${attempt}/${max_attempts} failed; tearing the stack down and retrying =="
-          docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-          attempt=$((attempt + 1))
-      done
-    )
-}
-
-# What: Tear down the bidirectional stack and its scratch dir.
-# Why: Named (not nested) so trap EXIT calls a reachable function.
-# From: Issue #479, Issue #264, PR #544
-_ci_e2e_bidir_cleanup() {
-    local workdir="$1"
-    echo "== Tearing down the bidirectional E2E stack =="
-    docker compose exec -T ng-node bash -c 'pkill distccd || true' 2>/dev/null || true
-    docker compose exec -T native-node bash -c 'pkill distccd || true' 2>/dev/null || true
-    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-    rm -rf "${workdir}"
-}
-
-# What: One leg of the bidirectional matrix (one direction, one mode).
-# Why: Starts/stops its own distccd; always independently log-verified.
-# From: Issue #479, Issue #264, PR #544
-_ci_e2e_bidir_leg() {
-    local leg_id="$1" leg_label="$2" server_service="$3" server_ip="$4"
-    local client_service="$5" client_ip="$6" mode="$7" workdir="$8"
-    local remote_log="/tmp/distccd-${mode}.log"
-    local local_log="${workdir}/${leg_id}.log"
-
-    echo
-    echo "=============================================================="
-    echo "== Leg: ${leg_label} (mode=${mode}) =="
-    echo "=============================================================="
-
-    echo "-- Starting distccd on ${server_service} (${server_ip}) --"
-    docker compose exec -T -d "${server_service}" bash -c "
-        rm -f ${remote_log}
-        distccd --no-detach --daemon --verbose --log-file=${remote_log} \
-          --port 3632 --allow 10.89.0.0/24 --jobs ${DAEMON_JOBS:-$(nproc)}
-    "
-    for _ in $(seq 1 20); do
-        docker compose exec -T "${server_service}" test -f "${remote_log}" && break
-        sleep 0.5
+_ci_e2e_teardown() {
+    local net="$1" rc=0 c
+    local ctrs=() vols=()
+    mapfile -t ctrs < <(docker ps -aq --filter "label=ci-e2e=${net}") || rc=1
+    for c in "${ctrs[@]}"; do
+        echo "== ${net}: last 100 log lines of ${c} =="
+        docker logs --tail 100 "${c}" || rc=1
     done
-
-    local client_rc=0
-    local src_dir="/work/workload/${leg_id}"
-    echo "-- Running real ${WORKLOAD:-samba} build on ${client_service}, distributing to ${server_ip}:3632 --"
-    docker compose exec -T \
-        -e "DISTCC_HOSTS=${server_ip}:3632" \
-        -e "DISTCC_FALLBACK=0" \
-        -e "DISTCC_VERBOSE=1" \
-        "${client_service}" \
-        bash "${WORKLOAD_SCRIPT:?WORKLOAD_SCRIPT required}" "${mode}" "${src_dir}" ${WAF_TARGETS:+"${WAF_TARGETS}"} \
-        > "${local_log}" 2>&1 || client_rc=$?
-
-    echo "-- Stopping distccd on ${server_service} --"
-    docker compose cp "${server_service}:${remote_log}" "${local_log}.server" 2>/dev/null || true
-    docker compose exec -T "${server_service}" bash -c 'pkill distccd || true'
-
-    if [ "${client_rc}" -ne 0 ]; then
-        echo "::error::${leg_label} (mode=${mode}): client build exited ${client_rc}" >&2
-        tail -n 100 "${local_log}" >&2
-        return 1
+    if [ "${#ctrs[@]}" -gt 0 ]; then
+        docker rm -f "${ctrs[@]}" >/dev/null || rc=1
     fi
-
-    local expected_objects
-    expected_objects="$(tail -n 1 "${local_log}" | tr -dc '0-9')"
-    if [ -z "${expected_objects}" ] || [ "${expected_objects}" -le 0 ]; then
-        echo "::error::${leg_label} (mode=${mode}): could not read a real compiled-object count from the workload script's output" >&2
-        tail -n 20 "${local_log}" >&2
-        return 1
+    mapfile -t vols < <(docker volume ls -q --filter "label=ci-e2e=${net}") || rc=1
+    if [ "${#vols[@]}" -gt 0 ]; then
+        docker volume rm "${vols[@]}" >/dev/null || rc=1
     fi
-
-    local remote_jobs
-    remote_jobs="$(_ci_e2e_count_compile_ok "${local_log}.server" "${client_ip//./\\.}")"
-    echo "${leg_label} (mode=${mode}): built ${expected_objects} real objects; server log shows ${remote_jobs} COMPILE_OK from ${client_ip}"
-
-    if [ "${remote_jobs}" -lt "${expected_objects}" ]; then
-        echo "::error::${leg_label} (mode=${mode}): server log shows only ${remote_jobs} COMPILE_OK, fewer than the ${expected_objects} objects the build actually produced -- distribution did not fully happen." >&2
-        return 1
+    if docker network inspect "${net}" >/dev/null 2>&1; then
+        docker network rm "${net}" >/dev/null || rc=1
     fi
-
-    echo "PASS: ${leg_label} (mode=${mode})"
+    if [ "${rc}" -ne 0 ]; then
+        ci_log "[CI-ERROR-E2E-0003]" "teardown of ${net} failed; resources may leak"
+    fi
+    return "${rc}"
 }
 
-# What: Full bidirectional native-compat matrix (direction A/B x plain/pump).
-# Why: Folds test/e2e-full/run-bidirectional-e2e.sh (issue #264).
+# What: Run a body on a fresh labelled net, then tear down.
+# Why: A failed teardown fails an otherwise green run.
+# From: Issue #479, PR #544
+_ci_e2e_in_stack() {
+    local net="$1" rc=0
+    shift
+    ( "$@" "${net}" ) || rc=$?
+    if ! _ci_e2e_teardown "${net}" && [ "${rc}" -eq 0 ]; then
+        rc=1
+    fi
+    return "${rc}"
+}
+
+# What: Wait for distccd's own "listening on" log line.
+# Why: A TCP probe is a denied client; listen() follows it.
+# From: Issue #479, PR #544
+_ci_e2e_wait_port() {
+    local ctr="$1" logs
+    for _ in $(seq 1 30); do
+        logs="$(docker logs "${ctr}" 2>&1)" || return 1
+        if grep -q 'listening on' <<< "${logs}"; then
+            return 0
+        fi
+        sleep 1
+    done
+    ci_log "[CI-ERROR-E2E-0014]" "distccd in ${ctr} never logged listening on"
+    printf '%s\n' "${logs}" >&2
+    return 1
+}
+
+# What: Build ng and native e2e images on the toolchain.
+# Why: ng is the checkout under test; native is Debian's.
+# From: Issue #264, Issue #479, PR #544
+_ci_e2e_images() {
+    local flavor
+    for flavor in ng native; do
+        docker build --file "${CI_REPO_ROOT}/test/e2e/Dockerfile" --target "${flavor}" \
+            --build-arg "TOOLCHAIN_IMAGE=${CI_BUILDTOOLS_IMAGE}" \
+            --tag "distcc-ng-e2e-${flavor}:local" "${CI_REPO_ROOT}" || return 1
+    done
+}
+
+# What: One leg+pass: fresh server, workload, server proof.
+# Why: A client exit code alone cannot rule out fallback.
 # From: Issue #479, Issue #264, PR #544
-_ci_e2e_bidirectional_run() {
-    local workload="${WORKLOAD:-samba}"
-    case "${workload}" in
-        samba)  WORKLOAD_SCRIPT="/e2e-scripts/workload-samba.sh" ;;
-        apache) WORKLOAD_SCRIPT="/e2e-scripts/workload-apache.sh" ;;
-        *) ci_log "[CI-ERROR-E2E-0001]" "unknown WORKLOAD='${workload}' (expected samba or apache)"; return 1 ;;
-    esac
-    local ng_ip="10.89.0.10" native_ip="10.89.0.20"
-    local workdir; workdir="$(mktemp -d)"
-    local overall_rc=0 mode
-    ( cd "${CI_REPO_ROOT}/test/e2e-full"
-      export WORKLOAD="${workload}" WORKLOAD_SCRIPT DAEMON_JOBS="${DAEMON_JOBS:-$(nproc)}"
-      trap '_ci_e2e_bidir_cleanup "${workdir}"' EXIT
-      echo "== Building the ng (throwaway, current checkout) and native (stable, apt-installed) images =="
-      docker compose build
-      echo "== Bringing the two-container stack up =="
-      docker compose up -d
-      for mode in plain pump; do
-          _ci_e2e_bidir_leg "dirA_${mode}" "Direction A (ng client -> native server) ${mode}" \
-              native-node "${native_ip}" ng-node "${ng_ip}" "${mode}" "${workdir}" || overall_rc=1
-          _ci_e2e_bidir_leg "dirB_${mode}" "Direction B (native client -> ng server) ${mode}" \
-              ng-node "${ng_ip}" native-node "${native_ip}" "${mode}" "${workdir}" || overall_rc=1
-      done
-      if [ "${overall_rc}" -ne 0 ]; then
-          echo "FAILED: one or more legs of the bidirectional native-compatibility matrix did not pass -- see the ::error:: lines above." >&2
-          exit 1
-      fi
-      echo
-      echo "SUCCESS: all four legs of the bidirectional native-compatibility matrix (direction A/B x plain/pump) passed, workload=${workload}."
-    )
+_ci_e2e_leg() {
+    local mode="$1" leg="$2" pass="$3" workload="$4" extra="$5" floor="$6" net="$7"
+    local subnet="$8" cli="${leg%%:*}" srv_flavor="${leg##*:}" id srv out client_rc=0 need n warn
+    id="${cli}-${srv_flavor}-${pass}"
+    srv="${net}-server"
+    out="${RUNNER_TEMP:-/tmp}/${net}-${id}"
+    ci_log "[CI-E2E]" "${mode}: leg ${cli} -> ${srv_flavor}, pass ${pass}"
+    docker run -d --init --name "${srv}" --label "ci-e2e=${net}" --network "${net}" \
+        --network-alias distccd-server "distcc-ng-e2e-${srv_flavor}:local" \
+        distccd --no-detach --daemon --verbose --log-stderr --port 3632 \
+        --allow "${subnet}" --jobs "$(nproc)" >/dev/null || return 1
+    _ci_e2e_wait_port "${srv}" || return 1
+    docker run --rm --init --label "ci-e2e=${net}" --network "${net}" \
+        -v "${CI_REPO_ROOT}:/ci:ro" -v "${net}-cache:/work/cache" -e CI_WORKLOAD_CACHE=/work/cache \
+        -e DISTCC_HOSTS=distccd-server:3632 -e DISTCC_FALLBACK=0 -e DISTCC_VERBOSE=1 \
+        "distcc-ng-e2e-${cli}:local" bash /ci/.github/scripts/ci.sh workload \
+        "${workload}" "${pass}" "/work/workload/${id}" "${extra}" > "${out}.client" 2>&1 || client_rc=$?
+    docker logs "${srv}" > "${out}.server" 2>&1 || return 1
+    docker rm -f "${srv}" >/dev/null || return 1
+    if [ "${client_rc}" -ne 0 ]; then
+        ci_log "[CI-ERROR-E2E-0009]" "${id}: client workload exited ${client_rc}"
+        cat "${out}.client" >&2
+        return 1
+    fi
+    if [ "${srv_flavor}" = "ng" ]; then
+        warn="$(_ci_sot_scalar "e2e.modes.${mode}.server_warnings")" || return 2
+        case "${warn}" in
+            fail) _ci_e2e_check_server_warnings "${out}.server" || return 1 ;;
+            notrun) ci_log "[CI-E2E]" "${id}: server warning scan NotRun (e2e.modes.${mode}.server_warnings)" ;;
+            *) ci_log "[CI-ERROR-E2E-0016]" "e2e.modes.${mode}.server_warnings=${warn} (fail|notrun)"; return 2 ;;
+        esac
+    fi
+    need="${floor}"
+    if [ "${floor}" = "objects" ]; then
+        need="$(tail -n 1 "${out}.client" | tr -dc '0-9')"
+        if [ -z "${need}" ] || [ "${need}" -le 0 ]; then
+            ci_log "[CI-ERROR-E2E-0010]" "${id}: workload printed no object count"
+            cat "${out}.client" >&2
+            return 1
+        fi
+    fi
+    n="$(_ci_e2e_count_compile_ok "${out}.server" "${subnet}")" || return 2
+    ci_log "[CI-E2E]" "${id}: ${n} COMPILE_OK from the client (need >= ${need})"
+    if [ "${n}" -lt "${need}" ]; then
+        ci_log "[CI-ERROR-E2E-0005]" "${id}: only ${n} remote compiles; not fully distributed"
+        return 1
+    fi
 }
 
-# What: Run the distributed-compile e2e harness (distributed|full).
-# Why: distributed = 2-container; full = bidirectional compat matrix.
-# From: Issue #479
+# What: Every leg x pass of one SOT mode on one network.
+# Why: Every leg runs after a failure; any failure fails all.
+# From: Issue #479, Issue #264, PR #544
+_ci_e2e_mode_run() {
+    local mode="$1" workload="$2" extra="$3" floor="$4" net="$5" subnet leg pass rc=0
+    local legs=() passes=()
+    mapfile -t legs < <(_ci_sot_list "e2e.modes.${mode}.legs") || return 2
+    mapfile -t passes < <(_ci_sot_list "e2e.modes.${mode}.passes") || return 2
+    subnet="$(docker network create --label "ci-e2e=${net}" "${net}" >/dev/null \
+        && docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "${net}")" || return 1
+    docker volume create --label "ci-e2e=${net}" "${net}-cache" >/dev/null || return 1
+    for leg in "${legs[@]}"; do
+        for pass in "${passes[@]}"; do
+            _ci_e2e_leg "${mode}" "${leg}" "${pass}" "${workload}" "${extra}" \
+                "${floor}" "${net}" "${subnet}" || rc=1
+        done
+    done
+    return "${rc}"
+}
+
+# What: Run one SOT e2e mode, retried per its max_attempts.
+# Why: Each attempt gets its own stack; last failure is final.
+# From: Issue #479, Issue #81, PR #544
+_ci_e2e_mode() {
+    local mode="$1" workload extra floor attempts attempt=1 net
+    workload="$(_ci_sot_scalar "e2e.modes.${mode}.workload")" || return 2
+    extra="$(_ci_sot_scalar "e2e.modes.${mode}.extra")" || return 2
+    floor="$(_ci_sot_scalar "e2e.modes.${mode}.floor")" || return 2
+    attempts="$(_ci_sot_scalar "e2e.modes.${mode}.max_attempts")" || return 2
+    _ci_e2e_images || return 1
+    while :; do
+        net="ci-e2e-${mode}-${GITHUB_RUN_ID:-local}-$$-${attempt}"
+        ci_log "[CI-E2E]" "${mode}: attempt ${attempt}/${attempts}"
+        if _ci_e2e_in_stack "${net}" _ci_e2e_mode_run "${mode}" "${workload}" "${extra}" "${floor}"; then
+            ci_log "[CI-E2E]" "${mode}: PASS"
+            return 0
+        fi
+        if [ "${attempt}" -ge "${attempts}" ]; then
+            ci_log "[CI-ERROR-E2E-0006]" "${mode}: failed on all ${attempts} attempt(s)"
+            return 1
+        fi
+        attempt=$((attempt + 1))
+    done
+}
+
+# What: Run a SOT e2e mode, or the ccache control build.
+# Why: Unknown modes fail closed instead of running a default.
+# From: Issue #479, PR #544
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
-    local tag hb_jobs hb_att waf
-    case "${1:-distributed}" in
-        full)
-            # What: CI-bounded bidirectional native-compat E2E (samba subset).
-            # Why: WAF_TARGETS bounds the CI leg to fit the runner timeout.
-            # From: Issue #479, Issue #264
-            waf="$(_ci_sot_scalar e2e.full_waf_targets)" || return 2
-            WORKLOAD="samba" \
-            WAF_TARGETS="${waf}" \
-                _ci_e2e_bidirectional_run ;;
-        heartbeat)
-            # What: Weekly ccache distributed build; tag and floors from the SOT.
-            # Why: A heavier external-project run than the distcc-ng self-compile.
-            # From: Issue #479, Issue #81
-            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
-            hb_jobs="$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)" || return 2
-            hb_att="$(_ci_sot_scalar e2e.heartbeat_max_attempts)" || return 2
-            export CCACHE_HEARTBEAT_TAG="${tag}"
-            E2E_CLIENT_SCRIPT="test/e2e/client-heartbeat.sh" \
-            E2E_MIN_REMOTE_JOBS="${hb_jobs}" \
-            E2E_SCENARIO="ccache weekly heartbeat" \
-            E2E_MAX_ATTEMPTS="${hb_att}" \
-                _ci_e2e_run ;;
+    local mode="${1:-distributed}" st=0
+    case "${mode}" in
         control)
-            # What: Diagnostic plain-compiler ccache build, no distcc involved.
-            # Why: Classifies a heartbeat failure as toolchain versus distribution.
-            # From: Issue #479, Issue #263
-            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
-            export CCACHE_HEARTBEAT_TAG="${tag}"
-            docker compose -f test/e2e/docker-compose.yml build distccd-server
-            local st=0
-            docker run --rm -e CCACHE_HEARTBEAT_TAG \
-                distcc-ng-e2e:latest bash test/e2e/control-build.sh || st=$?
+            _ci_e2e_images || return 1
+            docker run --rm -v "${CI_REPO_ROOT}:/ci:ro" distcc-ng-e2e-ng:local \
+                bash /ci/.github/scripts/ci.sh workload ccache local /work/workload/control "" || st=$?
             _ci_control_build_step_summary "${st}"
             return "${st}" ;;
-        *)    _ci_e2e_run ;;
+        *)
+            if ! _ci_sot_optional "e2e.modes.${mode}.workload" | grep -q .; then
+                ci_log "[CI-ERROR-E2E-0013]" "unknown e2e mode=\"${mode}\" (control or an e2e.modes key)"
+                return 2
+            fi
+            _ci_e2e_mode "${mode}" ;;
+    esac
+}
+
+# =========================================================
+# IMAGES AND WORKLOADS (run inside the test containers)
+# =========================================================
+
+# What: Build step of an e2e image, run by its Dockerfile.
+# Why: Packages come from the SOT; the checkout is mounted.
+# From: Issue #264, Issue #479, PR #544
+ci_cmd_image() {
+    local target="${1:-}" pkgs
+    case "${target}" in
+        e2e-ng|e2e-native) ;;
+        *) ci_log "[CI-ERROR-IMAGE-0001]" "unknown image target=\"${target}\" (e2e-ng|e2e-native)"; return 2 ;;
+    esac
+    pkgs="$(_ci_sot_scalar e2e.image_apt)" || return 2
+    if [ "${target}" = "e2e-native" ]; then
+        pkgs="${pkgs} $(_ci_sot_scalar e2e.native_apt)" || return 2
+    fi
+    _ci_apt_install "${pkgs}" || return 1
+    useradd --create-home --shell /bin/bash e2e || return 1
+    mkdir -p /work/workload /work/cache || return 1
+    chown -R e2e:e2e /work || return 1
+    if [ "${target}" = "e2e-ng" ]; then
+        cd "${CI_REPO_ROOT}" || return 1
+        ./autogen.sh || return 1
+        ./configure PYTHON=python3 --prefix=/usr/local || return 1
+        make -j"$(nproc)" || return 1
+        make install || return 1
+    fi
+    update-distcc-symlinks || return 1
+}
+
+# What: Print tarball, signature, key URL of pinned Samba.
+# Why: One owner of Samba's release layout; it signs the .tar.
+# From: Issue #264, Issue #285, Issue #479, PR #544
+_ci_workload_samba_release() {
+    local ver
+    ver="$(_ci_sot_scalar external_versions.samba.version)" || return 2
+    printf '%s\n' "https://download.samba.org/pub/samba/stable/samba-${ver}.tar.gz" \
+        "https://download.samba.org/pub/samba/stable/samba-${ver}.tar.asc" \
+        "https://download.samba.org/pub/samba/samba-pubkey.asc"
+}
+
+# What: Fetch Samba, GPG-verify it, extract a fresh tree.
+# Why: VER-SOURCE: a bad signature is a hard stop.
+# From: Issue #264, Issue #285, Issue #479, PR #544
+_ci_workload_samba_fetch() {
+    local dest="$1" cache
+    local rel=()
+    mapfile -t rel < <(_ci_workload_samba_release) || return 2
+    [ "${#rel[@]}" -eq 3 ] || return 2
+    cache="${CI_WORKLOAD_CACHE:-/tmp/ci-workload-cache}/samba"
+    if [ ! -f "${cache}/.verified" ]; then
+        rm -rf "${cache}"
+        mkdir -p "${cache}/gnupg"
+        chmod 700 "${cache}/gnupg"
+        wget -q --tries=3 -O "${cache}/src.tar.gz" "${rel[0]}" || return 1
+        wget -q --tries=3 -O "${cache}/sig" "${rel[1]}" || return 1
+        wget -q --tries=3 -O "${cache}/key" "${rel[2]}" || return 1
+        gunzip -c "${cache}/src.tar.gz" > "${cache}/src.tar" || return 1
+        GNUPGHOME="${cache}/gnupg" gpg --batch --import "${cache}/key" || return 1
+        if ! GNUPGHOME="${cache}/gnupg" gpg --batch --verify "${cache}/sig" "${cache}/src.tar"; then
+            ci_log "[CI-ERROR-WORKLOAD-0002]" "$(basename "${rel[0]}"): signature does not verify"
+            return 1
+        fi
+        touch "${cache}/.verified"
+    fi
+    rm -rf "${dest}"
+    mkdir -p "${dest}"
+    tar -xf "${cache}/src.tar" -C "${dest}" --strip-components=1
+}
+
+# What: Run a build under pump with this node's pump flavor.
+# Why: distcc-ng pump appends ,cpp,lzo; Debian's does not.
+# From: Issue #87, Issue #264, PR #544
+_ci_workload_pump() {
+    local rc=0
+    if command -v pump >/dev/null; then
+        pump "$@"
+        return
+    fi
+    export DISTCC_HOSTS="${DISTCC_HOSTS},cpp,lzo"
+    eval "$(timeout 30 distcc-pump --startup)" || return 1
+    "$@" || rc=$?
+    # What: A hung distcc-pump --shutdown only logs, never fails.
+    # Why: Upstream handshake can hang; teardown kills the server.
+    # From: Issue #264
+    timeout 15 distcc-pump --shutdown \
+        || ci_log "[CI-WORKLOAD]" "distcc-pump --shutdown did not finish (upstream hang)"
+    return "${rc}"
+}
+
+# What: Self-compile the checkout via distcc; count .o.
+# Why: Configure stays local; only make's compiles go remote.
+# From: Issue #87, Issue #479, PR #544
+_ci_workload_self_compile() {
+    local pass="${1:-}" dir="${2:-}" probe
+    local make_cc=(CC="distcc gcc" CXX="distcc g++") runner=()
+    case "${pass}" in
+        plain) ;;
+        pump) runner=(pump) ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0005]" "self-compile pass=${pass} (plain|pump)"; return 2 ;;
+    esac
+    : "${dir:?workdir required}"
+    rm -rf "${dir}"
+    mkdir -p "${dir}"
+    cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
+    cd "${dir}/src" || return 1
+    { ./autogen.sh && ./configure PYTHON=python3; } >&2 || return 1
+    "${runner[@]}" make -j"$(nproc)" "${make_cc[@]}" >&2 || return 1
+    test -x ./distcc && test -x ./distccd || return 1
+    if [ "${pass}" = "plain" ]; then
+        probe="$(mktemp -d)"
+        printf 'int distcc_e2e_probe(int x) { return (x * 2) + 1; }\n' > "${probe}/probe.c"
+        gcc -O2 -c "${probe}/probe.c" -o "${probe}/local.o" || return 1
+        env -u DISTCC_VERBOSE distcc gcc -O2 -c "${probe}/probe.c" -o "${probe}/dist.o" 2> "${probe}/err" || return 1
+        if [ -s "${probe}/err" ] || ! cmp "${probe}/local.o" "${probe}/dist.o"; then
+            ci_log "[CI-ERROR-WORKLOAD-0003]" "probe: remote object differs or distcc warned"
+            cat "${probe}/err" >&2
+            return 1
+        fi
+        # What: ,cpp,lzo host under plain distcc compiles remotely.
+        # Why: One host-list form must serve plain and pump (#87).
+        # From: Issue #87
+        DISTCC_HOSTS="${DISTCC_HOSTS},cpp,lzo" distcc gcc -O2 -c "${probe}/probe.c" -o "${probe}/c.o" || return 1
+    fi
+    find . -name '*.o' | wc -l
+}
+
+# What: Build pinned ccache via distcc, or local control.
+# Why: Same source/flags; only the distcc launcher may differ.
+# From: Issue #81, Issue #263, Issue #479, PR #544
+_ci_workload_ccache() {
+    local pass="${1:-}" dir="${2:-}" tag
+    local launcher=()
+    tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
+    case "${pass}" in
+        plain) launcher=(-DCMAKE_C_COMPILER_LAUNCHER=distcc -DCMAKE_CXX_COMPILER_LAUNCHER=distcc) ;;
+        local) ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0004]" "ccache pass=${pass} (plain|local)"; return 2 ;;
+    esac
+    : "${dir:?workdir required}"
+    rm -rf "${dir}"
+    git clone --depth 1 --branch "${tag}" https://github.com/ccache/ccache "${dir}/src" >&2 || return 1
+    # What: Two named -Wno-error flags, not -Werror off.
+    # Why: GCC 12 false positives; other warnings still fail.
+    # From: Issue #263
+    cmake -S "${dir}/src" -B "${dir}/build" -DCMAKE_BUILD_TYPE=Release "${launcher[@]}" \
+        -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=restrict" \
+        -DENABLE_TESTING=OFF >&2 || return 1
+    cmake --build "${dir}/build" -j"$(nproc)" >&2 || return 1
+    "${dir}/build/ccache" --version >&2 || return 1
+    find "${dir}/build" -name '*.o' | wc -l
+}
+
+# What: Configure, build verified Samba; print .o count.
+# Why: The count is the floor server COMPILE_OK must meet.
+# From: Issue #264, Issue #285, Issue #479, PR #544
+_ci_workload_samba() {
+    local pass="${1:-}" dir="${2:-}" targets="${3:-}"
+    local build=()
+    case "${pass}" in
+        plain|pump|configure) ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0005]" "samba pass=${pass} (plain|pump|configure)"; return 2 ;;
+    esac
+    : "${dir:?workdir required}"
+    _ci_workload_samba_fetch "${dir}" >&2 || return 1
+    cd "${dir}" || return 1
+    if [ "${pass}" = "configure" ]; then
+        ./configure >&2 || return 1
+        ci_log "[CI-WORKLOAD]" "samba configure OK"
+        return 0
+    fi
+    # What: Configure with CC=distcc but fallback allowed.
+    # Why: waf keeps its configure CC; probes may fail by design.
+    # From: Issue #264
+    env -u DISTCC_FALLBACK CC="distcc gcc" ./configure >&2 || return 1
+    export PYTHONHASHSEED=1
+    build=(./buildtools/bin/waf build -j"$(nproc)")
+    [ -z "${targets}" ] || build+=(--targets="${targets}")
+    if [ "${pass}" = "pump" ]; then
+        _ci_workload_pump "${build[@]}" >&2 || return 1
+    else
+        "${build[@]}" >&2 || return 1
+    fi
+    find . -name '*.o' | wc -l
+}
+
+# What: Dispatch workload: <name> <pass> <dir> [extra].
+# Why: One owner for all work inside a test container.
+# From: Issue #479, PR #544
+ci_cmd_workload() {
+    local name="${1:-}"
+    [ "$#" -eq 0 ] || shift
+    case "${name}" in
+        self-compile) _ci_workload_self_compile "$@" ;;
+        ccache) _ci_workload_ccache "$@" ;;
+        samba) _ci_workload_samba "$@" ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba)"; return 2 ;;
     esac
 }
 
@@ -697,8 +892,6 @@ ci_cmd_container() {
             docker push "${IMAGE_TAG}" ;;
         verify-image)
             _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
-        e2e-image)
-            docker build --file test/e2e/Dockerfile --tag distcc-ng-e2e:selftest . ;;
         buildtools)
             local short; short="$(git rev-parse --short HEAD)"
             local base="ghcr.io/${OWNER:?OWNER required}/distcc-ng-buildtools"
@@ -797,86 +990,6 @@ _ci_publish_manifest() {
     docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}"
     if [ "${TAG_PUSH:-false}" = "true" ]; then
         docker buildx imagetools create --tag "${IMAGE_BASE%:*}:latest" "${tags[@]}"
-    fi
-}
-
-# What: Print sha/run_id/attempt of the newest :latest tag.
-# Why: Multiple :latest tags can exist; max run wins race.
-# From: Issue #479
-_ci_e2e_image_published_sibling() {
-    local owner="$1" api_output api_status tags
-    api_output="$(gh api "orgs/${owner}/packages/container/distcc-ng-e2e/versions" \
-        --paginate --jq \
-        '.[] | select(.metadata.container.tags != null) | select(.metadata.container.tags | index("latest")) | .metadata.container.tags[]' \
-        2>&1)" && api_status=0 || api_status=$?
-    if [ "${api_status}" -ne 0 ]; then
-        printf '%s' "${api_output}" | grep -qi 'HTTP 404' && return 0
-        ci_log "[CI-ERROR-PUBLISH-0002]" "GHCR query failed: ${api_output}"
-        return 1
-    fi
-    tags="${api_output}"
-    local t fields sha run_id run_attempt best_sha="" best_id=0 best_attempt=0
-    while IFS= read -r t; do
-        [ -n "${t}" ] || continue
-        fields="$(printf '%s' "${t}" \
-            | awk -F- 'NF==4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {print $1, $3, $4}')"
-        [ -n "${fields}" ] || continue
-        read -r sha run_id run_attempt <<< "${fields}"
-        if [ "${run_id}" -gt "${best_id}" ] || \
-           { [ "${run_id}" -eq "${best_id}" ] && [ "${run_attempt}" -gt "${best_attempt}" ]; }; then
-            best_sha="${sha}"; best_id="${run_id}"; best_attempt="${run_attempt}"
-        fi
-    done <<< "${tags}"
-    printf '%s %s %s\n' "${best_sha}" "${best_id}" "${best_attempt}"
-}
-
-# What: Push the e2e image tag; race-safely move :latest.
-# Why: Folds e2e-image-build.yml; ancestry beats run order.
-# From: Issue #479
-_ci_publish_e2e_image() {
-    : "${OWNER:?OWNER required}"
-    : "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
-    : "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}"
-    local base="ghcr.io/${OWNER}/distcc-ng-e2e" built_sha build_date tag
-    built_sha="$(git rev-parse HEAD)"
-    build_date="$(date -u +%Y%m%d)"
-    tag="${built_sha}-${build_date}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-    docker tag distcc-ng-e2e:selftest "${base}:${tag}"
-    _ci_registry_login
-    docker push "${base}:${tag}"
-
-    local sibling pub_sha pub_id pub_attempt should_move=false
-    sibling="$(_ci_e2e_image_published_sibling "${OWNER}")" || return 1
-    read -r pub_sha pub_id pub_attempt <<< "${sibling}"
-    if [ -z "${pub_sha}" ]; then
-        should_move=true
-    else
-        local pub_full_sha ancestor_rc
-        pub_full_sha="$(git rev-parse "${pub_sha}")" || {
-            ci_log "[CI-ERROR-PUBLISH-0003]" "published tag ${pub_sha} unresolvable"
-            return 1
-        }
-        if [ "${pub_full_sha}" = "${built_sha}" ]; then
-            if [ "${GITHUB_RUN_ID}" -gt "${pub_id}" ] || \
-               { [ "${GITHUB_RUN_ID}" -eq "${pub_id}" ] && [ "${GITHUB_RUN_ATTEMPT}" -ge "${pub_attempt}" ]; }; then
-                should_move=true
-            fi
-        else
-            ancestor_rc=0
-            git merge-base --is-ancestor "${pub_full_sha}" "${built_sha}" || ancestor_rc=$?
-            if [ "${ancestor_rc}" -eq 0 ]; then
-                should_move=true
-            elif [ "${ancestor_rc}" -gt 1 ]; then
-                ci_log "[CI-ERROR-PUBLISH-0004]" "merge-base check failed (${ancestor_rc})"
-                return 1
-            fi
-        fi
-    fi
-    if [ "${should_move}" = "true" ]; then
-        docker tag distcc-ng-e2e:selftest "${base}:latest"
-        docker push "${base}:latest"
-    else
-        ci_log "[CI-INFO-PUBLISH-0001]" "built ${built_sha} not newer than published ${pub_sha}; skip :latest"
     fi
 }
 
@@ -1003,7 +1116,6 @@ ci_cmd_publish() {
         nightly)        _ci_publish_nightly ;;
         manifest)       _ci_publish_manifest "$@" ;;
         github-release) _ci_publish_github_release "$@" ;;
-        e2e-image)      _ci_publish_e2e_image ;;
         changelog)      _ci_publish_changelog_update "$@" ;;
         draft-release)  _ci_publish_draft_release ;;
         *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish target=\"${sub}\""; return 2 ;;
@@ -1770,29 +1882,11 @@ ci_cmd_verify() {
         ccache-redis)
             _ci_verify_ccache_redis "${image}" ;;
         samba-configure-dryrun)
-            # What: Samba version is read from the SOT, passed as an env var.
-            # Why: One owner for the tag; no hardcoded version in the check.
-            # From: Issue #479, Issue #285
-            local samba_ver
-            samba_ver="$(_ci_sot_scalar external_versions.samba.version)" || return 2
-            docker run --rm -e "SAMBA_VERSION=${samba_ver}" "${image}" bash -c "
-                set -euo pipefail
-                cd /tmp
-                wget -q \"https://download.samba.org/pub/samba/stable/samba-\${SAMBA_VERSION}.tar.gz\"
-                wget -q \"https://download.samba.org/pub/samba/stable/samba-\${SAMBA_VERSION}.tar.asc\"
-                wget -q https://download.samba.org/pub/samba/samba-pubkey.asc
-                gpg --batch --import samba-pubkey.asc
-                gunzip -k \"samba-\${SAMBA_VERSION}.tar.gz\"
-                gpg --batch --verify \"samba-\${SAMBA_VERSION}.tar.asc\" \"samba-\${SAMBA_VERSION}.tar\" 2>&1 | tee gpg-verify.log
-                grep -q \"Good signature from\" gpg-verify.log || { echo \"::error::Samba tarball signature did not verify\"; exit 1; }
-                tar xf \"samba-\${SAMBA_VERSION}.tar\"
-                cd \"samba-\${SAMBA_VERSION}\"
-                if ./configure 2>&1 | tee configure.log; then
-                    echo \"Samba ./configure exited 0 -- image inventory sufficient.\"
-                else
-                    echo \"::error::Samba ./configure exited non-zero -- inventory insufficient\"; exit 1
-                fi
-            " ;;
+            # What: Verified Samba configure inside the verify image.
+            # Why: Proves the image's build-deps; same fetch owner.
+            # From: Issue #479, Issue #285, PR #544
+            docker run --rm -v "${CI_REPO_ROOT}:/ci:ro" "${image}" \
+                bash /ci/.github/scripts/ci.sh workload samba configure /tmp/samba ;;
         *) ci_log "[CI-ERROR-VERIFY-0001]" "unknown verify subcommand=\"${sub}\""; return 2 ;;
     esac
 }
@@ -2152,7 +2246,7 @@ ci_cmd_selftest() {
 _ci_lint_buildtools_run() {
     docker run --rm --user "$(id -u):$(id -g)" \
         -v "${CI_REPO_ROOT}:/work:ro" -w /work \
-        ghcr.io/wiki-mod/distcc-ng-buildtools:latest "$@"
+        "${CI_BUILDTOOLS_IMAGE}" "$@"
 }
 
 # What: Lint every workflow file with actionlint.
@@ -2203,8 +2297,12 @@ ci_cmd_lint() {
 # From: Issue #493, Issue #479
 _ci_apt_install() {
     local packages="${1:?package list required}" max_attempts=2 attempt=1
+    local as_root=(sudo)
+    if [ "$(id -u)" -eq 0 ]; then
+        as_root=()
+    fi
     while true; do
-        if sudo timeout -k 10s 3m bash -c "apt-get update && apt-get install -y ${packages}"; then
+        if "${as_root[@]}" timeout -k 10s 3m bash -c "apt-get update && apt-get install -y ${packages}"; then
             return 0
         fi
         if [ "${attempt}" -ge "${max_attempts}" ]; then
@@ -2944,6 +3042,8 @@ ci_main() {
                 lint) ci_cmd_lint "$@" ;;
                 install) ci_cmd_install "$@" ;;
                 harden) ci_cmd_harden "$@" ;;
+                workload) ci_cmd_workload "$@" ;;
+                image) ci_cmd_image "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

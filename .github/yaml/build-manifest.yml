@@ -178,13 +178,40 @@ gc:
   series_tag_regex: "^manual-([0-9]+)(-amd64|-arm64)?$"
   keep_series: 2
 
-# What: Tuning for the distributed-compile E2E harness runs.
-# Why: One owner for heartbeat floors and full-run targets.
-# From: Issue #479, Issue #264, Issue #81
+# What: e2e modes: client:server legs, passes, floor.
+# Why: One harness; floor objects = the build's .o count.
+# From: Issue #479, Issue #264, Issue #81, PR #544
 e2e:
-  heartbeat_min_remote_jobs: 20
-  heartbeat_max_attempts: 2
-  full_waf_targets: "replace,ldb,tdb,talloc,tevent"
+  modes:
+    distributed:
+      legs: ["ng:ng"]
+      passes: ["plain", "pump"]
+      workload: "self-compile"
+      extra: ""
+      floor: 5
+      server_warnings: "fail"
+      max_attempts: 1
+    heartbeat:
+      legs: ["ng:ng"]
+      passes: ["plain"]
+      workload: "ccache"
+      extra: ""
+      floor: 20
+      server_warnings: "fail"
+      max_attempts: 2
+    # What: full reports the ng server warning scan as NotRun.
+    # Why: waf conf_check probes abort by design; logged as ERROR.
+    # From: Issue #264, PR #544
+    full:
+      legs: ["ng:native", "native:ng"]
+      passes: ["plain", "pump"]
+      workload: "samba"
+      extra: "replace,ldb,tdb,talloc,tevent"
+      floor: "objects"
+      server_warnings: "notrun"
+      max_attempts: 1
+  image_apt: "cmake libhiredis-dev procps"
+  native_apt: "distcc distcc-pump"
 
 # What: Diff path-classes and the ci.sh phases they select.
 # Why: DEFAULT=NOOP; a docs-only diff selects no compile.
@@ -206,11 +233,14 @@ impact_classes:
     paths: ["src/**", "test/fuzz/**", ".clusterfuzzlite/**"]
     phases: ["fuzz"]
   workflows:
-    paths: [".github/workflows/**", ".github/actions/**", ".github/yaml/**"]
+    paths: [".github/workflows/**", ".github/yaml/**"]
     phases: ["lint"]
   ci-engine:
     paths: [".github/scripts/**"]
-    phases: ["selftest", "lint", "container", "verify"]
+    phases: ["selftest", "lint", "container", "verify", "e2e"]
+  e2e-harness:
+    paths: ["test/e2e/**"]
+    phases: ["e2e"]
   governance:
     paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
     phases: ["lint"]

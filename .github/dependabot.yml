@@ -33,22 +33,9 @@ updates:
       interval: weekly
     labels: [dependencies, no-changelog-needed]
 
-  # What: Refresh the digest-pinned e2e and fuzz base images.
-  # Why: A digest pin without bumps would freeze them forever.
+  # What: Refresh the digest-pinned fuzz base image.
+  # Why: A digest pin without bumps would freeze it forever.
   # From: Issue #267
-  - package-ecosystem: docker
-    directory: /test/e2e
-    target-branch: master
-    schedule:
-      interval: weekly
-    labels: [dependencies, no-changelog-needed]
-  - package-ecosystem: docker
-    directory: /test/e2e
-    target-branch: current_dev
-    schedule:
-      interval: weekly
-    labels: [dependencies, no-changelog-needed]
-
   - package-ecosystem: docker
     directory: /.clusterfuzzlite
     target-branch: master

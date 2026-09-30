@@ -252,19 +252,74 @@ setup() {
     [ "$(cat "${BATS_TEST_TMPDIR}/argv")" = "login ghcr.io -u octo --password-stdin" ]
 }
 
-@test "e2e compile-ok counter matches only the given client address" {
-    # What: One counter serves both the subnet and single-IP callers.
-    # Why: test/e2e and test/e2e-full need the exact same log check.
+@test "e2e compile-ok counter counts only clients inside the CIDR" {
+    # What: One counter serves subnet and single-client legs.
+    # Why: Only real remote COMPILE_OK from the client may count.
     # From: Issue #479, Issue #264, PR #544
-    local log; log="$(mktemp)"
+    local log="${BATS_TEST_TMPDIR}/server.log"
     {
-        printf 'distccd[1] (dcc_job_summary) client: 10.89.0.10:48058 COMPILE_OK exit:0\n'
-        printf 'distccd[2] (dcc_job_summary) client: 10.89.0.20:48059 COMPILE_OK exit:0\n'
-        printf 'distccd[3] (dcc_job_summary) client: 10.89.0.10:48060 COMPILE_OK exit:0\n'
+        printf 'distccd[1] (dcc_job_summary) client: 172.18.0.10:48058 COMPILE_OK exit:0\n'
+        printf 'distccd[2] (dcc_job_summary) client: 172.18.0.20:48059 COMPILE_OK exit:0\n'
+        printf 'distccd[3] (dcc_job_summary) client: 172.18.0.10:48060 COMPILE_OK exit:0\n'
+        printf 'distccd[4] (dcc_job_summary) client: 172.19.0.10:48061 COMPILE_OK exit:0\n'
+        printf 'distccd[5] (dcc_job_summary) client: 172.18.0.10:48062 COMPILE_FAILED exit:1\n'
     } > "${log}"
-    [ "$(_ci_e2e_count_compile_ok "${log}" '10\.89\.0\.10')" = "2" ]
-    [ "$(_ci_e2e_count_compile_ok "${log}" '10\.89\.0\.20')" = "1" ]
-    rm -f "${log}"
+    [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.10/32)" = "2" ]
+    [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.20/32)" = "1" ]
+    [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.0/16)" = "3" ]
+}
+
+@test "e2e server warning scan passes a clean verbose log" {
+    # What: Verbose info/debug lines carry no severity prefix.
+    # Why: Green path: a normal distccd session must pass.
+    # From: Issue #479, PR #544
+    local log="${BATS_TEST_TMPDIR}/server.log"
+    printf 'distccd[7] listening on 0.0.0.0:3632\ndistccd[9] (dcc_job_summary) client: 172.18.0.3:4 COMPILE_OK\n' > "${log}"
+    run _ci_e2e_check_server_warnings "${log}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "e2e server warning scan fails on a warning-level line" {
+    # What: Any rs_severities prefix above notice fails the leg.
+    # Why: A daemon warning never reaches the client's exit code.
+    # From: Issue #479, PR #544
+    local log="${BATS_TEST_TMPDIR}/server.log"
+    printf 'distccd[8] (dcc_check_client) ERROR: connection from client denied\n' > "${log}"
+    run _ci_e2e_check_server_warnings "${log}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0015"* ]]
+}
+
+@test "e2e compile-ok counter fails closed on an unreadable log" {
+    # What: A missing server log is an error, not zero compiles.
+    # Why: grep -c || true used to mask exactly this case.
+    # From: Issue #479, PR #544
+    run _ci_e2e_count_compile_ok "${BATS_TEST_TMPDIR}/nope.log" 172.18.0.0/16
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0002"* ]]
+}
+
+@test "e2e and workload reject unknown modes before touching docker" {
+    # What: No default mode runs when the caller typoed one.
+    # Why: The old catch-all silently ran the distributed harness.
+    # From: Issue #479, PR #544
+    docker() { echo "docker must not run"; return 99; }
+    run ci_cmd_e2e bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0013"* ]]
+    run ci_cmd_workload bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0006"* ]]
+    run ci_cmd_workload ccache sideways
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0004"* ]]
+    run ci_cmd_workload samba sideways /tmp/x
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0005"* ]]
+    run ci_cmd_image bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-IMAGE-0001"* ]]
+    [[ "${output}" != *"must not run"* ]]
 }
 
 @test "publish nightly refuses to force-move a v* tag" {
@@ -448,18 +503,6 @@ setup() {
     OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
-}
-
-@test "gc package list and e2e tuning come from the SOT" {
-    # What: gc names and heartbeat/full tuning have one owner, not literals.
-    # Why: A hardcoded copy in ci.sh would drift from the manifest.
-    # From: Issue #479
-    run _ci_sot_list release.ghcr_packages
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"distcc-ng-buildtools"* ]]
-    [[ "${output}" == *"distcc-ng-e2e"* ]]
-    [ "$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)" = "20" ]
-    [ "$(_ci_sot_scalar e2e.full_waf_targets)" = "replace,ldb,tdb,talloc,tevent" ]
 }
 
 @test "project board identity comes only from the SOT" {
