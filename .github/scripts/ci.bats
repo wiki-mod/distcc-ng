@@ -151,8 +151,7 @@ setup() {
     # What: A fork PR skips the board lookup entirely.
     # Why: GitHub withholds the PAT from fork PR runs anyway.
     # From: Issue #479, PR #544
-    PROJECT_PAT="dummy" PROJECT_OWNER="wiki-mod" PROJECT_NUMBER="11" \
-        PR_IS_FORK="true" run _ci_check_pr_board
+    PROJECT_PAT="dummy" PR_IS_FORK="true" run _ci_check_pr_board
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"fork PR"* ]]
 }
@@ -393,12 +392,12 @@ setup() {
     [ "$(_ci_sot_scalar e2e.full_waf_targets)" = "replace,ldb,tdb,talloc,tevent" ]
 }
 
-@test "project board owner/number default from the SOT" {
-    # What: No workflow Variable is required for a fixed board identity.
-    # Why: One owner (the SOT), not a repo Variable nobody set.
+@test "project board identity comes only from the SOT" {
+    # What: An env value MUST NOT shadow the SOT's board identity.
+    # Why: One owner; a second source is a parallel owner.
     # From: Issue #236, Issue #479, PR #544
-    unset PROJECT_OWNER PROJECT_NUMBER
-    _ci_project_board_defaults
+    PROJECT_OWNER="shadow" PROJECT_NUMBER="999"
+    _ci_project_board_load
     [ "${PROJECT_OWNER}" = "wiki-mod" ]
     [ "${PROJECT_NUMBER}" = "11" ]
 }

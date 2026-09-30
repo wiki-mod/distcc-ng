@@ -48,8 +48,6 @@ jobs:
           # Why: github.token above cannot read Projects v2.
           # From: Issue #479, PR #544
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
         run: bash .github/scripts/ci.sh metadata all
 
   lint:
@@ -205,8 +203,6 @@ jobs:
       - if: steps.check-pat.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-          PROJECT_OWNER: ${{ vars.PROJECT_BOARD_OWNER }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
           ITEM_URL: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}
         run: bash .github/scripts/ci.sh variables add-to-project
       - if: always()

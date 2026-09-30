@@ -1105,12 +1105,12 @@ ci_cmd_gate() {
     ci_log "[CI-GATE]" "all jobs passed or were skipped"
 }
 
-# What: Fill PROJECT_OWNER/PROJECT_NUMBER from the SOT if unset.
-# Why: One owner for the board identity; no repo Variable needed.
+# What: Set PROJECT_OWNER/PROJECT_NUMBER from the SOT only.
+# Why: One board owner; no env or repo Variable may shadow it.
 # From: Issue #236, Issue #479, PR #544
-_ci_project_board_defaults() {
-    PROJECT_OWNER="${PROJECT_OWNER:-$(_ci_sot_scalar project_board.owner)}"
-    PROJECT_NUMBER="${PROJECT_NUMBER:-$(_ci_sot_scalar project_board.number)}"
+_ci_project_board_load() {
+    PROJECT_OWNER="$(_ci_sot_scalar project_board.owner)" || return 2
+    PROJECT_NUMBER="$(_ci_sot_scalar project_board.number)" || return 2
 }
 
 # What: Add the standing issue to the project board via the project PAT.
@@ -1118,7 +1118,7 @@ _ci_project_board_defaults() {
 # From: Issue #479, Issue #81, PR #476
 _ci_report_board() {
     local issue_url="$1"
-    _ci_project_board_defaults
+    _ci_project_board_load || return 2
     if [ -z "${PROJECT_PAT:-}" ]; then
         echo "::warning::PROJECT_AUTOMATION_PAT not configured; ${issue_url} was not added to the board."
         return 0
@@ -1193,7 +1193,8 @@ ci_cmd_report() {
     local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url
     local DRY_RUN="${DRY_RUN:-false}" FAILED_JOBS="${FAILED_JOBS:-}"
     local PROJECT_PAT="${PROJECT_PAT:-}"
-    local PROJECT_OWNER="${PROJECT_OWNER:-}" PROJECT_NUMBER="${PROJECT_NUMBER:-}"
+    local PROJECT_OWNER PROJECT_NUMBER
+    _ci_project_board_load || return 2
     # What: Derive FAILED_JOBS from JOBS (name=result lines) when provided.
     # Why: Only failure/cancelled are real; a skip means an upstream dep failed.
     # From: Issue #479, PR #476
@@ -1267,7 +1268,7 @@ _ci_variables_secret_present() {
 # From: Issue #479
 _ci_variables_add_to_project() {
     : "${ITEM_URL:?ITEM_URL required}"
-    _ci_project_board_defaults
+    _ci_project_board_load || return 2
     gh project item-add "${PROJECT_NUMBER}" --owner "${PROJECT_OWNER}" --url "${ITEM_URL}"
 }
 
@@ -1912,7 +1913,7 @@ _ci_check_pr_board() {
         ci_log "[CI-META-BOARD]" "skipped: PROJECT_AUTOMATION_PAT not configured"
         return 0
     fi
-    _ci_project_board_defaults
+    _ci_project_board_load || return 2
     if [ "${PR_IS_FORK:-false}" = "true" ]; then
         ci_log "[CI-META-BOARD]" "skipped: fork PR, PAT withheld by GitHub"
         return 0
