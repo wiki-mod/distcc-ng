@@ -58,6 +58,17 @@ ci_error() {
     printf 'raw:\n%s\n' "${raw}" >&2
 }
 
+# What: Run a mutating command, or print it if DRY_RUN=true.
+# Why: One dry-run owner; each caller picks its own default.
+# From: Issue #479, Issue #81, PR #544
+_ci_mutate() {
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        printf 'DRY_RUN would run:'; printf ' %q' "$@"; printf '\n'
+    else
+        "$@"
+    fi
+}
+
 # What: Report an unimplemented dispatch target.
 # Why: The skeleton MUST fail closed, never succeed silently.
 # From: Issue #479
@@ -79,13 +90,36 @@ ci_require_manifest() {
 # SOT READERS (awk only; no yq/jq/python)
 # =========================================================
 
-# What: Print the scalar at a dotted YAML path in the SOT.
-# Why: One reader for every pin; no yq/jq/python dependency.
-# From: Issue #479
+# What: Print the scalar at a dotted SOT path; fail if absent.
+# Why: A missing pin must never read as an empty value.
+# From: Issue #479, PR #544
 _ci_sot_scalar() {
+    local path="$1" rc=0
+    _ci_sot_lookup "${path}" || rc=$?
+    if [ "${rc}" -eq 3 ]; then
+        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
+        return 2
+    fi
+    return "${rc}"
+}
+
+# What: Print an optional SOT value; empty if absent.
+# Why: For per-entry keys only, e.g. opt_in or brew.
+# From: Issue #479, PR #544
+_ci_sot_optional() {
+    local rc=0
+    _ci_sot_lookup "$1" || rc=$?
+    [ "${rc}" -eq 3 ] || return "${rc}"
+}
+
+# What: awk lookup of a dotted SOT path; exit 3 if absent.
+# Why: Lets scalar fail closed and optional stay explicit.
+# From: Issue #479, PR #544
+_ci_sot_lookup() {
     local path="$1"
     awk -v path="${path}" '
-        BEGIN { n = split(path, want, "."); need = 1 }
+        BEGIN { n = split(path, want, "."); need = 1; found = 0 }
+        END { if (!found) exit 3 }
         /^[[:space:]]*#/ { next }
         /^[[:space:]]*$/ { next }
         {
@@ -97,20 +131,21 @@ _ci_sot_scalar() {
             if (need == n) {
                 val = $0; sub(/^[^:]*:[[:space:]]*/, "", val)
                 gsub(/^"|"[[:space:]]*$/, "", val)
-                print val; exit
+                print val; found = 1; exit
             }
             need++
         }
     ' "${CI_MANIFEST}"
 }
 
-# What: Print the immediate child keys of a dotted SOT path.
-# Why: One reader lets phases iterate variants/impact classes.
-# From: Issue #479
+# What: Print child keys of a dotted SOT path; fail if absent.
+# Why: A missing section must not read as zero variants.
+# From: Issue #479, PR #544
 _ci_sot_children() {
-    local path="$1"
+    local path="$1" rc=0
     awk -v path="${path}" '
         BEGIN { n = split(path, want, "."); need = 1; inside = 0; childind = 0 }
+        END { if (!inside) exit 3 }
         /^[[:space:]]*#/ { next }
         /^[[:space:]]*$/ { next }
         {
@@ -126,7 +161,12 @@ _ci_sot_children() {
             if (ind < childind) { exit }
             if (ind == childind) { print key }
         }
-    ' "${CI_MANIFEST}"
+    ' "${CI_MANIFEST}" || rc=$?
+    if [ "${rc}" -eq 3 ]; then
+        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
+        return 2
+    fi
+    return "${rc}"
 }
 
 # What: Print the items of an inline list `key: [a, b]` at a path.
@@ -134,31 +174,13 @@ _ci_sot_children() {
 # From: Issue #479
 _ci_sot_list() {
     local raw
-    raw="$(_ci_sot_scalar "$1")"
+    raw="$(_ci_sot_scalar "$1")" || return 2
     raw="${raw#"["}"
     raw="${raw%"]"}"
     printf '%s' "${raw}" \
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
         | grep -v '^[[:space:]]*$' || true
-}
-
-# What: Read a non-empty value from any dotted SOT path.
-# Why: Generic primitive; all SHA lookups funnel through here.
-# From: Issue #479
-_ci_sot_sha() {
-    local path="${1:-}" val
-    if [ -z "${path}" ]; then
-        ci_log "[CI-ERROR-SOT-0001]" "reason=\"SOT path required\""
-        return 2
-    fi
-    val="$(_ci_sot_scalar "${path}")"
-    if [ -z "${val}" ]; then
-        ci_log "[CI-ERROR-SOT-0002]" \
-            "path=\"${path}\" reason=\"not found in SOT\""
-        return 2
-    fi
-    printf '%s' "${val}"
 }
 
 # =========================================================
@@ -183,18 +205,19 @@ _ci_glob_match() {
 # Why: DEFAULT=NOOP; only a matched class selects any phase.
 # From: Issue #479
 _ci_classify_paths() {
-    local classes path cls pat
-    classes="$(_ci_sot_children impact_classes)"
+    local classes path cls pat pats
+    classes="$(_ci_sot_children impact_classes)" || return 2
     while IFS= read -r path; do
         [ -n "${path}" ] || continue
         for cls in ${classes}; do
+            pats="$(_ci_sot_list "impact_classes.${cls}.paths")" || return 2
             while IFS= read -r pat; do
                 [ -n "${pat}" ] || continue
                 if _ci_glob_match "${pat}" "${path}"; then
                     printf '%s\n' "${cls}"
                     break
                 fi
-            done < <(_ci_sot_list "impact_classes.${cls}.paths")
+            done <<< "${pats}"
         done
     done | sort -u
 }
@@ -207,7 +230,7 @@ _ci_phases_for_paths() {
     classes="$(_ci_classify_paths)"
     [ -n "${classes}" ] || { printf 'NOOP\n'; return 0; }
     for cls in ${classes}; do
-        _ci_sot_list "impact_classes.${cls}.phases"
+        _ci_sot_list "impact_classes.${cls}.phases" || return 2
     done | sort -u
 }
 
@@ -234,17 +257,22 @@ _ci_jobs() {
 # Why: Proves end-to-end SOT reads before wiring builds.
 # From: Issue #479
 ci_cmd_resolve() {
-    printf 'debian_verify=%s\n'   "$(_ci_sot_scalar base_images.debian_verify)"
-    printf 'debian_release=%s\n'  "$(_ci_sot_scalar base_images.debian_release)"
-    printf 'golang_actionlint=%s\n' "$(_ci_sot_scalar base_images.golang_actionlint)"
-    printf 'samba=%s\n'           "$(_ci_sot_scalar external_versions.samba.version)"
-    printf 'actionlint=%s\n'      "$(_ci_sot_scalar external_versions.actionlint.version)"
-    printf 'ccache_heartbeat=%s\n' "$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
-    printf 'codeql_cli=%s\n'      "$(_ci_sot_scalar external_versions.codeql_cli.version)"
-    printf 'scorecard=%s\n'       "$(_ci_sot_scalar external_versions.scorecard.version)"
-    printf 'osv_scanner=%s\n'     "$(_ci_sot_scalar external_versions.osv_scanner.version)"
-    printf 'clusterfuzzlite=%s\n' "$(_ci_sot_scalar external_versions.clusterfuzzlite.version)"
-    printf 'redis=%s\n'           "$(_ci_sot_scalar external_services.redis)"
+    local pair val
+    for pair in \
+        debian_verify=base_images.debian_verify \
+        debian_release=base_images.debian_release \
+        golang_actionlint=base_images.golang_actionlint \
+        samba=external_versions.samba.version \
+        actionlint=external_versions.actionlint.version \
+        ccache_heartbeat=external_versions.ccache_heartbeat.version \
+        codeql_cli=external_versions.codeql_cli.version \
+        scorecard=external_versions.scorecard.version \
+        osv_scanner=external_versions.osv_scanner.version \
+        clusterfuzzlite=external_versions.clusterfuzzlite.version \
+        redis=external_services.redis; do
+        val="$(_ci_sot_scalar "${pair#*=}")" || return 2
+        printf '%s=%s\n' "${pair%%=*}" "${val}"
+    done
 }
 
 # What: Print the phases selected by the base..head diff.
@@ -274,12 +302,14 @@ ci_cmd_impact_hit() {
 # Why: One owner feeds strategy.matrix; opt-in variants excluded.
 # From: Issue #479
 ci_cmd_matrix() {
-    local v os first=1 out='{"include":[' apt brew
-    for v in $(_ci_sot_children build_matrix.variants); do
-        [ "$(_ci_sot_scalar "build_matrix.variants.${v}.opt_in")" = "true" ] && continue
-        apt="$(_ci_sot_scalar "build_matrix.variants.${v}.apt")"
-        brew="$(_ci_sot_scalar "build_matrix.variants.${v}.brew")"
-        for os in $(_ci_sot_list "build_matrix.variants.${v}.os"); do
+    local v os first=1 out='{"include":[' apt brew variants oses
+    variants="$(_ci_sot_children build_matrix.variants)" || return 2
+    for v in ${variants}; do
+        [ "$(_ci_sot_optional "build_matrix.variants.${v}.opt_in")" = "true" ] && continue
+        apt="$(_ci_sot_scalar "build_matrix.variants.${v}.apt")" || return 2
+        brew="$(_ci_sot_optional "build_matrix.variants.${v}.brew")" || return 2
+        oses="$(_ci_sot_list "build_matrix.variants.${v}.os")" || return 2
+        for os in ${oses}; do
             [ "${first}" -eq 1 ] || out="${out},"
             first=0
             case "${os}" in
@@ -532,7 +562,7 @@ ci_cmd_e2e() {
             # What: CI-bounded bidirectional native-compat E2E (samba subset).
             # Why: WAF_TARGETS bounds the CI leg to fit the runner timeout.
             # From: Issue #479, Issue #264
-            waf="$(_ci_sot_scalar e2e.full_waf_targets)"
+            waf="$(_ci_sot_scalar e2e.full_waf_targets)" || return 2
             WORKLOAD="samba" \
             WAF_TARGETS="${waf}" \
                 _ci_e2e_bidirectional_run ;;
@@ -540,9 +570,9 @@ ci_cmd_e2e() {
             # What: Weekly ccache distributed build; tag and floors from the SOT.
             # Why: A heavier external-project run than the distcc-ng self-compile.
             # From: Issue #479, Issue #81
-            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
-            hb_jobs="$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)"
-            hb_att="$(_ci_sot_scalar e2e.heartbeat_max_attempts)"
+            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
+            hb_jobs="$(_ci_sot_scalar e2e.heartbeat_min_remote_jobs)" || return 2
+            hb_att="$(_ci_sot_scalar e2e.heartbeat_max_attempts)" || return 2
             export CCACHE_HEARTBEAT_TAG="${tag}"
             E2E_CLIENT_SCRIPT="test/e2e/client-heartbeat.sh" \
             E2E_MIN_REMOTE_JOBS="${hb_jobs}" \
@@ -553,7 +583,7 @@ ci_cmd_e2e() {
             # What: Diagnostic plain-compiler ccache build, no distcc involved.
             # Why: Classifies a heartbeat failure as toolchain versus distribution.
             # From: Issue #479, Issue #263
-            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)"
+            tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
             export CCACHE_HEARTBEAT_TAG="${tag}"
             docker compose -f test/e2e/docker-compose.yml build distccd-server
             local st=0
@@ -624,9 +654,12 @@ _ci_check_release_version() {
 # Why: One owner for the verify build-args; callers add tags/extra args.
 # From: Issue #479
 _ci_build_verify_image() {
+    local debian actionlint
+    debian="$(_ci_sot_scalar base_images.debian_verify)" || return 2
+    actionlint="$(_ci_sot_scalar external_versions.actionlint.version)" || return 2
     docker build --file docker/verify/Dockerfile \
-        --build-arg "DEBIAN_IMAGE=$(_ci_sot_scalar base_images.debian_verify)" \
-        --build-arg "ACTIONLINT_VERSION=$(_ci_sot_scalar external_versions.actionlint.version)" \
+        --build-arg "DEBIAN_IMAGE=${debian}" \
+        --build-arg "ACTIONLINT_VERSION=${actionlint}" \
         "$@"
 }
 
@@ -651,7 +684,7 @@ ci_cmd_container() {
     local variant="${first}" platform="${2:-}" ref debian
     cd "${CI_REPO_ROOT}"
     ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
-    debian="$(_ci_sot_scalar base_images.debian_release)"
+    debian="$(_ci_sot_scalar base_images.debian_release)" || return 2
     case "${variant}" in
         nightly)
             docker build --file docker/release/Dockerfile \
@@ -691,7 +724,7 @@ _ci_container_release() {
             platform="${3:?platform required (amd64|arm64)}"
             : "${IMAGE_TAG:?IMAGE_TAG required}"
             ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
-            debian="$(_ci_sot_scalar base_images.debian_release)"
+            debian="$(_ci_sot_scalar base_images.debian_release)" || return 2
             target="runtime"
             [ "${variant}" = "pump" ] && target="runtime-pump"
             docker build --platform "linux/${platform}" \
@@ -989,81 +1022,73 @@ ci_cmd_release() {
     esac
 }
 
-# What: Delete or (dry-run) list one stale GHCR package version.
-# Why: DRY_RUN=true only lists; real deletes need delete:packages PAT.
-# From: Issue #479
-_ci_gc_delete_version() {
-    local pkg="$1" id="$2" reason="$3"
-    if [ "${DRY_RUN:-true}" = "true" ]; then
-        echo "[dry-run] would delete ${pkg}#${id} (${reason})"
-    else
-        echo "deleting ${pkg}#${id} (${reason})"
-        gh api --method DELETE "orgs/${OWNER}/packages/container/${pkg}/versions/${id}" --silent
-    fi
+# What: JSON array of digests a live multi-arch index holds.
+# Why: Deleting such a child breaks pulls; errors abort.
+# From: Issue #479, PR #544
+_ci_gc_protected_digests() {
+    local pkg="$1" versions="$2" tag raw children=""
+    while IFS= read -r tag; do
+        [ -n "${tag}" ] || continue
+        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${pkg}:${tag}")"; then
+            ci_log "[CI-ERROR-GC-0002]" "cannot inspect ${pkg}:${tag}; refusing to prune ${pkg}"
+            return 1
+        fi
+        children+="$(jq -r '.manifests[]?.digest' <<< "${raw}")"$'\n'
+    done < <(jq -r '[.[].metadata.container.tags[]?] | unique | .[]' <<< "${versions}")
+    printf '%s' "${children}" | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
-# What: Prune stale GHCR versions (untagged + old manual-N builds).
-# Why: Never touches real/latest tags; keeps a small untagged rollback set.
-# From: Issue #479
+# What: Print "id<TAB>reason" for every prunable version.
+# Why: A tagged version ages out only if all tags are series.
+# From: Issue #479, PR #544
+_ci_gc_candidates() {
+    local versions="$1" protected="$2" keep_untagged="$3" series_re="$4" keep_series="$5"
+    jq -r --argjson protected "${protected}" --argjson ku "${keep_untagged}" \
+        --arg re "${series_re}" --argjson ks "${keep_series}" '
+        map({id, name, created_at, tags: (.metadata.container.tags // [])}) as $v
+        | ($v | map(select((.tags | length) == 0 and ((.name | IN($protected[])) | not)))
+              | sort_by(.created_at) | reverse | .[$ku:]
+              | map({id, why: "untagged \(.name), created \(.created_at)"})) as $untagged
+        | ($v | map(select((.tags | length) > 0 and all(.tags[]; test($re))))
+              | map(. + {key: (.tags[0] | match($re).captures[0].string | tonumber)})) as $series
+        | ($series | map(.key) | unique | sort | reverse | .[:$ks]) as $keep
+        | ($series | map(select((.key | IN($keep[])) | not))
+              | map({id, why: "superseded series tag \(.tags | join(","))"})) as $old
+        | ($untagged + $old)[] | "\(.id)\t\(.why)"
+    ' <<< "${versions}"
+}
+
+# What: Prune stale GHCR versions of one or all SOT packages.
+# Why: Deletes need a delete:packages PAT; dry run by default.
+# From: Issue #479, PR #544
 ci_cmd_gc() {
     : "${GH_TOKEN:?GH_TOKEN required (delete:packages scope when DRY_RUN=false)}"
     : "${OWNER:?OWNER required, e.g. wiki-mod}"
-    _ci_registry_login
-    local sel="${1:-all}" pkgs
+    local DRY_RUN="${DRY_RUN:-true}" sel="${1:-all}" known pkgs pkg
+    local ku re ks versions protected candidates id why
+    known="$(_ci_sot_list release.ghcr_packages)" || return 2
+    ku="$(_ci_sot_scalar gc.keep_untagged)" || return 2
+    re="$(_ci_sot_scalar gc.series_tag_regex)" || return 2
+    ks="$(_ci_sot_scalar gc.keep_series)" || return 2
     if [ "${sel}" = "all" ]; then
-        pkgs="$(_ci_sot_list release.ghcr_packages | tr '\n' ' ')"
-    else
+        pkgs="${known}"
+    elif grep -qxF -- "${sel}" <<< "${known}"; then
         pkgs="${sel}"
+    else
+        ci_log "[CI-ERROR-GC-0001]" "unknown package=\"${sel}\" (release.ghcr_packages or all)"
+        return 2
     fi
-    local DRY_RUN="${DRY_RUN:-true}" KEEP_MANUAL="${KEEP_MANUAL:-2}" KEEP_UNTAGGED="${KEEP_UNTAGGED:-3}"
-    local pkg versions_json all_tags tag raw kept created id digest manual_numbers keep_numbers num
+    _ci_registry_login
     for pkg in ${pkgs}; do
         echo "::group::${pkg}"
-        versions_json="$(gh api --paginate "orgs/${OWNER}/packages/container/${pkg}/versions")"
-        declare -A protected=()
-        all_tags="$(jq -r '.[].metadata.container.tags[]?' <<< "${versions_json}" | sort -u)"
-        while IFS= read -r tag; do
-            [ -z "${tag}" ] && continue
-            raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${pkg}:${tag}" 2>/dev/null)" || continue
-            if grep -q 'manifest\.list\.v2\|image\.index\.v1' <<< "${raw}"; then
-                while IFS= read -r child; do
-                    protected["${child}"]=1
-                done < <(jq -r '.manifests[]?.digest' <<< "${raw}")
-            fi
-        done <<< "${all_tags}"
-        deletable_untagged="$(
-            jq -r '.[] | select((.metadata.container.tags | length) == 0) | [.created_at, .id, .name] | @tsv' <<< "${versions_json}" \
-              | while IFS=$'\t' read -r created id digest; do
-                    [ -z "${id}" ] && continue
-                    if [ -n "${protected[${digest}]+x}" ]; then
-                        echo "SKIP untagged ${digest} (${pkg}#${id}): still referenced by a live multi-arch manifest" >&2
-                        continue
-                    fi
-                    printf '%s\t%s\t%s\n' "${created}" "${id}" "${digest}"
-                done | sort -r
-        )"
-        kept=0
-        while IFS=$'\t' read -r created id digest; do
-            [ -z "${id}" ] && continue
-            kept=$((kept + 1))
-            if [ "${kept}" -le "${KEEP_UNTAGGED}" ]; then
-                echo "KEEP untagged ${digest} (${pkg}#${id}, created ${created})"
-                continue
-            fi
-            _ci_gc_delete_version "${pkg}" "${id}" "untagged ${digest}, created ${created}"
-        done <<< "${deletable_untagged}"
-        manual_numbers="$(jq -r '.[].metadata.container.tags[]?' <<< "${versions_json}" \
-            | sed -nE 's/^manual-([0-9]+)(-amd64|-arm64)?$/\1/p' | sort -un)"
-        keep_numbers="$(printf '%s\n' "${manual_numbers}" | sort -urn | head -n "${KEEP_MANUAL}")"
-        while IFS=$'\t' read -r id tag; do
-            [ -z "${id}" ] && continue
-            num="$(sed -E 's/^manual-([0-9]+).*/\1/' <<< "${tag}")"
-            if grep -qx "${num}" <<< "${keep_numbers}"; then
-                continue
-            fi
-            _ci_gc_delete_version "${pkg}" "${id}" "old manual tag ${tag}"
-        done < <(jq -r '.[] | .id as $id | .metadata.container.tags[]? | select(test("^manual-[0-9]+(-amd64|-arm64)?$")) | [$id, .] | @tsv' <<< "${versions_json}")
-        unset protected
+        versions="$(gh api --paginate "orgs/${OWNER}/packages/container/${pkg}/versions" | jq -s 'add // []')" || return 1
+        protected="$(_ci_gc_protected_digests "${pkg}" "${versions}")" || return 1
+        candidates="$(_ci_gc_candidates "${versions}" "${protected}" "${ku}" "${re}" "${ks}")" || return 1
+        while IFS=$'\t' read -r id why; do
+            [ -n "${id}" ] || continue
+            ci_log "[CI-GC]" "${pkg}#${id}: delete (${why})"
+            _ci_mutate gh api --method DELETE "orgs/${OWNER}/packages/container/${pkg}/versions/${id}" --silent
+        done <<< "${candidates}"
         echo "::endgroup::"
     done
 }
@@ -1131,17 +1156,6 @@ _ci_report_board() {
         --owner "${PROJECT_OWNER}" --url "${issue_url}" >/dev/null
 }
 
-# What: Echo a mutating command instead of running it when DRY_RUN=true.
-# Why: Lets the file/update/close branch logic run without touching real issues.
-# From: Issue #479, Issue #81
-_ci_report_run() {
-    if [ "${DRY_RUN:-false}" = "true" ]; then
-        printf 'DRY_RUN would run:'; printf ' %q' "$@"; printf '\n'
-    else
-        "$@"
-    fi
-}
-
 # What: Assign the Bug issue type to issue $1 unless it already has one.
 # Why: Retrying on every failure self-heals an issue a one-shot attempt missed.
 # From: Issue #479, PR #476
@@ -1207,27 +1221,27 @@ ci_cmd_report() {
             _ci_report_ensure_bug_type "${existing}"
             _ci_report_board "https://github.com/${REPO}/issues/${existing}"
             echo "success: closing standing ${LABEL} issue #${existing}"
-            _ci_report_run gh issue comment "${existing}" --repo "${REPO}" \
+            _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
                 --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
-            _ci_report_run gh issue close "${existing}" --repo "${REPO}"
+            _ci_mutate gh issue close "${existing}" --repo "${REPO}"
         else
             echo "success and no open ${LABEL} issue: nothing to do"
         fi
         return 0
     fi
-    _ci_report_run gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
+    _ci_mutate gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
         --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
     detail="${SCOPE} failed in ${RUN_URL}"
     [ -n "${FAILED_JOBS}" ] && detail="${detail} (failed: ${FAILED_JOBS})"
     if [ -n "${existing}" ]; then
         echo "failure: commenting on standing ${LABEL} issue #${existing}"
-        _ci_report_run gh issue comment "${existing}" --repo "${REPO}" \
+        _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
             --body "Still failing: ${detail}."
         _ci_report_ensure_bug_type "${existing}"
         _ci_report_board "https://github.com/${REPO}/issues/${existing}"
     else
         echo "failure: opening a new standing ${LABEL} issue"
-        new_issue_url="$(_ci_report_run gh issue create --repo "${REPO}" --label "${LABEL}" \
+        new_issue_url="$(_ci_mutate gh issue create --repo "${REPO}" --label "${LABEL}" \
             --title "[${LABEL}] a scheduled CI run is failing" \
             --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
 
@@ -1760,7 +1774,7 @@ ci_cmd_verify() {
             # Why: One owner for the tag; no hardcoded version in the check.
             # From: Issue #479, Issue #285
             local samba_ver
-            samba_ver="$(_ci_sot_scalar external_versions.samba.version)"
+            samba_ver="$(_ci_sot_scalar external_versions.samba.version)" || return 2
             docker run --rm -e "SAMBA_VERSION=${samba_ver}" "${image}" bash -c "
                 set -euo pipefail
                 cd /tmp
@@ -1804,7 +1818,7 @@ _ci_verify_ccache_redis() {
     # What: Redis digest comes from the SOT; ci.sh starts it with a 2g cap.
     # Why: The ccache-remote-storage workload needs the maintainer's ~2GB budget.
     # From: Issue #479, Issue #285
-    redis_image="$(_ci_sot_scalar external_services.redis)"
+    redis_image="$(_ci_sot_scalar external_services.redis)" || return 2
     redis_cid="$(docker run -d --memory=2g --network host "${redis_image}")"
     _ci_verify_ccache_build() {
         docker run --rm --network host --user "$(id -u):$(id -g)" \
@@ -2063,8 +2077,7 @@ ci_guard_dependabot_consistency() {
         "golang_actionlint:docker/verify/Dockerfile"; do
         key="${pair%%:*}"; df="${pair#*:}"
         [ -f "${root}/${df}" ] || continue
-        sot="$(_ci_sot_scalar "base_images.${key}")"
-        if [ -z "${sot}" ]; then
+        if ! sot="$(_ci_sot_scalar "base_images.${key}")"; then
             rc=1
             ci_log "[CI-ERROR-GUARD-DEP-0001]" "SOT missing base_images.${key}"
             continue
@@ -2222,7 +2235,10 @@ ci_cmd_install() {
     case "${kind}" in
         apt)     _ci_apt_install "${arg}" ;;
         brew)    _ci_brew_install "${arg}" ;;
-        sot-apt) _ci_apt_install "$(_ci_sot_scalar "${arg}")" ;;
+        sot-apt)
+            local pkgs
+            pkgs="$(_ci_sot_scalar "${arg}")" || return 2
+            _ci_apt_install "${pkgs}" ;;
         *) ci_log "[CI-ERROR-INSTALL-0002]" "unknown install kind=\"${kind}\""; return 2 ;;
     esac
 }
@@ -2662,7 +2678,7 @@ _ci_popt_strict_compile() {
 # From: Issue #479
 _ci_popt_cve_fingerprint_check() {
     local want got rc=0
-    want="$(_ci_sot_scalar external_versions.popt_vendor.version)"
+    want="$(_ci_sot_scalar external_versions.popt_vendor.version)" || return 2
     got="$(cat popt/POPT_VERSION 2>/dev/null || true)"
     if [ "${got}" != "${want}" ]; then
         ci_log "[CI-ERROR-POPT-CVE-0001]" "POPT_VERSION mismatch: got=\"${got}\" want=\"${want}\""

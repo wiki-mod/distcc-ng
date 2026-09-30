@@ -58,6 +58,33 @@ setup() {
     [ "${output}" = "4.22.4" ]
 }
 
+@test "sot scalar fails closed on a missing key" {
+    # What: An absent key MUST NOT read as an empty value.
+    # Why: An empty pin once silently skipped a checksum.
+    # From: Issue #479, PR #544
+    run _ci_sot_scalar external_versions.nope.version
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+}
+
+@test "sot optional reads absent keys as empty" {
+    # What: Per-entry keys like brew/opt_in may be absent.
+    # Why: Optional is explicit, never the default reader.
+    # From: Issue #479, PR #544
+    run _ci_sot_optional build_matrix.variants.default.opt_in
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+}
+
+@test "sot children fails closed on a missing section" {
+    # What: An absent section MUST NOT read as zero children.
+    # Why: It would silently empty the build matrix.
+    # From: Issue #479, PR #544
+    run _ci_sot_children build_matrix.nope
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+}
+
 @test "sot children lists exactly the five build variants" {
     # What: build_matrix.variants owns the build set.
     # Why: Drift here silently drops or adds a build.
@@ -378,6 +405,49 @@ setup() {
     [ "$(_ci_ossf_grep "${fx}" 'nope-xyz')" = "NotMet" ]
     [ "$(_ci_ossf_grep "${fx}" 'SECURITY ADVISOR' -i)" = "Met" ]
     rm -f "${fx}"
+}
+
+@test "gc candidates keep protected, rollback set, and real tags" {
+    # What: Only unprotected old untagged and whole old series go.
+    # Why: A real tag or live index child must never be deleted.
+    # From: Issue #479, PR #544
+    local v out
+    v='[
+      {"id":1,"name":"sha256:u1","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":[]}}},
+      {"id":2,"name":"sha256:u2","created_at":"2026-01-02T00:00:00Z","metadata":{"container":{"tags":[]}}},
+      {"id":3,"name":"sha256:u3","created_at":"2026-01-03T00:00:00Z","metadata":{"container":{"tags":[]}}},
+      {"id":4,"name":"sha256:u4","created_at":"2026-01-04T00:00:00Z","metadata":{"container":{"tags":[]}}},
+      {"id":5,"name":"sha256:u5","created_at":"2026-01-05T00:00:00Z","metadata":{"container":{"tags":[]}}},
+      {"id":11,"name":"sha256:m1","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["manual-1"]}}},
+      {"id":12,"name":"sha256:m2","created_at":"2026-01-02T00:00:00Z","metadata":{"container":{"tags":["manual-2-amd64"]}}},
+      {"id":13,"name":"sha256:m3","created_at":"2026-01-03T00:00:00Z","metadata":{"container":{"tags":["manual-3"]}}},
+      {"id":14,"name":"sha256:mx","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["manual-1","v3.6.6-NG"]}}},
+      {"id":20,"name":"sha256:l","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["latest"]}}}
+    ]'
+    out="$(_ci_gc_candidates "${v}" '["sha256:u4"]' 3 '^manual-([0-9]+)(-amd64|-arm64)?$' 2 | cut -f1 | sort -n | tr '\n' ' ')"
+    [ "${out}" = "1 11 " ]
+}
+
+@test "gc rejects a package outside the SOT before any API call" {
+    # What: Only release.ghcr_packages (or all) may be pruned.
+    # Why: A typo MUST NOT reach a delete-capable token.
+    # From: Issue #479, PR #544
+    gh() { echo "gh must not run"; return 99; }
+    docker() { echo "docker must not run"; return 99; }
+    GH_TOKEN=x OWNER=wiki-mod run ci_cmd_gc not-a-package
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GC-0001"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+@test "gc protection fails closed when a tag cannot be inspected" {
+    # What: An uninspectable tag aborts pruning of that package.
+    # Why: Unknown children would otherwise lose their protection.
+    # From: Issue #479, PR #544
+    docker() { return 1; }
+    OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
 }
 
 @test "gc package list and e2e tuning come from the SOT" {

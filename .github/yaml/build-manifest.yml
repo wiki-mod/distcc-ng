@@ -170,6 +170,14 @@ security:
 ci_engine:
   selftest_apt: "bats parallel"
 
+# What: GHCR prune policy applied by ci.sh gc.
+# Why: Keeps a rollback set; only whole series groups age out.
+# From: Issue #479, PR #544
+gc:
+  keep_untagged: 3
+  series_tag_regex: "^manual-([0-9]+)(-amd64|-arm64)?$"
+  keep_series: 2
+
 # What: Tuning for the distributed-compile E2E harness runs.
 # Why: One owner for heartbeat floors and full-run targets.
 # From: Issue #479, Issue #264, Issue #81
