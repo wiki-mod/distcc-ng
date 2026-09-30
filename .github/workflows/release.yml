@@ -178,10 +178,6 @@ jobs:
     steps:
       - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - if: env.SHOULD_PUSH == 'true'
-        uses: ./.github/actions/ghcr-login
-        with:
-          token: ${{ github.token }}
       - env:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
@@ -191,6 +187,8 @@ jobs:
           OUT: distcc-ng-${{ matrix.variant }}-${{ env.TAG }}-${{ matrix.platform }}.spdx.json
         run: bash .github/scripts/ci.sh scan sbom "$IMAGE_TAG" "$OUT"
       - if: env.SHOULD_PUSH == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh container push "$IMAGE_TAG"
 
   publish_manifest:
@@ -201,6 +199,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.publish_container == true)
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
     strategy:
       fail-fast: false
@@ -214,9 +213,8 @@ jobs:
       # From: Issue #479, PR #544
       TAG_PUSH: ${{ github.event_name == 'push' }}
     steps:
-      - uses: ./.github/actions/ghcr-login
-        with:
-          token: ${{ github.token }}
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
           VARIANT: ${{ matrix.variant }}
+          REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish manifest "$VARIANT"

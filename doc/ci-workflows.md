@@ -34,10 +34,12 @@ as the intended final state.
 
 ## Cross-reference matrix
 
-**Composite actions actually used**: only `.github/actions/ghcr-login`
-(shared GHCR `docker login`, different tokens per caller: the default
-`github.token` almost everywhere, `GHCR_PACKAGE_DELETE_PAT` for
-`housekeeping.yml`'s `gc` job) and `.github/actions/harden-runner` (the one
+**GHCR login**: `ci.sh`'s `_ci_registry_login`, called by every command
+that pushes to or reads from GHCR, using the calling step's `REGISTRY_TOKEN`
+(the default `github.token` almost everywhere, `GHCR_PACKAGE_DELETE_PAT` for
+`housekeeping.yml`'s `gc` job).
+
+**Composite actions actually used**: only `.github/actions/harden-runner` (the one
 structural exception to the zero-SHA-outside-SOT rule -- a runner-level
 eBPF agent with no CLI/native equivalent). Every other piece of shared
 logic (labeler rules, project-board add, standing-issue reporting,

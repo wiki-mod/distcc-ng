@@ -630,6 +630,15 @@ _ci_build_verify_image() {
         "$@"
 }
 
+# What: docker login ghcr.io as GITHUB_ACTOR via stdin token.
+# Why: Token varies per job; gc needs the delete:packages PAT.
+# From: Issue #479, PR #544
+_ci_registry_login() {
+    : "${REGISTRY_TOKEN:?REGISTRY_TOKEN required}"
+    : "${GITHUB_ACTOR:?GITHUB_ACTOR required}"
+    printf '%s\n' "${REGISTRY_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+}
+
 # What: Build and push a release-family container image.
 # Why: Base image ARG comes from the SOT; folds nightly's docker build.
 # From: Issue #479
@@ -651,6 +660,7 @@ ci_cmd_container() {
                 --build-arg "VERSION=nightly" \
                 --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                 --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
+            _ci_registry_login
             docker push "${IMAGE_TAG}" ;;
         verify-image)
             _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
@@ -662,6 +672,7 @@ ci_cmd_container() {
             _ci_build_verify_image \
                 --build-arg "VCS_REF=${ref}" --build-arg "VERSION=${short}" \
                 --tag "${base}:latest" --tag "${base}:${short}" .
+            _ci_registry_login
             docker push "${base}:latest"
             docker push "${base}:${short}" ;;
         *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
@@ -692,6 +703,7 @@ _ci_container_release() {
                 --tag "${IMAGE_TAG}" . ;;
         push)
             local image_tag="${2:?image tag required}"
+            _ci_registry_login
             docker push "${image_tag}" ;;
     esac
 }
@@ -742,6 +754,7 @@ _ci_publish_nightly() {
 _ci_publish_manifest() {
     local variant="${1:?variant required}"
     : "${IMAGE_BASE:?IMAGE_BASE required}"
+    _ci_registry_login
     local tags=("${IMAGE_BASE}-amd64")
     if docker buildx imagetools inspect "${IMAGE_BASE}-arm64" >/dev/null 2>&1; then
         tags+=("${IMAGE_BASE}-arm64")
@@ -796,6 +809,7 @@ _ci_publish_e2e_image() {
     build_date="$(date -u +%Y%m%d)"
     tag="${built_sha}-${build_date}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     docker tag distcc-ng-e2e:selftest "${base}:${tag}"
+    _ci_registry_login
     docker push "${base}:${tag}"
 
     local sibling pub_sha pub_id pub_attempt should_move=false
@@ -994,6 +1008,7 @@ _ci_gc_delete_version() {
 ci_cmd_gc() {
     : "${GH_TOKEN:?GH_TOKEN required (delete:packages scope when DRY_RUN=false)}"
     : "${OWNER:?OWNER required, e.g. wiki-mod}"
+    _ci_registry_login
     local sel="${1:-all}" pkgs
     if [ "${sel}" = "all" ]; then
         pkgs="$(_ci_sot_list release.ghcr_packages | tr '\n' ' ')"

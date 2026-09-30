@@ -81,10 +81,9 @@ jobs:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
-      - uses: ./.github/actions/ghcr-login
-        with:
-          token: ${{ github.token }}
-      - run: bash .github/scripts/ci.sh container nightly
+      - env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh container nightly
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish nightly

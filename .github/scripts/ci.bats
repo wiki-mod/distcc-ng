@@ -203,6 +203,29 @@ setup() {
     [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
 }
 
+@test "registry login fails closed without REGISTRY_TOKEN" {
+    # What: No token MUST NOT fall through to an anonymous push.
+    # Why: A missing secret is a hard failure (AG-VAL-001).
+    # From: Issue #479, PR #544
+    docker() { echo "docker must not run"; return 99; }
+    unset REGISTRY_TOKEN
+    GITHUB_ACTOR=octo run _ci_registry_login
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"REGISTRY_TOKEN required"* ]]
+    [[ "${output}" != *"docker must not run"* ]]
+}
+
+@test "registry login pipes the token on stdin as GITHUB_ACTOR" {
+    # What: Token goes via stdin, never argv; user is the actor.
+    # Why: argv leaks into process listings and logs.
+    # From: Issue #479, PR #544
+    docker() { cat > "${BATS_TEST_TMPDIR}/stdin"; echo "$*" > "${BATS_TEST_TMPDIR}/argv"; }
+    REGISTRY_TOKEN=s3cret GITHUB_ACTOR=octo run _ci_registry_login
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/stdin")" = "s3cret" ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/argv")" = "login ghcr.io -u octo --password-stdin" ]
+}
+
 @test "e2e compile-ok counter matches only the given client address" {
     # What: One counter serves both the subnet and single-IP callers.
     # Why: test/e2e and test/e2e-full need the exact same log check.
