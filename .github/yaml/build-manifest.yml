@@ -76,6 +76,21 @@ external_versions:
   # From: Issue #479
   syft:
     version: "v1.52.0"
+  # What: StepSecurity agent tarball run by ci.sh harden.
+  # Why: Org has no TLS inspection: non-TLS agent, amd64 only.
+  # From: Issue #479, PR #544
+  harden_runner_agent:
+    version: "v0.16.2"
+    sha256: "4b14d8a3a5fbcef95af55e0c54d3bee6f44da802878c10289a4ca0b79b6d0237"
+
+# What: harden-runner policy and StepSecurity endpoints.
+# Why: Audit-only egress monitoring, never block (Issue #58).
+# From: Issue #479, PR #544, Issue #58
+harden_runner:
+  egress_policy: "audit"
+  api_url: "https://agent.api.stepsecurity.io/v1"
+  telemetry_url: "https://prod.app-api.stepsecurity.io/v1"
+  web_url: "https://app.stepsecurity.io"
 
 # What: Pinned external service images used by CI steps.
 # Why: Full-digest pin, never a floating tag anywhere.

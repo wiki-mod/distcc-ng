@@ -128,8 +128,8 @@ jobs:
     env:
       TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
-      - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
       - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
       - env:
@@ -142,6 +142,8 @@ jobs:
           # From: Issue #479, PR #544, Issue #460
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
         run: bash .github/scripts/ci.sh publish github-release "$TAG"
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
 
   build_container:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
@@ -176,8 +178,8 @@ jobs:
       # From: Issue #479, PR #544
       SHOULD_PUSH: ${{ github.event_name == 'push' || inputs.publish_container == true }}
     steps:
-      - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
       - env:
           VARIANT: ${{ matrix.variant }}
           PLATFORM: ${{ matrix.platform }}
@@ -190,6 +192,8 @@ jobs:
         env:
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh container push "$IMAGE_TAG"
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
 
   publish_manifest:
     name: Publish ${{ matrix.variant }} multi-arch manifest

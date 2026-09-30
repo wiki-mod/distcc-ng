@@ -190,8 +190,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: $/.github/actions/harden-runner
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
       - if: github.event_name == 'pull_request_target'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -209,3 +209,5 @@ jobs:
           PROJECT_NUMBER: ${{ vars.PROJECT_BOARD_NUMBER }}
           ITEM_URL: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}
         run: bash .github/scripts/ci.sh variables add-to-project
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop

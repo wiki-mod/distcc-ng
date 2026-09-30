@@ -631,7 +631,7 @@ setup() {
 
 @test "orchestrator guard fails closed on inline logic in a run: block" {
     # What: A run: block with shell control flow must be rejected.
-    # Why: AG-CI-023 bans inline logic; it belongs in ci.sh.
+    # Why: #479 bans inline logic; it belongs in ci.sh.
     # From: Issue #479
     fx="$(mktemp -d)"
     printf 'jobs:\n  x:\n    steps:\n      - run: |\n          if [ -x foo ]; then bar; fi\n' > "${fx}/wf.yml"
@@ -639,4 +639,126 @@ setup() {
     rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
+}
+
+@test "orchestrator guard fails closed on any uses: step" {
+    # What: A composite or marketplace uses: step is rejected.
+    # Why: #479: workflows only invoke ci.sh, no actions at all.
+    # From: Issue #479, PR #544
+    fx="$(mktemp -d)"
+    printf 'jobs:\n  x:\n    steps:\n      - uses: ./.github/actions/foo\n' > "${fx}/wf.yml"
+    run ci_guard_orchestrator_only "${fx}/wf.yml"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"uses: step"* ]]
+}
+
+@test "action-pin guard passes on a workflow without SHA pins" {
+    # What: A pin-free workflow is compliant.
+    # Why: Green path; only the SOT may carry pins.
+    # From: Issue #479, PR #544
+    fx="$(mktemp -d)"
+    printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
+    run ci_guard_action_pin_sot "${fx}/wf.yml"
+    rm -rf "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "action-pin guard fails closed on a SHA pin outside the SOT" {
+    # What: Any @<40-hex> outside the SOT fails the guard.
+    # Why: build-manifest.yml is the sole pin owner.
+    # From: Issue #479, PR #544
+    fx="$(mktemp -d)"
+    printf '      - uses: foo/bar@%s\n' "$(printf 'a%.0s' {1..40})" > "${fx}/wf.yml"
+    run ci_guard_action_pin_sot "${fx}/wf.yml"
+    rm -rf "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-APIN-0001"* ]]
+}
+
+# =========================================================
+# TOOL FETCH + HARDEN RUNNER
+# =========================================================
+
+@test "release-tarball fetch extracts when the sha256 matches" {
+    # What: A matching checksum extracts and caches the tarball.
+    # Why: Green path of the one shared tool downloader.
+    # From: Issue #479, PR #544
+    local src="${BATS_TEST_TMPDIR}/src" sum dir
+    mkdir -p "${src}"; printf 'bin' > "${src}/tool"
+    tar -czf "${BATS_TEST_TMPDIR}/t.tar.gz" -C "${src}" tool
+    sum="$(sha256sum "${BATS_TEST_TMPDIR}/t.tar.gz" | cut -d' ' -f1)"
+    curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${BATS_TEST_TMPDIR}/t.tar.gz" "$2"; fi; shift; done; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_fetch_release_tarball tool v1 https://example.invalid/t.tar.gz "${sum}"
+    [ "${status}" -eq 0 ]
+    dir="${output}"
+    [ "$(cat "${dir}/tool")" = "bin" ]
+    [ -f "${dir}/.complete" ]
+}
+
+@test "release-tarball fetch fails closed on a sha256 mismatch" {
+    # What: A wrong checksum MUST NOT extract anything.
+    # Why: A tampered agent binary must never run.
+    # From: Issue #479, PR #544
+    curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then printf 'evil' > "$2"; fi; shift; done; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_fetch_release_tarball tool v1 https://example.invalid/t.tar.gz "$(printf '0%.0s' {1..64})"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-FETCH-0001"* ]]
+    [ ! -f "${BATS_TEST_TMPDIR}/tool-v1/.complete" ]
+}
+
+@test "harden rejects an unknown subcommand" {
+    # What: harden only knows start|stop.
+    # Why: Fail-closed dispatch for every phase.
+    # From: Issue #479, PR #544
+    run ci_cmd_harden bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-HARDEN-0001"* ]]
+}
+
+@test "harden start is NotRun on an ARM64 runner" {
+    # What: arm64 logs NotRun and touches neither net nor sudo.
+    # Why: The non-TLS agent ships for x64 only.
+    # From: Issue #479, PR #544
+    curl() { echo "curl must not run"; return 99; }
+    sudo() { echo "sudo must not run"; return 99; }
+    RUNNER_OS=Linux RUNNER_ARCH=ARM64 RUNNER_ENVIRONMENT=github-hosted run _ci_harden_start
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NotRun: agent unsupported on RUNNER_ARCH=ARM64"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+@test "harden stop is NotRun when no agent was started" {
+    # What: No state file means nothing to stop.
+    # Why: Stop runs under if: always(), also after skips.
+    # From: Issue #479, PR #544
+    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NotRun: no agent was started"* ]]
+}
+
+@test "harden stop fails closed when the agent never confirms" {
+    # What: Missing done.json after the post event is a failure.
+    # Why: Unflushed telemetry must not pass silently.
+    # From: Issue #479, PR #544
+    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"; mkdir -p "${_CI_HARDEN_DIR}"
+    printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
+    sleep() { :; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-HARDEN-0003"* ]]
+    [ -f "${_CI_HARDEN_DIR}/post_event.json" ]
+}
+
+@test "harden stop passes once the agent wrote done.json" {
+    # What: done.json after post_event.json ends the job cleanly.
+    # Why: Green path of the post-step replacement.
+    # From: Issue #479, PR #544
+    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"; mkdir -p "${_CI_HARDEN_DIR}"
+    printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
+    printf '{}' > "${_CI_HARDEN_DIR}/done.json"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${_CI_HARDEN_DIR}/post_event.json")" = '{"event":"post"}' ]
 }

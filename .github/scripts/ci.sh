@@ -34,7 +34,7 @@ CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install"
+CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -1619,21 +1619,38 @@ EOF
     fi
 }
 
+# What: Download, verify, cache a release tarball; print dir.
+# Why: One owner for every SOT-pinned tool download.
+# From: Issue #479, PR #544
+_ci_fetch_release_tarball() {
+    local name="${1:?name required}" ver="${2:?version required}"
+    local url="${3:?url required}" sha256="${4:-}" dest archive
+    dest="${RUNNER_TEMP:-/tmp}/${name}-${ver}"
+    if [ ! -f "${dest}/.complete" ]; then
+        rm -rf "${dest}"
+        mkdir -p "${dest}"
+        archive="${dest}.tar.gz"
+        curl -fsSL --retry 3 -o "${archive}" "${url}" || return 2
+        if [ -n "${sha256}" ] && ! printf '%s  %s\n' "${sha256}" "${archive}" | sha256sum -c --quiet -; then
+            ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${name} ${ver}"
+            return 2
+        fi
+        tar -xzf "${archive}" -C "${dest}" || return 2
+        rm -f "${archive}"
+        touch "${dest}/.complete"
+    fi
+    printf '%s' "${dest}"
+}
+
 # What: Download+cache the pinned Trivy CLI; print its path.
 # Why: No marketplace action; version owned by SOT.
 # From: Issue #479
 _ci_trivy_bin() {
-    local ver dest bin
+    local ver dest
     ver="$(_ci_sot_scalar external_versions.trivy.version)" || return 2
-    dest="${RUNNER_TEMP:-/tmp}/trivy-${ver}"
-    bin="${dest}/trivy"
-    if [ ! -x "${bin}" ]; then
-        mkdir -p "${dest}"
-        curl -fsSL --retry 3 \
-            "https://github.com/aquasecurity/trivy/releases/download/${ver}/trivy_${ver#v}_Linux-64bit.tar.gz" \
-            | tar -xz -C "${dest}" || return 2
-    fi
-    printf '%s' "${bin}"
+    dest="$(_ci_fetch_release_tarball trivy "${ver}" \
+        "https://github.com/aquasecurity/trivy/releases/download/${ver}/trivy_${ver#v}_Linux-64bit.tar.gz")" || return 2
+    printf '%s/trivy' "${dest}"
 }
 
 # What: Scan a local image ref for HIGH/CRITICAL vulns.
@@ -1651,17 +1668,11 @@ ci_cmd_trivy_scan() {
 # Why: No marketplace action; version owned by SOT.
 # From: Issue #479
 _ci_syft_bin() {
-    local ver dest bin
+    local ver dest
     ver="$(_ci_sot_scalar external_versions.syft.version)" || return 2
-    dest="${RUNNER_TEMP:-/tmp}/syft-${ver}"
-    bin="${dest}/syft"
-    if [ ! -x "${bin}" ]; then
-        mkdir -p "${dest}"
-        curl -fsSL --retry 3 \
-            "https://github.com/anchore/syft/releases/download/${ver}/syft_${ver#v}_linux_amd64.tar.gz" \
-            | tar -xz -C "${dest}" || return 2
-    fi
-    printf '%s' "${bin}"
+    dest="$(_ci_fetch_release_tarball syft "${ver}" \
+        "https://github.com/anchore/syft/releases/download/${ver}/syft_${ver#v}_linux_amd64.tar.gz")" || return 2
+    printf '%s/syft' "${dest}"
 }
 
 # What: Generate an SPDX-JSON SBOM for an image/path.
@@ -2071,6 +2082,7 @@ ci_guard_dependabot_consistency() {
 _ci_scan_run_blocks() {
     awk -v F="$1" '
         function flag(r){ print F":"NR": "r }
+        /^[ ]*(- )?uses:[ ]/ { flag("uses: step (only ci.sh may run)"); next }
         { match($0,/^[ ]*/); ind=RLENGTH
           if (inrun && $0 !~ /^[ ]*$/ && ind <= runind) inrun=0
           if ($0 ~ /^[ ]*(- )?run:[ ]*[|>]/) { inrun=1; runind=ind; next }
@@ -2155,22 +2167,21 @@ ci_cmd_lint() {
     ci_guard_line_endings "${CI_REPO_ROOT}/docker" || rc=1
     # Full-SHA scans only files that may carry pins; scripts carry none
     # by design (ci.sh reads pins from the SOT, ci.bats holds fixtures).
-    for d in .github/workflows .github/actions .github/yaml docker; do
+    for d in .github/workflows .github/yaml docker; do
         [ -e "${CI_REPO_ROOT}/${d}" ] || continue
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
     ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
     # Every shipped workflow is an orchestrator; there is no legacy exemption.
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
-    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml \
-        "${CI_REPO_ROOT}"/.github/actions/*/action.yml || rc=1
+    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     _ci_lint_actionlint || rc=1
     _ci_lint_shellcheck || rc=1
     return "${rc}"
 }
 
 # =========================================================
-# INSTALL (apt/brew dependency installers; shared by composite actions)
+# INSTALL (apt/brew dependency installers)
 # =========================================================
 
 # What: apt-get update+install with a bounded 2x3-minute retry.
@@ -2238,27 +2249,187 @@ ci_cmd_checkout() {
 }
 
 # =========================================================
+# HARDEN RUNNER (StepSecurity agent, audit-only egress)
+# =========================================================
+
+# What: Agent home; fixed by the agent's own systemd unit.
+# Why: The unit's ExecStart/WorkingDirectory hardcode it.
+# From: Issue #479, PR #544
+_CI_HARDEN_DIR="/home/agent"
+
+# What: Print why the agent cannot run on this runner, if so.
+# Why: Non-TLS agent ships for GitHub-hosted Linux x64 only.
+# From: Issue #479, PR #544
+_ci_harden_unsupported() {
+    if [ "${RUNNER_OS:-}" != "Linux" ]; then
+        printf 'RUNNER_OS=%s' "${RUNNER_OS:-unset}"
+    elif [ "${RUNNER_ARCH:-}" != "X64" ]; then
+        printf 'RUNNER_ARCH=%s' "${RUNNER_ARCH:-unset}"
+    elif [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+        printf 'RUNNER_ENVIRONMENT=%s' "${RUNNER_ENVIRONMENT:-unset}"
+    fi
+}
+
+# What: Print the agent's systemd unit.
+# Why: Unit content is the agent's own install contract.
+# From: Issue #479, PR #544
+_ci_harden_service_unit() {
+    cat <<EOF
+[Unit]
+Description=Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${_CI_HARDEN_DIR}/agent
+WorkingDirectory=${_CI_HARDEN_DIR}
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=agentservice
+AmbientCapabilities=CAP_NET_BIND_SERVICE, CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# What: Register the job, install and start the agent.
+# Why: Monitor API is third-party; an outage must not fail CI.
+# From: Issue #479, PR #544, Issue #58
+_ci_harden_start() {
+    local why ver sha api tel web egress cid resp code otk="" summary="false"
+    local private dest
+    why="$(_ci_harden_unsupported)"
+    if [ -n "${why}" ]; then
+        ci_log "[CI-HARDEN]" "NotRun: agent unsupported on ${why}"
+        return 0
+    fi
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    : "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
+    : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE required}"
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    : "${USER:?USER required}"
+    : "${RUNNER_TEMP:?RUNNER_TEMP required}"
+    ver="$(_ci_sot_scalar external_versions.harden_runner_agent.version)" || return 2
+    sha="$(_ci_sot_scalar external_versions.harden_runner_agent.sha256)" || return 2
+    api="$(_ci_sot_scalar harden_runner.api_url)" || return 2
+    tel="$(_ci_sot_scalar harden_runner.telemetry_url)" || return 2
+    web="$(_ci_sot_scalar harden_runner.web_url)" || return 2
+    egress="$(_ci_sot_scalar harden_runner.egress_policy)" || return 2
+    cid="$(cat /proc/sys/kernel/random/uuid)"
+    resp="${RUNNER_TEMP:-/tmp}/harden-monitor.json"
+    code="$(curl -sS --max-time 3 -o "${resp}" -w '%{http_code}' -X POST \
+        -H 'content-type: application/json' \
+        --data "{\"correlation_id\":\"${cid}\",\"job\":\"${GITHUB_JOB:-}\"}" \
+        "${api}/github/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/monitor")" || code="000"
+    ci_log "[CI-HARDEN]" "monitor endpoint HTTP ${code}"
+    if [ "${code}" = "409" ]; then
+        ci_log "[CI-HARDEN]" "NotRun: StepSecurity reports the service unavailable"
+        return 0
+    fi
+    if [ "${code}" = "200" ]; then
+        otk="$(jq -r '.one_time_key // ""' "${resp}")"
+        summary="$(jq -r 'if .monitoring_started then "true" else "false" end' "${resp}")"
+    fi
+    private="$(jq -r '.repository.private // false' "${GITHUB_EVENT_PATH}")"
+    dest="$(_ci_fetch_release_tarball harden-runner-agent "${ver}" \
+        "https://github.com/step-security/agent/releases/download/${ver}/agent_${ver#v}_linux_amd64.tar.gz" \
+        "${sha}")" || return 2
+    sudo mkdir -p "${_CI_HARDEN_DIR}"
+    sudo chown -R "${USER}" "${_CI_HARDEN_DIR}"
+    cp "${dest}/agent" "${_CI_HARDEN_DIR}/agent"
+    chmod +x "${_CI_HARDEN_DIR}/agent"
+    jq -n --arg repo "${GITHUB_REPOSITORY}" --arg run_id "${GITHUB_RUN_ID}" \
+        --arg cid "${cid}" --arg wd "${GITHUB_WORKSPACE}" --arg api "${api}" \
+        --arg tel "${tel}" --arg egress "${egress}" --arg otk "${otk}" \
+        --argjson private "${private}" \
+        '{repo: $repo, run_id: $run_id, correlation_id: $cid,
+          working_directory: $wd, api_url: $api, telemetry_url: $tel,
+          allowed_endpoints: "", egress_policy: $egress,
+          disable_telemetry: false, disable_sudo: false,
+          disable_sudo_and_containers: false, disable_file_monitoring: false,
+          private: $private, is_github_hosted: true, is_debug: false,
+          one_time_key: $otk, deploy_on_self_hosted_vm: false}' \
+        > "${_CI_HARDEN_DIR}/agent.json"
+    printf 'correlation_id=%s\nadd_summary=%s\n' "${cid}" "${summary}" \
+        > "${RUNNER_TEMP}/ci-harden.state"
+    _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null
+    sudo systemctl daemon-reload
+    timeout 15 sudo service agent start
+    for _ in $(seq 1 30); do
+        if [ -f "${_CI_HARDEN_DIR}/agent.status" ]; then
+            ci_log "[CI-HARDEN]" "agent status: $(cat "${_CI_HARDEN_DIR}/agent.status")"
+            ci_log "[CI-HARDEN]" "insights: ${web}/github/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            return 0
+        fi
+        sleep 0.3
+    done
+    ci_log "[CI-ERROR-HARDEN-0002]" "agent wrote no agent.status within 9s"
+    cat "${_CI_HARDEN_DIR}/agent.log" 2>/dev/null || ci_log "[CI-ERROR-HARDEN-0002]" "no agent.log either"
+    return 1
+}
+
+# What: Signal job end, await the agent's flush, add summary.
+# Why: Agent writes done.json when it audits post_event.json.
+# From: Issue #479, PR #544
+_ci_harden_stop() {
+    local state="${RUNNER_TEMP:?RUNNER_TEMP required}/ci-harden.state"
+    local cid summary api out code
+    if [ ! -f "${state}" ]; then
+        ci_log "[CI-HARDEN]" "NotRun: no agent was started in this job"
+        return 0
+    fi
+    cid="$(sed -n 's/^correlation_id=//p' "${state}")"
+    summary="$(sed -n 's/^add_summary=//p' "${state}")"
+    printf '{"event":"post"}' > "${_CI_HARDEN_DIR}/post_event.json"
+    for _ in $(seq 1 10); do
+        if [ -f "${_CI_HARDEN_DIR}/done.json" ]; then
+            break
+        fi
+        sleep 1
+    done
+    if [ ! -f "${_CI_HARDEN_DIR}/done.json" ]; then
+        ci_log "[CI-ERROR-HARDEN-0003]" "agent did not confirm job end within 10s"
+        cat "${_CI_HARDEN_DIR}/agent.log" 2>/dev/null || ci_log "[CI-ERROR-HARDEN-0003]" "no agent.log either"
+        return 1
+    fi
+    if [ "${summary}" != "true" ]; then
+        return 0
+    fi
+    : "${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY required}"
+    api="$(_ci_sot_scalar harden_runner.api_url)" || return 2
+    out="${RUNNER_TEMP:-/tmp}/harden-summary.md"
+    code="$(curl -sS --max-time 3 -o "${out}" -w '%{http_code}' \
+        "${api}/github/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/actions/runs/${GITHUB_RUN_ID:?GITHUB_RUN_ID required}/correlation/${cid}/job-markdown-summary")" || code="000"
+    if [ "${code}" = "200" ]; then
+        cat "${out}" >> "${GITHUB_STEP_SUMMARY}"
+    else
+        ci_log "[CI-HARDEN]" "job summary endpoint HTTP ${code}; summary not added"
+    fi
+}
+
+# What: Dispatch harden start|stop.
+# Why: One owner for the agent's whole job lifecycle.
+# From: Issue #479, PR #544
+ci_cmd_harden() {
+    case "${1:-}" in
+        start) _ci_harden_start ;;
+        stop) _ci_harden_stop ;;
+        *) ci_log "[CI-ERROR-HARDEN-0001]" "unknown harden subcommand=\"${1:-}\" (start|stop)"; return 2 ;;
+    esac
+}
+
+# =========================================================
 # ACTION-PIN GUARD (build-manifest.yml is the sole SHA owner)
 # =========================================================
 
-# What: Files allowed their own SHA (no CLI/OIDC option).
-# Why: harden-runner needs a real in-GHA eBPF agent.
-# From: Issue #479
-_CI_ACTION_PIN_ALLOWFILES=".github/actions/harden-runner/action.yml"
-
-# What: Fail if any file but the SOT/allow-files has a pin.
+# What: Fail if any given file carries an action SHA pin.
 # Why: SOT is the only owner; ci.sh runs tools itself.
-# From: Issue #479
+# From: Issue #479, PR #544
 ci_guard_action_pin_sot() {
-    local rc=0 f rel allowed a
+    local rc=0 f
     for f in "$@"; do
         [ -f "${f}" ] || continue
-        rel="${f#"${CI_REPO_ROOT}"/}"
-        allowed=false
-        for a in ${_CI_ACTION_PIN_ALLOWFILES}; do
-            [ "${rel}" = "${a}" ] && allowed=true && break
-        done
-        "${allowed}" && continue
         if grep -qE '@[0-9a-f]{40}' "${f}" 2>/dev/null; then
             rc=1
             ci_log "[CI-ERROR-GUARD-APIN-0001]" \
@@ -2276,17 +2447,11 @@ ci_guard_action_pin_sot() {
 # Why: Own invocation, no JS action; version owned by SOT.
 # From: Issue #479
 _ci_codeql_bin() {
-    local ver dest bin
+    local ver dest
     ver="$(_ci_sot_scalar external_versions.codeql_cli.version)" || return 2
-    dest="${RUNNER_TEMP:-/tmp}/codeql-${ver}"
-    bin="${dest}/codeql/codeql"
-    if [ ! -x "${bin}" ]; then
-        mkdir -p "${dest}"
-        curl -fsSL --retry 3 \
-            "https://github.com/github/codeql-action/releases/download/codeql-bundle-${ver}/codeql-bundle-linux64.tar.gz" \
-            | tar -xz -C "${dest}" || return 2
-    fi
-    printf '%s' "${bin}"
+    dest="$(_ci_fetch_release_tarball codeql "${ver}" \
+        "https://github.com/github/codeql-action/releases/download/codeql-bundle-${ver}/codeql-bundle-linux64.tar.gz")" || return 2
+    printf '%s/codeql/codeql' "${dest}"
 }
 
 # What: Map language+suite to a CodeQL query-pack reference.
@@ -2344,17 +2509,11 @@ ci_cmd_sarif_upload() {
 # Why: Own invocation, no marketplace action; version owned by SOT.
 # From: Issue #479
 _ci_scorecard_bin() {
-    local ver dest bin
+    local ver dest
     ver="$(_ci_sot_scalar external_versions.scorecard.version)" || return 2
-    dest="${RUNNER_TEMP:-/tmp}/scorecard-${ver}"
-    bin="${dest}/scorecard"
-    if [ ! -x "${bin}" ]; then
-        mkdir -p "${dest}"
-        curl -fsSL --retry 3 \
-            "https://github.com/ossf/scorecard/releases/download/${ver}/scorecard_${ver#v}_linux_amd64.tar.gz" \
-            | tar -xz -C "${dest}" || return 2
-    fi
-    printf '%s' "${bin}"
+    dest="$(_ci_fetch_release_tarball scorecard "${ver}" \
+        "https://github.com/ossf/scorecard/releases/download/${ver}/scorecard_${ver#v}_linux_amd64.tar.gz")" || return 2
+    printf '%s/scorecard' "${dest}"
 }
 
 # What: Convert Scorecard's own JSON into real SARIF.
@@ -2767,6 +2926,7 @@ ci_main() {
                 release) ci_cmd_release "$@" ;;
                 lint) ci_cmd_lint "$@" ;;
                 install) ci_cmd_install "$@" ;;
+                harden) ci_cmd_harden "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

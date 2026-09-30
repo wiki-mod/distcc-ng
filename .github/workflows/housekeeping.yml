@@ -99,7 +99,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: $/.github/actions/harden-runner
       # What: pull_request checks out its own ref.
       # Why: else hides the PR's own Dockerfile diff.
       # From: Issue #479
@@ -107,12 +106,15 @@ jobs:
         run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - if: github.event_name != 'pull_request'
         run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh harden start
       - run: bash .github/scripts/ci.sh container e2e-image
       - if: github.event_name != 'pull_request'
         env:
           OWNER: ${{ github.repository_owner }}
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish e2e-image
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
 
   report_e2e_image:
     name: Report e2e-image status
