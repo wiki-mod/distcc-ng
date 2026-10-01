@@ -54,7 +54,7 @@ ac_cv_func_sendfile=no ac_cv_header_sys_sendfile_h=no ./configure \
   --bindir=%{_bindir} \
   --sysconfdir=%{_sysconfdir} \
   --datadir=%{_datadir} \
-  --with-docdir=%{_docdir} \
+  --docdir=%{_docdir} \
   --mandir=%{_mandir} \
   --enable-rfc2553
 # What: Have setup.py record its installed files in a list.
@@ -73,13 +73,13 @@ mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d
 install -m 644 packaging/RedHat/xinetd.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d/distcc
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/init.d
 install -m 755 packaging/RedHat/init.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/init.d/distcc
-# What: Masquerade symlinks cc, c++, gcc, g++ to distcc.
-# Why: make install does not create them for this layout.
+# What: Relative masquerade symlinks cc, c++, gcc, g++.
+# Why: make install skips them; rpm warns on absolute links.
 mkdir -p $RPM_BUILD_ROOT/%{_libdir}/distcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
 
 %clean
 rm -rf $RPM_BUILD_ROOT

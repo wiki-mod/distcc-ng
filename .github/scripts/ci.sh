@@ -1342,7 +1342,9 @@ ci_cmd_package() {
             || { ci_log "[CI-ERROR-PACKAGE-0001]" "missing tool: ${tool}"; return 1; }
     done
     _ci_configure_tree "${log}.configure" PYTHON="${py}" --enable-Werror || return 1
-    _ci_make_gated "${log}" -j"${JOBS:-2}" deb
+    # What: Run make deb without -j, so no jobserver exists.
+    # Why: rpmbuild's inner make cannot reach it and warns.
+    _ci_make_gated "${log}" deb
 }
 
 # What: Generate an SBOM for the just-built source tarball.
