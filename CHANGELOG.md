@@ -90,8 +90,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   named the setup macro, so `%prep` ran a second setup. Prose comments in
   the spec now carry no percent sign, and the two commented-out
   directives inherited from upstream write theirs as `%%`, which also
-  removes rpmbuild's two "Macro expanded in comment" warnings
-  (`support-upstream/issue-479-rpm-spec-comment-macros.md`).
+  removes rpmbuild's two "Macro expanded in comment" warnings. The spec
+  also passes autoconf's `--docdir` instead of the unknown
+  `--with-docdir` (same documentation path), and the `cc`/`c++`/`gcc`/`g++`
+  masquerade links in the RPM are relative (`../../bin/distcc`)
+  instead of absolute (`support-upstream/issue-479-rpm-spec-build-warnings.md`).
 
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
   (this fork's own maintained fork of `rpm-software-management/popt`,
