@@ -84,6 +84,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`packaging/RedHat/rpm.spec`** (issue #479, PR #544): `make rpm` and
+  `make deb` failed with "can't cd to distcc-ng-3.6.6" since 9990404c,
+  because rpm expands macros inside spec comments and a prose comment
+  named the setup macro, so `%prep` ran a second setup. Prose comments in
+  the spec now carry no percent sign, and the two commented-out
+  directives inherited from upstream write theirs as `%%`, which also
+  removes rpmbuild's two "Macro expanded in comment" warnings
+  (`support-upstream/issue-479-rpm-spec-comment-macros.md`).
+
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
   (this fork's own maintained fork of `rpm-software-management/popt`,
   pinned to an exact commit) instead of that project's four-year-old
@@ -156,6 +165,20 @@ See `doc/release-versioning.md` for the full versioning and release process.
   updated to `distcc-pump` to match the rename below. Refs #485.
 
 ### Changed
+
+- **`.github/scripts/ci.sh`, `.github/scripts/ci.bats`, `.github/yaml/build-manifest.yml`,
+  `.github/workflows/{validate,security,release,nightly,housekeeping}.yml`**
+  (issue #479, PR #544): CI Rewrite 1.2. One Bash engine owns every CI
+  decision, one SOT owns every pin, matrix and schedule, and five thin
+  workflows only call `ci.sh <phase>`. It replaces the former workflows
+  (`c-build.yml`, `nightly-publish.yml`, `package-release.yml`,
+  `changelog-check.yml` and others), every `.github/actions/` composite
+  action, `docker/verify/ci.sh`, `test/e2e*/run-*.sh` and
+  `.clusterfuzzlite/build.sh`'s build logic. Builds are selected by the
+  diff's impact classes, so a docs-only change compiles nothing; the
+  required checks are `Validate (required)`, `PR metadata
+  (title/tracking/changelog)`, `OSV scan` and the unchanged `Analyze (...)`
+  names. See `doc/ci-workflows.md`.
 
 - **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
   now shipped as `distcc-pump` in the `.deb` package and the
