@@ -2353,15 +2353,20 @@ _ci_tool_url() {
     printf '%s\n' "${url//\{bare\}/${ver#v}}"
 }
 
-# What: Download one URL to a file, retrying transient errors.
-# Why: Mirrors drop connections; failures name the URL.
+# What: Download one URL to a file in up to three attempts.
+# Why: curl --retry never retries a dropped connection.
 # From: Issue #479, PR #544
 _ci_download() {
-    local url="$1" file="$2"
-    if ! curl -fsSL --retry 3 --retry-all-errors -o "${file}" "${url}"; then
-        ci_log "[CI-ERROR-FETCH-0003]" "download failed: ${url}"
-        return 1
-    fi
+    local url="$1" file="$2" try
+    for try in 1 2 3; do
+        if curl -fsSL --retry 3 -o "${file}" "${url}"; then
+            return 0
+        fi
+        ci_log "[CI-FETCH]" "attempt ${try}/3 failed: ${url}"
+        [ "${try}" -eq 3 ] || sleep "${try}"
+    done
+    ci_log "[CI-ERROR-FETCH-0003]" "download failed: ${url}"
+    return 1
 }
 
 # What: Fetch, sha256-check and cache one SOT tool; print dir.

@@ -1281,9 +1281,25 @@ _fake_curl() {
     # Why: A failed fetch must never fail without an error line.
     # From: Issue #479, PR #544
     curl() { return 22; }
+    sleep() { :; }
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
+    [[ "${output}" == *"attempt 3/3 failed"* ]]
     [[ "${output}" == *"CI-ERROR-FETCH-0003"*"https://h/x.tar.gz"* ]]
+}
+
+@test "a dropped connection is retried by a later attempt" {
+    # What: A first failing curl, then a good one, succeeds.
+    # Why: curl --retry does not retry a dropped connection.
+    # From: Issue #479, PR #544
+    local n="${BATS_TEST_TMPDIR}/n"
+    echo 0 > "${n}"
+    curl() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"; [ "${c}" -ge 1 ]; }
+    sleep() { :; }
+    run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${n}")" -eq 2 ]
+    [[ "${output}" == *"attempt 1/3 failed"* ]]
 }
 
 @test "tool fetch expands the url and extracts on a matching sha256" {
