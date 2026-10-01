@@ -17,8 +17,11 @@ on:
     - cron: '0 6 1,15 * *'
   branch_protection_rule:
 
+# What: Cancel a run when a newer same-event run starts.
+# Why: schedule/ruleset runs share master with pushes.
+# From: Issue #479, PR #544
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

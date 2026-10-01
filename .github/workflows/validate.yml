@@ -8,7 +8,7 @@ name: Validate
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, milestoned, demilestoned]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [current_dev, master]
   issues:
@@ -16,11 +16,11 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# What: Cancel a run once a newer one for the ref starts.
-# Why: A superseded run only burns runner minutes.
+# What: Cancel a run when a newer same-event run starts.
+# Why: issues/PR-target runs share a base ref with pushes.
 # From: Issue #479, PR #544
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -67,11 +67,9 @@ jobs:
   plan:
     name: Plan (content-based impact matrix)
     # What: The one filter for content runs; others need plan.
-    # Why: Issue/label/PR-target events run only repo automation.
+    # Why: Issue and PR-target events run only repo automation.
     # From: Issue #479, PR #544
-    if: >-
-      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
-      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.plan.outputs.build }}
@@ -209,7 +207,7 @@ jobs:
 
   required_gate:
     # What: One stable name over a skippable impact matrix.
-    # Why: Metadata-only events must not report an unrun build.
+    # Why: A skipped phase passes; a failed or cancelled fails.
     # From: Issue #479, PR #544
     name: Validate (required)
     needs: [lint, engine-selftest, plan, build_test, e2e, container, package, verify_image, publish_buildtools]
