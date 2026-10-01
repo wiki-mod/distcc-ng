@@ -26,20 +26,30 @@ CI_MANIFEST="${CI_MANIFEST:-${CI_SCRIPT_DIR}/../yaml/build-manifest.yml}"
 # From: Issue #479
 CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 
-# What: Local tag for the locally-built verify/buildtools image.
-# Why: One owner; a build-time tag, not a published version.
-# From: Issue #479
-CI_VERIFY_IMAGE_TAG="distcc-ng-verify:ci"
-
-# What: The published buildtools image lint and e2e build on.
-# Why: One owner; the e2e images take it as their toolchain.
+# What: Where every container sees the checkout, read-only.
+# Why: Dockerfile RUN mounts and docker run share one path.
 # From: Issue #479, PR #544
-CI_BUILDTOOLS_IMAGE="ghcr.io/wiki-mod/distcc-ng-buildtools:latest"
+CI_CONTAINER_ROOT="/ci"
+
+# What: This engine as seen from inside a container.
+# Why: Containers run ci.sh workloads, never inline scripts.
+# From: Issue #479, PR #544
+CI_CONTAINER_SH="${CI_CONTAINER_ROOT}/.github/scripts/ci.sh"
+
+# What: Label that binds a resource to one ci.sh stack.
+# Why: Teardown finds every leaked resource by this label.
+# From: Issue #479, PR #544
+CI_STACK_LABEL="ci-stack"
+
+# What: ccache --show-stats line proving at least one hit.
+# Why: The selftest and the Redis check share one proof.
+# From: Issue #285, Issue #479, PR #544
+CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity resolve build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image"
+CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -174,7 +184,7 @@ _ci_sot_children() {
     return "${rc}"
 }
 
-# What: Print the items of an inline list `key: [a, b]` at a path.
+# What: Print each item of an inline `key: [a, b]` list.
 # Why: One reader lets phases read path/phase lists as lines.
 # From: Issue #479
 _ci_sot_list() {
@@ -193,12 +203,12 @@ _ci_sot_list() {
 # =========================================================
 
 # What: Match one SOT path glob to a path.
-# Why: The SOT owns patterns; this owns the matching semantics.
+# Why: The SOT owns the patterns; this owns matching.
 # From: Issue #479
 _ci_glob_match() {
     local pat="$1" path="$2" re
     # What: Escape regex metachars, then turn '*' runs into '.*'.
-    # Why: =~ needs a real regex; case/[[ == both warn on this use.
+    # Why: =~ needs a real regex; case and [[ == warn here.
     # From: Issue #479
     re="${pat//\*/$'\x01'}"
     re="$(printf '%s' "${re}" | sed 's/[.^$+?()[\]{}|]/\\&/g')"
@@ -206,7 +216,7 @@ _ci_glob_match() {
     [[ "${path}" =~ ^${re}$ ]]
 }
 
-# What: Print the impact classes matched by the paths on stdin.
+# What: Print impact classes matched by paths on stdin.
 # Why: DEFAULT=NOOP; only a matched class selects any phase.
 # From: Issue #479
 _ci_classify_paths() {
@@ -228,7 +238,7 @@ _ci_classify_paths() {
 }
 
 # What: Print the ci.sh phases selected by the paths on stdin.
-# Why: NOOP when nothing matches; docs select doc-lint, not build.
+# Why: NOOP if nothing matches; docs select doc-lint only.
 # From: Issue #479
 _ci_phases_for_paths() {
     local classes cls
@@ -244,7 +254,7 @@ _ci_phases_for_paths() {
 # =========================================================
 
 # What: bats job count = max(16, nproc*2).
-# Why: Parallel is mandatory; a floor keeps small runners busy.
+# Why: Parallel is mandatory; a floor keeps runners busy.
 # From: Issue #479
 _ci_jobs() {
     local n j
@@ -255,30 +265,184 @@ _ci_jobs() {
 }
 
 # =========================================================
-# PHASES
+# EXECUTION (one owner each: wait, name, build, run, stack)
 # =========================================================
 
-# What: Print the resolved external pins from the SOT.
-# Why: Proves end-to-end SOT reads before wiring builds.
-# From: Issue #479
-ci_cmd_resolve() {
-    local pair val
-    for pair in \
-        debian_verify=base_images.debian_verify \
-        debian_release=base_images.debian_release \
-        golang_actionlint=base_images.golang_actionlint \
-        samba=external_versions.samba.version \
-        actionlint=external_versions.actionlint.version \
-        ccache_heartbeat=external_versions.ccache_heartbeat.version \
-        codeql_cli=external_versions.codeql_cli.version \
-        scorecard=external_versions.scorecard.version \
-        osv_scanner=external_versions.osv_scanner.version \
-        clusterfuzzlite=external_versions.clusterfuzzlite.version \
-        redis=external_services.redis; do
-        val="$(_ci_sot_scalar "${pair#*=}")" || return 2
-        printf '%s=%s\n' "${pair%%=*}" "${val}"
+# What: Retry a probe until it succeeds; fail after N tries.
+# Why: One bounded poll owner; callers own only the probe.
+# From: Issue #479, PR #544
+_ci_wait_until() {
+    local tries="$1" pause="$2" i
+    shift 2
+    for ((i = 1; i <= tries; i++)); do
+        if "$@"; then
+            return 0
+        fi
+        if [ "${i}" -lt "${tries}" ]; then
+            sleep "${pause}"
+        fi
+    done
+    return 1
+}
+
+# What: Print a run-unique resource name for one purpose.
+# Why: Parallel jobs on one host must never share a name.
+# From: Issue #479, PR #544
+_ci_run_name() {
+    printf 'ci-%s-%s-%s\n' "$1" "${GITHUB_RUN_ID:-local}" "$$"
+}
+
+# What: True once a container's log has a matching line.
+# Why: A service's own ready line beats a probe client.
+# From: Issue #479, PR #544
+_ci_container_logged() {
+    local ctr="$1" re="$2" logs
+    logs="$(docker logs "${ctr}" 2>&1)" || return 1
+    grep -qE -- "${re}" <<< "${logs}"
+}
+
+# What: docker build one SOT image spec; ARGs from the SOT.
+# Why: Sole pin path; Dockerfiles carry no default or LABEL.
+# From: Issue #359, Issue #479, PR #544
+_ci_image_build() {
+    local spec="$1" version="$2" file target raw arg val tag desc ref
+    shift 2
+    local specs=() opts=()
+    file="$(_ci_sot_scalar "${spec}.dockerfile")" || return 2
+    target="$(_ci_sot_scalar "${spec}.target")" || return 2
+    raw="$(_ci_sot_list "${spec}.args")" || return 2
+    mapfile -t specs <<< "${raw}"
+    for arg in "${specs[@]}"; do
+        if [ "${arg}" = "${arg#*=}" ]; then
+            ci_log "[CI-ERROR-IMAGE-0002]" "${spec}.args entry \"${arg}\" is not ARG=sot.path"
+            return 2
+        fi
+        val="$(_ci_sot_scalar "${arg#*=}")" || return 2
+        opts+=(--build-arg "${arg%%=*}=${val}")
+    done
+    tag="$(_ci_sot_optional "${spec}.tag")" || return 2
+    if [ -n "${tag}" ]; then
+        opts+=(--tag "${tag}")
+    fi
+    desc="$(_ci_sot_optional "${spec}.description")" || return 2
+    if [ -n "${desc}" ]; then
+        : "${version:?published image ${spec} needs a version}"
+        : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
+        : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+        ref="${BUILT_SHA:-$(git -C "${CI_REPO_ROOT}" rev-parse HEAD)}" || return 1
+        val="$(_ci_sot_scalar release.licenses)" || return 2
+        opts+=(--label "org.opencontainers.image.title=${spec##*.}"
+            --label "org.opencontainers.image.description=${desc}"
+            --label "org.opencontainers.image.version=${version}"
+            --label "org.opencontainers.image.revision=${ref}"
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            --label "org.opencontainers.image.licenses=${val}")
+    fi
+    docker build "$@" --file "${CI_REPO_ROOT}/${file}" --target "${target}" \
+        "${opts[@]}" "${CI_REPO_ROOT}"
+}
+
+# What: Pull a SOT-pinned image and give it a local tag.
+# Why: For builders that pass no build-args, e.g. CFL.
+# From: Issue #267, Issue #479, PR #544
+_ci_image_alias() {
+    local spec="$1" from image tag
+    from="$(_ci_sot_scalar "${spec}.from")" || return 2
+    image="$(_ci_sot_scalar "${from}")" || return 2
+    tag="$(_ci_sot_scalar "${spec}.tag")" || return 2
+    docker pull "${image}" || return 1
+    docker tag "${image}" "${tag}"
+}
+
+# What: docker run --init; checkout read-only at /ci.
+# Why: In a stack, teardown removes it after reading its log.
+# From: Issue #479, PR #544
+_ci_container_run() {
+    local image="$1"
+    shift
+    local opts=(--init -v "${CI_REPO_ROOT}:${CI_CONTAINER_ROOT}:ro")
+    if [ -n "${CI_STACK:-}" ]; then
+        opts+=(--network "${CI_STACK}" --label "${CI_STACK_LABEL}=${CI_STACK}")
+    else
+        opts+=(--rm)
+    fi
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+        opts+=("$1")
+        shift
+    done
+    if [ "$#" -eq 0 ]; then
+        ci_log "[CI-ERROR-CONTAINER-0003]" "container run of ${image}: no -- before the command"
+        return 2
+    fi
+    shift
+    docker run "${opts[@]}" "${image}" "$@"
+}
+
+# What: Log each stack container's tail, remove it all.
+# Why: A leaked stack breaks the next run; so it must fail.
+# From: Issue #479, PR #544
+_ci_stack_teardown() {
+    local net="$1" rc=0 c
+    local ctrs=() vols=()
+    mapfile -t ctrs < <(docker ps -aq --filter "label=${CI_STACK_LABEL}=${net}") || rc=1
+    for c in "${ctrs[@]}"; do
+        echo "== ${net}: last 100 log lines of ${c} =="
+        docker logs --tail 100 "${c}" || rc=1
+    done
+    if [ "${#ctrs[@]}" -gt 0 ]; then
+        docker rm -f "${ctrs[@]}" >/dev/null || rc=1
+    fi
+    mapfile -t vols < <(docker volume ls -q --filter "label=${CI_STACK_LABEL}=${net}") || rc=1
+    if [ "${#vols[@]}" -gt 0 ]; then
+        docker volume rm "${vols[@]}" >/dev/null || rc=1
+    fi
+    if docker network inspect "${net}" >/dev/null 2>&1; then
+        docker network rm "${net}" >/dev/null || rc=1
+    fi
+    if [ "${rc}" -ne 0 ]; then
+        ci_log "[CI-ERROR-STACK-0001]" "teardown of ${net} failed; resources may leak"
+    fi
+    return "${rc}"
+}
+
+# What: Run a body on a fresh labelled net, then tear down.
+# Why: Every container the body starts is torn down with it.
+# From: Issue #479, PR #544
+_ci_stack_run() {
+    local net="$1" rc=0
+    shift
+    docker network create --label "${CI_STACK_LABEL}=${net}" "${net}" >/dev/null || return 1
+    ( CI_STACK="${net}"; "$@" "${net}" ) || rc=$?
+    if ! _ci_stack_teardown "${net}" && [ "${rc}" -eq 0 ]; then
+        rc=1
+    fi
+    return "${rc}"
+}
+
+# What: docker login ghcr.io as GITHUB_ACTOR via stdin token.
+# Why: Token varies per job; gc needs the delete:packages PAT.
+# From: Issue #479, PR #544
+_ci_registry_login() {
+    : "${REGISTRY_TOKEN:?REGISTRY_TOKEN required}"
+    : "${GITHUB_ACTOR:?GITHUB_ACTOR required}"
+    printf '%s\n' "${REGISTRY_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+}
+
+# What: Log in once, then push every given tag.
+# Why: One push owner; no push without a fresh login.
+# From: Issue #479, PR #544
+_ci_registry_push() {
+    local tag
+    _ci_registry_login || return 1
+    for tag in "$@"; do
+        docker push "${tag}" || return 1
     done
 }
+
+# =========================================================
+# PHASES
+# =========================================================
 
 # What: Print the phases selected by the base..head diff.
 # Why: A docs-only diff selects doc-lint, never a compile.
@@ -290,7 +454,7 @@ ci_cmd_impact() {
 }
 
 # What: Write hit=true/false for one impact class.
-# Why: One command; no pipe/&& chain lives in the calling workflow.
+# Why: One command; no pipe or && chain in the workflow.
 # From: Issue #479
 ci_cmd_impact_hit() {
     local class="${1:?class required}" base="${2:?base ref required}" head="${3:?head ref required}"
@@ -303,8 +467,8 @@ ci_cmd_impact_hit() {
     fi
 }
 
-# What: Emit the build matrix JSON (variant x os) from the SOT.
-# Why: One owner feeds strategy.matrix; opt-in variants excluded.
+# What: Emit the variant x os build matrix JSON from SOT.
+# Why: One owner feeds strategy.matrix; opt-in excluded.
 # From: Issue #479
 ci_cmd_matrix() {
     local v os first=1 out='{"include":[' apt brew variants oses
@@ -326,15 +490,17 @@ ci_cmd_matrix() {
     printf '%s]}\n' "${out}"
 }
 
-# What: Write phases/build/matrix outputs for the base..head diff.
-# Why: One command feeds the orchestrator; no logic in the YAML.
+# What: Write phases/build/matrix for the base..head diff.
+# Why: One command feeds the orchestrator; no YAML logic.
 # From: Issue #479
 ci_cmd_plan() {
     local base="${1:-}" head="${2:-HEAD}"
     local phases build=false matrix
     cd "${CI_REPO_ROOT}"
     if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
-        # Unknown base (e.g. first push / branch creation): run everything.
+        # What: An unknown base (first push) selects every phase.
+        # Why: No diff exists to classify; NOOP would skip all.
+        # From: Issue #479
         phases="build test e2e coverage analyze scan lint selftest"
     else
         phases="$(git diff --name-only "${base}" "${head}" \
@@ -401,72 +567,14 @@ _ci_e2e_check_server_warnings() {
     fi
 }
 
-# What: Log each harness container's tail, remove it all.
-# Why: A leaked stack breaks the next run; so it must fail.
-# From: Issue #479, PR #544
-_ci_e2e_teardown() {
-    local net="$1" rc=0 c
-    local ctrs=() vols=()
-    mapfile -t ctrs < <(docker ps -aq --filter "label=ci-e2e=${net}") || rc=1
-    for c in "${ctrs[@]}"; do
-        echo "== ${net}: last 100 log lines of ${c} =="
-        docker logs --tail 100 "${c}" || rc=1
-    done
-    if [ "${#ctrs[@]}" -gt 0 ]; then
-        docker rm -f "${ctrs[@]}" >/dev/null || rc=1
-    fi
-    mapfile -t vols < <(docker volume ls -q --filter "label=ci-e2e=${net}") || rc=1
-    if [ "${#vols[@]}" -gt 0 ]; then
-        docker volume rm "${vols[@]}" >/dev/null || rc=1
-    fi
-    if docker network inspect "${net}" >/dev/null 2>&1; then
-        docker network rm "${net}" >/dev/null || rc=1
-    fi
-    if [ "${rc}" -ne 0 ]; then
-        ci_log "[CI-ERROR-E2E-0003]" "teardown of ${net} failed; resources may leak"
-    fi
-    return "${rc}"
-}
-
-# What: Run a body on a fresh labelled net, then tear down.
-# Why: A failed teardown fails an otherwise green run.
-# From: Issue #479, PR #544
-_ci_e2e_in_stack() {
-    local net="$1" rc=0
-    shift
-    ( "$@" "${net}" ) || rc=$?
-    if ! _ci_e2e_teardown "${net}" && [ "${rc}" -eq 0 ]; then
-        rc=1
-    fi
-    return "${rc}"
-}
-
-# What: Wait for distccd's own "listening on" log line.
-# Why: A TCP probe is a denied client; listen() follows it.
-# From: Issue #479, PR #544
-_ci_e2e_wait_port() {
-    local ctr="$1" logs
-    for _ in $(seq 1 30); do
-        logs="$(docker logs "${ctr}" 2>&1)" || return 1
-        if grep -q 'listening on' <<< "${logs}"; then
-            return 0
-        fi
-        sleep 1
-    done
-    ci_log "[CI-ERROR-E2E-0014]" "distccd in ${ctr} never logged listening on"
-    printf '%s\n' "${logs}" >&2
-    return 1
-}
-
-# What: Build ng and native e2e images on the toolchain.
+# What: Build every SOT e2e image (ng, native).
 # Why: ng is the checkout under test; native is Debian's.
 # From: Issue #264, Issue #479, PR #544
 _ci_e2e_images() {
-    local flavor
-    for flavor in ng native; do
-        docker build --file "${CI_REPO_ROOT}/test/e2e/Dockerfile" --target "${flavor}" \
-            --build-arg "TOOLCHAIN_IMAGE=${CI_BUILDTOOLS_IMAGE}" \
-            --tag "distcc-ng-e2e-${flavor}:local" "${CI_REPO_ROOT}" || return 1
+    local flavors flavor
+    flavors="$(_ci_sot_children e2e.images)" || return 2
+    for flavor in ${flavors}; do
+        _ci_image_build "e2e.images.${flavor}" "" || return 1
     done
 }
 
@@ -476,20 +584,28 @@ _ci_e2e_images() {
 _ci_e2e_leg() {
     local mode="$1" leg="$2" pass="$3" workload="$4" extra="$5" floor="$6" net="$7"
     local subnet="$8" cli="${leg%%:*}" srv_flavor="${leg##*:}" id srv out client_rc=0 need n warn
+    local srv_image cli_image
     id="${cli}-${srv_flavor}-${pass}"
     srv="${net}-server"
     out="${RUNNER_TEMP:-/tmp}/${net}-${id}"
+    srv_image="$(_ci_sot_scalar "e2e.images.${srv_flavor}.tag")" || return 2
+    cli_image="$(_ci_sot_scalar "e2e.images.${cli}.tag")" || return 2
     ci_log "[CI-E2E]" "${mode}: leg ${cli} -> ${srv_flavor}, pass ${pass}"
-    docker run -d --init --name "${srv}" --label "ci-e2e=${net}" --network "${net}" \
-        --network-alias distccd-server "distcc-ng-e2e-${srv_flavor}:local" \
+    _ci_container_run "${srv_image}" -d --name "${srv}" --network-alias distccd-server -- \
         distccd --no-detach --daemon --verbose --log-stderr --port 3632 \
         --allow "${subnet}" --jobs "$(nproc)" >/dev/null || return 1
-    _ci_e2e_wait_port "${srv}" || return 1
-    docker run --rm --init --label "ci-e2e=${net}" --network "${net}" \
-        -v "${CI_REPO_ROOT}:/ci:ro" -v "${net}-cache:/work/cache" -e CI_WORKLOAD_CACHE=/work/cache \
-        -e DISTCC_HOSTS=distccd-server:3632 -e DISTCC_FALLBACK=0 -e DISTCC_VERBOSE=1 \
-        "distcc-ng-e2e-${cli}:local" bash /ci/.github/scripts/ci.sh workload \
-        "${workload}" "${pass}" "/work/workload/${id}" "${extra}" > "${out}.client" 2>&1 || client_rc=$?
+    # What: Wait for distccd's own "listening on" log line.
+    # Why: A TCP probe is a denied client; listen() follows it.
+    # From: Issue #479, PR #544
+    if ! _ci_wait_until 30 1 _ci_container_logged "${srv}" 'listening on'; then
+        ci_log "[CI-ERROR-E2E-0014]" "distccd in ${srv} never logged listening on"
+        docker logs "${srv}" >&2 || return 1
+        return 1
+    fi
+    _ci_container_run "${cli_image}" -v "${net}-cache:/work/cache" -e CI_WORKLOAD_CACHE=/work/cache \
+        -e DISTCC_HOSTS=distccd-server:3632 -e DISTCC_FALLBACK=0 -e DISTCC_VERBOSE=1 -- \
+        bash "${CI_CONTAINER_SH}" workload "${workload}" "${pass}" \
+        "/work/workload/${id}" "${extra}" > "${out}.client" 2>&1 || client_rc=$?
     docker logs "${srv}" > "${out}.server" 2>&1 || return 1
     docker rm -f "${srv}" >/dev/null || return 1
     if [ "${client_rc}" -ne 0 ]; then
@@ -530,9 +646,8 @@ _ci_e2e_mode_run() {
     local legs=() passes=()
     mapfile -t legs < <(_ci_sot_list "e2e.modes.${mode}.legs") || return 2
     mapfile -t passes < <(_ci_sot_list "e2e.modes.${mode}.passes") || return 2
-    subnet="$(docker network create --label "ci-e2e=${net}" "${net}" >/dev/null \
-        && docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "${net}")" || return 1
-    docker volume create --label "ci-e2e=${net}" "${net}-cache" >/dev/null || return 1
+    subnet="$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "${net}")" || return 1
+    docker volume create --label "${CI_STACK_LABEL}=${net}" "${net}-cache" >/dev/null || return 1
     for leg in "${legs[@]}"; do
         for pass in "${passes[@]}"; do
             _ci_e2e_leg "${mode}" "${leg}" "${pass}" "${workload}" "${extra}" \
@@ -553,9 +668,9 @@ _ci_e2e_mode() {
     attempts="$(_ci_sot_scalar "e2e.modes.${mode}.max_attempts")" || return 2
     _ci_e2e_images || return 1
     while :; do
-        net="ci-e2e-${mode}-${GITHUB_RUN_ID:-local}-$$-${attempt}"
+        net="$(_ci_run_name "e2e-${mode}-${attempt}")"
         ci_log "[CI-E2E]" "${mode}: attempt ${attempt}/${attempts}"
-        if _ci_e2e_in_stack "${net}" _ci_e2e_mode_run "${mode}" "${workload}" "${extra}" "${floor}"; then
+        if _ci_stack_run "${net}" _ci_e2e_mode_run "${mode}" "${workload}" "${extra}" "${floor}"; then
             ci_log "[CI-E2E]" "${mode}: PASS"
             return 0
         fi
@@ -572,12 +687,13 @@ _ci_e2e_mode() {
 # From: Issue #479, PR #544
 ci_cmd_e2e() {
     cd "${CI_REPO_ROOT}"
-    local mode="${1:-distributed}" st=0
+    local mode="${1:-distributed}" st=0 image
     case "${mode}" in
         control)
             _ci_e2e_images || return 1
-            docker run --rm -v "${CI_REPO_ROOT}:/ci:ro" distcc-ng-e2e-ng:local \
-                bash /ci/.github/scripts/ci.sh workload ccache local /work/workload/control "" || st=$?
+            image="$(_ci_sot_scalar e2e.images.ng.tag)" || return 2
+            _ci_container_run "${image}" -- \
+                bash "${CI_CONTAINER_SH}" workload ccache local /work/workload/control "" || st=$?
             _ci_control_build_step_summary "${st}"
             return "${st}" ;;
         *)
@@ -593,31 +709,272 @@ ci_cmd_e2e() {
 # IMAGES AND WORKLOADS (run inside the test containers)
 # =========================================================
 
-# What: Build step of an e2e image, run by its Dockerfile.
-# Why: Packages come from the SOT; the checkout is mounted.
+# What: Build into /out (binaries) and /out-pump (all).
+# Why: Vendored popt has the CVE fixes; install wires pump.
+# From: Issue #181, Issue #485, PR #504, Issue #479, PR #544
+_ci_image_release_build() {
+    local pkgs
+    pkgs="$(_ci_sot_scalar release.image_build_apt)" || return 2
+    _ci_apt_install "${pkgs}" image || return 1
+    cd "${CI_REPO_ROOT}" || return 1
+    ./autogen.sh || return 1
+    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt || return 1
+    make -j"$(nproc)" || return 1
+    install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text || return 1
+    make install DESTDIR=/out-pump || return 1
+    mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump || return 1
+}
+
+# What: Runtime packages and the unprivileged distcc user.
+# Why: distccd must not run as root in the published images.
+# From: Issue #398, PR #487, Issue #479, PR #544
+_ci_image_release_runtime() {
+    local pkgs
+    pkgs="$(_ci_sot_scalar release.image_runtime_apt)" || return 2
+    _ci_apt_install "${pkgs}" image || return 1
+    useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin distcc
+}
+
+# What: CFL toolchain: SOT packages, autoconf from source.
+# Why: base-builder ships autoconf 2.69; we need 2.71.
+# From: Issue #267, Issue #479, PR #544
+_ci_image_cfl_toolchain() {
+    local pkgs ver sha dest
+    pkgs="$(_ci_sot_scalar security.cfl_image_apt)" || return 2
+    ver="$(_ci_sot_scalar external_versions.autoconf.version)" || return 2
+    sha="$(_ci_sot_scalar external_versions.autoconf.sha256)" || return 2
+    _ci_apt_install "${pkgs}" image || return 1
+    dest="$(_ci_fetch_release_tarball autoconf "${ver}" \
+        "https://ftp.gnu.org/gnu/autoconf/autoconf-${ver}.tar.gz" "${sha}")" || return 1
+    cd "${dest}/autoconf-${ver}" || return 1
+    ./configure || return 1
+    make -j"$(nproc)" || return 1
+    make install || return 1
+    rm -rf "${dest}"
+}
+
+# What: Run a check; its output must match /re/ (or not, !re).
+# Why: Bug fixtures exit non-zero; their output is proof.
 # From: Issue #264, Issue #479, PR #544
-ci_cmd_image() {
-    local target="${1:-}" pkgs
-    case "${target}" in
-        e2e-ng|e2e-native) ;;
-        *) ci_log "[CI-ERROR-IMAGE-0001]" "unknown image target=\"${target}\" (e2e-ng|e2e-native)"; return 2 ;;
+_ci_expect_output() {
+    local name="$1" regex="$2" want=0 out rc=0 hit=0
+    shift 2
+    if [ "${regex#!}" != "${regex}" ]; then
+        want=1
+        regex="${regex#!}"
+    fi
+    out="$("$@" 2>&1)" || rc=$?
+    grep -qE -- "${regex}" <<< "${out}" || hit=1
+    if [ "${hit}" -ne "${want}" ]; then
+        ci_log "[CI-ERROR-SELFTEST-0001]" "${name}: output vs /${regex}/ wrong (negated=${want}, exit ${rc})"
+        printf '%s\n' "${out}" >&2
+        return 1
+    fi
+    ci_log "[CI-SELFTEST]" "${name}: OK (exit ${rc})"
+}
+
+# What: Source-build the SOT actionlint version into /out.
+# Why: A release binary embeds a possibly stale Go stdlib.
+# From: Issue #267, Issue #479, PR #544
+_ci_image_actionlint() {
+    local ver
+    ver="$(_ci_sot_scalar external_versions.actionlint.version)" || return 2
+    GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ver}" || return 1
+    /out/actionlint --version
+}
+
+# What: Prove each verify-image tool works, not just exists.
+# Why: A broken tool fails the build, not its first user.
+# From: Issue #264 #275 #398, PR #273 #332 #544
+_ci_verify_selftest() {
+    local d port pid addr
+    d="$(mktemp -d)"
+    cd "${d}" || return 1
+    printf 'int main(void) { return 0; }\n' > ok.c
+    gcc ok.c -o ok_gcc || return 1
+    ./ok_gcc || return 1
+    clang ok.c -o ok_clang || return 1
+    ./ok_clang || return 1
+    gcc -g -O0 ok.c -o ok_dbg || return 1
+    printf '#include <stdlib.h>\nint main(void) { char *p = malloc(8); p[8] = 1; return 0; }\n' > asan.c
+    gcc -fsanitize=address -g asan.c -o asan || return 1
+    _ci_expect_output asan 'AddressSanitizer: heap-buffer-overflow' ./asan || return 1
+    printf '#include <limits.h>\nint main(void) { int x = INT_MAX; return x + 1; }\n' > ubsan.c
+    gcc -fsanitize=undefined -g ubsan.c -o ubsan || return 1
+    _ci_expect_output ubsan 'runtime error: signed integer overflow' ./ubsan || return 1
+    printf '#include <stdlib.h>\nint main(void) { malloc(16); return 0; }\n' > leak.c
+    gcc -g -O0 leak.c -o leak || return 1
+    _ci_expect_output valgrind 'definitely lost: 16 bytes' valgrind --leak-check=full ./leak || return 1
+    _ci_expect_output objdump 'main>:' objdump -d ok_gcc || return 1
+    _ci_expect_output readelf 'ELF Header' readelf -h ok_gcc || return 1
+    _ci_expect_output nm ' T main$' nm ok_gcc || return 1
+    addr="$(nm ok_dbg | awk '$3 == "main" {print $1}')"
+    _ci_expect_output addr2line '^main$' addr2line -f -e ok_dbg "${addr}" || return 1
+    printf '%s\n' '#include <fcntl.h>' '#include <stdio.h>' '#include <libelf.h>' '#include <gelf.h>' \
+        'int main(void) { GElf_Ehdr h; Elf *e; int fd = open("ok_gcc", O_RDONLY);' \
+        '  if (fd < 0 || elf_version(EV_CURRENT) == EV_NONE) return 1;' \
+        '  e = elf_begin(fd, ELF_C_READ, NULL);' \
+        '  if (!e || !gelf_getehdr(e, &h)) return 1;' \
+        '  printf("libelf_ok e_type=%d\n", h.e_type); return 0; }' > libelf.c
+    gcc libelf.c -lelf -o libelf_check || return 1
+    _ci_expect_output libelf 'libelf_ok' ./libelf_check || return 1
+    printf 'needle_marker\nhaystack\n' > hay.txt
+    _ci_expect_output ripgrep '^needle_marker$' rg needle_marker hay.txt || return 1
+    _ci_expect_output grep '^needle_marker$' grep needle_marker hay.txt || return 1
+    ccache --zero-stats >/dev/null || return 1
+    ccache gcc -c ok.c -o ok.o || return 1
+    ccache gcc -c ok.c -o ok.o || return 1
+    _ci_expect_output ccache "${CI_CCACHE_HIT_RE}" ccache --show-stats || return 1
+    python3 -u -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(1); print(s.getsockname()[1]); time.sleep(60)' > port.txt &
+    pid=$!
+    _ci_wait_until 20 0.5 test -s port.txt || return 1
+    port="$(head -n 1 port.txt)"
+    _ci_expect_output ss ":${port} " ss -tln || return 1
+    kill "${pid}" || return 1
+    wait "${pid}" || [ "$?" -eq 143 ] || return 1
+    exec 9< /etc/hostname
+    _ci_expect_output lsof 'hostname' lsof -p "$$" || return 1
+    exec 9<&-
+    _ci_expect_output dig '^[0-9]+\.' dig +short deb.debian.org || return 1
+    _ci_expect_output nslookup 'Address' nslookup deb.debian.org || return 1
+    _ci_verify_selftest_ssh "${d}" || return 1
+    printf '{"ok": true}\n' > doc.json
+    _ci_expect_output jq '^true$' jq -e .ok doc.json || return 1
+    printf '#!/bin/sh\nx="a b"\necho %sx\n' "\$" > sc.sh
+    _ci_expect_output shellcheck 'SC2086' shellcheck sc.sh || return 1
+    mkdir -p al/.github/workflows
+    printf 'on: push\njobs:\n  test:\n    steps:\n      - run: echo hi\n' > al/.github/workflows/broken.yml
+    _ci_expect_output actionlint 'runs-on' actionlint al/.github/workflows/broken.yml || return 1
+    cd / || return 1
+    rm -rf "${d}"
+}
+
+# What: A real sshd and ssh client round trip on loopback.
+# Why: SSHMode_Case needs both or it is NOTRUN-skipped.
+# From: Issue #275, Issue #440, PR #443
+_ci_verify_selftest_ssh() {
+    local d="$1"
+    ssh-keygen -q -t ed25519 -f "${d}/host_key" -N '' || return 1
+    ssh-keygen -q -t ed25519 -f "${d}/client_key" -N '' || return 1
+    cp "${d}/client_key.pub" "${d}/authorized_keys" || return 1
+    printf '%s\n' 'Port 2222' 'ListenAddress 127.0.0.1' "HostKey ${d}/host_key" \
+        "AuthorizedKeysFile ${d}/authorized_keys" "PidFile ${d}/sshd.pid" 'UsePAM no' \
+        'StrictModes no' 'PasswordAuthentication no' > "${d}/sshd_config"
+    mkdir -p /run/sshd || return 1
+    /usr/sbin/sshd -f "${d}/sshd_config" -E "${d}/sshd.log" || return 1
+    _ci_expect_output ssh '^ssh_marker$' ssh -p 2222 -i "${d}/client_key" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+        -o ConnectionAttempts=10 -o ConnectTimeout=2 127.0.0.1 'echo ssh_marker' \
+        || { cat "${d}/sshd.log" >&2; return 1; }
+    kill "$(cat "${d}/sshd.pid")"
+}
+
+# What: gdb, strace, ltrace and py-bt really trace a child.
+# Why: Build RUNs lack CAP_SYS_PTRACE; only a run proves it.
+# From: Issue #285, PR #528, PR #544
+_ci_workload_ptrace() {
+    local d
+    d="$(mktemp -d)"
+    cd "${d}" || return 1
+    printf 'int main(void) { return 0; }\n' > ok.c
+    gcc -g -O0 ok.c -o ok_gcc || return 1
+    _ci_expect_output gdb 'Breakpoint 1' \
+        gdb -q -batch -ex 'break main' -ex run -ex continue ./ok_gcc || return 1
+    # What: gdb must disable ASLR under the narrow profile.
+    # Why: The breakpoint still hits when personality() is denied.
+    # From: Issue #285
+    _ci_expect_output gdb-aslr '!Error disabling address space randomization' \
+        gdb -q -batch -ex 'break main' -ex run -ex continue ./ok_gcc || return 1
+    _ci_expect_output strace '\+\+\+ exited with 0 \+\+\+' strace -f -e trace=execve ./ok_gcc || return 1
+    printf '#include <stdlib.h>\nint main(void) { free(malloc(1)); return 0; }\n' > lt.c
+    gcc -g -O0 lt.c -o lt || return 1
+    _ci_expect_output ltrace 'malloc' ltrace -e 'malloc+free' ./lt || return 1
+    # What: gdb runs python3-dbg itself, then py-bt.
+    # Why: Yama ptrace_scope=1 forbids attaching to a sibling.
+    # From: Issue #285
+    printf 'import time\ndef target_function():\n    time.sleep(5)\ntarget_function()\n' > py.py
+    _ci_expect_output py-bt 'target_function' gdb -q -batch -ex 'break time_sleep' \
+        -ex run -ex 'py-bt' --args python3-dbg py.py || return 1
+    cd / || return 1
+    rm -rf "${d}"
+}
+
+# What: Build, and for check also test, a copy of the tree.
+# Why: The mount stays read-only; the build owner is reused.
+# From: Issue #285, Issue #286, Issue #479, PR #544
+_ci_workload_checkout() {
+    local pass="${1:-}" dir="${2:-}"
+    case "${pass}" in
+        build|check) ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0007]" "checkout pass=${pass} (build|check)"; return 2 ;;
     esac
+    : "${dir:?workdir required}"
+    rm -rf "${dir}"
+    mkdir -p "${dir}"
+    cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
+    bash "${dir}/src/.github/scripts/ci.sh" build default || return 1
+    if [ "${pass}" = "check" ]; then
+        CI_TEST_UNPRIVILEGED=true bash "${dir}/src/.github/scripts/ci.sh" test default || return 1
+    fi
+    ccache --show-stats
+}
+
+# What: SOT packages, the tool self-test, the verify user.
+# Why: The image builds what CI builds; tools must work.
+# From: Issue #264, Issue #286, Issue #479, PR #544
+_ci_image_verify() {
+    local pkgs groups group
+    pkgs="$(_ci_sot_scalar build_matrix.variants.default.apt)" || return 2
+    groups="$(_ci_sot_children verify.apt)" || return 2
+    for group in ${groups}; do
+        pkgs="${pkgs} $(_ci_sot_scalar "verify.apt.${group}")" || return 2
+    done
+    # What: Add the engine's bats self-test packages.
+    # Why: ci.bats evidence must come from the buildtools image.
+    # From: Issue #479, PR #544
+    pkgs="${pkgs} $(_ci_sot_scalar ci_engine.selftest_apt)" || return 2
+    _ci_apt_install "${pkgs}" image || return 1
+    _ci_verify_selftest || return 1
+    useradd --create-home --shell /bin/bash verify
+}
+
+# What: e2e image: SOT apt, e2e user; ng installs the tree.
+# Why: native keeps Debian's distcc; ng is under test.
+# From: Issue #264, Issue #479, PR #544
+_ci_image_e2e() {
+    local flavor="$1" pkgs
     pkgs="$(_ci_sot_scalar e2e.image_apt)" || return 2
-    if [ "${target}" = "e2e-native" ]; then
+    if [ "${flavor}" = "native" ]; then
         pkgs="${pkgs} $(_ci_sot_scalar e2e.native_apt)" || return 2
     fi
-    _ci_apt_install "${pkgs}" || return 1
+    _ci_apt_install "${pkgs}" image || return 1
     useradd --create-home --shell /bin/bash e2e || return 1
     mkdir -p /work/workload /work/cache || return 1
     chown -R e2e:e2e /work || return 1
-    if [ "${target}" = "e2e-ng" ]; then
+    if [ "${flavor}" = "ng" ]; then
         cd "${CI_REPO_ROOT}" || return 1
         ./autogen.sh || return 1
         ./configure PYTHON=python3 --prefix=/usr/local || return 1
         make -j"$(nproc)" || return 1
         make install || return 1
     fi
-    update-distcc-symlinks || return 1
+    update-distcc-symlinks
+}
+
+# What: Image build step run by a Dockerfile's single RUN.
+# Why: Packages come from the SOT; the tree is only mounted.
+# From: Issue #264, Issue #479, PR #544
+ci_cmd_image() {
+    case "${1:-}" in
+        release-build) _ci_image_release_build ;;
+        release-runtime) _ci_image_release_runtime ;;
+        cfl-toolchain) _ci_image_cfl_toolchain ;;
+        actionlint) _ci_image_actionlint ;;
+        verify) _ci_image_verify ;;
+        e2e-ng) _ci_image_e2e ng ;;
+        e2e-native) _ci_image_e2e native ;;
+        *) ci_log "[CI-ERROR-IMAGE-0001]" "unknown image target=\"${1:-}\" (release-build|release-runtime|cfl-toolchain|actionlint|verify|e2e-ng|e2e-native)"; return 2 ;;
+    esac
 }
 
 # What: Print tarball, signature, key URL of pinned Samba.
@@ -786,7 +1143,9 @@ ci_cmd_workload() {
         self-compile) _ci_workload_self_compile "$@" ;;
         ccache) _ci_workload_ccache "$@" ;;
         samba) _ci_workload_samba "$@" ;;
-        *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba)"; return 2 ;;
+        checkout) _ci_workload_checkout "$@" ;;
+        ptrace) _ci_workload_ptrace ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba|checkout|ptrace)"; return 2 ;;
     esac
 }
 
@@ -794,8 +1153,8 @@ ci_cmd_workload() {
 # PACKAGING / RELEASE
 # =========================================================
 
-# What: Build the source tarball and binary packages (make deb).
-# Why: Folds build-release-packages.sh; fails on a missing tool.
+# What: Build the source tarball and packages (make deb).
+# Why: A missing packaging tool fails before any build.
 # From: Issue #479
 ci_cmd_package() {
     cd "${CI_REPO_ROOT}"
@@ -824,8 +1183,8 @@ _ci_package_sbom() {
     ci_cmd_sbom "${tarball}" "${out}"
 }
 
-# What: Fail unless a release tag matches configure.ac (POL-RELEASE-05/07).
-# Why: require_new=false for a real, already-pushed tag; true pre-tag.
+# What: Fail unless a release tag matches configure.ac.
+# Why: POL-RELEASE-05/07; require_new=false once pushed.
 # From: Issue #479, PR #544
 _ci_check_release_version() {
     local tag="${1:?tag required}" require_new="${2:-true}" version configured
@@ -845,92 +1204,54 @@ _ci_check_release_version() {
     ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac"
 }
 
-# What: docker build of docker/verify with base+actionlint from the SOT.
-# Why: One owner for the verify build-args; callers add tags/extra args.
-# From: Issue #479
-_ci_build_verify_image() {
-    local debian actionlint
-    debian="$(_ci_sot_scalar base_images.debian_verify)" || return 2
-    actionlint="$(_ci_sot_scalar external_versions.actionlint.version)" || return 2
-    docker build --file docker/verify/Dockerfile \
-        --build-arg "DEBIAN_IMAGE=${debian}" \
-        --build-arg "ACTIONLINT_VERSION=${actionlint}" \
-        "$@"
-}
-
-# What: docker login ghcr.io as GITHUB_ACTOR via stdin token.
-# Why: Token varies per job; gc needs the delete:packages PAT.
-# From: Issue #479, PR #544
-_ci_registry_login() {
-    : "${REGISTRY_TOKEN:?REGISTRY_TOKEN required}"
-    : "${GITHUB_ACTOR:?GITHUB_ACTOR required}"
-    printf '%s\n' "${REGISTRY_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-}
-
-# What: Build and push a release-family container image.
-# Why: Base image ARG comes from the SOT; folds nightly's docker build.
-# From: Issue #479
+# What: Build and push the non-release-matrix images.
+# Why: Each variant names only its SOT spec, tags and push.
+# From: Issue #359, Issue #479, PR #544
 ci_cmd_container() {
     local first="${1:?variant or build/push required}"
     if [ "${first}" = "build" ] || [ "${first}" = "push" ]; then
         _ci_container_release "$@"
         return
     fi
-    local variant="${first}" platform="${2:-}" ref debian
-    cd "${CI_REPO_ROOT}"
-    ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
-    debian="$(_ci_sot_scalar base_images.debian_release)" || return 2
-    case "${variant}" in
+    local short base
+    case "${first}" in
         nightly)
-            docker build --file docker/release/Dockerfile \
-                --build-arg "DEBIAN_IMAGE=${debian}" \
-                --build-arg "VCS_REF=${ref}" \
-                --build-arg "VERSION=nightly" \
-                --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                --tag "${IMAGE_TAG:?IMAGE_TAG required}" .
-            _ci_registry_login
-            docker push "${IMAGE_TAG}" ;;
+            _ci_image_build release.images.distcc-ng-nightly nightly \
+                --tag "${IMAGE_TAG:?IMAGE_TAG required}" || return 1
+            _ci_registry_push "${IMAGE_TAG}" ;;
         verify-image)
-            _ci_build_verify_image --tag "${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}" . ;;
+            short="$(git -C "${CI_REPO_ROOT}" rev-parse --short HEAD)" || return 1
+            _ci_image_build release.images.distcc-ng-buildtools "${short}" ;;
         buildtools)
-            local short; short="$(git rev-parse --short HEAD)"
-            local base="ghcr.io/${OWNER:?OWNER required}/distcc-ng-buildtools"
-            _ci_build_verify_image \
-                --build-arg "VCS_REF=${ref}" --build-arg "VERSION=${short}" \
-                --tag "${base}:latest" --tag "${base}:${short}" .
-            _ci_registry_login
-            docker push "${base}:latest"
-            docker push "${base}:${short}" ;;
-        *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${variant}\""; return 2 ;;
+            short="$(git -C "${CI_REPO_ROOT}" rev-parse --short HEAD)" || return 1
+            base="$(_ci_sot_scalar release.images.distcc-ng-buildtools.ref)" || return 2
+            base="${base%:*}"
+            _ci_image_build release.images.distcc-ng-buildtools "${short}" \
+                --tag "${base}:latest" --tag "${base}:${short}" || return 1
+            _ci_registry_push "${base}:latest" "${base}:${short}" ;;
+        *) ci_log "[CI-ERROR-CONTAINER-0001]" "unimplemented container variant=\"${first}\""; return 2 ;;
     esac
 }
 
 # What: Build (no push) or push a release plain/pump image.
 # Why: Trivy scan needs the built, unpushed image.
-# From: Issue #479
+# From: Issue #479, PR #544
 _ci_container_release() {
-    local action="$1" variant platform ref debian target
-    cd "${CI_REPO_ROOT}"
+    local action="$1" variant platform pkg
     case "${action}" in
         build)
             variant="${2:?variant required}"
             platform="${3:?platform required (amd64|arm64)}"
-            : "${IMAGE_TAG:?IMAGE_TAG required}"
-            ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
-            debian="$(_ci_sot_scalar base_images.debian_release)" || return 2
-            target="runtime"
-            [ "${variant}" = "pump" ] && target="runtime-pump"
-            docker build --platform "linux/${platform}" \
-                --file docker/release/Dockerfile --target "${target}" \
-                --build-arg "DEBIAN_IMAGE=${debian}" \
-                --build-arg "VCS_REF=${ref}" \
-                --build-arg "VERSION=${VERSION:-${ref}}" \
-                --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                --tag "${IMAGE_TAG}" . ;;
+            case "${variant}" in
+                plain) pkg="distcc-ng" ;;
+                pump) pkg="distcc-ng-pump" ;;
+                *) ci_log "[CI-ERROR-CONTAINER-0002]" "release variant=${variant} (plain|pump)"; return 2 ;;
+            esac
+            _ci_image_build "release.images.${pkg}" "${VERSION:?VERSION required}" \
+                --platform "linux/${platform}" --tag "${IMAGE_TAG:?IMAGE_TAG required}" ;;
         push)
-            local image_tag="${2:?image tag required}"
-            _ci_registry_login
-            docker push "${image_tag}" ;;
+            _ci_registry_push "${2:?image tag required}" ;;
+        *) ci_log "[CI-ERROR-CONTAINER-0004]" "release action=${action} (build|push)"; return 2 ;;
     esac
 }
 
@@ -942,8 +1263,8 @@ _ci_git_auth_setup() {
     gh auth setup-git
 }
 
-# What: Force-move the floating nightly tag and (re)publish its prerelease.
-# Why: Folds nightly-publish.yml; refuses to move a real v* release tag.
+# What: Force-move the nightly tag; republish its prerelease.
+# Why: It refuses to move a real v* release tag.
 # From: Issue #479
 _ci_publish_nightly() {
     cd "${CI_REPO_ROOT}"
@@ -974,8 +1295,8 @@ _ci_publish_nightly() {
         --prerelease --latest=false --target "${ref}"
 }
 
-# What: Create the multi-arch manifest from the pushed platform tags.
-# Why: imagetools reads tags from the registry; no artifact handoff.
+# What: Create the multi-arch manifest from pushed tags.
+# Why: imagetools reads the registry; no artifact handoff.
 # From: Issue #479
 _ci_publish_manifest() {
     local variant="${1:?variant required}"
@@ -993,8 +1314,8 @@ _ci_publish_manifest() {
     fi
 }
 
-# What: Cut the GitHub release for a version tag with built assets.
-# Why: Version-check gates it; assets are the built packages/tarballs.
+# What: Cut the GitHub release of a tag with built assets.
+# Why: The version check gates it before any asset upload.
 # From: Issue #479
 _ci_publish_github_release() {
     local tag="${1:?tag required}" repo notes
@@ -1107,7 +1428,7 @@ _ci_publish_draft_release() {
 }
 
 # What: Publish a release-family artifact set.
-# Why: Outward; real release cut/manifest are maintainer-driven.
+# Why: Outward; a real cut or manifest is maintainer-driven.
 # From: Issue #479
 ci_cmd_publish() {
     local sub="${1:?publish target required}"
@@ -1122,8 +1443,8 @@ ci_cmd_publish() {
     esac
 }
 
-# What: Release subcommands; version-check is safe, cut is outward.
-# Why: The version guardrail runs anywhere; publishing is maintainer-gated.
+# What: Release subcommands; only version-check exists.
+# Why: The version guardrail runs anywhere, side-effect free.
 # From: Issue #479
 ci_cmd_release() {
     local sub="${1:-}"
@@ -1141,7 +1462,7 @@ _ci_gc_protected_digests() {
     local pkg="$1" versions="$2" tag raw children=""
     while IFS= read -r tag; do
         [ -n "${tag}" ] || continue
-        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${pkg}:${tag}")"; then
+        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER:?OWNER required}/${pkg}:${tag}")"; then
             ci_log "[CI-ERROR-GC-0002]" "cannot inspect ${pkg}:${tag}; refusing to prune ${pkg}"
             return 1
         fi
@@ -1209,8 +1530,8 @@ ci_cmd_gc() {
 # SCHEDULED-CI STATUS REPORT
 # =========================================================
 
-# What: Echo space-separated names of failed/cancelled jobs from pairs.
-# Why: A skip means an upstream dep failed first, not this job.
+# What: Print names of failed or cancelled jobs from pairs.
+# Why: A skip means an upstream job failed, not this one.
 # From: Issue #479, PR #476
 _ci_failed_jobs() {
     local pairs="$1" jname jresult out=""
@@ -1228,8 +1549,7 @@ _ci_failed_jobs() {
 # =========================================================
 
 # What: Fail if JOBS has any real failure/cancelled entry.
-# Why: A matrix/impact-skipped job has no fixed context name
-#   a branch ruleset can require; this one name always reports.
+# Why: Skipped jobs have no name a ruleset can require.
 # From: Issue #479, PR #544
 ci_cmd_gate() {
     : "${JOBS:?JOBS required}"
@@ -1250,8 +1570,8 @@ _ci_project_board_load() {
     PROJECT_NUMBER="$(_ci_sot_scalar project_board.number)" || return 2
 }
 
-# What: Add the standing issue to the project board via the project PAT.
-# Why: Only GH_TOKEN's own board touch needs a real project scope.
+# What: Add the standing issue to the board via PROJECT_PAT.
+# Why: Only a board write needs a real project scope.
 # From: Issue #479, Issue #81, PR #476
 _ci_report_board() {
     local issue_url="$1"
@@ -1268,8 +1588,8 @@ _ci_report_board() {
         --owner "${PROJECT_OWNER}" --url "${issue_url}" >/dev/null
 }
 
-# What: Assign the Bug issue type to issue $1 unless it already has one.
-# Why: Retrying on every failure self-heals an issue a one-shot attempt missed.
+# What: Give issue $1 the Bug type unless it has a type.
+# Why: Retrying on each failure heals a missed one-shot.
 # From: Issue #479, PR #476
 _ci_report_ensure_bug_type() {
     : "${REPO:?REPO required}"
@@ -1306,9 +1626,8 @@ _ci_report_ensure_bug_type() {
       }" -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
 }
 
-# What: File, update, or close the one standing nightly-broken tracking issue.
-# Why: Every scheduled workflow shares this issue, so a success anywhere closes
-#   what another filed; the next real failure re-files it.
+# What: File, update or close the standing tracking issue.
+# Why: All schedules share it; any success closes it.
 # From: Issue #479, Issue #81, PR #89, PR #476
 ci_cmd_report() {
     : "${GH_TOKEN:?GH_TOKEN required}"
@@ -1321,8 +1640,8 @@ ci_cmd_report() {
     local PROJECT_PAT="${PROJECT_PAT:-}"
     local PROJECT_OWNER PROJECT_NUMBER
     _ci_project_board_load || return 2
-    # What: Derive FAILED_JOBS from JOBS (name=result lines) when provided.
-    # Why: Only failure/cancelled are real; a skip means an upstream dep failed.
+    # What: Derive FAILED_JOBS from JOBS name=result lines.
+    # Why: Only failure/cancelled are real; skips are upstream.
     # From: Issue #479, PR #476
     local JOBS="${JOBS:-}"
     [ -n "${JOBS}" ] && FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
@@ -1377,8 +1696,8 @@ ${detail}.")"
 # VARIABLES (workflow output helpers)
 # =========================================================
 
-# What: Write available=true/false to GITHUB_OUTPUT from SECRET_VALUE.
-# Why: GitHub forbids the secrets context in an if:, so the gate lives here.
+# What: Write available=true|false from SECRET_VALUE.
+# Why: GitHub forbids the secrets context inside an if:.
 # From: Issue #479, PR #329
 _ci_variables_secret_present() {
     : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
@@ -1390,7 +1709,7 @@ _ci_variables_secret_present() {
 }
 
 # What: Add an issue/PR to the org project board via gh CLI.
-# Why: Replaces actions/add-to-project; gh project item-add is native.
+# Why: gh project item-add is native; no marketplace action.
 # From: Issue #479
 _ci_variables_add_to_project() {
     : "${ITEM_URL:?ITEM_URL required}"
@@ -1398,8 +1717,8 @@ _ci_variables_add_to_project() {
     gh project item-add "${PROJECT_NUMBER}" --owner "${PROJECT_OWNER}" --url "${ITEM_URL}"
 }
 
-# What: True if a changed file is under doc/ or a non-CHANGELOG .md.
-# Why: Mirrors labeler.yml's documentation label's any:/negation rule.
+# What: True if a file is under doc/ or a non-CHANGELOG .md.
+# Why: labeler.yml's any:/negation rule needs own logic.
 # From: Issue #479
 _ci_labeler_documentation_match() {
     local files="$1" f
@@ -1411,7 +1730,7 @@ _ci_labeler_documentation_match() {
 }
 
 # What: True if pat matches any line of files (one per line).
-# Why: Shared by every simple labeler rule; herestring avoids a subshell.
+# Why: Shared by every simple rule; a herestring, no subshell.
 # From: Issue #479
 _ci_labeler_glob_matches_any() {
     local pat="$1" files="$2" f
@@ -1421,8 +1740,8 @@ _ci_labeler_glob_matches_any() {
     return 1
 }
 
-# What: Print "label glob" lines for labeler.yml's simple OR rules.
-# Why: One purpose-built reader; only documentation needs any:/negation.
+# What: Print "label glob" for labeler.yml's simple rules.
+# Why: Only the documentation label needs any:/negation.
 # From: Issue #479
 _ci_labeler_simple_rules() {
     awk '
@@ -1485,7 +1804,7 @@ _ci_variables_label_pr() {
 }
 
 # What: Workflow variable/output helpers dispatch.
-# Why: One owner for the small gate logic GitHub can't express in YAML.
+# Why: One owner for gate logic YAML cannot express.
 # From: Issue #479
 ci_cmd_variables() {
     local sub="${1:?variables subcommand required}"
@@ -1501,7 +1820,7 @@ ci_cmd_variables() {
 # SECURITY SCAN (OpenSSF Baseline recheck)
 # =========================================================
 
-# What: Echo Met when pattern is in file (opt -i), else NotMet.
+# What: Print Met if a pattern is in a file (-i), else NotMet.
 # Why: One owner for the many grep-based baseline checks.
 # From: Issue #479, Issue #312
 _ci_ossf_grep() {
@@ -1515,12 +1834,12 @@ _ci_ossf_grep() {
 }
 
 # What: URL-encode one argument via jq @uri.
-# Why: Justification text must survive as a valid query-string value.
+# Why: Justification text must survive in a query string.
 # From: Issue #312
 _ci_ossf_urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
 
-# What: Append one status=Met&justification pair to a query-string nameref.
-# Why: Only currently-Met criteria are offered in the proposal URL.
+# What: Append one status=Met&justification query pair.
+# Why: Only currently-Met criteria enter the proposal URL.
 # From: Issue #312
 _ci_ossf_add_met() {
     local -n _qs="$1"
@@ -1531,13 +1850,13 @@ _ci_ossf_add_met() {
     _qs="${_qs}${param_key}_status=Met&${param_key}_justification=${enc_just}"
 }
 
-# What: Build the bestpractices.dev edit-form URL for one baseline level.
+# What: Print the bestpractices.dev edit URL of one level.
 # Why: Callers pass an assembled Met-criteria query string.
 # From: Issue #312
 _ci_ossf_url() { echo "https://www.bestpractices.dev/en/projects/${PROJECT_ID}/baseline-$1/edit?$2"; }
 
-# What: Ruleset still enforces a pull_request and a deletion rule.
-# Why: A recreated-under-new-ID ruleset is the drift this catches.
+# What: Ruleset keeps pull_request and deletion rules.
+# Why: Catches a ruleset recreated under a new ID.
 # From: Issue #312
 _ci_ossf_check_ac03() {
     local types
@@ -1546,9 +1865,8 @@ _ci_ossf_check_ac03() {
         echo "Met"; else echo "NotMet"; fi
 }
 
-# What: No workflow runs untrusted fork code under pull_request_target,
-#   and none interpolates untrusted event title/body text.
-# Why: pull_request_target is only risky when it also checks out PR head.
+# What: No pull_request_target fork code, no raw event text.
+# Why: pull_request_target is risky only with a PR checkout.
 # From: Issue #312
 _ci_ossf_check_br01() {
     local hits=0 f
@@ -1565,8 +1883,8 @@ _ci_ossf_check_br01() {
     [ "${hits}" -eq 0 ] && echo "Met" || echo "NotMet"
 }
 
-# What: Secret scanning and its push protection are both enabled.
-# Why: Needs an admin-scoped token; github.token never returns the field.
+# What: Secret scanning and push protection are enabled.
+# Why: Needs an admin token; github.token hides the field.
 # From: Issue #312
 _ci_ossf_check_br07() {
     local analysis
@@ -1575,7 +1893,7 @@ _ci_ossf_check_br07() {
         echo "Met"; else echo "NotMet"; fi
 }
 
-# What: No compiled binary artifact is tracked in the git tree.
+# What: No compiled binary is tracked in the git tree.
 # Why: Build outputs must be produced, never committed.
 # From: Issue #312
 _ci_ossf_check_qa05() {
@@ -1583,7 +1901,7 @@ _ci_ossf_check_qa05() {
         echo "NotMet"; else echo "Met"; fi
 }
 
-# What: Every workflow declares a top-level permissions block, none broad.
+# What: Each workflow has a narrow top-level permissions key.
 # Why: A missing or write-all default is not least-privilege.
 # From: Issue #312
 _ci_ossf_check_ac04() {
@@ -1598,15 +1916,15 @@ _ci_ossf_check_ac04() {
     echo "Met"
 }
 
-# What: A build-provenance attestation step exists in some workflow.
-# Why: Scans all workflows so it survives the package->release rename.
+# What: Some workflow has a build-provenance attestation.
+# Why: Scanning all workflows survives a workflow rename.
 # From: Issue #312, Issue #479
 _ci_ossf_check_br06() {
     if grep -rq "actions/attest-build-provenance" .github/workflows/ 2>/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
 
-# What: dependabot.yml exists and the dependency policy is documented.
+# What: dependabot.yml and the dependency policy doc exist.
 # Why: Both must hold for OSPS-BR-05.01/DO-06.01.
 # From: Issue #312
 _ci_ossf_check_br05_do06() {
@@ -1614,8 +1932,8 @@ _ci_ossf_check_br05_do06() {
         echo "Met"; else echo "NotMet"; fi
 }
 
-# What: Run every OpenSSF baseline check, post/update the tracking comment.
-# Why: One owner for the recheck logic; workflows only call the phase.
+# What: Run every baseline check; post the tracking comment.
+# Why: One recheck owner; workflows only call the phase.
 # From: Issue #479, Issue #312
 _ci_scan_openssf() {
     : "${REPO:?REPO required, e.g. wiki-mod/distcc-ng}"
@@ -1811,8 +2129,8 @@ ci_cmd_sbom() {
     "${bin}" "${target}" -o "spdx-json=${out}"
 }
 
-# What: Security scan dispatch (currently the OpenSSF baseline recheck).
-# Why: One phase owner; codeql/osv/scorecard/fuzz are pure workflow actions.
+# What: Dispatch one security scan subcommand.
+# Why: One scan phase owner; YAML only names the scan.
 # From: Issue #479, Issue #312
 ci_cmd_scan() {
     local sub="${1:?scan target required}"
@@ -1836,115 +2154,60 @@ ci_cmd_scan() {
 # VERIFY IMAGE (buildtools/verify container)
 # =========================================================
 
-# What: docker run with SYS_PTRACE + this repo's narrow seccomp profile.
-# Why: the two ptrace steps must share one flag set, not drift apart.
-# From: Issue #285, PR #528
-_ci_docker_run_ptrace() {
-    docker run --rm --cap-add=SYS_PTRACE \
-        --security-opt seccomp="${VERIFY_SECCOMP:-${CI_REPO_ROOT}/docker/verify/seccomp-verify.json}" \
-        "$@"
-}
-
-# What: run one verify-image check inside distcc-ng-verify:ci.
-# Why: keeps all verify logic in ci.sh; workflows only call phases.
-# From: Issue #285, Issue #286, PR #528
+# What: Run one verify check in the local buildtools image.
+# Why: Each check is a workload; ptrace ones get the profile.
+# From: Issue #285, Issue #286, PR #528, PR #544
 ci_cmd_verify() {
-    local sub="${1:?verify subcommand required}"
-    local image="${VERIFY_IMAGE:-${CI_VERIFY_IMAGE_TAG}}"
-    cd "${CI_REPO_ROOT}"
+    local sub="${1:?verify subcommand required}" image
+    local ptrace=(--cap-add=SYS_PTRACE
+        --security-opt "seccomp=${CI_REPO_ROOT}/docker/verify/seccomp-verify.json")
+    image="$(_ci_sot_scalar release.images.distcc-ng-buildtools.tag)" || return 2
     case "${sub}" in
-        prepare-etc)
-            mkdir -p "${RUNNER_TEMP}/verify-etc"
-            docker run --rm "${image}" cat /etc/passwd > "${RUNNER_TEMP}/verify-etc/passwd"
-            docker run --rm "${image}" cat /etc/group > "${RUNNER_TEMP}/verify-etc/group"
-            printf 'ci-runner:x:%s:%s:GitHub Actions runner uid:/tmp/distcc-ng-verify-home:/bin/bash\n' \
-                "$(id -u)" "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/passwd"
-            printf 'ci-runner:x:%s:\n' "$(id -g)" >> "${RUNNER_TEMP}/verify-etc/group" ;;
         ptrace-selftest)
-            _ci_docker_run_ptrace -e ASLR_MUST_DISABLE=1 \
-                -v "${CI_REPO_ROOT}/docker/verify:/verify:ro" \
-                "${image}" bash /verify/selftest-ptrace.sh ;;
+            _ci_container_run "${image}" "${ptrace[@]}" -- \
+                bash "${CI_CONTAINER_SH}" workload ptrace ;;
         build-test)
-            _ci_docker_run_ptrace \
-                --user "$(id -u):$(id -g)" --init \
-                -v "${CI_REPO_ROOT}:/work/src:rw" \
-                -v "${RUNNER_TEMP}/verify-etc/passwd:/etc/passwd:ro" \
-                -v "${RUNNER_TEMP}/verify-etc/group:/etc/group:ro" \
-                -w /work/src -e HOME=/tmp/distcc-ng-verify-home \
-                "${image}" bash -c "
-                    set -euo pipefail
-                    mkdir -p \"\${HOME}\"; id
-                    ./autogen.sh
-                    ./configure PYTHON=python3
-                    make
-                    make check
-                " ;;
+            _ci_container_run "${image}" "${ptrace[@]}" -- \
+                bash "${CI_CONTAINER_SH}" workload checkout check /tmp/checkout ;;
         ccache-redis)
-            _ci_verify_ccache_redis "${image}" ;;
+            _ci_stack_run "$(_ci_run_name ccache-redis)" _ci_verify_ccache_redis "${image}" ;;
         samba-configure-dryrun)
-            # What: Verified Samba configure inside the verify image.
-            # Why: Proves the image's build-deps; same fetch owner.
-            # From: Issue #479, Issue #285, PR #544
-            docker run --rm -v "${CI_REPO_ROOT}:/ci:ro" "${image}" \
-                bash /ci/.github/scripts/ci.sh workload samba configure /tmp/samba ;;
+            _ci_container_run "${image}" -- \
+                bash "${CI_CONTAINER_SH}" workload samba configure /tmp/samba ;;
         *) ci_log "[CI-ERROR-VERIFY-0001]" "unknown verify subcommand=\"${sub}\""; return 2 ;;
     esac
 }
 
-# What: Block until the SOT-pinned Redis container answers PING, or fail.
-# Why: The ccache builds must not race a not-yet-ready Redis backend.
-# From: Issue #479, Issue #285
-_ci_wait_for_redis() {
-    local cid="$1" tries=0
-    while [ "${tries}" -lt 30 ]; do
-        [ "$(docker exec "${cid}" redis-cli ping 2>/dev/null)" = "PONG" ] && return 0
-        tries=$((tries + 1)); sleep 1
-    done
-    ci_log "[CI-ERROR-VERIFY-0004]" "Redis backend did not become ready within 30s"
-    return 1
-}
-
-# What: prove ccache's Redis remote backend serves a real cross-container hit.
-# Why: a single container's local dir would false-hit without Redis involved.
-# From: Issue #285, Issue #479, PR #528
+# What: Two fresh containers build via ccache's Redis backend.
+# Why: The second has an empty local cache; a hit is Redis's.
+# From: Issue #285, Issue #479, PR #528, PR #544
 _ci_verify_ccache_redis() {
-    local image="$1" redis_image redis_cid rc=0
-    # What: Redis digest comes from the SOT; ci.sh starts it with a 2g cap.
-    # Why: The ccache-remote-storage workload needs the maintainer's ~2GB budget.
+    local image="$1" net="$2" redis pass out
+    redis="$(_ci_sot_scalar external_services.redis)" || return 2
+    # What: Redis gets the maintainer's 2g memory budget.
+    # Why: The ccache-remote-storage workload needs about 2GB.
     # From: Issue #479, Issue #285
-    redis_image="$(_ci_sot_scalar external_services.redis)" || return 2
-    redis_cid="$(docker run -d --memory=2g --network host "${redis_image}")"
-    _ci_verify_ccache_build() {
-        docker run --rm --network host --user "$(id -u):$(id -g)" \
-            -v "${CI_REPO_ROOT}:/work/src:rw" -w /work/src \
-            -e CCACHE_REMOTE_STORAGE="redis://127.0.0.1:6379" \
-            -e HOME=/tmp/ccache-home \
-            "${image}" bash -c "
-                set -euo pipefail
-                mkdir -p \"\${HOME}\"; cd /work/src
-                ccache --zero-stats >/dev/null
-                touch src/dopt.c
-                make CC=\"ccache gcc\" src/dopt.o
-                ccache --show-stats
-            " | tee "$2"
-    }
-    if ! _ci_wait_for_redis "${redis_cid}"; then rc=1; fi
-    if [ "${rc}" -eq 0 ]; then
-        _ci_verify_ccache_build "first (MISS, pushes to Redis)" "${RUNNER_TEMP}/first-run-stats.log" || rc=$?
-    fi
-    if [ "${rc}" -eq 0 ]; then
-        _ci_verify_ccache_build "second (fresh, a Hit can only come from Redis)" "${RUNNER_TEMP}/second-run-stats.log" || rc=$?
-    fi
-    docker rm -f "${redis_cid}" >/dev/null 2>&1 || true
-    if [ "${rc}" -ne 0 ]; then
-        ci_log "[CI-ERROR-VERIFY-0003]" "ccache/Redis verify step failed (rc=${rc})"
-        return "${rc}"
-    fi
-    if ! grep -qE "Hits:[[:space:]]*[1-9]" "${RUNNER_TEMP}/second-run-stats.log"; then
-        ci_log "[CI-ERROR-VERIFY-0002]" "no ccache hit on the fresh container -- Redis backend did not serve the object"
+    _ci_container_run "${redis}" -d --name "${net}-redis" --network-alias redis \
+        --memory=2g -- >/dev/null || return 1
+    if ! _ci_wait_until 30 1 _ci_container_logged "${net}-redis" 'Ready to accept connections'; then
+        ci_log "[CI-ERROR-VERIFY-0004]" "Redis backend did not become ready within 30s"
         return 1
     fi
-    echo "Real cache hit confirmed against the SOT-pinned, ci.sh-managed Redis backend."
+    for pass in first second; do
+        out="${RUNNER_TEMP:-/tmp}/${net}-${pass}.log"
+        if ! _ci_container_run "${image}" -e CCACHE_REMOTE_STORAGE=redis://redis:6379 -- \
+            bash "${CI_CONTAINER_SH}" workload checkout build /tmp/checkout > "${out}" 2>&1; then
+            ci_log "[CI-ERROR-VERIFY-0003]" "ccache/Redis ${pass} build failed"
+            cat "${out}" >&2
+            return 1
+        fi
+    done
+    if ! grep -qE "${CI_CCACHE_HIT_RE}" "${out}"; then
+        ci_log "[CI-ERROR-VERIFY-0002]" "no ccache hit in the fresh container; Redis served nothing"
+        cat "${out}" >&2
+        return 1
+    fi
+    ci_log "[CI-VERIFY]" "ccache hit in a fresh container, served by the SOT-pinned Redis"
 }
 
 # =========================================================
@@ -2063,8 +2326,8 @@ _ci_check_pr_tracking() {
     return 1
 }
 
-# What: Require a CHANGELOG.md change or the no-changelog-needed label.
-# Why: Folds require_changelog; PR_LABELS/BASE/HEAD from the workflow.
+# What: Require a CHANGELOG.md change or its opt-out label.
+# Why: Every user-facing change needs a changelog entry.
 # From: Issue #479
 _ci_check_changelog() {
     if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
@@ -2139,8 +2402,8 @@ ci_guard_line_endings() {
     return "${rc}"
 }
 
-# What: Fail if any sha256 digest is not full 64 lowercase hex.
-# Why: Full-length SHAs only; no abbreviations or special forms.
+# What: Fail on any sha256 digest not 64 lowercase hex.
+# Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
 ci_guard_full_sha() {
     local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit
@@ -2160,32 +2423,54 @@ ci_guard_full_sha() {
     return "${rc}"
 }
 
-# What: Fail if a SOT base-image pin is absent from its Dockerfile.
-# Why: Binds Dependabot's Dockerfile digest bumps to the SOT; no drift.
-# From: Issue #479
-ci_guard_dependabot_consistency() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 pair key df sot
-    for pair in \
-        "debian_verify:docker/verify/Dockerfile" \
-        "debian_release:docker/release/Dockerfile" \
-        "golang_actionlint:docker/verify/Dockerfile"; do
-        key="${pair%%:*}"; df="${pair#*:}"
-        [ -f "${root}/${df}" ] || continue
-        if ! sot="$(_ci_sot_scalar "base_images.${key}")"; then
+# What: Print "line kind ref" per pin-shaped Dockerfile line.
+# Why: Digests, ARG defaults, pulled FROMs bypass the SOT.
+# From: Issue #479, PR #544
+_ci_dockerfile_pins() {
+    awk '
+        /@sha256:/ { print NR " digest -" }
+        /^[[:space:]]*ARG[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=/ { print NR " arg-default -" }
+        toupper($1) == "FROM" {
+            i = 2
+            while ($i ~ /^--/) i++
+            ref = $i
+            if (ref !~ /^[$][{]?[A-Za-z_]/ && !(ref in stage) && ref !~ /^[a-z0-9._-]+:local$/)
+                print NR " from " ref
+            if (tolower($(i + 1)) == "as") stage[$(i + 2)] = 1
+        }
+    ' "$1"
+}
+
+# What: Fail on any image or action pin outside the SOT.
+# Why: The SOT is the sole pin owner; ci.sh passes its pins.
+# From: Issue #479, PR #544
+ci_guard_pins_in_sot() {
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out line kind ref
+    local files=()
+    for f in "${root}"/.github/workflows/*.yml; do
+        [ -f "${f}" ] || continue
+        out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^[[:space:]]*(image|container):' "${f}")" \
+            || [ "$?" -eq 1 ] || return 2
+        while IFS=: read -r line _; do
+            [ -n "${line}" ] || continue
             rc=1
-            ci_log "[CI-ERROR-GUARD-DEP-0001]" "SOT missing base_images.${key}"
-            continue
-        fi
-        if ! grep -Fq "${sot}" "${root}/${df}" 2>/dev/null; then
+            ci_log "[CI-ERROR-GUARD-PIN-0001]" "${f}:${line}: image or action pin outside the SOT"
+        done <<< "${out}"
+    done
+    mapfile -t files < <(find "${root}" -name Dockerfile -type f -not -path '*/.git/*')
+    for f in "${files[@]}"; do
+        out="$(_ci_dockerfile_pins "${f}")" || return 2
+        while read -r line kind ref; do
+            [ -n "${line}" ] || continue
             rc=1
-            ci_log "[CI-ERROR-GUARD-DEP-0002]" "base_images.${key}=${sot} not present in ${df}"
-        fi
+            ci_log "[CI-ERROR-GUARD-PIN-0002]" "${f}:${line}: ${kind} ${ref} bypasses the SOT ARG"
+        done <<< "${out}"
     done
     return "${rc}"
 }
 
-# What: Print orchestrator-only violations in a workflow's run: blocks.
-# Why: YAML stays an orchestrator; run: calls one ci.sh command only.
+# What: Print orchestrator violations in run: blocks.
+# Why: A run: step may call exactly one ci.sh command.
 # From: Issue #479
 _ci_scan_run_blocks() {
     awk -v F="$1" '
@@ -2217,8 +2502,8 @@ _ci_scan_run_blocks() {
     ' "$1"
 }
 
-# What: Fail if any given workflow has inline logic in a run: block.
-# Why: New orchestrators must call one command; legacy is exempt (#267 clause).
+# What: Fail if a workflow run: block holds inline logic.
+# Why: Logic belongs in ci.sh; workflows only orchestrate.
 # From: Issue #479
 ci_guard_orchestrator_only() {
     local rc=0 f hit
@@ -2240,13 +2525,13 @@ ci_cmd_selftest() {
     bats --jobs "$(_ci_jobs)" "${CI_SCRIPT_DIR}/ci.bats"
 }
 
-# What: Run a command inside the published buildtools image.
-# Why: uid-matched, read-only; shared by every lint check.
-# From: Issue #479
-_ci_lint_buildtools_run() {
-    docker run --rm --user "$(id -u):$(id -g)" \
-        -v "${CI_REPO_ROOT}:/work:ro" -w /work \
-        "${CI_BUILDTOOLS_IMAGE}" "$@"
+# What: Run a lint tool in the published buildtools image.
+# Why: Lint uses the image CI publishes, not a local rebuild.
+# From: Issue #479, PR #544
+_ci_lint_run() {
+    local image
+    image="$(_ci_sot_scalar release.images.distcc-ng-buildtools.ref)" || return 2
+    _ci_container_run "${image}" -w "${CI_CONTAINER_ROOT}" -- "$@"
 }
 
 # What: Lint every workflow file with actionlint.
@@ -2256,14 +2541,14 @@ _ci_lint_actionlint() {
     local files=()
     while IFS= read -r f; do files+=("${f}"); done \
         < <(cd "${CI_REPO_ROOT}" && find .github/workflows -name "*.yml" -type f)
-    _ci_lint_buildtools_run actionlint -color "${files[@]}"
+    _ci_lint_run actionlint -color "${files[@]}"
 }
 
 # What: Shellcheck ci.sh, this repo's real shell engine.
 # Why: test/e2e*/*.sh stay explicitly out of scope.
 # From: Issue #479
 _ci_lint_shellcheck() {
-    _ci_lint_buildtools_run shellcheck .github/scripts/ci.sh
+    _ci_lint_run shellcheck .github/scripts/ci.sh
 }
 
 # What: Run the governance guards over the CI-owned tree.
@@ -2271,18 +2556,21 @@ _ci_lint_shellcheck() {
 # From: Issue #479
 ci_cmd_lint() {
     local rc=0 d
-    ci_guard_line_endings "${CI_REPO_ROOT}/.github" || rc=1
-    ci_guard_line_endings "${CI_REPO_ROOT}/docker" || rc=1
-    # Full-SHA scans only files that may carry pins; scripts carry none
-    # by design (ci.sh reads pins from the SOT, ci.bats holds fixtures).
+    for d in .github docker test/e2e .clusterfuzzlite; do
+        ci_guard_line_endings "${CI_REPO_ROOT}/${d}" || rc=1
+    done
+    # What: Full-SHA scan of the dirs that may carry a pin.
+    # Why: Scripts hold none; ci.bats holds test fixtures.
+    # From: Issue #479
     for d in .github/workflows .github/yaml docker; do
         [ -e "${CI_REPO_ROOT}/${d}" ] || continue
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
-    ci_guard_dependabot_consistency "${CI_REPO_ROOT}" || rc=1
-    # Every shipped workflow is an orchestrator; there is no legacy exemption.
+    ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
+    # What: Every workflow must be a pure orchestrator.
+    # Why: No legacy exemption remains after the rewrite.
+    # From: Issue #479, PR #544
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
-    ci_guard_action_pin_sot "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     _ci_lint_actionlint || rc=1
     _ci_lint_shellcheck || rc=1
     return "${rc}"
@@ -2292,17 +2580,29 @@ ci_cmd_lint() {
 # INSTALL (apt/brew dependency installers)
 # =========================================================
 
-# What: apt-get update+install with a bounded 2x3-minute retry.
+# What: apt-get update+install, bounded 2x3-minute retry.
 # Why: ubuntu-latest's default mirror has hung indefinitely.
 # From: Issue #493, Issue #479
 _ci_apt_install() {
-    local packages="${1:?package list required}" max_attempts=2 attempt=1
-    local as_root=(sudo)
+    local packages="${1:?package list required}" mode="${2:-runner}" max_attempts=2 attempt=1
+    local as_root=(sudo) apt_opts=""
     if [ "$(id -u)" -eq 0 ]; then
         as_root=()
     fi
+    # What: Image builds skip recommends and drop the apt lists.
+    # Why: Image layers stay minimal; runners keep defaults.
+    # From: Issue #479, PR #544
+    case "${mode}" in
+        runner) ;;
+        image) apt_opts="--no-install-recommends" ;;
+        *) ci_log "[CI-ERROR-INSTALL-0003]" "apt mode=${mode} (runner|image)"; return 2 ;;
+    esac
     while true; do
-        if "${as_root[@]}" timeout -k 10s 3m bash -c "apt-get update && apt-get install -y ${packages}"; then
+        if "${as_root[@]}" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
+            bash -c "apt-get update && apt-get install -y ${apt_opts} ${packages}"; then
+            if [ "${mode}" = "image" ]; then
+                rm -rf /var/lib/apt/lists/* || return 1
+            fi
             return 0
         fi
         if [ "${attempt}" -ge "${max_attempts}" ]; then
@@ -2535,26 +2835,6 @@ ci_cmd_harden() {
 }
 
 # =========================================================
-# ACTION-PIN GUARD (build-manifest.yml is the sole SHA owner)
-# =========================================================
-
-# What: Fail if any given file carries an action SHA pin.
-# Why: SOT is the only owner; ci.sh runs tools itself.
-# From: Issue #479, PR #544
-ci_guard_action_pin_sot() {
-    local rc=0 f
-    for f in "$@"; do
-        [ -f "${f}" ] || continue
-        if grep -qE '@[0-9a-f]{40}' "${f}" 2>/dev/null; then
-            rc=1
-            ci_log "[CI-ERROR-GUARD-APIN-0001]" \
-                "file=\"${f}\" reason=\"SHA pin outside SOT\""
-        fi
-    done
-    return "${rc}"
-}
-
-# =========================================================
 # SECURITY TOOLS (own CLI invocations; no marketplace actions)
 # =========================================================
 
@@ -2570,7 +2850,7 @@ _ci_codeql_bin() {
 }
 
 # What: Map language+suite to a CodeQL query-pack reference.
-# Why: One mapping; callers pass a plain suite name like init did.
+# Why: One mapping; callers pass only a plain suite name.
 # From: Issue #479
 _ci_codeql_query_pack() {
     local lang="$1" suite="${2:-security-extended}"
@@ -2582,7 +2862,7 @@ _ci_codeql_query_pack() {
 }
 
 # What: Create a CodeQL DB and analyze it into a SARIF file.
-# Why: CLI-native flow; c-cpp traces the repo's own build command.
+# Why: c-cpp traces the repo's own ci.sh build command.
 # From: Issue #479
 ci_cmd_codeql_scan() {
     local lang="${1:?language required}" suite="${2:-security-extended}" \
@@ -2608,7 +2888,7 @@ ci_cmd_codeql_scan() {
 }
 
 # What: Upload one SARIF file via the code-scanning API.
-# Why: Replaces codeql-action/upload-sarif; no marketplace action.
+# Why: The code-scanning API needs no marketplace action.
 # From: Issue #479
 ci_cmd_sarif_upload() {
     local file="${1:?sarif file required}" payload
@@ -2620,8 +2900,8 @@ ci_cmd_sarif_upload() {
         -f "sarif=${payload}" >/dev/null
 }
 
-# What: Download+cache the pinned Scorecard CLI; print its path.
-# Why: Own invocation, no marketplace action; version owned by SOT.
+# What: Fetch and cache the SOT Scorecard CLI; print path.
+# Why: Own invocation, no action; the SOT owns the version.
 # From: Issue #479
 _ci_scorecard_bin() {
     local ver dest
@@ -2676,8 +2956,8 @@ ci_cmd_scorecard_scan() {
     _ci_scorecard_json_to_sarif < "${json}" > "${out}"
 }
 
-# What: Download+cache the pinned OSV-Scanner CLI; print its path.
-# Why: Own invocation, no reusable workflow; version owned by SOT.
+# What: Fetch and cache the SOT OSV-Scanner; print its path.
+# Why: Own invocation, no action; the SOT owns the version.
 # From: Issue #479
 _ci_osv_scanner_bin() {
     local ver dest bin
@@ -2694,56 +2974,61 @@ _ci_osv_scanner_bin() {
 }
 
 # What: Scan the repo with OSV-Scanner, writing a SARIF file.
-# Why: CLI-native flow; no osv-scanner-action reusable workflow.
+# Why: CLI-native; no osv-scanner reusable workflow.
 # From: Issue #479
 ci_cmd_osv_scan() {
     local out="${1:-osv-results.sarif}" bin rc=0
     bin="$(_ci_osv_scanner_bin)" || return 2
     "${bin}" scan source --format=sarif --output-file="${out}" \
         --allow-no-lockfiles -r . || rc=$?
-    # osv-scanner exit 1-126 means "vulnerabilities found", not a tool
-    # failure; only 127+ (general/non-result error) is a real failure.
+    # What: Exit 1-126 means findings; 127+ is a tool failure.
+    # Why: Findings go to SARIF; only a broken scan may fail.
+    # From: Issue #479
     if [ "${rc}" -ge 127 ]; then
         ci_log "[CI-ERROR-SCAN-0002]" "tool=osv-scanner exit=${rc} reason=\"scan failed\""
         return 2
     fi
 }
 
-# What: Print the pinned ClusterFuzzLite step image for a step.
-# Why: One lookup; build/run share the SOT-owned image tag.
-# From: Issue #479
-_ci_clusterfuzzlite_image() {
-    local step="${1:?build or run required}" tag
-    tag="$(_ci_sot_scalar external_versions.clusterfuzzlite.version)" || return 2
-    printf 'gcr.io/oss-fuzz-base/clusterfuzzlite-%s-fuzzers:%s' "${step}" "${tag}"
+# What: Run a ClusterFuzzLite step image; CFL options only.
+# Why: CFL runs docker itself; --volumes-from needs our name.
+# From: Issue #267, Issue #479, PR #544
+_ci_cfl_run() {
+    local step="$1" image name work repo
+    shift
+    image="$(_ci_sot_scalar "base_images.cfl_${step}_fuzzers")" || return 2
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    repo="${GITHUB_REPOSITORY#*/}"
+    name="$(_ci_run_name "cfl-${step}")"
+    work="${RUNNER_TEMP:-/tmp}/cfl-workspace"
+    mkdir -p "${work}" || return 1
+    # What: CFL reads the checkout from PROJECT_SRC_PATH.
+    # Why: Standalone mode has no other source; unset is None.
+    # From: Issue #267, PR #544
+    _ci_container_run "${image}" --name "${name}" -e "CFL_CONTAINER_ID=${name}" \
+        -v /var/run/docker.sock:/var/run/docker.sock -v "${work}:${work}" \
+        -e "PROJECT_SRC_PATH=${CI_CONTAINER_ROOT}" \
+        -e CFL_PLATFORM=standalone -e LANGUAGE=c -e "REPOSITORY=${repo}" \
+        -e "WORKSPACE=${work}" -e "FILESTORE_ROOT_DIR=${work}/filestore" \
+        -e LOW_DISK_SPACE=True "$@" --
 }
 
-# What: Run the ClusterFuzzLite build-fuzzers step via docker.
-# Why: Own docker run, no marketplace Docker action; SOT-pinned tag.
-# From: Issue #479
+# What: Tag the SOT base-builder, then build the CFL fuzzers.
+# Why: CFL builds its Dockerfile without any build-args.
+# From: Issue #267, Issue #479, PR #544
 ci_cmd_clusterfuzzlite_build() {
-    local sanitizer="${1:-address}" image
-    image="$(_ci_clusterfuzzlite_image build)" || return 2
-    docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
-        -e LANGUAGE=c -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
-        -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore -e LOW_DISK_SPACE=True \
-        -e WORKSPACE=/tmp/cfl-workspace -e "REPOSITORY=${GITHUB_REPOSITORY#*/}" \
-        "${image}"
+    local sanitizer="${1:-address}"
+    _ci_image_alias security.cfl_base || return 1
+    _ci_cfl_run build -e "SANITIZER=${sanitizer}"
 }
 
-# What: Run the ClusterFuzzLite run-fuzzers step via docker.
-# Why: Own docker run, no marketplace Docker action; SOT-pinned tag.
-# From: Issue #479
+# What: Run the built fuzzers for a bounded time.
+# Why: Code-change mode on PRs; SARIF feeds code scanning.
+# From: Issue #267, Issue #479
 ci_cmd_clusterfuzzlite_run() {
-    local sanitizer="${1:-address}" fuzz_seconds="${2:-300}" mode="${3:-code-change}" image
-    image="$(_ci_clusterfuzzlite_image run)" || return 2
-    docker run --rm -v "$(pwd):/src/${GITHUB_REPOSITORY#*/}" \
-        -e FUZZ_SECONDS="${fuzz_seconds}" -e MODE="${mode}" \
-        -e SANITIZER="${sanitizer}" -e CFL_PLATFORM=standalone \
-        -e FILESTORE_ROOT_DIR=/tmp/cfl-filestore \
-        -e WORKSPACE=/tmp/cfl-workspace -e "REPOSITORY=${GITHUB_REPOSITORY#*/}" \
-        -e LOW_DISK_SPACE=True -e OUTPUT_SARIF=true \
-        "${image}"
+    local sanitizer="${1:-address}" fuzz_seconds="${2:-300}" mode="${3:-code-change}"
+    _ci_cfl_run run -e "SANITIZER=${sanitizer}" -e "FUZZ_SECONDS=${fuzz_seconds}" \
+        -e "MODE=${mode}" -e OUTPUT_SARIF=true
 }
 
 # =========================================================
@@ -2772,7 +3057,7 @@ _ci_popt_strict_compile() {
 }
 
 # What: Verify the vendored popt/ tree has 3 CVE fixes.
-# Why: A silent revert to a pre-fix snapshot would compile fine.
+# Why: A revert to a pre-fix snapshot would compile fine.
 # From: Issue #479
 _ci_popt_cve_fingerprint_check() {
     local want got rc=0
@@ -2806,7 +3091,7 @@ _ci_popt_cve_fingerprint_check() {
 }
 
 # What: Build one configure variant from the SOT matrix.
-# Why: Folds c-build.yml per-variant configure/make, Werror-clean.
+# Why: Variants differ only in configure; warnings fail.
 # From: Issue #479
 ci_cmd_build() {
     local variant="${1:?variant required}" log
@@ -2868,7 +3153,7 @@ _ci_popt_fallback_smoke_test() {
 }
 
 # What: Parse comfychair make-check output into a verdict.
-# Why: 0/0/0 parsed is a hard fail (rule 66), not a clean pass.
+# Why: 0/0/0 parsed is a hard fail (rule 66), not a pass.
 # From: Issue #479
 _ci_parse_comfychair() {
     local log="$1" ok notrun failed
@@ -2896,6 +3181,13 @@ _ci_privileged_single_test() {
         ci_log "[CI-TEST-SKIP]" "autogroup privilege case is Linux-only; skipping on $(uname -s)"
         return 0
     fi
+    # What: The verify-image workload runs this test without root.
+    # Why: That container is unprivileged; it has no sudo.
+    # From: Issue #285, Issue #479, PR #544
+    if [ "${CI_TEST_UNPRIVILEGED:-false}" = "true" ]; then
+        ci_log "[CI-TEST-NOTRUN]" "AutogroupNicenessPrivilegeDrop_Case: unprivileged verify container"
+        return 0
+    fi
     local log="${RUNNER_TEMP:-/tmp}/ci-autogroup.log"
     sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee "${log}"
     if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" "${log}"; then
@@ -2906,8 +3198,8 @@ _ci_privileged_single_test() {
         || { ci_log "[CI-ERROR-TEST-0004]" "AutogroupNicenessPrivilegeDrop_Case not OK"; return 1; }
 }
 
-# What: Create the coverage-recording PYTHON wrapper; print its path.
-# Why: Records include_server/*.py into the coverage denominator.
+# What: Write the coverage PYTHON wrapper; print its path.
+# Why: include_server/*.py joins the coverage denominator.
 # From: Issue #479, PR #370
 _ci_coverage_python_wrapper() {
     local w="${RUNNER_TEMP:-/tmp}/coverage-python-wrapper" py
@@ -3019,7 +3311,6 @@ ci_main() {
             fi
             ci_require_manifest || return "$?"
             case "${command}" in
-                resolve) ci_cmd_resolve "$@" ;;
                 impact) ci_cmd_impact "$@" ;;
                 impact-hit) ci_cmd_impact_hit "$@" ;;
                 matrix) ci_cmd_matrix "$@" ;;

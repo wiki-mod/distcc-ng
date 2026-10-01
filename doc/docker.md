@@ -6,6 +6,13 @@
 - **`docker/verify/`**: a verification/debug image for contributors/agents
   working on this repo's own source -- not a runtime image.
 
+Both Dockerfiles only orchestrate. Each stage is one `ci.sh image <target>`
+call with the checkout bind-mounted for that step, so neither `ci.sh` nor
+the SOT is baked into a layer. Every base image is an `ARG` without a
+default: `ci.sh` passes the digest from `.github/yaml/build-manifest.yml`,
+the only file that may pin one (`ci.sh lint` fails on a pin anywhere else).
+Build them through `ci.sh container`, not a bare `docker build`.
+
 ## Release images (`docker/release/`)
 
 Built and pushed to GHCR by `.github/workflows/release.yml`'s
@@ -80,8 +87,10 @@ needs no extra package, it already ships inside plain `python3`.
 self-contained.** Downloading and starting this image is the entire setup
 step -- nothing installs or fetches anything at container start or first
 use. Every tool listed above is baked into the image layers and gets a real
-build-time self-test (see the Dockerfile's self-test `RUN` step); the image
-build itself fails if any tool is missing or non-functional.
+build-time self-test (`ci.sh image verify`); the image build itself fails
+if any tool is missing or non-functional. The ptrace-dependent tools (`gdb`,
+`strace`, `ltrace`, `py-bt`) need a running container and are proven by
+`ci.sh verify ptrace-selftest` instead.
 
 ### Pulling the published image
 

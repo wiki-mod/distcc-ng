@@ -21,6 +21,15 @@ base_images:
   # Why: verify's actionlint-builder stage consumes it.
   # From: Issue #479
   golang_actionlint: "golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
+  # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
+  # Why: :v1 lineage; its old glibc matches the host check.
+  # From: Issue #267, Issue #479, PR #544
+  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder@sha256:47bcf5c42c4863af02843d16315014011571e31ece4ac9110a77a2e43949c5d2"
+  # What: ClusterFuzzLite build/run step images run by ci.sh.
+  # Why: Pinned by digest, not the floating v1 tag.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_build_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers@sha256:9407058df630a7f8af9c8f371abc6aacae8362dd99e68b40a06fa0ea75caec2e"
+  cfl_run_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers@sha256:f8223bc628dc8c5cd458ae1a58ba6e5fdc5d6b3831f3f5fe737f3a6e9f1c2021"
 
 # What: Pinned external tool/asset versions.
 # Why: Central version owner; consumers never re-pin.
@@ -61,11 +70,12 @@ external_versions:
   # From: Issue #479
   osv_scanner:
     version: "v2.6.0"
-  # What: ClusterFuzzLite step image ci.sh runs via docker.
-  # Why: No Docker action; own docker run, same image.
-  # From: Issue #479
-  clusterfuzzlite:
-    version: "v1"
+  # What: autoconf built into the ClusterFuzzLite image.
+  # Why: configure.ac needs 2.71; base-builder apt ships 2.69.
+  # From: Issue #267, Issue #479, PR #544
+  autoconf:
+    version: "2.71"
+    sha256: "431075ad0bf529ef13cb41e9042c542381103e80015686222b8a9d4abef42a1c"
   # What: Trivy CLI release run directly by ci.sh.
   # Why: Replaces aquasecurity/trivy-action.
   # From: Issue #479
@@ -140,8 +150,41 @@ build_matrix:
 # Why: One inventory owner for packages and images.
 # From: Issue #479
 release:
-  packages: ["rpm", "deb", "apk"]
-  containers: ["release", "pump", "nightly"]
+  # What: Published images: file, stage, ARG=SOT-path, OCI text.
+  # Why: An implicit last stage once changed what was published.
+  # From: Issue #181, Issue #359, Issue #479, PR #544
+  images:
+    distcc-ng:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime"
+      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      description: "distcc-ng runtime image."
+    distcc-ng-pump:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime-pump"
+      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      description: "distcc-ng runtime image with pump mode enabled."
+    distcc-ng-nightly:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime"
+      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      description: "distcc-ng nightly runtime image from current_dev."
+    # What: ref is the published tag lint and e2e run on.
+    # Why: tag is this job's local build of the same image.
+    # From: Issue #264, Issue #479, PR #544
+    distcc-ng-buildtools:
+      dockerfile: "docker/verify/Dockerfile"
+      target: "verify"
+      args: ["DEBIAN_IMAGE=base_images.debian_verify", "GOLANG_IMAGE=base_images.golang_actionlint"]
+      description: "distcc-ng build, debug and verification image."
+      tag: "distcc-ng-buildtools:local"
+      ref: "ghcr.io/wiki-mod/distcc-ng-buildtools:latest"
+  # What: apt packages of the release build and runtime stages.
+  # Why: libelf for --with-libelf; vendored popt: no libpopt.
+  # From: Issue #398, PR #487, PR #504
+  image_build_apt: "autoconf automake build-essential ccache libelf-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools"
+  image_runtime_apt: "build-essential libelf1 libseccomp2 libzstd1 python3"
+  licenses: "GPL-2.0-or-later"
   # What: Canonical GHCR package names this repo owns.
   # Why: One owner for gc/tag construction; no hardcode.
   # From: Issue #479
@@ -163,6 +206,42 @@ project_board:
 # From: Issue #479
 security:
   codeql_cpp_apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+  # What: apt packages of the ClusterFuzzLite build image.
+  # Why: src/auth.h needs gssapi.h, so libkrb5-dev is required.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_image_apt: "automake libtool pkg-config libpopt-dev libavahi-client-dev libzstd-dev libseccomp-dev python3-dev python3-setuptools libkrb5-dev"
+  # What: Local tag of the SOT base-builder; the CFL FROM.
+  # Why: CFL passes no build-args, so ci.sh tags the pin first.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_base:
+    from: "base_images.oss_fuzz_base_builder"
+    tag: "distcc-ng-cfl-base:local"
+
+# What: verify image apt groups atop the default matrix apt.
+# Why: The image builds what CI builds, plus debug tools.
+# From: Issue #264, PR #273, PR #291, Issue #479, PR #544
+verify:
+  apt:
+    # What: gcc and autotools beside the matrix clang.
+    # Why: dcc_probe_is_clang needs both compiler families.
+    # From: PR #273, Issue #264
+    toolchain: "build-essential autoconf automake libtool pkg-config libseccomp-dev"
+    # What: Debuggers, tracers, valgrind, binutils.
+    # Why: py-bt for the include server needs python3-dbg.
+    # From: PR #273, PR #291, Issue #264
+    debug: "python3-dbg strace ltrace valgrind binutils"
+    # What: A representative Samba build-dependency subset.
+    # Why: Proves the image builds a large real C project.
+    # From: Issue #264
+    samba: "libkrb5-dev libldap2-dev libgnutls28-dev libpam0g-dev libsystemd-dev libicu-dev liblmdb-dev libacl1-dev libbsd-dev libcap-dev libjansson-dev libreadline-dev libtirpc-dev libcups2-dev libdbus-1-dev libarchive-dev libblkid-dev libcmocka-dev libgpgme11-dev libkeyutils-dev libpcap-dev libtasn1-6-dev libtasn1-bin liburing-dev zlib1g-dev bison flex docbook-xml docbook-xsl xsltproc perl libparse-yapp-perl python3-dnspython python3-markdown"
+    # What: Search, fetch, socket, DNS and lint tools.
+    # Why: Verification inside the container needs them.
+    # From: PR #273, PR #291, Issue #267
+    tools: "ripgrep grep less git ca-certificates wget curl lsof iproute2 dnsutils shellcheck jq"
+    # What: sshd and ssh for SSHMode_Case.
+    # Why: Without them SSHMode_Case NOTRUN-skips here.
+    # From: Issue #275, Issue #440
+    ssh: "openssh-server openssh-client"
 
 # What: apt packages the engine self-test job needs.
 # Why: One owner; validate.yml installs this first.
@@ -210,6 +289,20 @@ e2e:
       floor: "objects"
       server_warnings: "notrun"
       max_attempts: 1
+  # What: ng builds the checkout; native is Debian's distcc.
+  # Why: Both sit on the published buildtools toolchain.
+  # From: Issue #264, Issue #479, PR #544
+  images:
+    ng:
+      dockerfile: "test/e2e/Dockerfile"
+      target: "ng"
+      args: ["TOOLCHAIN_IMAGE=release.images.distcc-ng-buildtools.ref"]
+      tag: "distcc-ng-e2e-ng:local"
+    native:
+      dockerfile: "test/e2e/Dockerfile"
+      target: "native"
+      args: ["TOOLCHAIN_IMAGE=release.images.distcc-ng-buildtools.ref"]
+      tag: "distcc-ng-e2e-native:local"
   image_apt: "cmake libhiredis-dev procps"
   native_apt: "distcc distcc-pump"
 

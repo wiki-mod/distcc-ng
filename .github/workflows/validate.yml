@@ -16,11 +16,8 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# What: Cancel a superseded run when a newer commit/event supersedes it.
-# Why: Legacy's c-build.yml/changelog-check.yml both had this; dropped
-#   during the rewrite's consolidation into this one file (found by
-#   checking the same pattern release.yml just needed against every
-#   sibling workflow, not assumed fine because nothing complained yet).
+# What: Cancel a run once a newer one for the ref starts.
+# Why: A superseded run only burns runner minutes.
 # From: Issue #479, PR #544
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -133,7 +130,6 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh container verify-image
-      - run: bash .github/scripts/ci.sh verify prepare-etc
       - run: bash .github/scripts/ci.sh verify ptrace-selftest
       - run: bash .github/scripts/ci.sh verify build-test
       - run: bash .github/scripts/ci.sh verify ccache-redis
@@ -152,13 +148,12 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
-          OWNER: ${{ github.repository_owner }}
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh container buildtools
 
   required_gate:
-    # What: One stable name over a content-based, skippable matrix.
-    # Why: metadata-only events must not report a build that never ran.
+    # What: One stable name over a skippable impact matrix.
+    # Why: Metadata-only events must not report an unrun build.
     # From: Issue #479, PR #544
     name: Validate (required)
     needs: [lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]

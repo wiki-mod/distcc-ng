@@ -14,6 +14,24 @@ setup() {
     source "${CI_SH}"
 }
 
+# What: Point CI_MANIFEST at a fixture of the given lines.
+# Why: Tests that copy real SOT values are a second truth.
+# From: Issue #479, PR #544
+_fixture_manifest() {
+    CI_MANIFEST="${BATS_TEST_TMPDIR}/build-manifest.yml"
+    printf '%s\n' "$@" > "${CI_MANIFEST}"
+}
+
+# What: Make each named command fail loudly if it is run.
+# Why: Proves a fail-closed path stops before any side effect.
+# From: Issue #479, PR #544
+_forbid() {
+    local c
+    for c in "$@"; do
+        eval "${c}() { echo '${c} must not run'; return 99; }"
+    done
+}
+
 # =========================================================
 # DISPATCH
 # =========================================================
@@ -40,22 +58,24 @@ setup() {
 # SOT READERS
 # =========================================================
 
-@test "sot scalar reads a two-level pin" {
-    # What: base_images.debian_verify is one owned digest.
-    # Why: Drift here breaks every verify-image build.
-    # From: Issue #479
-    run _ci_sot_scalar base_images.debian_verify
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == debian@sha256:* ]]
+@test "sot scalar reads a scalar at any nesting depth" {
+    # What: The awk reader follows dotted paths of any depth.
+    # Why: Every pin and spec is read through this one reader.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"'
+    [ "$(_ci_sot_scalar a.b)" = "x" ]
+    [ "$(_ci_sot_scalar a.c.d)" = "y:z@sha256:0" ]
 }
 
-@test "sot scalar reads a three-level pin" {
-    # What: external_versions.samba.version is one owner.
-    # Why: The verify source check downloads exactly this tag.
-    # From: Issue #479
-    run _ci_sot_scalar external_versions.samba.version
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "4.22.4" ]
+@test "every SOT base image is pinned by a full sha256 digest" {
+    # What: base_images holds only name@sha256:<64 hex> values.
+    # Why: A tag-only base image would float under every build.
+    # From: Issue #479, PR #544
+    local k v
+    for k in $(_ci_sot_children base_images); do
+        v="$(_ci_sot_scalar "base_images.${k}")"
+        [[ "${v}" =~ @sha256:[0-9a-f]{64}$ ]]
+    done
 }
 
 @test "sot scalar fails closed on a missing key" {
@@ -85,15 +105,16 @@ setup() {
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
 }
 
-@test "sot children lists exactly the five build variants" {
-    # What: build_matrix.variants owns the build set.
-    # Why: Drift here silently drops or adds a build.
-    # From: Issue #479
-    run _ci_sot_children build_matrix.variants
+@test "sot children lists only the direct child keys" {
+    # What: Children of a path are its next level, nothing deeper.
+    # Why: Drift here silently drops or adds a variant or image.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'v:' '  one:' '    k: 1' '  two:' '    k: 2' 'other: 1'
+    run _ci_sot_children v
     [ "${status}" -eq 0 ]
-    [ "${#lines[@]}" -eq 5 ]
-    printf '%s\n' "${lines[@]}" | grep -qx "default"
-    printf '%s\n' "${lines[@]}" | grep -qx "sanitizer"
+    [ "${#lines[@]}" -eq 2 ]
+    [ "${lines[0]}" = "one" ]
+    [ "${lines[1]}" = "two" ]
 }
 
 # =========================================================
@@ -193,29 +214,27 @@ setup() {
 }
 
 @test "release version-check require_new=false accepts an already-pushed tag" {
-    # What: POL-RELEASE-07's post-push check must not reject its own tag.
-    # Why: The tag genuinely exists by the time this runs for real.
+    # What: The post-push check accepts its own existing tag.
+    # Why: POL-RELEASE-07 runs after the tag was pushed.
     # From: Issue #479, PR #544
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
       printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
       git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG false
-    rm -rf "${fx}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"CI-RELEASE"*"OK"* ]]
 }
 
 @test "release version-check require_new=true still rejects an existing tag" {
     # What: The pre-tag dispatch path keeps refusing a collision.
-    # Why: require_new's default must stay true, unchanged behavior.
+    # Why: require_new defaults to true for the pre-tag path.
     # From: Issue #479, PR #544
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
       printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
       git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
 }
@@ -233,7 +252,7 @@ setup() {
     # What: No token MUST NOT fall through to an anonymous push.
     # Why: A missing secret is a hard failure (AG-VAL-001).
     # From: Issue #479, PR #544
-    docker() { echo "docker must not run"; return 99; }
+    _forbid docker
     unset REGISTRY_TOKEN
     GITHUB_ACTOR=octo run _ci_registry_login
     [ "${status}" -ne 0 ]
@@ -303,7 +322,7 @@ setup() {
     # What: No default mode runs when the caller typoed one.
     # Why: The old catch-all silently ran the distributed harness.
     # From: Issue #479, PR #544
-    docker() { echo "docker must not run"; return 99; }
+    _forbid docker
     run ci_cmd_e2e bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-E2E-0013"* ]]
@@ -323,7 +342,7 @@ setup() {
 }
 
 @test "publish nightly refuses to force-move a v* tag" {
-    # What: The nightly publisher must never touch a real release tag.
+    # What: The nightly publisher never moves a release tag.
     # Why: git push -f on a v* tag would clobber a real release.
     # From: Issue #479
     NIGHTLY_TAG="v3.6.6-NG" run _ci_publish_nightly
@@ -348,15 +367,16 @@ setup() {
     [ "${status}" -eq 0 ]
 }
 
-@test "matrix includes default on both OSes and excludes opt-in sanitizer" {
+@test "matrix expands variant x os and excludes opt-in variants" {
     # What: The PR matrix is the SOT variants minus opt-in ones.
-    # Why: sanitizer is dispatch/schedule-only, never a PR gate.
-    # From: Issue #479
+    # Why: An opt-in variant is never a PR gate.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p"' '      brew: "q"' \
+        '      os: [ubuntu-latest, macos-latest]' '    b:' '      apt: "r"' '      opt_in: true' \
+        '      os: [ubuntu-latest]'
     run ci_cmd_matrix
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *'"variant":"default","os":"ubuntu-latest"'* ]]
-    [[ "${output}" == *'"variant":"default","os":"macos-latest"'* ]]
-    [[ "${output}" != *'sanitizer'* ]]
+    [ "${output}" = '{"include":[{"variant":"a","os":"ubuntu-latest","apt":"p"},{"variant":"a","os":"macos-latest","brew":"q"}]}' ]
 }
 
 @test "build fails closed on an unknown variant before touching the tree" {
@@ -372,10 +392,9 @@ setup() {
     # What: A run with only OK/NOTRUN lines passes.
     # Why: Proves the green parse path.
     # From: Issue #479
-    log="$(mktemp)"
+    log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "FooCase           OK" "BarCase           NOTRUN, needs root" > "${log}"
     run _ci_parse_comfychair "${log}"
-    rm -f "${log}"
     [ "${status}" -eq 0 ]
 }
 
@@ -383,10 +402,9 @@ setup() {
     # What: Any FAIL case fails the parse.
     # Why: A failed test must never report green.
     # From: Issue #479
-    log="$(mktemp)"
+    log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "FooCase           OK" "BarCase           FAIL" > "${log}"
     run _ci_parse_comfychair "${log}"
-    rm -f "${log}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0002"* ]]
 }
@@ -395,10 +413,9 @@ setup() {
     # What: 0/0/0 parsed is a hard failure (rule 66).
     # Why: An empty parse must not look like a clean pass.
     # From: Issue #479
-    log="$(mktemp)"
+    log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "build noise, no result lines" > "${log}"
     run _ci_parse_comfychair "${log}"
-    rm -f "${log}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0001"* ]]
 }
@@ -412,54 +429,35 @@ setup() {
     [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
-@test "resolve prints every external pin from the SOT" {
-    # What: One resolve call proves all end-to-end SOT reads at once.
-    # Why: Every later phase depends on these read paths; no floating literals.
-    # From: Issue #479, Issue #81
-    run ci_cmd_resolve
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"debian_verify=debian@sha256:"* ]]
-    [[ "${output}" == *"samba=4.22.4"* ]]
-    [[ "${output}" == *"actionlint=1.7.12"* ]]
-    [[ "${output}" == *"ccache_heartbeat=v4.13.6"* ]]
-    [[ "${output}" == *"codeql_cli=v2.27.0"* ]]
-    [[ "${output}" == *"scorecard=v5.5.0"* ]]
-    [[ "${output}" == *"osv_scanner=v2.6.0"* ]]
-    [[ "${output}" == *"clusterfuzzlite=v1"* ]]
-    [[ "${output}" == *"redis=redis@sha256:"* ]]
-}
-
 @test "report fails closed when GH_TOKEN is unset" {
-    # What: report must fail rather than silently skip without credentials.
-    # Why: A silent no-op would hide broken scheduled-status wiring.
+    # What: report fails without credentials, never skips.
+    # Why: A silent no-op would hide broken status reporting.
     # From: Issue #479, Issue #81
     GH_TOKEN="" run ci_cmd_report
     [ "${status}" -ne 0 ]
 }
 
 @test "variables secret-present writes available true/false" {
-    # What: The secret-presence gate that add-to-project's if: depends on.
-    # Why: GitHub forbids the secrets context in if:, so ci.sh owns the gate.
+    # What: The secret-presence gate writes true, then false.
+    # Why: GitHub forbids the secrets context inside an if:.
     # From: Issue #479, PR #329
-    local out; out="$(mktemp)"
+    local out="${BATS_TEST_TMPDIR}/out"
     GITHUB_OUTPUT="${out}" SECRET_VALUE="x" _ci_variables_secret_present
     GITHUB_OUTPUT="${out}" SECRET_VALUE="" _ci_variables_secret_present
     run cat "${out}"
     [ "${lines[0]}" = "available=true" ]
     [ "${lines[1]}" = "available=false" ]
-    rm -f "${out}"
 }
 
 @test "ossf grep helper reports Met, NotMet, and case-insensitive" {
-    # What: The shared baseline grep helper drives many openssf checks.
-    # Why: A wrong Met/NotMet would mis-report a security criterion.
+    # What: The baseline grep helper backs many openssf checks.
+    # Why: A wrong Met/NotMet misreports a security criterion.
     # From: Issue #479, Issue #312
-    local fx; fx="$(mktemp)"
+    local fx="${BATS_TEST_TMPDIR}/fx"
     printf 'has Security Advisory here\n' > "${fx}"
     [ "$(_ci_ossf_grep "${fx}" 'Security Advisor')" = "Met" ]
     [ "$(_ci_ossf_grep "${fx}" 'nope-xyz')" = "NotMet" ]
     [ "$(_ci_ossf_grep "${fx}" 'SECURITY ADVISOR' -i)" = "Met" ]
-    rm -f "${fx}"
 }
 
 @test "gc candidates keep protected, rollback set, and real tags" {
@@ -487,8 +485,7 @@ setup() {
     # What: Only release.ghcr_packages (or all) may be pruned.
     # Why: A typo MUST NOT reach a delete-capable token.
     # From: Issue #479, PR #544
-    gh() { echo "gh must not run"; return 99; }
-    docker() { echo "docker must not run"; return 99; }
+    _forbid gh docker
     GH_TOKEN=x OWNER=wiki-mod run ci_cmd_gc not-a-package
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GC-0001"* ]]
@@ -509,15 +506,16 @@ setup() {
     # What: An env value MUST NOT shadow the SOT's board identity.
     # Why: One owner; a second source is a parallel owner.
     # From: Issue #236, Issue #479, PR #544
+    _fixture_manifest 'project_board:' '  owner: "sot-owner"' '  number: "7"'
     PROJECT_OWNER="shadow" PROJECT_NUMBER="999"
     _ci_project_board_load
-    [ "${PROJECT_OWNER}" = "wiki-mod" ]
-    [ "${PROJECT_NUMBER}" = "11" ]
+    [ "${PROJECT_OWNER}" = "sot-owner" ]
+    [ "${PROJECT_NUMBER}" = "7" ]
 }
 
 @test "failed-jobs filter keeps only failure and cancelled" {
-    # What: Only real failures are reported, not upstream-caused skips.
-    # Why: A skipped dependent would otherwise mask the true root cause.
+    # What: Only real failures are reported, never skips.
+    # Why: A skipped dependent would mask the root cause.
     # From: Issue #479, PR #476
     run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
     [ "${status}" -eq 0 ]
@@ -534,7 +532,7 @@ setup() {
 
 @test "gate fails closed when a real job failed" {
     # What: A real failure/cancelled entry fails the gate.
-    # Why: This is the one stable required-check name over the matrix.
+    # Why: It is the one stable required-check name.
     # From: Issue #479, PR #544
     JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
     [ "${status}" -eq 1 ]
@@ -549,7 +547,7 @@ setup() {
     # What: A .md edit MUST NOT trigger a compile.
     # Why: Kills the sledgehammer full-CI on documentation.
     # From: Issue #479
-    run bash -c 'printf "%s\n" README.md doc/threat-model.md | { source "'"${BATS_TEST_DIRNAME}"'/ci.sh"; _ci_phases_for_paths; }'
+    run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"doc-lint"* ]]
     [[ "${output}" != *"build"* ]]
@@ -560,7 +558,7 @@ setup() {
     # What: A src/*.c edit selects the compile phases.
     # Why: Real code changes must build, test and analyze.
     # From: Issue #479
-    run bash -c 'printf "%s\n" src/dopt.c | { source "'"${BATS_TEST_DIRNAME}"'/ci.sh"; _ci_phases_for_paths; }'
+    run _ci_phases_for_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"build"* ]]
     [[ "${output}" == *"test"* ]]
@@ -570,7 +568,7 @@ setup() {
     # What: include_server/*.py selects build/test/analyze only.
     # Why: A pump-mode Python change is not a packaging change.
     # From: Issue #479
-    run bash -c 'printf "%s\n" include_server/basics.py | { source "'"${BATS_TEST_DIRNAME}"'/ci.sh"; _ci_phases_for_paths; }'
+    run _ci_phases_for_paths < <(printf '%s\n' include_server/basics.py)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"build"* ]]
     [[ "${output}" != *"package"* ]]
@@ -580,7 +578,7 @@ setup() {
     # What: A path in no class selects no work at all.
     # Why: DEFAULT=NOOP; nothing runs on an irrelevant change.
     # From: Issue #479
-    run bash -c 'printf "%s\n" LICENSE | { source "'"${BATS_TEST_DIRNAME}"'/ci.sh"; _ci_phases_for_paths; }'
+    run _ci_phases_for_paths < <(printf '%s\n' LICENSE)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
 }
@@ -589,7 +587,7 @@ setup() {
     # What: One path resolves to exactly its owning class.
     # Why: Guards the glob matcher against silent misrouting.
     # From: Issue #479
-    run bash -c 'printf "%s\n" src/dopt.c | { source "'"${BATS_TEST_DIRNAME}"'/ci.sh"; _ci_classify_paths; }'
+    run _ci_classify_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"c-source"* ]]
 }
@@ -629,7 +627,7 @@ setup() {
 }
 
 @test "pr category: maps rule-71 types to release-drafter labels" {
-    # What: feat/fix/docs/security map to their changelog category.
+    # What: feat/fix/docs/security map to a changelog category.
     # Why: Replaces release-drafter's autolabeler regex entirely.
     # From: Issue #479
     [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
@@ -640,7 +638,7 @@ setup() {
 
 @test "pr category: an uncategorized type prints nothing" {
     # What: chore/refactor/etc. get no changelog category label.
-    # Why: Matches release-drafter.yml's original 4-category scope.
+    # Why: The release notes have exactly these 4 categories.
     # From: Issue #479
     [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
 }
@@ -653,9 +651,8 @@ setup() {
     # What: An LF-only fixture must pass the guard.
     # Why: Proves the green path, not only the failing one.
     # From: Issue #479
-    fx="$(mktemp -d)"; printf 'clean line\n' > "${fx}/ok.sh"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'clean line\n' > "${fx}/ok.sh"
     run ci_guard_line_endings "${fx}"
-    rm -rf "${fx}"
     [ "${status}" -eq 0 ]
 }
 
@@ -663,9 +660,8 @@ setup() {
     # What: A CR byte anywhere must fail the guard.
     # Why: Proves the fail-closed path is reachable.
     # From: Issue #479
-    fx="$(mktemp -d)"; printf 'bad line\r\n' > "${fx}/crlf.sh"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'bad line\r\n' > "${fx}/crlf.sh"
     run ci_guard_line_endings "${fx}"
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-EOL-0001"* ]]
 }
@@ -674,10 +670,9 @@ setup() {
     # What: A full 64-hex sha256 is compliant.
     # Why: Proves the green path for the SHA rule.
     # From: Issue #479
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'image: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
-    rm -rf "${fx}"
     [ "${status}" -eq 0 ]
 }
 
@@ -685,9 +680,8 @@ setup() {
     # What: A short sha256 must be rejected.
     # Why: No abbreviations or special SHA forms allowed.
     # From: Issue #479
-    fx="$(mktemp -d)"; printf 'image: "debian@sha256:fac46bff"\n' > "${fx}/f.yml"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'image: "debian@sha256:fac46bff"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHA-0001"* ]]
 }
@@ -696,48 +690,78 @@ setup() {
     # What: A short git SHA on a `uses:` pin must be rejected.
     # Why: Action pins MUST be full 40-hex SHAs.
     # From: Issue #479
-    fx="$(mktemp -d)"; printf '      - uses: actions/checkout@abc1234\n' > "${fx}/w.yml"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf '      - uses: actions/checkout@abc1234\n' > "${fx}/w.yml"
     run ci_guard_full_sha "${fx}"
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHA-0002"* ]]
 }
 
-@test "dependabot-consistency passes when SOT and Dockerfile agree" {
-    # What: A SOT pin present verbatim in its Dockerfile passes.
-    # Why: Proves the green path of the anti-drift binding.
-    # From: Issue #479
-    fx="$(mktemp -d)"; mkdir -p "${fx}/docker/verify" "${fx}/.github/yaml"
-    a="$(printf 'a%.0s' {1..64})"; g="$(printf 'b%.0s' {1..64})"
-    printf 'ARG DEBIAN_IMAGE=debian@sha256:%s\nFROM golang@sha256:%s AS actionlint-builder\nFROM ${DEBIAN_IMAGE}\n' "${a}" "${g}" > "${fx}/docker/verify/Dockerfile"
-    printf 'base_images:\n  debian_verify: "debian@sha256:%s"\n  golang_actionlint: "golang@sha256:%s"\n' "${a}" "${g}" > "${fx}/.github/yaml/build-manifest.yml"
-    CI_MANIFEST="${fx}/.github/yaml/build-manifest.yml" run ci_guard_dependabot_consistency "${fx}"
-    rm -rf "${fx}"
+@test "pin guard passes the repo's own Dockerfiles and workflows" {
+    # What: The real tree holds pins only in the SOT.
+    # Why: Thesis 1: build-manifest.yml is the sole pin owner.
+    # From: Issue #479, PR #544
+    run ci_guard_pins_in_sot "${CI_REPO_ROOT}"
     [ "${status}" -eq 0 ]
 }
 
-@test "dependabot-consistency fails closed when the SOT drifts from the Dockerfile" {
-    # What: A SOT digest absent from its Dockerfile must fail.
-    # Why: Catches a Dependabot bump that did not reach the SOT.
-    # From: Issue #479
-    fx="$(mktemp -d)"; mkdir -p "${fx}/docker/verify" "${fx}/.github/yaml"
-    a="$(printf 'a%.0s' {1..64})"; c="$(printf 'c%.0s' {1..64})"; g="$(printf 'b%.0s' {1..64})"
-    printf 'ARG DEBIAN_IMAGE=debian@sha256:%s\nFROM golang@sha256:%s AS actionlint-builder\nFROM ${DEBIAN_IMAGE}\n' "${a}" "${g}" > "${fx}/docker/verify/Dockerfile"
-    printf 'base_images:\n  debian_verify: "debian@sha256:%s"\n  golang_actionlint: "golang@sha256:%s"\n' "${c}" "${g}" > "${fx}/.github/yaml/build-manifest.yml"
-    CI_MANIFEST="${fx}/.github/yaml/build-manifest.yml" run ci_guard_dependabot_consistency "${fx}"
-    rm -rf "${fx}"
+@test "pin guard passes ARG FROMs, stage aliases and :local images" {
+    # What: FROM ${ARG}, FROM <stage> and FROM <name>:local pass.
+    # Why: None of them can pull an image the SOT did not pin.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/d" "${fx}/.github/workflows"
+    printf '%s\n' 'ARG BASE' 'FROM ${BASE} AS one' 'FROM one AS two' 'FROM x-y:local' > "${fx}/d/Dockerfile"
+    printf '%s\n' 'jobs:' '  x:' '    steps:' '      - run: bash .github/scripts/ci.sh build' > "${fx}/.github/workflows/w.yml"
+    run ci_guard_pins_in_sot "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "pin guard fails closed on every pin form outside the SOT" {
+    # What: Digest, ARG default, pulled FROM, workflow pins fail.
+    # Why: Each one is a second pin owner beside the SOT.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx" d
+    d="$(printf 'a%.0s' {1..64})"
+    mkdir -p "${fx}/d" "${fx}/.github/workflows"
+    printf '%s\n' "ARG BASE=debian@sha256:${d}" 'FROM debian:trixie' 'FROM --platform=linux/amd64 golang:1' > "${fx}/d/Dockerfile"
+    printf '%s\n' "      - uses: foo/bar@$(printf 'b%.0s' {1..40})" '    container: debian:13' > "${fx}/.github/workflows/w.yml"
+    run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-DEP-0002"* ]]
+    [[ "${output}" == *"d/Dockerfile:1: digest"* ]]
+    [[ "${output}" == *"d/Dockerfile:1: arg-default"* ]]
+    [[ "${output}" == *"d/Dockerfile:2: from debian:trixie"* ]]
+    [[ "${output}" == *"d/Dockerfile:3: from golang:1"* ]]
+    [[ "${output}" == *"w.yml:1: image or action pin"* ]]
+    [[ "${output}" == *"w.yml:2: image or action pin"* ]]
+}
+
+@test "the CFL Dockerfile FROM is the SOT base-builder tag" {
+    # What: CFL builds its Dockerfile without build-args.
+    # Why: So its FROM literal must equal the tag ci.sh sets.
+    # From: Issue #267, Issue #479, PR #544
+    local tag
+    tag="$(_ci_sot_scalar security.cfl_base.tag)"
+    grep -qx "FROM ${tag}" "${CI_REPO_ROOT}/.clusterfuzzlite/Dockerfile"
+}
+
+@test "image alias pulls the SOT pin and tags it locally" {
+    # What: The alias resolves a SOT path to its pinned image.
+    # Why: A builder without build-args may only see that tag.
+    # From: Issue #267, Issue #479, PR #544
+    _fixture_manifest 'base:' '  img: "b@sha256:0"' 's:' '  a:' '    from: "base.img"' '    tag: "a:local"'
+    _capture_docker
+    run _ci_image_alias s.a
+    [ "${status}" -eq 0 ]
+    [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "pull b@sha256:0 tag b@sha256:0 a:local " ]
 }
 
 @test "orchestrator guard passes on a single-command run: step" {
-    # What: `run: bash ci.sh <phase>` is a compliant orchestrator step.
+    # What: `run: bash ci.sh <phase>` is a compliant step.
     # Why: Proves the green path; one command is allowed.
     # From: Issue #479
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
-    rm -rf "${fx}"
     [ "${status}" -eq 0 ]
 }
 
@@ -745,10 +769,9 @@ setup() {
     # What: A run: block with shell control flow must be rejected.
     # Why: #479 bans inline logic; it belongs in ci.sh.
     # From: Issue #479
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: |\n          if [ -x foo ]; then bar; fi\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
 }
@@ -757,35 +780,137 @@ setup() {
     # What: A composite or marketplace uses: step is rejected.
     # Why: #479: workflows only invoke ci.sh, no actions at all.
     # From: Issue #479, PR #544
-    fx="$(mktemp -d)"
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - uses: ./.github/actions/foo\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
-    rm -rf "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"uses: step"* ]]
 }
 
-@test "action-pin guard passes on a workflow without SHA pins" {
-    # What: A pin-free workflow is compliant.
-    # Why: Green path; only the SOT may carry pins.
-    # From: Issue #479, PR #544
-    fx="$(mktemp -d)"
-    printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
-    run ci_guard_action_pin_sot "${fx}/wf.yml"
-    rm -rf "${fx}"
-    [ "${status}" -eq 0 ]
+# =========================================================
+# EXECUTION OWNERS (argv capture, no real docker)
+# =========================================================
+
+# What: docker stub that records its argv, one arg per line.
+# Why: Owner tests assert the exact flags, not a real daemon.
+# From: Issue #479, PR #544
+_capture_docker() {
+    docker() { printf '%s\n' "$@" >> "${BATS_TEST_TMPDIR}/argv"; }
 }
 
-@test "action-pin guard fails closed on a SHA pin outside the SOT" {
-    # What: Any @<40-hex> outside the SOT fails the guard.
-    # Why: build-manifest.yml is the sole pin owner.
+@test "image build passes SOT ARGs, explicit target and local tag" {
+    # What: A local spec builds its file and target, SOT ARGs.
+    # Why: The only path a base-image pin may take into a build.
+    # From: Issue #359, Issue #479, PR #544
+    local d; d="$(printf 'a%.0s' {1..64})"
+    _fixture_manifest 'base:' "  img: \"b@sha256:${d}\"" 's:' '  x:' '    dockerfile: "d/Dockerfile"' \
+        '    target: "t"' '    args: ["A=base.img"]' '    tag: "x:local"'
+    _capture_docker
+    run _ci_image_build s.x "" --pull
+    [ "${status}" -eq 0 ]
+    [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "build --pull --file ${CI_REPO_ROOT}/d/Dockerfile --target t --build-arg A=b@sha256:${d} --tag x:local ${CI_REPO_ROOT} " ]
+}
+
+@test "image build labels a published spec and needs its version" {
+    # What: A spec with a description gets 7 OCI labels.
+    # Why: One OCI metadata owner; Dockerfiles carry no LABEL.
+    # From: Issue #359, Issue #479, PR #544
+    _fixture_manifest 'base:' '  img: "b"' 'release:' '  licenses: "L"' '  images:' '    pkg:' \
+        '      dockerfile: "f"' '      target: "t"' '      args: ["A=base.img"]' '      description: "D"'
+    _capture_docker
+    GITHUB_SERVER_URL=https://h GITHUB_REPOSITORY=o/r BUILT_SHA=abc run _ci_image_build release.images.pkg ""
+    [ "${status}" -ne 0 ]
+    [ ! -f "${BATS_TEST_TMPDIR}/argv" ]
+    GITHUB_SERVER_URL=https://h GITHUB_REPOSITORY=o/r BUILT_SHA=abc run _ci_image_build release.images.pkg 1.0
+    [ "${status}" -eq 0 ]
+    [ "$(grep -c '^org.opencontainers.image' "${BATS_TEST_TMPDIR}/argv")" -eq 7 ]
+    grep -qx 'org.opencontainers.image.title=pkg' "${BATS_TEST_TMPDIR}/argv"
+    grep -qx 'org.opencontainers.image.version=1.0' "${BATS_TEST_TMPDIR}/argv"
+    grep -qx 'org.opencontainers.image.revision=abc' "${BATS_TEST_TMPDIR}/argv"
+}
+
+@test "image build fails closed on a bad spec before docker runs" {
+    # What: A missing spec or a non ARG=path entry stops it.
+    # Why: An unpinned ARG would build FROM an empty base.
     # From: Issue #479, PR #544
-    fx="$(mktemp -d)"
-    printf '      - uses: foo/bar@%s\n' "$(printf 'a%.0s' {1..40})" > "${fx}/wf.yml"
-    run ci_guard_action_pin_sot "${fx}/wf.yml"
-    rm -rf "${fx}"
+    _fixture_manifest 's:' '  x:' '    dockerfile: "f"' '    target: "t"' '    args: ["NOEQUALS"]'
+    _forbid docker
+    run _ci_image_build s.x ""
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-IMAGE-0002"* ]]
+    run _ci_image_build s.nope ""
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+@test "container run: --init and a read-only checkout, --rm alone" {
+    # What: Every run gets --init and the checkout at /ci:ro.
+    # Why: --init reaps zombies; a missing one hung earlier runs.
+    # From: Issue #479, PR #544
+    _capture_docker
+    run _ci_container_run img -e K=V -- bash x
+    [ "${status}" -eq 0 ]
+    [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --rm -e K=V img bash x " ]
+}
+
+@test "container run: inside a stack it joins net and label, no --rm" {
+    # What: A stack member is labelled; teardown removes it.
+    # Why: --rm would drop a crashed server's log too early.
+    # From: Issue #479, PR #544
+    _capture_docker
+    CI_STACK=n1 run _ci_container_run img -d --
+    [ "${status}" -eq 0 ]
+    [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --network n1 --label ci-stack=n1 -d img " ]
+}
+
+@test "container run fails closed without -- before the command" {
+    # What: Options and command must be split by an explicit --.
+    # Why: A guessed split could run an option as the image.
+    # From: Issue #479, PR #544
+    _forbid docker
+    run _ci_container_run img -e K=V
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CONTAINER-0003"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+@test "registry push never pushes after a failed login" {
+    # What: No token means no login and no push at all.
+    # Why: An anonymous or stale-credential push must not happen.
+    # From: Issue #479, PR #544
+    _forbid docker
+    unset REGISTRY_TOKEN
+    GITHUB_ACTOR=octo run _ci_registry_push some/image:tag
+    [ "${status}" -ne 0 ]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+@test "wait-until retries a probe and fails after N tries" {
+    # What: Success on a later try passes; N failures fail.
+    # Why: One bounded poll owner for every readiness wait.
+    # From: Issue #479, PR #544
+    sleep() { :; }
+    _probe() { echo x >> "${BATS_TEST_TMPDIR}/tries"; [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -ge 3 ]; }
+    run _ci_wait_until 5 1 _probe
+    [ "${status}" -eq 0 ]
+    [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -eq 3 ]
+    run _ci_wait_until 2 1 false
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-APIN-0001"* ]]
+}
+
+@test "expect-output checks presence, and absence with !re" {
+    # What: A fixture's output is the proof, not its exit code.
+    # Why: Fixtures exit non-zero; a negated check can fail too.
+    # From: Issue #264, Issue #479, PR #544
+    run _ci_expect_output t 'needle' bash -c 'echo needle; exit 3'
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"t: OK (exit 3)"* ]]
+    run _ci_expect_output t '!needle' echo needle
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SELFTEST-0001"* ]]
+    run _ci_expect_output t '!needle' echo hay
+    [ "${status}" -eq 0 ]
 }
 
 # =========================================================
@@ -832,8 +957,7 @@ setup() {
     # What: arm64 logs NotRun and touches neither net nor sudo.
     # Why: The non-TLS agent ships for x64 only.
     # From: Issue #479, PR #544
-    curl() { echo "curl must not run"; return 99; }
-    sudo() { echo "sudo must not run"; return 99; }
+    _forbid curl sudo
     RUNNER_OS=Linux RUNNER_ARCH=ARM64 RUNNER_ENVIRONMENT=github-hosted run _ci_harden_start
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"NotRun: agent unsupported on RUNNER_ARCH=ARM64"* ]]
