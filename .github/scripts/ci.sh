@@ -234,34 +234,48 @@ _ci_sot_set() {
 # From: Issue #479
 _ci_glob_match() {
     local pat="$1" path="$2" re
-    # What: Escape regex metachars, then turn '*' runs into '.*'.
-    # Why: =~ needs a real regex; case and [[ == warn here.
-    # From: Issue #479
-    re="${pat//\*/$'\x01'}"
+    # What: Escape metachars; '**/' may match no directory.
+    # Why: =~ needs a regex; '**/*.md' must match README.md.
+    # From: Issue #479, PR #544
+    re="${pat//\*\*\//$'\x02'}"
+    re="${re//\*/$'\x01'}"
     re="$(printf '%s' "${re}" | sed 's/[.^$+?()[\]{}|]/\\&/g')"
+    re="${re//$'\x02'/(.*/)?}"
     re="${re//$'\x01'/.*}"
     [[ "${path}" =~ ^${re}$ ]]
 }
 
-# What: Print impact classes matched by paths on stdin.
-# Why: DEFAULT=NOOP; only a matched class selects any phase.
-# From: Issue #479
+# What: Print the names in a SOT path map hit by stdin paths.
+# Why: impact_classes and labels share one glob classifier.
+# From: Issue #479, PR #544
 _ci_classify_paths() {
-    local classes path cls pat pats
-    classes="$(_ci_sot_children impact_classes)" || return 2
+    local map="${1:-impact_classes}" classes path cls pats excl
+    classes="$(_ci_sot_children "${map}")" || return 2
     while IFS= read -r path; do
         [ -n "${path}" ] || continue
         for cls in ${classes}; do
-            pats="$(_ci_sot_list "impact_classes.${cls}.paths")" || return 2
-            while IFS= read -r pat; do
-                [ -n "${pat}" ] || continue
-                if _ci_glob_match "${pat}" "${path}"; then
-                    printf '%s\n' "${cls}"
-                    break
-                fi
-            done <<< "${pats}"
+            pats="$(_ci_sot_list "${map}.${cls}.paths")" || return 2
+            _ci_paths_hit "${path}" "${pats}" || continue
+            excl="$(_ci_sot_optional "${map}.${cls}.exclude")" || return 2
+            if [ -n "${excl}" ]; then
+                excl="$(_ci_sot_list "${map}.${cls}.exclude")" || return 2
+                _ci_paths_hit "${path}" "${excl}" && continue
+            fi
+            printf '%s\n' "${cls}"
         done
     done | sort -u
+}
+
+# What: Succeed if a path matches one of the glob lines.
+# Why: A class's paths and its exclude list match alike.
+# From: Issue #479, PR #544
+_ci_paths_hit() {
+    local path="$1" pat
+    while IFS= read -r pat; do
+        [ -n "${pat}" ] || continue
+        _ci_glob_match "${pat}" "${path}" && return 0
+    done <<< "$2"
+    return 1
 }
 
 # What: Print the validate phases selected by paths on stdin.
@@ -485,7 +499,7 @@ ci_cmd_impact() {
 # Why: One command; no pipe or && chain in the workflow.
 # From: Issue #479
 ci_cmd_impact_hit() {
-    local class="${1:?class required}" changed range=()
+    local class="${1:?class required}" changed classes range=()
     # What: Only a PR diff can skip a class; other events run it.
     # Why: A push or schedule has no reviewed diff to classify.
     # From: Issue #479, PR #544
@@ -501,7 +515,8 @@ ci_cmd_impact_hit() {
         ci_log "[CI-ERROR-IMPACT-0001]" "cannot diff ${range[0]}..${range[1]}"
         return 1
     fi
-    if _ci_classify_paths <<< "${changed}" | grep -qx "${class}"; then
+    classes="$(_ci_classify_paths <<< "${changed}")" || return 2
+    if grep -qx "${class}" <<< "${classes}"; then
         _ci_output hit true
     else
         _ci_output hit false
@@ -2178,53 +2193,6 @@ _ci_variables_add_to_project() {
     _ci_board_add "${url}" "${GH_TOKEN:-}"
 }
 
-# What: True if a file is under doc/ or a non-CHANGELOG .md.
-# Why: labeler.yml's any:/negation rule needs own logic.
-# From: Issue #479
-_ci_labeler_documentation_match() {
-    local files="$1" f
-    while IFS= read -r f; do
-        case "${f}" in doc/*) return 0 ;; esac
-        case "${f}" in *.md) [ "${f}" != "CHANGELOG.md" ] && return 0 ;; esac
-    done <<< "${files}"
-    return 1
-}
-
-# What: True if pat matches any line of files (one per line).
-# Why: Shared by every simple rule; a herestring, no subshell.
-# From: Issue #479
-_ci_labeler_glob_matches_any() {
-    local pat="$1" files="$2" f
-    while IFS= read -r f; do
-        _ci_glob_match "${pat}" "${f}" && return 0
-    done <<< "${files}"
-    return 1
-}
-
-# What: Print "label glob" for labeler.yml's simple rules.
-# Why: Only the documentation label needs any:/negation.
-# From: Issue #479
-_ci_labeler_simple_rules() {
-    awk '
-        /^documentation:$/ { label = ""; collecting = 0; next }
-        /^[a-z_-]+:$/ { label = $0; sub(/:$/, "", label); collecting = 0; next }
-        label == "" { next }
-        /any-glob-to-any-file:/ {
-            rest = $0
-            sub(/.*any-glob-to-any-file:[[:space:]]*/, "", rest)
-            gsub(/"/, "", rest)
-            if (rest != "") { print label, rest; collecting = 0 } else { collecting = 1 }
-            next
-        }
-        collecting && /^[[:space:]]*-[[:space:]]*"/ {
-            val = $0; gsub(/^[[:space:]]*-[[:space:]]*"|"[[:space:]]*$/, "", val)
-            print label, val
-            next
-        }
-        { collecting = 0 }
-    ' "${CI_REPO_ROOT}/.github/labeler.yml"
-}
-
 # What: Map a Commit type prefix to a category label.
 # Why: rule 71 already structures titles; no regex needed.
 # From: Issue #479
@@ -2240,24 +2208,18 @@ _ci_pr_category_label() {
 }
 
 # What: Apply path- and title-based labels to a PR.
-# Why: Replaces both actions/labeler and release-drafter.
-# From: Issue #479
+# Why: SOT labels map paths; the title type sets the category.
+# From: Issue #479, PR #544
 _ci_variables_label_pr() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local files label pat labels=() category PR_NUMBER
+    local files hits labels=() category PR_NUMBER
     PR_NUMBER="$(_ci_event_pr_number)" || return 2
-    files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)"
-    if _ci_labeler_documentation_match "${files}"; then
-        labels+=("documentation")
-    fi
-    while read -r label pat; do
-        [ -n "${label}" ] || continue
-        _ci_labeler_glob_matches_any "${pat}" "${files}" && labels+=("${label}")
-    done < <(_ci_labeler_simple_rules)
-    if _ci_metadata_fetch_live; then
-        category="$(_ci_pr_category_label "${PR_TITLE:-}")"
-        [ -n "${category}" ] && labels+=("${category}")
-    fi
+    files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)" || return 1
+    hits="$(_ci_classify_paths labels <<< "${files}")" || return 2
+    [ -z "${hits}" ] || mapfile -t labels <<< "${hits}"
+    _ci_metadata_fetch_live || return 2
+    category="$(_ci_pr_category_label "${PR_TITLE:-}")"
+    [ -z "${category}" ] || labels+=("${category}")
     if [ "${#labels[@]}" -gt 0 ]; then
         gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
             --add-label "$(IFS=,; printf '%s' "${labels[*]}")"
@@ -2907,6 +2869,76 @@ ci_guard_line_endings() {
     return "${rc}"
 }
 
+# What: Print AG-CODE-001 violations of one '#'-comment file.
+# Why: Prose comments are What/Why/From lines of 60 chars.
+# From: Issue #479, PR #544
+_ci_comment_violations() {
+    awk -v F="$1" -v q="'" '
+        BEGIN { hd = "(^|[ \t(])<<-?[ ]*[\"" q "]?[A-Za-z_][A-Za-z0-9_]*[\"" q "]?([ \t;|&)]|$)" }
+        function flush(   i, nwhat, nwhy, nfrom) {
+            nwhat = nwhy = nfrom = 0
+            for (i = 1; i <= np; i++) {
+                if (kind[i] == "") print F ":" pno[i] ": not a What/Why/From line"
+                else if (kind[i] == "What") nwhat++
+                else if (kind[i] == "Why") nwhy++
+                else nfrom++
+            }
+            if (np > 0 && (nwhat != 1 || nwhy != 1 || nfrom > 1))
+                print F ":" pno[1] ": block needs one What, one Why, at most one From"
+            np = 0; banner = 0
+        }
+        term != "" { if ($0 ~ ("^[ \t]*" term "$")) term = ""; next }
+        {
+            s = $0; sub(/^[ \t]+/, "", s)
+            if (substr(s, 1, 1) != "#") {
+                flush()
+                l = $0; gsub(/<<</, "", l)
+                if (match(l, hd)) {
+                    term = substr(l, RSTART, RLENGTH); tline = NR
+                    sub(/^[ \t(]*<<-?[ ]*/, "", term); sub(/[ \t;|&)]$/, "", term)
+                    gsub("[\"" q "]", "", term)
+                }
+                next
+            }
+            if (s ~ /^#!/ || s ~ /^#[ ]*(shellcheck |syntax=|SPDX-License-Identifier:)/) next
+            if (s ~ /^#[ ]*=+[ ]*$/) { banner = !banner; next }
+            if (banner || index(s, "# distcc-ng (https://") == 1) next
+            np++; pno[np] = NR; kind[np] = ""
+            if (s ~ /^#[ ]?(What|Why|From):[ ]/) {
+                body = s; sub(/^#[ ]?/, "", body)
+                kind[np] = substr(body, 1, index(body, ":") - 1)
+                if (length(body) > 60) print F ":" NR ": longer than 60 characters"
+            }
+        }
+        END {
+            flush()
+            if (term != "") print F ":" tline ": heredoc " term " never ends"
+        }
+    ' "$1"
+}
+
+# What: Fail on prose comments not in What/Why/From form.
+# Why: #479's comment guard; AG-CODE-001 defines the form.
+# From: Issue #479, PR #544
+ci_guard_comment_format() {
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out hit d
+    local files=()
+    for d in .github docker test/e2e .clusterfuzzlite; do
+        [ -e "${root}/${d}" ] || continue
+        mapfile -t -O "${#files[@]}" files < <(find "${root}/${d}" -type f \( -name '*.sh' \
+            -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \))
+    done
+    for f in "${files[@]}"; do
+        out="$(_ci_comment_violations "${f}")" || return 2
+        while IFS= read -r hit; do
+            [ -n "${hit}" ] || continue
+            rc=1
+            ci_log "[CI-ERROR-GUARD-COMMENT-0001]" "${hit}"
+        done <<< "${out}"
+    done
+    return "${rc}"
+}
+
 # What: Fail on any sha256 digest not 64 lowercase hex.
 # Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
@@ -3116,6 +3148,7 @@ ci_cmd_lint() {
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
+    ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
     # What: Every workflow must be a pure orchestrator.
     # Why: No legacy exemption remains after the rewrite.
     # From: Issue #479, PR #544

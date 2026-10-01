@@ -48,8 +48,18 @@ input that does not forward a `${{ steps.<id>.outputs.<name> }}` value.
 `ci_guard_pins_in_sot` fails on a SOT action that no workflow uses. Every
 decision (cache path, key and restore keys; artifact name, files and
 retention) comes from a `ci.sh` step output. All other shared logic,
-including labeler rules, project-board add, standing-issue reporting,
-apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`.
+including PR labeling, project-board add, standing-issue reporting,
+apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`. PR
+path labels are SOT data (`labels`, matched like `impact_classes`, with
+an optional `exclude` list).
+
+**Lint guards** (`ci.sh lint`): LF-only line endings, full-length
+sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`),
+orchestrator-only workflows (`ci_guard_orchestrator_only`), the
+`What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]` over
+every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
+`test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`),
+actionlint and shellcheck.
 
 **Compile cache**: every job that builds the `default` variant (the
 `validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)

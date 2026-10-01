@@ -389,6 +389,26 @@ e2e:
   image_apt: "cmake libhiredis-dev procps"
   native_apt: "distcc distcc-pump"
 
+# What: PR labels set from the paths a PR changes.
+# Why: A real doc file is docs; CHANGELOG.md alone is not.
+# From: Issue #479, PR #544
+labels:
+  documentation:
+    paths: ["doc/**", "**/*.md"]
+    exclude: ["CHANGELOG.md"]
+  ci:
+    paths: [".github/workflows/**"]
+  packaging:
+    paths: ["packaging/**", "docker/**"]
+  pump:
+    paths: ["include_server/**"]
+  seccomp:
+    paths: ["src/sandbox-seccomp.*", "src/sandbox-config.*"]
+  zstd:
+    paths: ["src/compress-zstd.c"]
+  config:
+    paths: ["src/config-parser.*", "src/client-config.*"]
+
 # What: Diff path-classes and the validate jobs they select.
 # Why: DEFAULT=NOOP; every phase named here gates a real job.
 # From: Issue #479, PR #544

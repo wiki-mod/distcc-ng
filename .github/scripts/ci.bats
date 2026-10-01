@@ -1102,22 +1102,43 @@ _forbid() {
     [ "${status}" -ne 0 ]
 }
 
-@test "labeler: documentation label matches doc/** and non-CHANGELOG .md" {
-    # What: Mirrors labeler's any:/negation for one label.
-    # Why: Two earlier configs got this negation wrong.
-    # From: Issue #479
-    run _ci_labeler_documentation_match $'doc/foo.md\nsrc/bar.c'
+@test "glob: '**/' also matches files at the top level" {
+    # What: '**/*.md' matches README.md and doc/a/b.md alike.
+    # Why: Globstar semantics; a root file is zero dirs deep.
+    # From: Issue #479, PR #544
+    run _ci_glob_match "**/*.md" "README.md"
     [ "${status}" -eq 0 ]
-    run _ci_labeler_documentation_match "README.md"
+    run _ci_glob_match "**/*.md" "doc/a/b.md"
     [ "${status}" -eq 0 ]
+    run _ci_glob_match "**/*.md" "README.mdx"
+    [ "${status}" -ne 0 ]
 }
 
-@test "labeler: documentation label excludes a CHANGELOG.md-only diff" {
-    # What: CHANGELOG.md alone must not fire this label.
-    # Why: Almost every PR touches it; not a real doc PR.
-    # From: Issue #479
-    run _ci_labeler_documentation_match "CHANGELOG.md"
-    [ "${status}" -ne 0 ]
+@test "classifier: a path map's exclude list removes a hit" {
+    # What: A path matching paths but also exclude gets no name.
+    # Why: The documentation label must skip CHANGELOG.md alone.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'labels:' '  documentation:' '    paths: ["doc/**", "**/*.md"]' \
+        '    exclude: ["CHANGELOG.md"]' '  ci:' '    paths: [".github/workflows/**"]'
+    run _ci_classify_paths labels <<< "CHANGELOG.md"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    run _ci_classify_paths labels < <(printf '%s\n' CHANGELOG.md README.md .github/workflows/v.yml)
+    [ "${output}" = "$(printf '%s\n' ci documentation)" ]
+}
+
+@test "label-pr applies path labels and the title category" {
+    # What: SOT path labels plus the title's category are added.
+    # Why: The board and release notes read these labels.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '{"pull_request":{"number":5}}' > "${ev}"
+    _fixture_manifest 'labels:' '  ci:' '    paths: [".github/workflows/**"]'
+    gh() { case "$1 $2" in "pr diff") echo .github/workflows/v.yml ;; "pr edit") echo "edit $*" ;; esac; }
+    _ci_metadata_fetch_live() { PR_TITLE="fix(ci): x"; }
+    GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" run _ci_variables_label_pr
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"--add-label ci,bug"* ]]
 }
 
 @test "pr category: maps rule-71 types to release-drafter labels" {
@@ -1277,6 +1298,49 @@ _forbid() {
     run _ci_image_alias s.a
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "pull b@sha256:0 tag b@sha256:0 a:local " ]
+}
+
+@test "comment guard passes standard blocks, directives and heredocs" {
+    # What: Standard blocks, directives, banners, heredocs pass.
+    # Why: Heredoc text and tool directives are not prose.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
+    mkdir -p "${fx}/.github"
+    printf '%s\n' '#!/usr/bin/env bash' '# distcc-ng (https://github.com/wiki-mod/distcc-ng)' \
+        '# SPDX-License-Identifier: GPL-2.0-or-later' '# shellcheck disable=SC2034' \
+        '# What: Do a thing.' '# Why: A reason.' '# From: Issue #1' 'x=1' \
+        '# ====' '# SECTION' '# ====' "cat ${hd}'EOF'" '# a markdown heading' 'EOF' \
+        "grep -q x ${hd}${hd:0:1} \"\${y}\"" '    # What: Indented.' '    # Why: Also fine.' 'y=2' \
+        > "${fx}/.github/a.sh"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "comment guard fails closed on a heredoc that never ends" {
+    # What: An unterminated heredoc is reported, not skipped.
+    # Why: Skipping to EOF would hide every later comment.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
+    mkdir -p "${fx}/.github"
+    printf '%s\n' "cat ${hd}EOF" 'text' '# free prose after' > "${fx}/.github/b.sh"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"b.sh:1: heredoc EOF never ends"* ]]
+}
+
+@test "comment guard fails closed on prose, a missing Why, a long line" {
+    # What: Free prose, What without Why and >60 chars all fail.
+    # Why: AG-CODE-001 allows only the What/Why/From form.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/.github/workflows"
+    printf '%s\n' '# Some free prose.' 'a: 1' '# What: Only a what.' 'b: 2' \
+        "# What: $(printf 'x%.0s' {1..60})" '# Why: ok' 'c: 3' > "${fx}/.github/workflows/w.yml"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"w.yml:1: not a What/Why/From line"* ]]
+    [[ "${output}" == *"w.yml:3: block needs one What, one Why"* ]]
+    [[ "${output}" == *"w.yml:5: longer than 60 characters"* ]]
 }
 
 @test "orchestrator guard passes on a single-command run: step" {
