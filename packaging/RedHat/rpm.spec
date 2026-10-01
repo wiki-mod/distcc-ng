@@ -6,7 +6,7 @@
 %define	_prefix	/usr
 %define _bindir %{_prefix}/bin
 %define _datadir %{_prefix}/share
-#%define _docdir %{_datadir}/doc/%{name}-%{version}
+#%%define _docdir %%{_datadir}/doc/%%{name}-%%{version}
 %define _docdir %{_datadir}/doc/%{name}
 %define _libdir %{_prefix}/lib
 %define _mandir %{_datadir}/man
@@ -126,7 +126,7 @@ faster than a local compile.
 %config %{_sysconfdir}/logrotate.d/distcc
 # What: The init.d directory itself is not owned here.
 # Why: On Red Hat it is a chkconfig-owned symlink.
-#%dir %{_sysconfdir}/init.d
+#%%dir %%{_sysconfdir}/init.d
 %config %{_sysconfdir}/init.d/distcc
 %dir %{_sysconfdir}/xinetd.d/
 %config %{_sysconfdir}/xinetd.d/distcc
