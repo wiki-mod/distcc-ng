@@ -71,6 +71,7 @@ jobs:
     # From: Issue #479, PR #544
     if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       build: ${{ steps.plan.outputs.build }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -90,6 +91,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     # What: id-token/attestations for the build attestation.
     # Why: A fork PR gets no id-token; ci.sh logs it NotRun.
     # From: Issue #38, Issue #479, PR #544
@@ -141,6 +143,7 @@ jobs:
     needs: plan
     if: contains(needs.plan.outputs.phases, 'e2e')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e
@@ -169,6 +172,7 @@ jobs:
     needs: plan
     if: contains(needs.plan.outputs.phases, 'package')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt

@@ -68,7 +68,7 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution
 | REL-CI-01 | Real `pull_request`-triggered CI run exists for this release PR |  | | | |
 | REL-CI-02 | Manual pre-tag package/artifact verification run, if used |  | | | |
 | REL-CI-03 | Real tag-triggered `release.yml` run exists and succeeded |  | | | |
-| REL-CI-04 | `release: types: [published]` actually triggered `changelog-update-on-release.yml` |  | | | |
+| REL-CI-04 | `release: types: [published]` actually triggered `release.yml`'s `update_changelog` job |  | | | |
 | REL-DOC-01 | `README.md`/`doc/docker.md` quick-start references match what this release publishes |  | | | |
 | REL-DOC-02 | Every user-visible change since last release is in `CHANGELOG.md` under a dated section |  | | | |
 | REL-PROMO-01 | Explicit, fresh maintainer approval for this specific promotion |  | | | |
@@ -101,7 +101,7 @@ This table records evidence only. Completion state belongs in the single Live Re
 | REL-CI-01 | Normal PR CI (`validate.yml`, `security.yml`) | Release PR (`pull_request` event) | | |
 | REL-CI-02 | Pre-tag package/artifact verification (`release.yml`) | Manual `workflow_dispatch` | | |
 | REL-CI-03 | Real release pipeline (`release.yml`) | `v*` tag push | | |
-| REL-CI-04 | Changelog automation (`changelog-update-on-release.yml`) | `release: types: [published]` | | |
+| REL-CI-04 | Changelog automation (`release.yml` `update_changelog`) | `release: types: [published]` | | |
 
 A green normal PR CI run is not evidence that RPM, DEB, source archives, SBOM, attestations, or release containers from `release.yml` were already built or verified.
 
@@ -203,7 +203,7 @@ This section documents observed publication evidence only. It is **not** a techn
 Publication state observed:
 Tagged workflow run:
 Published release:
-`changelog-update-on-release.yml` run for this tag (REL-CI-04 evidence):
+`release.yml` `update_changelog` run for this tag (REL-CI-04 evidence):
 
 A real pre-publication gate requires a separate workflow change and is outside this template's scope.
 

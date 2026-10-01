@@ -8,7 +8,7 @@ support-upstream check (AGENTS.md rule 57) is documented here as a negative
 finding, not skipped.
 
 **Fork issue:** [wiki-mod/distcc-ng#264](https://github.com/wiki-mod/distcc-ng/issues/264)
-**Fixed by:** not yet merged (this fork's full bidirectional E2E test, `test/e2e-full/`)
+**Fixed by:** not yet merged (this fork's full bidirectional E2E test, now `ci.sh e2e full`: the `full` mode in `.github/yaml/build-manifest.yml`'s `e2e.modes`, images from `test/e2e/Dockerfile`)
 **Upstream location:** `.github/workflows/c-build.yml`, `test/testdistcc.py`
 (root of `distcc/distcc`)
 **Checked against upstream commit:** [`8d569d19`](https://github.com/distcc/distcc/commit/8d569d192141615e26a3f0b65315822e7c814c3d) (`master`, checked 2026-07-23)
@@ -43,8 +43,9 @@ to point at as "here is the bug", only an absent category of coverage. Per
 this README's own exception carve-out, that is recorded here as a negative
 finding rather than force-fit into the bug-report template.
 
-This fork's `test/e2e-full/` (issue #264's later design comments,
-2026-07-21) closes that specific gap for this fork's own code: a real
+This fork's full bidirectional E2E (introduced as `test/e2e-full/` per
+issue #264's later design comments, 2026-07-21; now `ci.sh e2e full`)
+closes that specific gap for this fork's own code: a real
 Debian-packaged `distcc`/`distcc-pump` (independently built by Debian, not
 this fork) is exercised against this fork's own `-NG` binaries in both
 directions (this fork's client against the native server, and the native

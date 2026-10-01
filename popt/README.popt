@@ -33,7 +33,9 @@ directory now tracks the exact `wiki-mod/popt-ng` commit recorded in
 
 `POPT_VERSION` in this directory records the exact vendored release, so a
 future accidental regression back to a stale/wrong copy can be caught
-mechanically (see the `popt_vendor_check` step in `c-build.yml`).
+mechanically (see `_ci_popt_cve_fingerprint_check` in `.github/scripts/ci.sh`,
+run by the `popt-vendor` variant of `ci.sh build`, which compares it against
+`external_versions.popt_vendor` in `.github/yaml/build-manifest.yml`).
 
 ## NLS
 

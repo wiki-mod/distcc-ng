@@ -104,6 +104,14 @@ No workflow here publishes `distcc-ng-e2e`; until this CI reaches `master`,
 `master`'s former workflows still push it. It stays in
 `release.ghcr_packages` only so `ci.sh gc` can prune its existing versions.
 
+**Job timeouts**: every job the former workflows bounded keeps that bound
+as a `timeout-minutes` literal: `plan`/`route` 5, `lint` and the OpenSSF
+recheck 15, the PR `build_test` matrix 15 (the backstop `test/testdistcc.py`
+relies on for its daemon tests), the nightly/release `build_test` 20, the
+2-container `e2e` and nightly `sanitizer` 30, `verify_image` and `control` 45,
+`package`/`publish` 60, `heartbeat` 75, `bidirectional_e2e` 340 and CodeQL
+360. A `ci.bats` test fails when one of these jobs loses its bound.
+
 **Path-based gating**: `security.yml`'s `clusterfuzzlite` job and
 `validate.yml`'s `plan` job both gate on the content-based
 `impact_classes` in `build-manifest.yml`; no workflow uses a literal

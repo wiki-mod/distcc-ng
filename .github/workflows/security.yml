@@ -34,6 +34,7 @@ jobs:
   route:
     name: Route scheduled jobs
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       scans: ${{ steps.route.outputs.scans }}
       openssf: ${{ steps.route.outputs.openssf }}
@@ -52,6 +53,7 @@ jobs:
     # From: Issue #479, PR #544
     if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: read
@@ -151,6 +153,7 @@ jobs:
     needs: route
     if: needs.route.outputs.openssf == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

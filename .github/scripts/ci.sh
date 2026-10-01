@@ -3059,7 +3059,7 @@ _ci_check_changelog() {
 }
 
 # What: Fetch one PR's live title/labels/tracking fields.
-# Why: An event snapshot can go stale (rule 3/71).
+# Why: An event snapshot goes stale (AG-GH-002, AG-GH-014).
 # From: Issue #479
 _ci_metadata_fetch_live() {
     : "${PR_NUMBER:?PR_NUMBER required}"
@@ -3076,7 +3076,7 @@ _ci_metadata_fetch_live() {
 }
 
 # What: Runs metadata check(s); fetches live PR data first.
-# Why: Replaces changelog-check.yml's PR-context jobs.
+# Why: One PR-context gate for title, tracking and changelog.
 # From: Issue #479
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0 range=()
@@ -4129,7 +4129,7 @@ ci_cmd_clusterfuzzlite_run() {
 # =========================================================
 
 # What: Print every real gcc/clang warning line of a log.
-# Why: Warnings are errors (rule 31); anchored to diag shape.
+# Why: Warnings are errors (AG-INT-003); diag-shape anchor.
 # From: Issue #479
 _ci_compiler_warnings() {
     grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
@@ -4178,7 +4178,7 @@ _ci_make_gated() {
         return 1
     fi
     if warnings="$(_ci_compiler_warnings "${log}")"; then
-        ci_error "[CI-ERROR-BUILD-WARN-0001]" "make $* emitted compiler warnings (rule 31)" "${warnings}"
+        ci_error "[CI-ERROR-BUILD-WARN-0001]" "make $* emitted compiler warnings (AG-INT-003)" "${warnings}"
         return 1
     fi
 }
@@ -4323,7 +4323,7 @@ _ci_popt_fallback_smoke_test() {
 }
 
 # What: Parse comfychair make-check output into a verdict.
-# Why: 0/0/0 parsed is a hard fail (rule 66), not a pass.
+# Why: 0/0/0 parsed is a hard fail (AG-INT-003), not a pass.
 # From: Issue #479
 _ci_parse_comfychair() {
     local log="$1" ok notrun failed
@@ -4425,7 +4425,7 @@ _ci_coverage_step_summary() {
 }
 
 # What: Run make check for a variant and verify the result.
-# Why: Folds run-tests.sh parse + c-build.yml per-variant env.
+# Why: One owner of per-variant test env and result parsing.
 # From: Issue #479
 ci_cmd_test() {
     local variant="${1:-default}" log wrapper warnings st=0
@@ -4449,7 +4449,7 @@ ci_cmd_test() {
     esac
     cat "${log}"
     if warnings="$(_ci_compiler_warnings "${log}")"; then
-        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (rule 31)" "${warnings}"
+        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (AG-INT-003)" "${warnings}"
         return 1
     fi
     _ci_parse_comfychair "${log}" || return 1

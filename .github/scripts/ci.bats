@@ -278,7 +278,7 @@ _forbid() {
 }
 
 @test "tracking passes with labels and a milestone" {
-    # What: A PR with a label and a milestone passes rule 3.
+    # What: A PR with a label and a milestone passes AG-GH-002.
     # Why: Proves the green tracking path.
     # From: Issue #479
     PR_LABELS="ci" PR_MILESTONE_TITLE="current_dev backlog" run _ci_check_pr_tracking
@@ -286,7 +286,7 @@ _forbid() {
 }
 
 @test "tracking fails closed without a milestone" {
-    # What: A missing milestone fails rule 3.
+    # What: A missing milestone fails AG-GH-002.
     # Why: Proves the fail-closed tracking path.
     # From: Issue #479
     PR_LABELS="ci" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
@@ -864,7 +864,7 @@ _forbid() {
 
 @test "make gate passes a clean build and fails on a warning" {
     # What: A compiler warning in make output fails the build.
-    # Why: Warnings are errors (rule 31) on every tree build.
+    # Why: Warnings are errors (AG-INT-003) on every tree build.
     # From: Issue #479, PR #544
     make() { echo "gcc -c src/x.c"; }
     run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
@@ -919,7 +919,7 @@ _forbid() {
 }
 
 @test "comfychair parse fails closed on zero parsed result lines" {
-    # What: 0/0/0 parsed is a hard failure (rule 66).
+    # What: 0/0/0 parsed is a hard failure (AG-INT-003).
     # Why: An empty parse must not look like a clean pass.
     # From: Issue #479
     log="${BATS_TEST_TMPDIR}/log"
@@ -1288,6 +1288,25 @@ _forbid() {
             grep -qF "contains(needs.plan.outputs.phases, '${ph}')" \
                 "${CI_REPO_ROOT}/.github/workflows/validate.yml" || { echo "${c}: ${ph}"; false; }
         done
+    done
+}
+
+@test "every job legacy CI bounded keeps a timeout-minutes" {
+    # What: Build, test, e2e, package and scan jobs stay bounded.
+    # Why: Unbounded, a hung test runs to the 6-hour default.
+    # From: Issue #479, PR #544
+    local spec wf job
+    for spec in validate:plan validate:lint validate:build_test validate:e2e validate:package \
+        validate:verify_image security:route security:codeql security:openssf nightly:build_test \
+        nightly:sanitizer nightly:e2e nightly:bidirectional_e2e nightly:publish release:build_test \
+        release:e2e release:package housekeeping:heartbeat housekeeping:control; do
+        wf="${spec%%:*}" job="${spec#*:}"
+        awk -v job="${job}" '
+            /^jobs:/ { j = 1 }
+            j && /^  [A-Za-z0-9_-]+:$/ { cur = substr($1, 1, length($1) - 1) }
+            cur == job && /^    timeout-minutes: [0-9]+$/ { found = 1 }
+            END { exit !found }
+        ' "${CI_REPO_ROOT}/.github/workflows/${wf}.yml" || { echo "${spec}"; false; }
     done
 }
 
