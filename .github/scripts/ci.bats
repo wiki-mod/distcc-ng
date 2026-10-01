@@ -1185,6 +1185,24 @@ _fake_osv() {
     [[ "${output}" == *"no new vulnerability"* ]]
 }
 
+@test "SARIF upload sends the gzip+base64 file in the request body" {
+    # What: The SARIF travels in --input, decodable to the file.
+    # Why: A 350-result SARIF in argv failed with E2BIG.
+    # From: Issue #479, PR #544
+    local big="${BATS_TEST_TMPDIR}/big.sarif"
+    head -c 3000000 /dev/urandom | base64 > "${big}"
+    gh() {
+        local in=""
+        while [ "$#" -gt 0 ]; do [ "$1" = "--input" ] && in="$2"; shift; done
+        jq -r .sarif "${in}" | base64 -d | gunzip > "${BATS_TEST_TMPDIR}/back"
+        jq -r '.commit_sha + " " + .ref' "${in}"
+    }
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=abc GITHUB_REF=refs/heads/x run ci_cmd_sarif_upload "${big}"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "abc refs/heads/x" ]
+    cmp "${big}" "${BATS_TEST_TMPDIR}/back"
+}
+
 @test "OSV PR gate is NotRun against a base SOT without tool pins" {
     # What: A base predating tool pins has nothing to compare.
     # Why: Its tools cannot be fetched; reading 0 would fail all.

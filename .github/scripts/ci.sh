@@ -3197,16 +3197,18 @@ ci_cmd_codeql_scan() {
 }
 
 # What: Upload one SARIF file via the code-scanning API.
-# Why: The code-scanning API needs no marketplace action.
-# From: Issue #479
+# Why: The body goes in a file; a large SARIF overflows argv.
+# From: Issue #479, PR #544
 ci_cmd_sarif_upload() {
-    local file="${1:?sarif file required}" payload
+    local file="${1:?sarif file required}" work
     : "${GH_TOKEN:?GH_TOKEN required}"
-    payload="$(gzip -c "${file}" | base64 -w0)"
-    gh api "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
-        -f "commit_sha=${GITHUB_SHA}" \
-        -f "ref=${GITHUB_REF}" \
-        -f "sarif=${payload}" >/dev/null
+    work="$(mktemp -d)" || return 1
+    gzip -c "${file}" | base64 -w0 > "${work}/sarif.b64" || return 1
+    jq -n --arg c "${GITHUB_SHA:?GITHUB_SHA required}" --arg r "${GITHUB_REF:?GITHUB_REF required}" \
+        --rawfile s "${work}/sarif.b64" '{commit_sha: $c, ref: $r, sarif: $s}' > "${work}/body.json" || return 1
+    gh api --method POST "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+        --input "${work}/body.json" --jq '"[CI-SCAN] SARIF upload id \(.id)"' || return 1
+    rm -rf "${work}"
 }
 
 # What: Convert Scorecard's own JSON into real SARIF.
