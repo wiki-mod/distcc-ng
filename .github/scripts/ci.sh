@@ -313,6 +313,19 @@ _ci_jobs() {
     printf '%s\n' "${j}"
 }
 
+# What: Read a command's output lines into array $1, keep rc.
+# Why: mapfile < <(cmd) drops cmd's exit status.
+# From: Issue #479, PR #544
+_ci_mapfile() {
+    local -n _cm_ref="$1"
+    local _cm_out _cm_rc=0
+    shift
+    _cm_out="$("$@")" || _cm_rc=$?
+    _cm_ref=()
+    [ "${_cm_rc}" -eq 0 ] || return "${_cm_rc}"
+    [ -z "${_cm_out}" ] || mapfile -t _cm_ref <<< "${_cm_out}"
+}
+
 # =========================================================
 # EXECUTION (one owner each: wait, name, build, run, stack)
 # =========================================================
@@ -354,13 +367,12 @@ _ci_container_logged() {
 # Why: Sole pin path; Dockerfiles carry no default or LABEL.
 # From: Issue #359, Issue #479, PR #544
 _ci_image_build() {
-    local spec="$1" version="$2" file target raw arg val tag desc ref
+    local spec="$1" version="$2" file target arg val tag desc ref
     shift 2
     local specs=() opts=()
     file="$(_ci_sot_scalar "${spec}.dockerfile")" || return 2
     target="$(_ci_sot_scalar "${spec}.target")" || return 2
-    raw="$(_ci_sot_list "${spec}.args")" || return 2
-    mapfile -t specs <<< "${raw}"
+    _ci_mapfile specs _ci_sot_list "${spec}.args" || return 2
     for arg in "${specs[@]}"; do
         if [ "${arg}" = "${arg#*=}" ]; then
             ci_log "[CI-ERROR-IMAGE-0002]" "${spec}.args entry \"${arg}\" is not ARG=sot.path"
@@ -434,7 +446,7 @@ _ci_container_run() {
 _ci_stack_teardown() {
     local net="$1" rc=0 c
     local ctrs=() vols=()
-    mapfile -t ctrs < <(docker ps -aq --filter "label=${CI_STACK_LABEL}=${net}") || rc=1
+    _ci_mapfile ctrs docker ps -aq --filter "label=${CI_STACK_LABEL}=${net}" || rc=1
     for c in "${ctrs[@]}"; do
         echo "== ${net}: last 100 log lines of ${c} =="
         docker logs --tail 100 "${c}" || rc=1
@@ -442,7 +454,7 @@ _ci_stack_teardown() {
     if [ "${#ctrs[@]}" -gt 0 ]; then
         docker rm -f "${ctrs[@]}" >/dev/null || rc=1
     fi
-    mapfile -t vols < <(docker volume ls -q --filter "label=${CI_STACK_LABEL}=${net}") || rc=1
+    _ci_mapfile vols docker volume ls -q --filter "label=${CI_STACK_LABEL}=${net}" || rc=1
     if [ "${#vols[@]}" -gt 0 ]; then
         docker volume rm "${vols[@]}" >/dev/null || rc=1
     fi
@@ -515,7 +527,7 @@ ci_cmd_impact_hit() {
         _ci_output hit true
         return
     fi
-    mapfile -t range < <(_ci_event_range) || return 2
+    _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
     cd "${CI_REPO_ROOT}" || return 1
     if ! changed="$(git diff --name-only "${range[0]}" "${range[1]}")"; then
@@ -584,7 +596,7 @@ _ci_event_pr_number() {
 # From: Issue #479, PR #544
 ci_cmd_plan() {
     local base head phases build=false publish=false matrix range=() mx=()
-    mapfile -t range < <(_ci_event_range) || return 2
+    _ci_mapfile range _ci_event_range || return 2
     if [ "${#range[@]}" -ne 2 ]; then
         ci_log "[CI-ERROR-PLAN-0001]" "cannot read this run's base and head"
         return 2
@@ -611,7 +623,7 @@ ci_cmd_plan() {
     if [ "${build}" = "true" ]; then
         matrix="$(ci_cmd_matrix)" || return 2
     fi
-    mapfile -t mx < <(_ci_release_matrix) || return 2
+    _ci_mapfile mx _ci_release_matrix || return 2
     [ "${#mx[@]}" -eq 2 ] || return 2
     _ci_output phases "${phases}" build "${build}" matrix "${matrix}" \
         container_variants "${mx[1]}" publish_buildtools "${publish}"
@@ -747,8 +759,8 @@ _ci_e2e_leg() {
 _ci_e2e_mode_run() {
     local mode="$1" workload="$2" extra="$3" floor="$4" net="$5" subnet leg pass rc=0
     local legs=() passes=()
-    mapfile -t legs < <(_ci_sot_list "e2e.modes.${mode}.legs") || return 2
-    mapfile -t passes < <(_ci_sot_list "e2e.modes.${mode}.passes") || return 2
+    _ci_mapfile legs _ci_sot_list "e2e.modes.${mode}.legs" || return 2
+    _ci_mapfile passes _ci_sot_list "e2e.modes.${mode}.passes" || return 2
     subnet="$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "${net}")" || return 1
     docker volume create --label "${CI_STACK_LABEL}=${net}" "${net}-cache" >/dev/null || return 1
     for leg in "${legs[@]}"; do
@@ -1092,7 +1104,7 @@ _ci_workload_samba_release() {
 _ci_workload_samba_fetch() {
     local dest="$1" cache
     local rel=()
-    mapfile -t rel < <(_ci_workload_samba_release) || return 2
+    _ci_mapfile rel _ci_workload_samba_release || return 2
     [ "${#rel[@]}" -eq 3 ] || return 2
     cache="${CI_WORKLOAD_CACHE:-/tmp/ci-workload-cache}/samba"
     if [ ! -f "${cache}/.verified" ]; then
@@ -1466,7 +1478,7 @@ _ci_publish_nightly() {
     repo="${GITHUB_REPOSITORY}"
     cd "${CI_REPO_ROOT}" || return 1
     ref="${BUILT_SHA:-$(git rev-parse HEAD)}" || return 1
-    mapfile -t assets < <(_ci_release_assets)
+    _ci_mapfile assets _ci_release_assets || return 1
     [ "${#assets[@]}" -gt 0 ] || return 1
     _ci_git_identity || return 1
     _ci_mutate git tag -f "${tag}" || return 1
@@ -1491,7 +1503,7 @@ _ci_publish_nightly() {
 # From: Issue #479, PR #544
 _ci_publish_manifest() {
     local variant="${1:?variant required}" pkg base out p platforms opt ctx=() tags=()
-    mapfile -t ctx < <(_ci_release_context) || return 2
+    _ci_mapfile ctx _ci_release_context || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
     pkg="$(_ci_release_pkg "${variant}")" || return 2
     base="$(_ci_release_image "${pkg}" "${ctx[0]}")" || return 2
@@ -1530,7 +1542,7 @@ _ci_publish_github_release() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     repo="${GITHUB_REPOSITORY}"
     _ci_check_release_version "${tag}" || return 1
-    mapfile -t assets < <(_ci_release_assets)
+    _ci_mapfile assets _ci_release_assets || return 1
     [ "${#assets[@]}" -gt 0 ] || return 1
     notes="$(mktemp)" || return 1
     printf 'distcc-ng %s\n' "${tag}" > "${notes}" || return 1
@@ -1747,9 +1759,9 @@ ci_cmd_release() {
 # From: Issue #479, PR #544
 _ci_release_offer_packages() {
     local ctx=() rel=() files=() f
-    mapfile -t ctx < <(_ci_release_context) || return 2
+    _ci_mapfile ctx _ci_release_context || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
-    mapfile -t rel < <(_ci_release_assets)
+    _ci_mapfile rel _ci_release_assets || return 1
     [ "${#rel[@]}" -gt 0 ] || return 1
     for f in "${rel[@]}"; do
         files+=("${CI_REPO_ROOT}/${f}")
@@ -1792,10 +1804,10 @@ _ci_release_version_check() {
         _ci_check_release_version "$1" true
         return
     fi
-    mapfile -t ctx < <(_ci_release_context) || return 2
+    _ci_mapfile ctx _ci_release_context || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
     _ci_check_release_version "${ctx[0]}" "${ctx[1]}" || return 1
-    mapfile -t mx < <(_ci_release_matrix) || return 2
+    _ci_mapfile mx _ci_release_matrix || return 2
     [ "${#mx[@]}" -eq 2 ] || return 2
     _ci_output tag "${ctx[0]}" publish "${ctx[2]}" tag_push "${ctx[3]}" \
         container_matrix "${mx[0]}" variants "${mx[1]}"
@@ -2410,7 +2422,7 @@ _ci_variables_label_pr() {
     PR_NUMBER="$(_ci_event_pr_number)" || return 2
     files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)" || return 1
     hits="$(_ci_classify_paths labels <<< "${files}")" || return 2
-    [ -z "${hits}" ] || mapfile -t labels <<< "${hits}"
+    _ci_mapfile labels printf '%s' "${hits}" || return 2
     _ci_metadata_fetch_live || return 2
     category="$(_ci_pr_category_label "${PR_TITLE:-}")"
     [ -z "${category}" ] || labels+=("${category}")
@@ -2854,7 +2866,7 @@ _ci_verify_in_image() {
         --security-opt "seccomp=${CI_REPO_ROOT}/docker/verify/seccomp-verify.json" \
         -- sleep infinity >/dev/null || return 1
     for check in "${checks[@]}"; do
-        mapfile -t argv < <(_ci_verify_argv "${check}")
+        _ci_mapfile argv _ci_verify_argv "${check}" || return 2
         [ "${#argv[@]}" -gt 0 ] || return 2
         ci_log "[CI-VERIFY]" "== ${check}"
         if ! docker exec "${name}" bash "${CI_CONTAINER_SH}" workload "${argv[@]}"; then
@@ -3111,7 +3123,7 @@ _ci_metadata_fetch_live() {
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0 range=()
     PR_NUMBER="$(_ci_event_pr_number)" || return 2
-    mapfile -t range < <(_ci_event_range) || return 2
+    _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
     BASE="${range[0]}" HEAD="${range[1]}"
     _ci_metadata_fetch_live || return 2
@@ -3199,11 +3211,12 @@ _ci_comment_violations() {
 # From: Issue #479, PR #544
 ci_guard_comment_format() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out hit d
-    local files=()
+    local files=() found=()
     for d in .github docker test/e2e .clusterfuzzlite; do
         [ -e "${root}/${d}" ] || continue
-        mapfile -t -O "${#files[@]}" files < <(find "${root}/${d}" -type f \( -name '*.sh' \
-            -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \))
+        _ci_mapfile found find "${root}/${d}" -type f \( -name '*.sh' \
+            -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \) || return 2
+        files+=("${found[@]}")
     done
     for f in "${files[@]}"; do
         out="$(_ci_comment_violations "${f}")" || return 2
@@ -3332,7 +3345,7 @@ ci_guard_pins_in_sot() {
             ci_log "[CI-ERROR-GUARD-PIN-0003]" "SOT action ${pin} is used by no workflow"
         fi
     done <<< "${pins}"
-    mapfile -t files < <(find "${root}" -name Dockerfile -type f -not -path '*/.git/*')
+    _ci_mapfile files find "${root}" -name Dockerfile -type f -not -path '*/.git/*' || return 2
     for f in "${files[@]}"; do
         out="$(_ci_dockerfile_pins "${f}")" || return 2
         while read -r line kind ref; do
@@ -3441,8 +3454,11 @@ _ci_lint_run() {
 # From: Issue #479
 _ci_lint_actionlint() {
     local files=()
-    while IFS= read -r f; do files+=("${f}"); done \
-        < <(cd "${CI_REPO_ROOT}" && find .github/workflows -name "*.yml" -type f)
+    _ci_mapfile files env -C "${CI_REPO_ROOT}" find .github/workflows -name "*.yml" -type f || return 2
+    if [ "${#files[@]}" -eq 0 ]; then
+        ci_log "[CI-ERROR-LINT-0002]" "no workflow files under .github/workflows to lint"
+        return 2
+    fi
     _ci_lint_run actionlint -color "${files[@]}"
 }
 
@@ -3694,7 +3710,7 @@ ci_cmd_attest() {
             fi
             files=(distcc distccd) ;;
         release)
-            mapfile -t files < <(_ci_release_assets)
+            _ci_mapfile files _ci_release_assets || return 1
             [ "${#files[@]}" -gt 0 ] || return 1
             files+=("$@") ;;
         image)
@@ -4013,13 +4029,13 @@ ci_cmd_osv_scan() {
     local out="${1:-osv-results.sarif}" bin base base_sot old new added
     local dirs=() range=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
-    mapfile -t dirs < <(_ci_osv_tool_dirs)
+    _ci_mapfile dirs _ci_osv_tool_dirs || return 2
     [ "${#dirs[@]}" -gt 0 ] || return 2
     _ci_osv_run "${bin}" sarif "${out}" "${dirs[@]}" || return 2
     if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" != "pull_request" ]; then
         return 0
     fi
-    mapfile -t range < <(_ci_event_range) || return 2
+    _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
     base="${range[0]}"
     # What: PR gate: fail on vuln ids the head's tools add.
@@ -4082,11 +4098,10 @@ _ci_osv_run() {
 # Why: The PR gate diffs these id sets, base against head.
 # From: Issue #267, Issue #479, PR #544
 _ci_osv_vulns() {
-    local bin="$1" sot="$2" json dirs_raw
+    local bin="$1" sot="$2" json
     local dirs=()
     json="$(mktemp)" || return 1
-    dirs_raw="$(CI_MANIFEST="${sot}" _ci_osv_tool_dirs)" || return 2
-    mapfile -t dirs <<< "${dirs_raw}"
+    CI_MANIFEST="${sot}" _ci_mapfile dirs _ci_osv_tool_dirs || return 2
     _ci_osv_run "${bin}" json "${json}" "${dirs[@]}" || return 2
     jq -r '[.results[]?.packages[]?.vulnerabilities[]?.id] | unique | .[]' "${json}"
 }

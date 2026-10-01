@@ -172,6 +172,24 @@ _forbid() {
     [ "${output}" -ge 16 ]
 }
 
+@test "_ci_mapfile keeps the command's exit status" {
+    # What: Lines land in the array; a failure is returned.
+    # Why: mapfile < <(cmd) hid partial and total failures.
+    # From: Issue #479, PR #544
+    local arr=(stale)
+    _half() { printf 'a\nb c\n'; return 4; }
+    run _ci_mapfile arr _half
+    [ "${status}" -eq 4 ]
+    _ci_mapfile arr printf 'a\nb c\n'
+    [ "${#arr[@]}" -eq 2 ]
+    [ "${arr[1]}" = "b c" ]
+    _ci_mapfile arr printf ''
+    [ "${#arr[@]}" -eq 0 ]
+    arr=(stale)
+    if _ci_mapfile arr _half; then false; fi
+    [ "${#arr[@]}" -eq 0 ]
+}
+
 @test "job count fails closed when nproc fails" {
     # What: No CPU count is an error, not a silent guess of 4.
     # Why: AG-VAL-001: a failed tool is never worked around.
