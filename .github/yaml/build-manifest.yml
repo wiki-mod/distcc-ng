@@ -116,7 +116,7 @@ external_versions:
     archive: "binary"
     bin: "cosign"
   # What: StepSecurity agent tarball run by ci.sh harden.
-  # Why: Org has no TLS inspection: non-TLS agent, amd64 only.
+  # Why: Non-TLS community tier refuses ARM; amd64 only.
   # From: Issue #479, PR #544
   harden_runner_agent:
     version: "v0.17.0"

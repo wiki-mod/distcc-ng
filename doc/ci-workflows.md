@@ -34,7 +34,10 @@ that pushes to or reads from GHCR, using the calling step's `REGISTRY_TOKEN`
 StepSecurity agent in audit-only egress mode. Agent version and SHA256 live
 in `build-manifest.yml` (`external_versions.harden_runner_agent`), policy and
 endpoints in its `harden_runner` section. On runners the agent does not
-support (arm64, non-Linux) both steps log `NotRun` with the reason.
+support (arm64, non-Linux) both steps log `NotRun` with the reason. arm64
+is a tier limit, not a missing binary: `step-security/harden-runner` itself
+skips arm64 without TLS inspection ("community tier"), so this matches the
+former `harden-runner` action on the arm64 container leg.
 
 **Transport-only actions, no composite actions**: the only `uses:` steps
 are `actions/cache` and `actions/upload-artifact`. The cache and artifact

@@ -3647,7 +3647,7 @@ ci_cmd_attest() {
 _CI_HARDEN_DIR="/home/agent"
 
 # What: Print why the agent cannot run on this runner, if so.
-# Why: Non-TLS agent ships for GitHub-hosted Linux x64 only.
+# Why: Community tier: non-TLS agent, hosted Linux x64 only.
 # From: Issue #479, PR #544
 _ci_harden_unsupported() {
     if [ "${RUNNER_OS:-}" != "Linux" ]; then
