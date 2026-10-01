@@ -49,9 +49,8 @@ jobs:
 
   lint:
     name: Static lint (actionlint / shellcheck / guards)
-    if: >-
-      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
-      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -60,9 +59,8 @@ jobs:
 
   engine-selftest:
     name: CI engine self-test (ci.bats)
-    if: >-
-      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
-      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -71,6 +69,9 @@ jobs:
 
   plan:
     name: Plan (content-based impact matrix)
+    # What: The one filter for content runs; others need plan.
+    # Why: Issue/label/PR-target events run only repo automation.
+    # From: Issue #479, PR #544
     if: >-
       github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
       !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
@@ -82,10 +83,7 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: plan
-        env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: bash .github/scripts/ci.sh plan "$BASE" "$HEAD"
+        run: bash .github/scripts/ci.sh plan
 
   build_test:
     name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
@@ -219,10 +217,7 @@ jobs:
     # From: Issue #479, PR #544
     name: Validate (required)
     needs: [lint, engine-selftest, plan, build_test, e2e, container, package, verify_image, publish_buildtools]
-    if: >-
-      always() &&
-      github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
-      !contains(fromJSON('["labeled","unlabeled","milestoned","demilestoned"]'), github.event.action)
+    if: always() && needs.plan.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout

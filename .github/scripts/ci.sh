@@ -517,12 +517,31 @@ ci_cmd_matrix() {
     printf '%s]}\n' "${out}"
 }
 
-# What: Write phases/build/matrix for the base..head diff.
+# What: Print the base and head commit of this run's diff.
+# Why: A PR diffs base..head; a push or dispatch before..sha.
+# From: Issue #479, PR #544
+_ci_event_range() {
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
+        pull_request)
+            jq -r '.pull_request.base.sha, .pull_request.head.sha' "${GITHUB_EVENT_PATH}" ;;
+        *)
+            jq -r '.before // ""' "${GITHUB_EVENT_PATH}" || return 2
+            printf '%s\n' "${GITHUB_SHA:?GITHUB_SHA required}" ;;
+    esac
+}
+
+# What: Write phases/build/matrix for this run's diff.
 # Why: One command feeds the orchestrator; no YAML logic.
-# From: Issue #479
+# From: Issue #479, PR #544
 ci_cmd_plan() {
-    local base="${1:-}" head="${2:-HEAD}"
-    local phases build=false matrix
+    local base head phases build=false matrix range=()
+    mapfile -t range < <(_ci_event_range) || return 2
+    if [ "${#range[@]}" -ne 2 ]; then
+        ci_log "[CI-ERROR-PLAN-0001]" "cannot read this run's base and head"
+        return 2
+    fi
+    base="${range[0]}" head="${range[1]}"
     cd "${CI_REPO_ROOT}" || return 1
     if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
         # What: An unknown base (first push) selects every phase.

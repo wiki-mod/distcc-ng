@@ -560,6 +560,37 @@ _forbid() {
     [ "${status}" -eq 0 ]
 }
 
+@test "event range: a PR diffs base..head, a push before..sha" {
+    # What: Each event type yields its own base and head commit.
+    # Why: The plan diff must never mix PR and push fields.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '{"pull_request":{"base":{"sha":"b1"},"head":{"sha":"h1"}},"before":"x"}' > "${ev}"
+    GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=m run _ci_event_range
+    [ "${output}" = "$(printf '%s\n' b1 h1)" ]
+    printf '{"before":"p0"}' > "${ev}"
+    GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=s1 run _ci_event_range
+    [ "${output}" = "$(printf '%s\n' p0 s1)" ]
+    printf '{"inputs":{}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=s1 run _ci_event_range
+    [ "${lines[0]}" = "s1" ]
+    [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "plan on a dispatch selects every phase" {
+    # What: No before commit means no diff, so all five phases.
+    # Why: NOOP there would skip every check a dispatch asked for.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
+    printf '{"inputs":{}}' > "${ev}"
+    ci_cmd_matrix() { echo '{"include":[]}'; }
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
+        run ci_cmd_plan
+    [ "${status}" -eq 0 ]
+    grep -qx 'phases=build e2e verify container package' "${out}"
+    grep -qx 'build=true' "${out}"
+}
+
 @test "matrix expands variant x os and excludes opt-in variants" {
     # What: The PR matrix is the SOT variants minus opt-in ones.
     # Why: An opt-in variant is never a PR gate.
