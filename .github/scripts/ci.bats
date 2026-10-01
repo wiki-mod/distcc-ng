@@ -955,11 +955,12 @@ _forbid() {
     # From: Issue #267, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
-    _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"'
+    _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"' \
+        'security:' '  cfl_run:' '    seconds: "1"' '    mode: "batch"'
     _ci_cfl_run() { return 1; }
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x"
     : > "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x/crash-1"
-    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address 1 batch
+    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
     [ "${status}" -eq 1 ]
     grep -qx 'artifact_name=cfl-crashes-address' "${out}"
     grep -qx "artifact_path=${RUNNER_TEMP}/cfl-workspace/out/artifacts" "${out}"
@@ -973,7 +974,7 @@ _forbid() {
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
     _ci_cfl_run() { return 3; }
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
-    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address 1 batch
+    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
     [ "${status}" -eq 3 ]
     [ ! -e "${out}" ]
 }
@@ -1399,12 +1400,13 @@ _forbid() {
     # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     _fixture_manifest 'schedules:' '  security_scans:' '    workflow: "security"' '    cron: "0 5 * * 0"' \
-        '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"'
+        '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"' 'security:' '  cfl_run:' \
+        '    sanitizers: ["address"]' '  codeql:' '    languages: ["c-cpp", "python"]'
     _route() {
         : > "${out}"
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME="$1" GITHUB_REF_NAME="$2" \
             ci_cmd_route security || return 1
-        tr '\n' ' ' < "${out}"
+        head -2 "${out}" | tr '\n' ' '
     }
     echo '{}' > "${ev}"
     [ "$(_route pull_request 544/merge)" = "scans=true openssf=false " ]
@@ -1414,6 +1416,8 @@ _forbid() {
     [ "$(_route schedule master)" = "scans=true openssf=false " ]
     echo '{"schedule":"0 6 1,15 * *"}' > "${ev}"
     [ "$(_route schedule master)" = "scans=false openssf=true " ]
+    grep -qx 'codeql_languages=\["c-cpp","python"\]' "${out}"
+    grep -qx 'cfl_sanitizers=\["address"\]' "${out}"
 }
 
 @test "route housekeeping: the weekly cron or a dispatch task" {

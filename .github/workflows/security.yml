@@ -37,6 +37,8 @@ jobs:
     outputs:
       scans: ${{ steps.route.outputs.scans }}
       openssf: ${{ steps.route.outputs.openssf }}
+      codeql_languages: ${{ steps.route.outputs.codeql_languages }}
+      cfl_sanitizers: ${{ steps.route.outputs.cfl_sanitizers }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - id: route
@@ -57,10 +59,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [c-cpp, python, actions]
+        language: ${{ fromJSON(needs.route.outputs.codeql_languages) }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" security-extended "codeql-${{ matrix.language }}.sarif"
+      - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" "codeql-${{ matrix.language }}.sarif"
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif"
@@ -124,7 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitizer: [address]
+        sanitizer: ${{ fromJSON(needs.route.outputs.cfl_sanitizers) }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: relevant
@@ -135,7 +137,7 @@ jobs:
       - if: steps.relevant.outputs.hit == 'true'
         id: fuzz
         name: Run fuzzers (${{ matrix.sanitizer }})
-        run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}" 300 code-change
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}"
       - if: always() && steps.fuzz.outputs.artifact_name != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

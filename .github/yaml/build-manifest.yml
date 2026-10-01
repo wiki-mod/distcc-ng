@@ -274,6 +274,19 @@ security:
   cfl_fuzz:
     exclude_main: ["distcc", "h_argvtostr", "h_compile", "h_dopt", "h_dotd", "h_exten", "h_getline", "h_hosts", "h_includesort", "h_issource", "h_parsemask", "h_pathsafety", "h_sa2str", "h_scanargs", "h_srvrpc", "h_ssh", "h_state", "h_stats", "h_strip", "lsdistcc", "mon-gnome", "mon-text", "history", "renderer"]
     rename_main: ["daemon", "stringmap"]
+  # What: CFL sanitizers, fuzz seconds and mode of each run.
+  # Why: The matrix and the run read one inventory.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_run:
+    sanitizers: ["address"]
+    seconds: "300"
+    mode: "code-change"
+  # What: CodeQL languages and the query suite they run.
+  # Why: The matrix and the scan read one list and one suite.
+  # From: Issue #479, PR #544
+  codeql:
+    languages: ["c-cpp", "python", "actions"]
+    suite: "security-extended"
   # What: Local tag of the SOT base-builder; the CFL FROM.
   # Why: CFL passes no build-args, so ci.sh tags the pin first.
   # From: Issue #267, Issue #479, PR #544

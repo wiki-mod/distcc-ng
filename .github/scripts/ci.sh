@@ -2192,6 +2192,15 @@ _ci_output() {
     done
 }
 
+# What: Print a SOT list as a JSON array of strings.
+# Why: A job matrix reads it through fromJSON.
+# From: Issue #479, PR #544
+_ci_sot_json_list() {
+    local items
+    items="$(_ci_sot_list "$1")" || return 2
+    jq -cnR '[inputs | select(length > 0)]' <<< "${items}"
+}
+
 # What: Succeed if this run fired from the SOT schedule $1.
 # Why: The cron string is the only thing naming a schedule.
 # From: Issue #479, PR #544
@@ -2220,7 +2229,7 @@ _ci_schedule_flag() {
 # Why: One owner maps events, crons and tasks to jobs.
 # From: Issue #479, PR #544
 ci_cmd_route() {
-    local wf="${1:?workflow required}" scans openssf weekly task="" ref gc sot hb
+    local wf="${1:?workflow required}" scans openssf weekly task="" ref gc sot hb langs sans
     case "${wf}" in
         security)
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ]; then
@@ -2237,7 +2246,10 @@ ci_cmd_route() {
                 && { [ "${ref}" = "current_dev" ] || [ "${ref}" = "master" ]; }; then
                 openssf=true
             fi
-            _ci_output scans "${scans}" openssf "${openssf}" ;;
+            langs="$(_ci_sot_json_list security.codeql.languages)" || return 2
+            sans="$(_ci_sot_json_list security.cfl_run.sanitizers)" || return 2
+            _ci_output scans "${scans}" openssf "${openssf}" \
+                codeql_languages "${langs}" cfl_sanitizers "${sans}" ;;
         housekeeping)
             weekly="$(_ci_schedule_flag housekeeping_weekly)" || return 2
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "workflow_dispatch" ]; then
@@ -3753,7 +3765,7 @@ ci_cmd_harden() {
 # Why: One mapping; callers pass only a plain suite name.
 # From: Issue #479
 _ci_codeql_query_pack() {
-    local lang="$1" suite="${2:-security-extended}"
+    local lang="$1" suite="$2"
     case "${lang}" in
         c-cpp)  printf 'codeql/cpp-queries:codeql-suites/cpp-%s.qls' "${suite}" ;;
         python) printf 'codeql/python-queries:codeql-suites/python-%s.qls' "${suite}" ;;
@@ -3765,8 +3777,8 @@ _ci_codeql_query_pack() {
 # Why: c-cpp traces the repo's own ci.sh build command.
 # From: Issue #479
 ci_cmd_codeql_scan() {
-    local lang="${1:?language required}" suite="${2:-security-extended}" \
-        out="${3:-results-${1}.sarif}" bin db pack
+    local lang="${1:?language required}" out="${2:?sarif output required}" suite bin db pack
+    suite="$(_ci_sot_scalar security.codeql.suite)" || return 2
     bin="$(_ci_tool_bin external_versions.codeql_cli)" || return 2
     db="${RUNNER_TEMP:-/tmp}/codeql-db-${lang}"
     pack="$(_ci_codeql_query_pack "${lang}" "${suite}")" || return 2
@@ -3994,7 +4006,7 @@ _ci_cfl_run() {
 # Why: CFL builds its Dockerfile without any build-args.
 # From: Issue #267, Issue #479, PR #544
 ci_cmd_clusterfuzzlite_build() {
-    local sanitizer="${1:-address}"
+    local sanitizer="${1:?sanitizer required}"
     # What: Generate configure on the host before the CFL build.
     # Why: base-builder has autoconf 2.69; configure needs 2.71.
     # From: Issue #267, Issue #479, PR #544
@@ -4008,8 +4020,9 @@ ci_cmd_clusterfuzzlite_build() {
 # Why: Code-change mode on PRs; SARIF feeds code scanning.
 # From: Issue #267, Issue #479
 ci_cmd_clusterfuzzlite_run() {
-    local sanitizer="${1:-address}" fuzz_seconds="${2:-300}" mode="${3:-code-change}"
-    local rc=0 crashes found
+    local sanitizer="${1:?sanitizer required}" fuzz_seconds mode rc=0 crashes found
+    fuzz_seconds="$(_ci_sot_scalar security.cfl_run.seconds)" || return 2
+    mode="$(_ci_sot_scalar security.cfl_run.mode)" || return 2
     _ci_cfl_run run -e "SANITIZER=${sanitizer}" -e "FUZZ_SECONDS=${fuzz_seconds}" \
         -e "MODE=${mode}" -e OUTPUT_SARIF=true || rc=$?
     # What: Offer the crash reproducers CFL left in its workspace.
