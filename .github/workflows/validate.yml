@@ -38,9 +38,6 @@ jobs:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
           # What: PAT for the AG-GH-002 board sub-check only.
           # Why: github.token above cannot read Projects v2.
           # From: Issue #479, PR #544
@@ -134,10 +131,10 @@ jobs:
           path: ${{ steps.test.outputs.artifact_path }}
           retention-days: ${{ steps.test.outputs.artifact_retention_days }}
           if-no-files-found: ${{ steps.test.outputs.artifact_if_missing }}
-      - if: matrix.variant == 'default' && runner.os == 'Linux'
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/ci.sh attest build
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh attest build "$VARIANT"
 
   e2e:
     name: Distributed compile E2E (2-container)
@@ -180,7 +177,7 @@ jobs:
   verify_image:
     name: Verify container build + self-test
     needs: plan
-    if: contains(needs.plan.outputs.phases, 'verify') || github.event_name == 'workflow_dispatch'
+    if: contains(needs.plan.outputs.phases, 'verify')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -198,9 +195,8 @@ jobs:
     # Why: A dispatch on a bot branch must never publish :latest.
     # From: Issue #479, PR #544
     if: >-
-      (github.ref_name == 'current_dev' || github.ref_name == 'master') && (
-      (github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')) ||
-      github.event_name == 'workflow_dispatch')
+      contains(needs.plan.outputs.phases, 'verify') &&
+      (github.ref_name == 'current_dev' || github.ref_name == 'master')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -247,7 +243,6 @@ jobs:
       - if: github.event_name == 'pull_request_target'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .github/scripts/ci.sh variables label-pr
       - name: Check for automation PAT
         id: check-pat
@@ -257,7 +252,6 @@ jobs:
       - if: steps.check-pat.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-          ITEM_URL: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}
         run: bash .github/scripts/ci.sh variables add-to-project
       - if: always()
         run: bash .github/scripts/ci.sh harden stop

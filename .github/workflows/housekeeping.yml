@@ -51,7 +51,6 @@ jobs:
       - env:
           GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
           REGISTRY_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
-          OWNER: ${{ github.repository_owner }}
           DRY_RUN: ${{ inputs.dry_run }}
           PACKAGE: ${{ inputs.package }}
         run: bash .github/scripts/ci.sh gc "$PACKAGE"
@@ -68,12 +67,10 @@ jobs:
       pull-requests: write
       actions: write
     steps:
-      # What: A schedule refreshes current_dev; a dispatch its ref.
-      # Why: Schedules fire on master, whose SOT is not the target.
+      # What: Always refresh current_dev's SOT.
+      # Why: Its PR targets current_dev; other refs would leak in.
       # From: Issue #479, PR #544
-      - env:
-          REF: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref_name }}
-        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 1 "$REF"
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
@@ -114,8 +111,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-          REPO: ${{ github.repository }}
-          OUTCOME: ${{ needs.heartbeat.result == 'success' && 'success' || 'failure' }}
           SCOPE: weekly ccache heartbeat
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOBS: |
+            heartbeat=${{ needs.heartbeat.result }}
         run: bash .github/scripts/ci.sh report

@@ -577,6 +577,72 @@ _forbid() {
     [ "${#lines[@]}" -eq 1 ]
 }
 
+@test "event PR number and board url come from the payload" {
+    # What: PR number and issue/PR url are read from the event.
+    # Why: The workflows forward neither; a missing one fails.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '{"pull_request":{"number":7,"html_url":"https://h/pr/7"}}' > "${ev}"
+    GITHUB_EVENT_PATH="${ev}" run _ci_event_pr_number
+    [ "${output}" = "7" ]
+    _ci_board_add() { printf 'add %s\n' "$1"; }
+    GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
+    [ "${output}" = "add https://h/pr/7" ]
+    printf '{"issue":{"html_url":"https://h/i/3"}}' > "${ev}"
+    GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
+    [ "${output}" = "add https://h/i/3" ]
+    printf '{}' > "${ev}"
+    GITHUB_EVENT_PATH="${ev}" run _ci_event_pr_number
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
+    GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0002"* ]]
+}
+
+@test "impact-hit runs every class off a PR, diffs on a PR" {
+    # What: Non-PR events hit; a PR hits only on a matching path.
+    # Why: Only a reviewed PR diff may skip a class.
+    # From: Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
+    [ "$(cat "${out}")" = "hit=true" ]
+    _ci_event_range() { printf '%s\n' b h; }
+    git() { [ "$1" = diff ] && printf '%s\n' doc/x.md; }
+    : > "${out}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
+    [ "$(cat "${out}")" = "hit=false" ]
+    git() { [ "$1" = diff ] && printf '%s\n' test/fuzz/a.c; }
+    : > "${out}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
+    [ "$(cat "${out}")" = "hit=true" ]
+}
+
+@test "impact-hit fails closed when the PR diff fails" {
+    # What: A failing git diff is an error, never a miss.
+    # Why: A false miss would skip fuzzing on a broken diff.
+    # From: Issue #479, PR #544
+    _ci_event_range() { printf '%s\n' b h; }
+    git() { return 128; }
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-IMPACT-0001"* ]]
+}
+
+@test "report outcome is success only if every job succeeded" {
+    # What: A failure, cancel or skip makes the outcome failure.
+    # Why: A skipped publish means the nightly did not ship.
+    # From: Issue #479, PR #544
+    run _ci_jobs_outcome "$(printf '%s\n' a=success b=success)"
+    [ "${output}" = "success" ]
+    run _ci_jobs_outcome "$(printf '%s\n' a=success b=skipped)"
+    [ "${output}" = "failure" ]
+    run _ci_jobs_outcome ""
+    [ "${status}" -eq 2 ]
+    GITHUB_SERVER_URL=https://s GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=9 run _ci_run_url
+    [ "${output}" = "https://s/o/r/actions/runs/9" ]
+}
+
 @test "plan on a dispatch selects every phase" {
     # What: No before commit means no diff, so all five phases.
     # Why: NOOP there would skip every check a dispatch asked for.
@@ -881,7 +947,7 @@ _forbid() {
     # Why: A typo MUST NOT reach a delete-capable token.
     # From: Issue #479, PR #544
     _forbid gh docker
-    GH_TOKEN=x OWNER=wiki-mod run ci_cmd_gc not-a-package
+    GH_TOKEN=x GITHUB_REPOSITORY_OWNER=wiki-mod run ci_cmd_gc not-a-package
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GC-0001"* ]]
     [[ "${output}" != *"must not run"* ]]
@@ -892,7 +958,7 @@ _forbid() {
     # Why: Unknown children would otherwise lose their protection.
     # From: Issue #479, PR #544
     docker() { return 1; }
-    OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
+    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
 }
@@ -1548,6 +1614,7 @@ _fake_osv() {
     _ci_tool_bin() { echo /bin/true; }
     _ci_osv_tool_dirs() { echo "${BATS_TEST_TMPDIR}"; }
     _ci_osv_run() { :; }
+    _ci_event_range() { printf '%s\n' abc def; }
     git() { case "$*" in *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;; esac; }
     _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
 }
@@ -1557,12 +1624,12 @@ _fake_osv() {
     # Why: Legacy's PR scan blocked newly vulnerable dependencies.
     # From: Issue #267, Issue #479, PR #544
     _fake_osv '    bin: "x"'
-    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" BASE=abc run ci_cmd_osv_scan out.sarif
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-SCAN-0003"* ]]
     [[ "${output}" == *"GO-3"* ]]
     [[ "${output}" != *"GO-2"* ]]
-    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" BASE=abc run ci_cmd_osv_scan out.sarif
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"no new vulnerability"* ]]
 }
@@ -1590,7 +1657,7 @@ _fake_osv() {
     # Why: Its tools cannot be fetched; reading 0 would fail all.
     # From: Issue #267, Issue #479, PR #544
     _fake_osv '    version: "v1"'
-    OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" BASE=abc run ci_cmd_osv_scan out.sarif
+    OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"OSV PR gate NotRun"* ]]
 }
@@ -1637,9 +1704,13 @@ _fake_osv() {
     # From: Issue #38, Issue #479, PR #544
     _forbid curl gh
     unset ACTIONS_ID_TOKEN_REQUEST_URL
-    run ci_cmd_attest build
+    RUNNER_OS=Linux run ci_cmd_attest build default
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"build attestation NotRun"* ]]
+    [[ "${output}" == *"build attestation NotRun: no id-token"* ]]
+    ACTIONS_ID_TOKEN_REQUEST_URL=x RUNNER_OS=macOS run ci_cmd_attest build default
+    [[ "${output}" == *"not the default Linux build"* ]]
+    ACTIONS_ID_TOKEN_REQUEST_URL=x RUNNER_OS=Linux run ci_cmd_attest build coverage
+    [[ "${output}" == *"not the default Linux build"* ]]
     run ci_cmd_attest bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-ATTEST-0001"* ]]

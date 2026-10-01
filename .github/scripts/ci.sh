@@ -485,9 +485,23 @@ ci_cmd_impact() {
 # Why: One command; no pipe or && chain in the workflow.
 # From: Issue #479
 ci_cmd_impact_hit() {
-    local class="${1:?class required}" base="${2:?base ref required}" head="${3:?head ref required}"
-    cd "${CI_REPO_ROOT}"
-    if git diff --name-only "${base}" "${head}" | _ci_classify_paths | grep -qx "${class}"; then
+    local class="${1:?class required}" changed range=()
+    # What: Only a PR diff can skip a class; other events run it.
+    # Why: A push or schedule has no reviewed diff to classify.
+    # From: Issue #479, PR #544
+    if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" != "pull_request" ]; then
+        ci_log "[CI-IMPACT]" "${GITHUB_EVENT_NAME}: no PR diff, ${class} runs"
+        _ci_output hit true
+        return
+    fi
+    mapfile -t range < <(_ci_event_range) || return 2
+    [ "${#range[@]}" -eq 2 ] || return 2
+    cd "${CI_REPO_ROOT}" || return 1
+    if ! changed="$(git diff --name-only "${range[0]}" "${range[1]}")"; then
+        ci_log "[CI-ERROR-IMPACT-0001]" "cannot diff ${range[0]}..${range[1]}"
+        return 1
+    fi
+    if _ci_classify_paths <<< "${changed}" | grep -qx "${class}"; then
         _ci_output hit true
     else
         _ci_output hit false
@@ -529,6 +543,17 @@ _ci_event_range() {
             jq -r '.before // ""' "${GITHUB_EVENT_PATH}" || return 2
             printf '%s\n' "${GITHUB_SHA:?GITHUB_SHA required}" ;;
     esac
+}
+
+# What: Print the number of this run's pull request.
+# Why: pull_request and pull_request_target carry it alike.
+# From: Issue #479, PR #544
+_ci_event_pr_number() {
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    if ! jq -er '.pull_request.number' "${GITHUB_EVENT_PATH}"; then
+        ci_log "[CI-ERROR-EVENT-0001]" "${GITHUB_EVENT_NAME:-event} has no pull_request.number"
+        return 2
+    fi
 }
 
 # What: Write phases/build/matrix for this run's diff.
@@ -1572,14 +1597,14 @@ $(printf '%s\n' "$@")
 # From: Issue #479
 _ci_publish_draft_release() {
     : "${GH_TOKEN:?GH_TOKEN required}"
-    : "${REPO:?REPO required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local since since_date pr_json number title category
     local security=() bug=() enhancement=() documentation=()
-    since="$(gh release list --repo "${REPO}" --exclude-drafts \
+    since="$(gh release list --repo "${GITHUB_REPOSITORY}" --exclude-drafts \
         --exclude-pre-releases --json tagName,publishedAt \
         --jq 'sort_by(.publishedAt) | last | .publishedAt // empty')"
     since_date="${since:-2000-01-01}"
-    pr_json="$(gh pr list --repo "${REPO}" --state merged --base current_dev \
+    pr_json="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state merged --base current_dev \
         --search "merged:>=${since_date}" --json number,title --limit 200)"
     while IFS=$'\t' read -r number title; do
         [ -n "${number}" ] || continue
@@ -1600,10 +1625,10 @@ _ci_publish_draft_release() {
 
     local notes; notes="$(mktemp)"
     printf '%s' "${body}" > "${notes}"
-    if gh release view draft-current_dev --repo "${REPO}" >/dev/null 2>&1; then
-        gh release edit draft-current_dev --repo "${REPO}" --notes-file "${notes}"
+    if gh release view draft-current_dev --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+        gh release edit draft-current_dev --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}"
     else
-        gh release create draft-current_dev --repo "${REPO}" --draft \
+        gh release create draft-current_dev --repo "${GITHUB_REPOSITORY}" --draft \
             --title "Next release (draft)" --notes-file "${notes}" \
             --target current_dev
     fi
@@ -1700,7 +1725,7 @@ _ci_gc_protected_digests() {
     local pkg="$1" versions="$2" tag raw children=""
     while IFS= read -r tag; do
         [ -n "${tag}" ] || continue
-        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER:?OWNER required}/${pkg}:${tag}")"; then
+        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}/${pkg}:${tag}")"; then
             ci_log "[CI-ERROR-GC-0002]" "cannot inspect ${pkg}:${tag}; refusing to prune ${pkg}"
             return 1
         fi
@@ -1734,7 +1759,7 @@ _ci_gc_candidates() {
 # From: Issue #479, PR #544
 ci_cmd_gc() {
     : "${GH_TOKEN:?GH_TOKEN required (delete:packages scope when DRY_RUN=false)}"
-    : "${OWNER:?OWNER required, e.g. wiki-mod}"
+    : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}"
     local DRY_RUN="${DRY_RUN:-true}" sel="${1:-all}" known pkgs pkg
     local ku re ks versions protected candidates id why
     known="$(_ci_sot_list release.ghcr_packages)" || return 2
@@ -1752,13 +1777,13 @@ ci_cmd_gc() {
     _ci_registry_login
     for pkg in ${pkgs}; do
         echo "::group::${pkg}"
-        versions="$(gh api --paginate "orgs/${OWNER}/packages/container/${pkg}/versions" | jq -s 'add // []')" || return 1
+        versions="$(gh api --paginate "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}/versions" | jq -s 'add // []')" || return 1
         protected="$(_ci_gc_protected_digests "${pkg}" "${versions}")" || return 1
         candidates="$(_ci_gc_candidates "${versions}" "${protected}" "${ku}" "${re}" "${ks}")" || return 1
         while IFS=$'\t' read -r id why; do
             [ -n "${id}" ] || continue
             ci_log "[CI-GC]" "${pkg}#${id}: delete (${why})"
-            _ci_mutate gh api --method DELETE "orgs/${OWNER}/packages/container/${pkg}/versions/${id}" --silent
+            _ci_mutate gh api --method DELETE "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}/versions/${id}" --silent
         done <<< "${candidates}"
         echo "::endgroup::"
     done
@@ -1964,10 +1989,10 @@ _ci_board_add() {
 # Why: Retrying on each failure heals a missed one-shot.
 # From: Issue #479, PR #476
 _ci_report_ensure_bug_type() {
-    : "${REPO:?REPO required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local issue_number="$1" owner name issue_query_result issue_node_id current_type bug_type_id
-    owner="${REPO%%/*}"
-    name="${REPO##*/}"
+    owner="${GITHUB_REPOSITORY%%/*}"
+    name="${GITHUB_REPOSITORY##*/}"
     issue_query_result="$(gh api graphql -f query="
       query(\$owner: String!, \$name: String!, \$number: Int!) {
         repository(owner: \$owner, name: \$name) {
@@ -1985,7 +2010,7 @@ _ci_report_ensure_bug_type() {
       }" -F owner="${owner}" -F name="${name}" \
       --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')"
     if [ -z "${bug_type_id}" ]; then
-        ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${REPO}"
+        ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${GITHUB_REPOSITORY}"
         return 1
     fi
     _ci_mutate gh api graphql -f query="
@@ -1994,50 +2019,75 @@ _ci_report_ensure_bug_type() {
       }" -F issueId="${issue_node_id}" -F typeId="${bug_type_id}"
 }
 
+# What: Print success if every name=result line is success.
+# Why: A skipped job means the run did not do its work.
+# From: Issue #479, PR #544
+_ci_jobs_outcome() {
+    local jname jresult outcome=success n=0
+    while IFS='=' read -r jname jresult; do
+        [ -n "${jname}" ] || continue
+        n=$((n + 1))
+        [ "${jresult}" = "success" ] || outcome=failure
+    done <<< "$1"
+    if [ "${n}" -eq 0 ]; then
+        ci_log "[CI-ERROR-REPORT-0002]" "JOBS names no job"
+        return 2
+    fi
+    printf '%s\n' "${outcome}"
+}
+
+# What: Print the URL of this workflow run.
+# Why: Built from the runner's own variables, never passed in.
+# From: Issue #479, PR #544
+_ci_run_url() {
+    printf '%s/%s/actions/runs/%s\n' "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}" \
+        "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
+}
+
 # What: File, update or close the standing tracking issue.
 # Why: All schedules share it; any success closes it.
 # From: Issue #479, Issue #81, PR #89, PR #476
 ci_cmd_report() {
     : "${GH_TOKEN:?GH_TOKEN required}"
-    : "${REPO:?REPO required, e.g. wiki-mod/distcc-ng}"
-    : "${OUTCOME:?OUTCOME required (success|failure)}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     : "${SCOPE:?SCOPE required, e.g. 'weekly ccache heartbeat (master)'}"
-    : "${RUN_URL:?RUN_URL required}"
-    local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url
-    local FAILED_JOBS="${FAILED_JOBS:-}"
-    # What: Derive FAILED_JOBS from JOBS name=result lines.
-    # Why: Only failure/cancelled are real; skips are upstream.
+    : "${JOBS:?JOBS required (name=result lines)}"
+    local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url RUN_URL
+    local OUTCOME FAILED_JOBS
+    RUN_URL="$(_ci_run_url)" || return 2
+    OUTCOME="$(_ci_jobs_outcome "${JOBS}")" || return 2
+    # What: Name only the failed or cancelled jobs.
+    # Why: A skip is the upstream failure, already named.
     # From: Issue #479, PR #476
-    local JOBS="${JOBS:-}"
-    [ -n "${JOBS}" ] && FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
-    existing="$(gh issue list --repo "${REPO}" --label "${LABEL}" --state open \
+    FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
+    existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" --state open \
         --json number --jq 'sort_by(.number) | .[0].number // empty')"
     if [ "${OUTCOME}" = "success" ]; then
         if [ -n "${existing}" ]; then
             _ci_report_ensure_bug_type "${existing}" || return 1
-            _ci_board_add "https://github.com/${REPO}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
+            _ci_board_add "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}/${GITHUB_REPOSITORY}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
             echo "success: closing standing ${LABEL} issue #${existing}"
-            _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
+            _ci_mutate gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" \
                 --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
-            _ci_mutate gh issue close "${existing}" --repo "${REPO}"
+            _ci_mutate gh issue close "${existing}" --repo "${GITHUB_REPOSITORY}"
         else
             echo "success and no open ${LABEL} issue: nothing to do"
         fi
         return 0
     fi
-    _ci_mutate gh label create "${LABEL}" --repo "${REPO}" --color b60205 --force \
+    _ci_mutate gh label create "${LABEL}" --repo "${GITHUB_REPOSITORY}" --color b60205 --force \
         --description "A scheduled nightly/heartbeat CI run is failing" || return 1
     detail="${SCOPE} failed in ${RUN_URL}"
     [ -n "${FAILED_JOBS}" ] && detail="${detail} (failed: ${FAILED_JOBS})"
     if [ -n "${existing}" ]; then
         echo "failure: commenting on standing ${LABEL} issue #${existing}"
-        _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
+        _ci_mutate gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" \
             --body "Still failing: ${detail}."
         _ci_report_ensure_bug_type "${existing}" || return 1
-        _ci_board_add "https://github.com/${REPO}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
+        _ci_board_add "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}/${GITHUB_REPOSITORY}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
     else
         echo "failure: opening a new standing ${LABEL} issue"
-        new_issue_url="$(_ci_mutate gh issue create --repo "${REPO}" --label "${LABEL}" \
+        new_issue_url="$(_ci_mutate gh issue create --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" \
             --title "[${LABEL}] a scheduled CI run is failing" \
             --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
 
@@ -2118,8 +2168,13 @@ _ci_variables_secret_present() {
 # Why: gh project item-add is native; no marketplace action.
 # From: Issue #479
 _ci_variables_add_to_project() {
-    : "${ITEM_URL:?ITEM_URL required}"
-    _ci_board_add "${ITEM_URL}" "${GH_TOKEN:-}"
+    local url
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    if ! url="$(jq -er '.issue.html_url // .pull_request.html_url' "${GITHUB_EVENT_PATH}")"; then
+        ci_log "[CI-ERROR-EVENT-0002]" "${GITHUB_EVENT_NAME:-event} carries no issue or PR url"
+        return 2
+    fi
+    _ci_board_add "${url}" "${GH_TOKEN:-}"
 }
 
 # What: True if a file is under doc/ or a non-CHANGELOG .md.
@@ -2187,9 +2242,9 @@ _ci_pr_category_label() {
 # Why: Replaces both actions/labeler and release-drafter.
 # From: Issue #479
 _ci_variables_label_pr() {
-    : "${PR_NUMBER:?PR_NUMBER required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local files label pat labels=() category
+    local files label pat labels=() category PR_NUMBER
+    PR_NUMBER="$(_ci_event_pr_number)" || return 2
     files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)"
     if _ci_labeler_documentation_match "${files}"; then
         labels+=("documentation")
@@ -2265,7 +2320,7 @@ _ci_ossf_url() { echo "https://www.bestpractices.dev/en/projects/${PROJECT_ID}/b
 # From: Issue #312
 _ci_ossf_check_ac03() {
     local types
-    types="$(gh api "repos/${REPO}/rulesets/18300729" --jq '[.rules[].type]')" || { echo "NotMet"; return; }
+    types="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/18300729" --jq '[.rules[].type]')" || { echo "NotMet"; return; }
     if echo "${types}" | jq -e 'contains(["pull_request"]) and contains(["deletion"])' >/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
@@ -2293,7 +2348,7 @@ _ci_ossf_check_br01() {
 # From: Issue #312
 _ci_ossf_check_br07() {
     local analysis
-    analysis="$(gh api "repos/${REPO}" --jq '.security_and_analysis')"
+    analysis="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.security_and_analysis')"
     if echo "${analysis}" | jq -e '.secret_scanning.status == "enabled" and .secret_scanning_push_protection.status == "enabled"' >/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
@@ -2342,10 +2397,12 @@ _ci_ossf_check_br05_do06() {
 # Why: One recheck owner; workflows only call the phase.
 # From: Issue #479, Issue #312
 _ci_scan_openssf() {
-    : "${REPO:?REPO required, e.g. wiki-mod/distcc-ng}"
-    : "${ISSUE_NUMBER:?ISSUE_NUMBER required (the tracking issue)}"
-    local PROJECT_ID="${PROJECT_ID:-13760}"
-    local MARKER="<!-- openssf-baseline-recheck -->" RUN_URL="${RUN_URL:-}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    local ISSUE_NUMBER PROJECT_ID RUN_URL
+    ISSUE_NUMBER="$(_ci_sot_scalar security.openssf.issue)" || return 2
+    PROJECT_ID="$(_ci_sot_scalar security.openssf.project_id)" || return 2
+    RUN_URL="$(_ci_run_url)" || return 2
+    local MARKER="<!-- openssf-baseline-recheck -->"
     local TODAY; TODAY="$(date -u +%Y-%m-%d)"
     local ac03 br01 br07 qa05 vm02 ac04 br06 br05_do06 gv01 vm01_vm03 do04_do05
     ac03="$(_ci_ossf_check_ac03)"
@@ -2369,13 +2426,13 @@ _ci_scan_openssf() {
           "AC-04":$ac04,"BR-06":$br06,"BR-05_DO-06":$br05_do06,"GV-01":$gv01,
           "VM-01_VM-03":$vm01_vm03,"DO-04_DO-05":$do04_do05}')"
     local existing_id prev_state regressed_keys
-    existing_id="$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
+    existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
         --jq "[.[] | select(.body | startswith(\"${MARKER}\"))] | sort_by(.id) | last | .id // empty")"
     if [ -z "${existing_id}" ]; then
         prev_state="{}"
     else
         local prev_body state_line
-        prev_body="$(gh api "repos/${REPO}/issues/comments/${existing_id}" --jq '.body')"
+        prev_body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" --jq '.body')"
         state_line="$(echo "${prev_body}" | grep -o '<!-- openssf-baseline-recheck-state: .*-->')" || [ "$?" -eq 1 ] || return 2
         if [ -z "${state_line}" ]; then
             prev_state="{}"
@@ -2386,11 +2443,11 @@ _ci_scan_openssf() {
     regressed_keys="$(jq -rn --argjson prev "${prev_state}" --argjson new "${new_state}" '
         $new | to_entries[] | select(.value == "NotMet" and ($prev[.key] // "") == "Met") | .key')"
     local qs1="" qs2="" qs3="" l1 l2 l3 url1 url2 url3 regressed_block=""
-    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset 18300729 on ${REPO} has a pull_request and a deletion rule, re-verified ${TODAY}."
+    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset 18300729 on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
     [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.02" "Same ruleset re-verified ${TODAY}; deletion rule present."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.01" "No workflow runs fork code under pull_request_target, re-verified ${TODAY}."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.03" "No workflow interpolates untrusted event title/body, re-verified ${TODAY}."
-    [ "${br07}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-07.01" "Secret scanning and push protection are enabled on ${REPO}, re-verified ${TODAY}."
+    [ "${br07}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-07.01" "Secret scanning and push protection are enabled on ${GITHUB_REPOSITORY}, re-verified ${TODAY}."
     [ "${qa05}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-QA-05.01" "No compiled binary is tracked in the git tree, re-verified ${TODAY}."
     [ "${qa05}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-QA-05.02" "Same check, re-verified ${TODAY}."
     [ "${vm02}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-VM-02.01" "SECURITY.md still exists at the repo root, re-verified ${TODAY}."
@@ -2462,10 +2519,10 @@ EOF
     body_file="$(mktemp)" || return 1
     printf '%s\n' "${body}" | tee "${body_file}"
     if [ -n "${existing_id}" ]; then
-        _ci_mutate gh api --method PATCH "repos/${REPO}/issues/comments/${existing_id}" \
+        _ci_mutate gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" \
             -F "body=@${body_file}" || return 1
     else
-        _ci_mutate gh api --method POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+        _ci_mutate gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
             -F "body=@${body_file}" || return 1
     fi
 }
@@ -2812,10 +2869,12 @@ _ci_metadata_fetch_live() {
 # Why: Replaces changelog-check.yml's PR-context jobs.
 # From: Issue #479
 ci_cmd_metadata() {
-    local sub="${1:-all}" rc=0
-    if [ -n "${PR_NUMBER:-}" ]; then
-        _ci_metadata_fetch_live || return 2
-    fi
+    local sub="${1:-all}" rc=0 range=()
+    PR_NUMBER="$(_ci_event_pr_number)" || return 2
+    mapfile -t range < <(_ci_event_range) || return 2
+    [ "${#range[@]}" -eq 2 ] || return 2
+    BASE="${range[0]}" HEAD="${range[1]}"
+    _ci_metadata_fetch_live || return 2
     case "${sub}" in
         title)     _ci_check_pr_title || rc=1 ;;
         tracking)  _ci_check_pr_tracking || rc=1 ;;
@@ -3256,6 +3315,13 @@ ci_cmd_attest() {
     cd "${CI_REPO_ROOT}" || return 1
     case "${what}" in
         build)
+            # What: Attest only the default Linux leg's binaries.
+            # Why: That build is the one the release ships.
+            # From: Issue #38, Issue #479, PR #544
+            if [ "${1:?variant required}" != "default" ] || [ "${RUNNER_OS:?RUNNER_OS required}" != "Linux" ]; then
+                ci_log "[CI-ATTEST]" "build attestation NotRun: ${1} on ${RUNNER_OS} is not the default Linux build"
+                return 0
+            fi
             if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
                 ci_log "[CI-ATTEST]" "build attestation NotRun: no id-token (fork PR or local run)"
                 return 0
@@ -3467,10 +3533,14 @@ ci_cmd_codeql_scan() {
         out="${3:-results-${1}.sarif}" bin db pack
     bin="$(_ci_tool_bin external_versions.codeql_cli)" || return 2
     db="${RUNNER_TEMP:-/tmp}/codeql-db-${lang}"
-    pack="$(_ci_codeql_query_pack "${lang}" "${suite}")"
+    pack="$(_ci_codeql_query_pack "${lang}" "${suite}")" || return 2
     rm -rf "${db}"
     case "${lang}" in
         c-cpp)
+            # What: Install the c-cpp build deps before tracing.
+            # Why: Only the traced build needs them; others do not.
+            # From: Issue #479, PR #544
+            ci_cmd_install sot-apt security.codeql_cpp_apt || return 1
             "${bin}" database create "${db}" --language=cpp \
                 --source-root=. \
                 --command="bash .github/scripts/ci.sh build default" || return 2
@@ -3554,25 +3624,28 @@ ci_cmd_scorecard_scan() {
 # Why: CLI-native; no osv-scanner reusable workflow.
 # From: Issue #479
 ci_cmd_osv_scan() {
-    local out="${1:-osv-results.sarif}" bin base_sot old new added
-    local dirs=()
+    local out="${1:-osv-results.sarif}" bin base base_sot old new added
+    local dirs=() range=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
     mapfile -t dirs < <(_ci_osv_tool_dirs)
     [ "${#dirs[@]}" -gt 0 ] || return 2
     _ci_osv_run "${bin}" sarif "${out}" "${dirs[@]}" || return 2
-    if [ -z "${BASE:-}" ]; then
+    if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" != "pull_request" ]; then
         return 0
     fi
+    mapfile -t range < <(_ci_event_range) || return 2
+    [ "${#range[@]}" -eq 2 ] || return 2
+    base="${range[0]}"
     # What: PR gate: fail on vuln ids the head's tools add.
     # Why: Same scanner and DB on both SOTs; only versions differ.
     # From: Issue #267, Issue #479, PR #544
     base_sot="$(mktemp)" || return 1
-    git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${BASE}" || return 1
-    if ! git -C "${CI_REPO_ROOT}" cat-file -e "${BASE}:.github/yaml/build-manifest.yml"; then
-        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${BASE} has no SOT yet"
+    git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${base}" || return 1
+    if ! git -C "${CI_REPO_ROOT}" cat-file -e "${base}:.github/yaml/build-manifest.yml"; then
+        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${base} has no SOT yet"
         return 0
     fi
-    git -C "${CI_REPO_ROOT}" show "${BASE}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
+    git -C "${CI_REPO_ROOT}" show "${base}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
     if ! grep -q '^    bin:' "${base_sot}"; then
         ci_log "[CI-SCAN]" "OSV PR gate NotRun: base SOT has no tool pins to compare"
         return 0

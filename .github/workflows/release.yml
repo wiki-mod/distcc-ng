@@ -82,7 +82,6 @@ jobs:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
         run: bash .github/scripts/ci.sh publish draft-release
 
   build_test:
