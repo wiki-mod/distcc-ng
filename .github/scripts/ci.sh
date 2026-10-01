@@ -1162,6 +1162,65 @@ _ci_workload_samba() {
     find . -name '*.o' | wc -l
 }
 
+# What: Build every test/fuzz target in the CFL builder image.
+# Why: CFL runs $SRC/build.sh; ci.sh owns the logic.
+# From: Issue #267, Issue #479, PR #544
+_ci_workload_fuzz_build() {
+    : "${CC:?CC required}" "${CXX:?CXX required}" "${OUT:?OUT required}"
+    : "${LIB_FUZZING_ENGINE:?LIB_FUZZING_ENGINE required}"
+    local skip rename raw f base prefix sysconfdir datarootdir t lib
+    local cflags=() cxxflags=() engine=() libs=() defs=() extra=() objs=()
+    read -ra cflags <<< "${CFLAGS:-}"
+    read -ra cxxflags <<< "${CXXFLAGS:-}"
+    read -ra engine <<< "${LIB_FUZZING_ENGINE}"
+    raw="$(_ci_sot_list security.cfl_fuzz.exclude_main)" || return 2
+    skip=" $(tr '\n' ' ' <<< "${raw}")"
+    raw="$(_ci_sot_list security.cfl_fuzz.rename_main)" || return 2
+    rename=" $(tr '\n' ' ' <<< "${raw}")"
+    cd "${CI_REPO_ROOT}" || return 1
+    # What: --with-auth builds auth_common.c's GSSAPI symbols.
+    # Why: The link takes every src/*.c, auth_common.c included.
+    # From: Issue #267
+    _ci_configure_tree /tmp/fuzz-configure.log PYTHON=python3 --disable-pump-mode --with-auth || return 1
+    # What: Rebuild Makefile.in's DIR_DEFS for direct compiles.
+    # Why: They are Makefile-only; config.h never carries them.
+    # From: Issue #267
+    prefix="$(sed -n 's/^prefix = //p' Makefile)" || return 1
+    sysconfdir="$(sed -n 's/^sysconfdir = //p' Makefile)" || return 1
+    datarootdir="$(sed -n 's/^datarootdir = //p' Makefile)" || return 1
+    sysconfdir="${sysconfdir//\$\{prefix\}/${prefix}}"
+    sysconfdir="${sysconfdir//\$(prefix)/${prefix}}"
+    datarootdir="${datarootdir//\$\{prefix\}/${prefix}}"
+    datarootdir="${datarootdir//\$(prefix)/${prefix}}"
+    defs=("-DLIBDIR=\"${prefix}/lib\"" "-DSYSCONFDIR=\"${sysconfdir}\"" "-DICONDIR=\"${datarootdir}/pixmaps\"")
+    for f in src/*.c lzo/minilzo.c; do
+        base="$(basename "${f}" .c)"
+        case "${skip}" in *" ${base} "*) continue ;; esac
+        extra=()
+        case "${rename}" in *" ${base} "*) extra=("-Dmain=distccng_disabled_main_${base}") ;; esac
+        "${CC}" "${cflags[@]}" -Isrc -Ilzo -DHAVE_CONFIG_H "${defs[@]}" "${extra[@]}" \
+            -c "${f}" -o "${OUT}/${base}.o" || return 1
+        objs+=("${OUT}/${base}.o")
+    done
+    read -ra libs <<< "$(sed -n 's/^LIBS = //p' Makefile)"
+    for t in test/fuzz/*.c; do
+        # What: -x c compiles the target as C; -x none ends it.
+        # Why: CFL links with $CXX; the .o files must not parse as C.
+        # From: Issue #267
+        "${CXX}" "${cxxflags[@]}" -Isrc -Ilzo -DHAVE_CONFIG_H -x c "${t}" -x none "${objs[@]}" \
+            -o "${OUT}/$(basename "${t}" .c)" -Wl,-rpath,"\$ORIGIN" "${engine[@]}" "${libs[@]}" || return 1
+        # What: Ship only libavahi/libpopt next to the target.
+        # Why: The run image lacks them; a copied glibc crashes it.
+        # From: Issue #267
+        raw="$(ldd "${OUT}/$(basename "${t}" .c)")" || return 1
+        while read -r lib; do
+            case "$(basename "${lib}")" in
+                libavahi-*|libpopt.*) cp -L "${lib}" "${OUT}/" || return 1 ;;
+            esac
+        done < <(awk '/=>/ {print $3} !/=>/ {if ($1 ~ /^\//) print $1}' <<< "${raw}")
+    done
+}
+
 # What: Dispatch workload: <name> <pass> <dir> [extra].
 # Why: One owner for all work inside a test container.
 # From: Issue #479, PR #544
@@ -1174,7 +1233,8 @@ ci_cmd_workload() {
         samba) _ci_workload_samba "$@" ;;
         checkout) _ci_workload_checkout "$@" ;;
         ptrace) _ci_workload_ptrace ;;
-        *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba|checkout|ptrace)"; return 2 ;;
+        fuzz-build) _ci_workload_fuzz_build ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba|checkout|ptrace|fuzz-build)"; return 2 ;;
     esac
 }
 
