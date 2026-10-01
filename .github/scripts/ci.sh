@@ -2785,7 +2785,7 @@ ci_cmd_lint() {
 # From: Issue #493, Issue #479
 _ci_apt_install() {
     local packages="${1:?package list required}" mode="${2:-runner}" max_attempts=2 attempt=1
-    local as_root=(sudo) apt_opts=""
+    local as_root=(sudo) apt_opts="" upgrade=""
     if [ "$(id -u)" -eq 0 ]; then
         as_root=()
     fi
@@ -2794,12 +2794,17 @@ _ci_apt_install() {
     # From: Issue #479, PR #544
     case "${mode}" in
         runner) ;;
-        image) apt_opts="--no-install-recommends" ;;
+        image)
+            apt_opts="--no-install-recommends"
+            # What: Image builds apply pending security updates first.
+            # Why: A fixable HIGH CVE in a base package blocks a release.
+            # From: Issue #479, PR #544
+            upgrade="apt-get upgrade -y ${apt_opts} &&" ;;
         *) ci_log "[CI-ERROR-INSTALL-0003]" "apt mode=${mode} (runner|image)"; return 2 ;;
     esac
     while true; do
         if "${as_root[@]}" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
-            bash -c "apt-get update && apt-get install -y ${apt_opts} ${packages}"; then
+            bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}"; then
             if [ "${mode}" = "image" ]; then
                 rm -rf /var/lib/apt/lists/* || return 1
             fi
@@ -2932,10 +2937,13 @@ _ci_attest_publish() {
     local cosign="$1" work="$2" verify="$3"
     "${cosign}" attest-blob --yes --statement "${work}/statement.json" \
         --bundle "${work}/bundle.json" || return 1
+    jq -r '.subject[] | "[CI-ATTEST] subject \(.name) sha256:\(.digest.sha256)"' \
+        "${work}/statement.json" || return 1
     jq -e '{bundle: .}' "${work}/bundle.json" > "${work}/body.json" || return 1
     gh api --method POST "repos/${GITHUB_REPOSITORY}/attestations" --input "${work}/body.json" \
         --jq '"[CI-ATTEST] stored attestation \(.id)"' || return 1
-    gh attestation verify "${verify}" --repo "${GITHUB_REPOSITORY}"
+    gh attestation verify "${verify}" --repo "${GITHUB_REPOSITORY}" --format json \
+        | jq -er '.[] | "[CI-ATTEST] verified \(.verificationResult.statement.predicateType) by \(.verificationResult.signature.certificate.subjectAlternativeName)"'
 }
 
 # What: Print "name sha256" for each given file, by basename.
@@ -3264,6 +3272,10 @@ ci_cmd_osv_scan() {
     # From: Issue #267, Issue #479, PR #544
     base_sot="$(mktemp)" || return 1
     git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${BASE}" || return 1
+    if ! git -C "${CI_REPO_ROOT}" cat-file -e "${BASE}:.github/yaml/build-manifest.yml"; then
+        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${BASE} has no SOT yet"
+        return 0
+    fi
     git -C "${CI_REPO_ROOT}" show "${BASE}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
     if ! grep -q '^    bin:' "${base_sot}"; then
         ci_log "[CI-SCAN]" "OSV PR gate NotRun: base SOT has no tool pins to compare"
@@ -3298,7 +3310,11 @@ _ci_osv_tool_dirs() {
 _ci_osv_run() {
     local bin="$1" format="$2" out="$3" rc=0
     shift 3
-    "${bin}" scan source --experimental-plugins artifact --format="${format}" \
+    # What: Skip the transitive Maven pom resolver.
+    # Why: osv flags it risky on foreign artifacts; jars read as-is.
+    # From: Issue #267, PR #544
+    "${bin}" scan source --experimental-plugins artifact \
+        --experimental-disable-plugins transitivedependency/pomxml --format="${format}" \
         --output-file="${out}" -r "$@" || rc=$?
     if [ "${rc}" -ge 127 ]; then
         ci_log "[CI-ERROR-SCAN-0002]" "tool=osv-scanner exit=${rc} reason=\"scan failed\""
