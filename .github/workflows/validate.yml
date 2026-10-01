@@ -132,6 +132,35 @@ jobs:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e
 
+  container:
+    name: Release images build + Trivy (${{ matrix.variant }})
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'container')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [plain, pump]
+    env:
+      IMAGE_TAG: distcc-ng-${{ matrix.variant }}:pr
+      VERSION: pr-${{ github.sha }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh container build "$VARIANT" amd64
+      - run: bash .github/scripts/ci.sh scan trivy "$IMAGE_TAG"
+
+  package:
+    name: Release packages (rpm/deb) build
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'package')
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+
   verify_image:
     name: Verify container build + self-test
     needs: plan
@@ -171,7 +200,7 @@ jobs:
     # Why: Metadata-only events must not report an unrun build.
     # From: Issue #479, PR #544
     name: Validate (required)
-    needs: [lint, engine-selftest, plan, build_test, e2e, verify_image, publish_buildtools]
+    needs: [lint, engine-selftest, plan, build_test, e2e, container, package, verify_image, publish_buildtools]
     if: >-
       always() &&
       github.event_name != 'issues' && github.event_name != 'pull_request_target' &&
@@ -186,6 +215,8 @@ jobs:
             plan=${{ needs.plan.result }}
             build_test=${{ needs.build_test.result }}
             e2e=${{ needs.e2e.result }}
+            container=${{ needs.container.result }}
+            package=${{ needs.package.result }}
             verify_image=${{ needs.verify_image.result }}
             publish_buildtools=${{ needs.publish_buildtools.result }}
         run: bash .github/scripts/ci.sh gate

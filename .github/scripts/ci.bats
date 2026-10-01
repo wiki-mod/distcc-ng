@@ -664,35 +664,67 @@ _forbid() {
 # IMPACT (DEFAULT=NOOP)
 # =========================================================
 
-@test "impact: a docs-only diff selects doc-lint, never build" {
-    # What: A .md edit MUST NOT trigger a compile.
+@test "impact: a docs-only diff selects nothing (NOOP)" {
+    # What: A .md edit MUST NOT trigger any gated job.
     # Why: Kills the sledgehammer full-CI on documentation.
-    # From: Issue #479
+    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"doc-lint"* ]]
-    [[ "${output}" != *"build"* ]]
-    [[ "${output}" != *"e2e"* ]]
+    [ "${output}" = "NOOP" ]
 }
 
-@test "impact: a c-source diff selects build and test" {
-    # What: A src/*.c edit selects the compile phases.
-    # Why: Real code changes must build, test and analyze.
-    # From: Issue #479
+@test "impact: a c-source diff selects build, e2e and package" {
+    # What: A src/*.c edit selects compile, e2e and packaging.
+    # Why: Real code changes must build, distribute and package.
+    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"build"* ]]
-    [[ "${output}" == *"test"* ]]
+    [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e package " ]
+}
+
+@test "impact: a SOT or engine change selects every gated job" {
+    # What: build-manifest.yml or ci.sh select all five phases.
+    # Why: A pin bump or engine edit can break any of them.
+    # From: Issue #479, PR #544
+    local p
+    for p in .github/yaml/build-manifest.yml .github/scripts/ci.sh; do
+        run _ci_phases_for_paths < <(printf '%s\n' "${p}")
+        [ "$(tr '\n' ' ' <<< "${output}")" = "build container e2e package verify " ]
+    done
+}
+
+@test "every SOT impact phase gates a validate.yml job" {
+    # What: Each phase name has a contains(... phases, ...) user.
+    # Why: A phase nobody reads is policy that changes nothing.
+    # From: Issue #479, PR #544
+    local c ph
+    for c in $(_ci_sot_children impact_classes); do
+        for ph in $(_ci_sot_list "impact_classes.${c}.phases"); do
+            [ "${ph}" = "build" ] && continue
+            grep -qF "contains(needs.plan.outputs.phases, '${ph}')" \
+                "${CI_REPO_ROOT}/.github/workflows/validate.yml" || { echo "${c}: ${ph}"; false; }
+        done
+    done
+}
+
+@test "every CI_COMMANDS entry has its own dispatch arm" {
+    # What: The registry and the case dispatch name the same set.
+    # Why: A listed command without an arm was a silent stub.
+    # From: Issue #479, PR #544
+    local c
+    for c in ${CI_COMMANDS}; do
+        [ "${c}" = "checkout" ] && continue
+        grep -qE "^ {16}${c}\) ci_cmd_" "${CI_SH}" || { echo "${c}"; false; }
+    done
 }
 
 @test "impact: an include-server .py diff selects build but not package" {
-    # What: include_server/*.py selects build/test/analyze only.
+    # What: include_server/*.py selects build and e2e only.
     # Why: A pump-mode Python change is not a packaging change.
-    # From: Issue #479
+    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' include_server/basics.py)
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"build"* ]]
-    [[ "${output}" != *"package"* ]]
+    [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e " ]
 }
 
 @test "impact: an unmatched path yields NOOP" {
@@ -844,7 +876,7 @@ _forbid() {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/d" "${fx}/.github/workflows"
     printf '%s\n' 'ARG BASE' 'FROM ${BASE} AS one' 'FROM one AS two' 'FROM x-y:local' > "${fx}/d/Dockerfile"
-    printf '%s\n' 'jobs:' '  x:' '    steps:' '      - run: bash .github/scripts/ci.sh build' > "${fx}/.github/workflows/w.yml"
+    printf '%s\n' 'jobs:' '  container:' '    steps:' '      - run: bash .github/scripts/ci.sh build' > "${fx}/.github/workflows/w.yml"
     run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 0 ]
 }

@@ -49,7 +49,7 @@ CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
+CI_COMMANDS="checkout plan impact impact-hit build test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -82,14 +82,6 @@ _ci_mutate() {
     else
         "$@"
     fi
-}
-
-# What: Report an unimplemented dispatch target.
-# Why: The skeleton MUST fail closed, never succeed silently.
-# From: Issue #479
-ci_not_implemented() {
-    ci_log "[CI-ERROR-CORE-0001]" "command=$* state=SKELETON reason=\"not yet implemented\""
-    return 2
 }
 
 # What: Fail closed unless the SOT manifest exists.
@@ -272,16 +264,17 @@ _ci_classify_paths() {
     done | sort -u
 }
 
-# What: Print the ci.sh phases selected by the paths on stdin.
-# Why: NOOP if nothing matches; docs select doc-lint only.
-# From: Issue #479
+# What: Print the validate phases selected by paths on stdin.
+# Why: NOOP when no matched class selects any job (docs only).
+# From: Issue #479, PR #544
 _ci_phases_for_paths() {
-    local classes cls
-    classes="$(_ci_classify_paths)"
-    [ -n "${classes}" ] || { printf 'NOOP\n'; return 0; }
+    local classes cls phases=""
+    classes="$(_ci_classify_paths)" || return 2
     for cls in ${classes}; do
-        _ci_sot_list "impact_classes.${cls}.phases" || return 2
-    done | sort -u
+        phases="${phases}$(_ci_sot_list "impact_classes.${cls}.phases")"$'\n' || return 2
+    done
+    phases="$(grep -v '^$' <<< "${phases}" | sort -u)" || [ "$?" -eq 1 ] || return 2
+    printf '%s\n' "${phases:-NOOP}"
 }
 
 # =========================================================
@@ -531,19 +524,22 @@ ci_cmd_matrix() {
 ci_cmd_plan() {
     local base="${1:-}" head="${2:-HEAD}"
     local phases build=false matrix
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
         # What: An unknown base (first push) selects every phase.
         # Why: No diff exists to classify; NOOP would skip all.
         # From: Issue #479
-        phases="build test e2e coverage analyze scan lint selftest"
+        phases="build e2e verify container package"
     else
         phases="$(git diff --name-only "${base}" "${head}" \
-            | _ci_phases_for_paths | tr '\n' ' ')"
+            | _ci_phases_for_paths | tr '\n' ' ')" || return 2
         phases="${phases% }"
     fi
     case " ${phases} " in *" build "*) build=true ;; esac
-    if [ "${build}" = "true" ]; then matrix="$(ci_cmd_matrix)"; else matrix='{"include":[]}'; fi
+    matrix='{"include":[]}'
+    if [ "${build}" = "true" ]; then
+        matrix="$(ci_cmd_matrix)" || return 2
+    fi
     {
         printf 'phases=%s\n' "${phases}"
         printf 'build=%s\n' "${build}"
@@ -2649,7 +2645,7 @@ ci_guard_pins_in_sot() {
     local files=()
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
-        out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^[[:space:]]*(image|container):' "${f}")" \
+        out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^ {4,}(image|container):' "${f}")" \
             || [ "$?" -eq 1 ] || return 2
         while IFS=: read -r line _; do
             [ -n "${line}" ] || continue
@@ -3313,7 +3309,7 @@ _ci_osv_run() {
     local bin="$1" format="$2" out="$3" rc=0
     shift 3
     # What: Skip the transitive Maven pom resolver.
-    # Why: osv flags it risky on foreign artifacts; jars read as-is.
+    # Why: osv calls it risky on foreign files; jars read as-is.
     # From: Issue #267, PR #544
     "${bin}" scan source --experimental-plugins artifact \
         --experimental-disable-plugins transitivedependency/pomxml --format="${format}" \
@@ -3684,7 +3680,6 @@ ci_main() {
             case "${command}" in
                 impact) ci_cmd_impact "$@" ;;
                 impact-hit) ci_cmd_impact_hit "$@" ;;
-                matrix) ci_cmd_matrix "$@" ;;
                 plan) ci_cmd_plan "$@" ;;
                 build) ci_cmd_build "$@" ;;
                 test) ci_cmd_test "$@" ;;
@@ -3708,7 +3703,7 @@ ci_main() {
                 image) ci_cmd_image "$@" ;;
                 sot-update) ci_cmd_sot_update "$@" ;;
                 attest) ci_cmd_attest "$@" ;;
-                *) ci_not_implemented "${command}" "$@" ;;
+                *) ci_log "[CI-ERROR-CORE-0001]" "command=${command} has no dispatch arm"; return 2 ;;
             esac
             ;;
         *)

@@ -350,16 +350,16 @@ e2e:
   image_apt: "cmake libhiredis-dev procps"
   native_apt: "distcc distcc-pump"
 
-# What: Diff path-classes and the ci.sh phases they select.
-# Why: DEFAULT=NOOP; a docs-only diff selects no compile.
-# From: Issue #479
+# What: Diff path-classes and the validate jobs they select.
+# Why: DEFAULT=NOOP; every phase named here gates a real job.
+# From: Issue #479, PR #544
 impact_classes:
   c-source:
     paths: ["src/**", "**/*.c", "**/*.h", "configure.ac", "Makefile.in"]
-    phases: ["build", "test", "e2e", "coverage", "analyze", "scan"]
+    phases: ["build", "e2e", "package"]
   include-server:
     paths: ["include_server/**", "**/*.py"]
-    phases: ["build", "test", "analyze"]
+    phases: ["build", "e2e"]
   packaging:
     paths: ["packaging/**"]
     phases: ["package"]
@@ -368,19 +368,22 @@ impact_classes:
     phases: ["container", "verify"]
   fuzz:
     paths: ["src/**", "test/fuzz/**", ".clusterfuzzlite/**"]
-    phases: ["fuzz"]
+    phases: []
   workflows:
-    paths: [".github/workflows/**", ".github/yaml/**"]
-    phases: ["lint"]
+    paths: [".github/workflows/**"]
+    phases: []
+  sot:
+    paths: [".github/yaml/**"]
+    phases: ["build", "e2e", "verify", "container", "package"]
   ci-engine:
     paths: [".github/scripts/**"]
-    phases: ["selftest", "lint", "container", "verify", "e2e"]
+    phases: ["build", "e2e", "verify", "container", "package"]
   e2e-harness:
     paths: ["test/e2e/**"]
     phases: ["e2e"]
   governance:
     paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
-    phases: ["lint"]
+    phases: []
   docs:
     paths: ["**/*.md", "doc/**"]
-    phases: ["doc-lint"]
+    phases: []

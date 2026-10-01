@@ -55,7 +55,12 @@ apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`.
 **Path-based gating**: `security.yml`'s `clusterfuzzlite` job and
 `validate.yml`'s `plan` job both gate on the content-based
 `impact_classes` in `build-manifest.yml`; no workflow uses a literal
-`paths:` filter. A docs-only PR selects no build, test, or e2e work.
+`paths:` filter. `plan` selects five phases, each gating one job set:
+`build` (the build/test matrix), `e2e`, `verify` (the verify image),
+`container` (both release images built and Trivy-scanned) and `package`
+(the rpm/deb build). A change to the SOT or to `ci.sh` selects all five;
+a docs-only PR selects none (`NOOP`). Lint, the `ci.bats` self-test,
+metadata and the security scans run on every PR regardless.
 
 ## Distributed-compile e2e (`ci.sh e2e <mode>`)
 
