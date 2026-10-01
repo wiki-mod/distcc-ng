@@ -100,4 +100,8 @@ from the copy of a workflow file present on the **default branch**
 (`master`) -- this repo develops on `current_dev` and only promotes to
 `master` via explicit maintainer-approved release PRs. A `schedule` or
 unscoped `workflow_dispatch` change therefore takes effect only once the
-changed workflow file has been promoted to `master`.
+changed workflow file has been promoted to `master`. This includes
+`ci.sh sot-update`'s own `gh workflow run` of `validate.yml` and
+`security.yml` on its update branch: until those files exist on `master`,
+that dispatch returns 404 and the `sot_update` job fails instead of
+leaving an untested pull request behind.
