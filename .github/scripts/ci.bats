@@ -1090,6 +1090,16 @@ _fake_curl() {
     curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${FAKE_DOWNLOAD}" "$2"; fi; shift; done; }
 }
 
+@test "a failed download names its URL and fails" {
+    # What: curl's failure surfaces as FETCH-0003 with the URL.
+    # Why: A failed fetch must never fail without an error line.
+    # From: Issue #479, PR #544
+    curl() { return 22; }
+    run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-FETCH-0003"*"https://h/x.tar.gz"* ]]
+}
+
 @test "tool fetch expands the url and extracts on a matching sha256" {
     # What: A matching checksum extracts; bin names the binary.
     # Why: Green path of the one SOT-driven tool downloader.

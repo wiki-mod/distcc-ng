@@ -1030,9 +1030,9 @@ _ci_workload_samba_fetch() {
         rm -rf "${cache}"
         mkdir -p "${cache}/gnupg"
         chmod 700 "${cache}/gnupg"
-        wget -q --tries=3 -O "${cache}/src.tar.gz" "${rel[0]}" || return 1
-        wget -q --tries=3 -O "${cache}/sig" "${rel[1]}" || return 1
-        wget -q --tries=3 -O "${cache}/key" "${rel[2]}" || return 1
+        _ci_download "${rel[0]}" "${cache}/src.tar.gz" || return 1
+        _ci_download "${rel[1]}" "${cache}/sig" || return 1
+        _ci_download "${rel[2]}" "${cache}/key" || return 1
         gunzip -c "${cache}/src.tar.gz" > "${cache}/src.tar" || return 1
         GNUPGHOME="${cache}/gnupg" gpg --batch --import "${cache}/key" || return 1
         if ! GNUPGHOME="${cache}/gnupg" gpg --batch --verify "${cache}/sig" "${cache}/src.tar"; then
@@ -2314,8 +2314,19 @@ _ci_tool_url() {
     printf '%s\n' "${url//\{bare\}/${ver#v}}"
 }
 
+# What: Download one URL to a file, retrying transient errors.
+# Why: Mirrors drop connections; failures name the URL.
+# From: Issue #479, PR #544
+_ci_download() {
+    local url="$1" file="$2"
+    if ! curl -fsSL --retry 3 --retry-all-errors -o "${file}" "${url}"; then
+        ci_log "[CI-ERROR-FETCH-0003]" "download failed: ${url}"
+        return 1
+    fi
+}
+
 # What: Fetch, sha256-check and cache one SOT tool; print dir.
-# Why: One download owner; a missing sha256 pin fails closed.
+# Why: One tool fetcher; a missing sha256 pin fails closed.
 # From: Issue #479, PR #544
 _ci_fetch_tool() {
     local spec="$1" ver sha url kind dest file
@@ -2328,7 +2339,7 @@ _ci_fetch_tool() {
         rm -rf "${dest}"
         mkdir -p "${dest}" || return 2
         file="${dest}.download"
-        curl -fsSL --retry 3 -o "${file}" "${url}" || return 2
+        _ci_download "${url}" "${file}" || return 2
         if ! printf '%s  %s\n' "${sha}" "${file}" | sha256sum -c --quiet -; then
             ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${spec} ${ver}"
             rm -f "${file}"
