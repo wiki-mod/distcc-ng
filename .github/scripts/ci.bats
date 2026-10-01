@@ -1199,7 +1199,7 @@ _forbid() {
     printf '{"pull_request":{"number":5}}' > "${ev}"
     _fixture_manifest 'labels:' '  ci:' '    paths: [".github/workflows/**"]'
     gh() { case "$1 $2" in "pr diff") echo .github/workflows/v.yml ;; "pr edit") echo "edit $*" ;; esac; }
-    _ci_metadata_fetch_live() { PR_TITLE="fix(ci): x"; }
+    _ci_metadata_fetch_live() { export PR_TITLE="fix(ci): x"; }
     GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" run _ci_variables_label_pr
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"--add-label ci,bug"* ]]

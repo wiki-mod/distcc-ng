@@ -3221,11 +3221,14 @@ _ci_lint_actionlint() {
     _ci_lint_run actionlint -color "${files[@]}"
 }
 
-# What: Shellcheck ci.sh, this repo's real shell engine.
-# Why: test/e2e*/*.sh stay explicitly out of scope.
-# From: Issue #479
+# What: Shellcheck CI's own shell: engine, suite, CFL entry.
+# Why: #479: warning-clean; ci.sh passes every level.
+# From: Issue #479, PR #544
 _ci_lint_shellcheck() {
-    _ci_lint_run shellcheck .github/scripts/ci.sh
+    local rc=0
+    _ci_lint_run shellcheck .github/scripts/ci.sh || rc=1
+    _ci_lint_run shellcheck --severity=warning .github/scripts/ci.bats .clusterfuzzlite/build.sh || rc=1
+    return "${rc}"
 }
 
 # What: Run the governance guards over the CI-owned tree.
