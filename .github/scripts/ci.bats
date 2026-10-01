@@ -1364,6 +1364,24 @@ _forbid() {
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "pull b@sha256:0 tag b@sha256:0 a:local " ]
 }
 
+@test "verify starts one container and runs every in-image check" {
+    # What: One docker run, one exec per check; failures add up.
+    # Why: #479: the verify container starts once for all phases.
+    # From: Issue #479, PR #544
+    local log="${BATS_TEST_TMPDIR}/docker"
+    docker() {
+        echo "$1 $*" >> "${log}"
+        [ "$1" = exec ] && [ "$4" = "${CI_CONTAINER_SH}" ] && [ "$6" = checkout ] && return 1
+        return 0
+    }
+    run _ci_verify_in_image img ptrace-selftest build-test samba-configure-dryrun net1
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-VERIFY-0006"*"failed in-image checks: build-test"* ]]
+    [ "$(grep -c '^run ' "${log}")" -eq 1 ]
+    [ "$(grep -c '^exec ' "${log}")" -eq 3 ]
+    grep -q '^run run .*--name net1-verify .*--cap-add=SYS_PTRACE.* img sleep infinity' "${log}"
+}
+
 @test "comment guard passes standard blocks, directives and heredocs" {
     # What: Standard blocks, directives, banners, heredocs pass.
     # Why: Heredoc text and tool directives are not prose.

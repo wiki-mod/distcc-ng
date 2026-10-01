@@ -182,10 +182,7 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh container verify-image
-      - run: bash .github/scripts/ci.sh verify ptrace-selftest
-      - run: bash .github/scripts/ci.sh verify build-test
-      - run: bash .github/scripts/ci.sh verify ccache-redis
-      - run: bash .github/scripts/ci.sh verify samba-configure-dryrun
+      - run: bash .github/scripts/ci.sh verify all
 
   publish_buildtools:
     name: Publish distcc-ng-buildtools:latest

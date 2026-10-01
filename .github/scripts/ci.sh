@@ -2661,23 +2661,66 @@ ci_cmd_scan() {
 # From: Issue #285, Issue #286, PR #528, PR #544
 ci_cmd_verify() {
     local sub="${1:?verify subcommand required}" image
-    local ptrace=(--cap-add=SYS_PTRACE
-        --security-opt "seccomp=${CI_REPO_ROOT}/docker/verify/seccomp-verify.json")
     image="$(_ci_sot_scalar release.images.distcc-ng-buildtools.tag)" || return 2
     case "${sub}" in
-        ptrace-selftest)
-            _ci_container_run "${image}" "${ptrace[@]}" -- \
-                bash "${CI_CONTAINER_SH}" workload ptrace ;;
-        build-test)
-            _ci_container_run "${image}" "${ptrace[@]}" -- \
-                bash "${CI_CONTAINER_SH}" workload checkout check /tmp/checkout ;;
+        all)
+            _ci_stack_run "$(_ci_run_name verify)" _ci_verify_all "${image}" ;;
+        ptrace-selftest|build-test|samba-configure-dryrun)
+            _ci_stack_run "$(_ci_run_name verify)" _ci_verify_in_image "${image}" "${sub}" ;;
         ccache-redis)
             _ci_stack_run "$(_ci_run_name ccache-redis)" _ci_verify_ccache_redis "${image}" ;;
-        samba-configure-dryrun)
-            _ci_container_run "${image}" -- \
-                bash "${CI_CONTAINER_SH}" workload samba configure /tmp/samba ;;
         *) ci_log "[CI-ERROR-VERIFY-0001]" "unknown verify subcommand=\"${sub}\""; return 2 ;;
     esac
+}
+
+# What: Print the workload argv of one in-image verify check.
+# Why: One owner whether a check runs alone or with the rest.
+# From: Issue #264, Issue #479, PR #544
+_ci_verify_argv() {
+    case "$1" in
+        ptrace-selftest) printf '%s\n' ptrace ;;
+        build-test) printf '%s\n' checkout check /tmp/checkout ;;
+        samba-configure-dryrun) printf '%s\n' samba configure /tmp/samba ;;
+        *) ci_log "[CI-ERROR-VERIFY-0005]" "unknown in-image check=\"$1\""; return 2 ;;
+    esac
+}
+
+# What: Run in-image checks in one verify container, in order.
+# Why: #479: the verify container starts once for all phases.
+# From: Issue #264, Issue #285, Issue #479, PR #528, PR #544
+_ci_verify_in_image() {
+    local image="$1" net="${!#}" name check rc=0 argv=() failed=""
+    local checks=("${@:2:$#-2}")
+    name="${net}-verify"
+    # What: ptrace and the narrow seccomp profile for the checks.
+    # Why: The self-test and make check run gdb/strace in here.
+    # From: Issue #285, PR #528
+    _ci_container_run "${image}" -d --name "${name}" --cap-add=SYS_PTRACE \
+        --security-opt "seccomp=${CI_REPO_ROOT}/docker/verify/seccomp-verify.json" \
+        -- sleep infinity >/dev/null || return 1
+    for check in "${checks[@]}"; do
+        mapfile -t argv < <(_ci_verify_argv "${check}")
+        [ "${#argv[@]}" -gt 0 ] || return 2
+        ci_log "[CI-VERIFY]" "== ${check}"
+        if ! docker exec "${name}" bash "${CI_CONTAINER_SH}" workload "${argv[@]}"; then
+            failed="${failed} ${check}"
+            rc=1
+        fi
+    done
+    if [ "${rc}" -ne 0 ]; then
+        ci_log "[CI-ERROR-VERIFY-0006]" "failed in-image checks:${failed}"
+    fi
+    return "${rc}"
+}
+
+# What: Run every verify check: in-image ones, then Redis.
+# Why: The Redis check needs its own fresh containers.
+# From: Issue #285, Issue #479, PR #544
+_ci_verify_all() {
+    local image="$1" net="$2" rc=0
+    _ci_verify_in_image "${image}" ptrace-selftest build-test samba-configure-dryrun "${net}" || rc=1
+    _ci_verify_ccache_redis "${image}" "${net}" || rc=1
+    return "${rc}"
 }
 
 # What: Two fresh containers build via ccache's Redis backend.
