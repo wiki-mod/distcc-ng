@@ -1006,6 +1006,38 @@ _forbid() {
     [ ! -e "${out}" ]
 }
 
+@test "draft release stops on an API error before it writes" {
+    # What: A failed release or PR lookup fails; nothing writes.
+    # Why: Empty lookups would publish a wrong, empty draft.
+    # From: Issue #479, PR #544
+    local log="${BATS_TEST_TMPDIR}/gh"
+    gh() { echo "$*" >> "${log}"; case "$1 $2" in "release list") return 1 ;; esac; }
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
+    [ "${status}" -eq 1 ]
+    run grep -c -E 'release (edit|create)' "${log}"
+    [ "${output}" = "0" ]
+    gh() {
+        case "$1 $2" in
+            "release list") echo 2026-01-01 ;;
+            "pr list") echo '[{"number":5,"title":"fix(ci): a"}]' ;;
+            "release view") return 1 ;;
+        esac
+    }
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DRY_RUN would run: gh release create draft-current_dev"* ]]
+}
+
+@test "draft release body groups PRs under their category heading" {
+    # What: A fix PR lands under ### Fixed with number and title.
+    # Why: The heading is a value; only the body is a nameref.
+    # From: Issue #479, PR #544
+    local body=""
+    _ci_draft_release_append body "Fixed" "* #5 | fix(ci): a"
+    [ "${body}" = "$(printf '%s\n%s\n' '### Fixed' '* #5 | fix(ci): a')
+" ]
+}
+
 @test "OpenSSF API checks fail closed instead of reading NotMet" {
     # What: An API error or unreadable field errors, never NotMet.
     # Why: A tool failure must never pose as a compliance finding.

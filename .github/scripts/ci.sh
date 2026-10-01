@@ -1631,7 +1631,8 @@ _ci_changelog_insert() {
 # Why: Shared by every category in the draft release body.
 # From: Issue #479
 _ci_draft_release_append() {
-    local -n out_ref="$1" heading="$2"
+    local -n out_ref="$1"
+    local heading="$2"
     shift 2
     [ "$#" -eq 0 ] && return 0
     out_ref="${out_ref}### ${heading}
@@ -1645,14 +1646,15 @@ $(printf '%s\n' "$@")
 _ci_publish_draft_release() {
     : "${GH_TOKEN:?GH_TOKEN required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local since since_date pr_json number title category
+    local since since_date pr_json rows number title category
     local security=() bug=() enhancement=() documentation=()
     since="$(gh release list --repo "${GITHUB_REPOSITORY}" --exclude-drafts \
         --exclude-pre-releases --json tagName,publishedAt \
-        --jq 'sort_by(.publishedAt) | last | .publishedAt // empty')"
+        --jq 'sort_by(.publishedAt) | last | .publishedAt // empty')" || return 1
     since_date="${since:-2000-01-01}"
     pr_json="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state merged --base current_dev \
-        --search "merged:>=${since_date}" --json number,title --limit 200)"
+        --search "merged:>=${since_date}" --json number,title --limit 200)" || return 1
+    rows="$(jq -r '.[] | [.number, .title] | @tsv' <<< "${pr_json}")" || return 2
     while IFS=$'\t' read -r number title; do
         [ -n "${number}" ] || continue
         category="$(_ci_pr_category_label "${title}")"
@@ -1662,7 +1664,7 @@ _ci_publish_draft_release() {
             enhancement)   enhancement+=("* #${number} | ${title}") ;;
             documentation) documentation+=("* #${number} | ${title}") ;;
         esac
-    done < <(printf '%s' "${pr_json}" | jq -r '.[] | [.number, .title] | @tsv')
+    done <<< "${rows}"
 
     local body=""
     _ci_draft_release_append body "Security" "${security[@]}"
@@ -1670,14 +1672,17 @@ _ci_publish_draft_release() {
     _ci_draft_release_append body "Added" "${enhancement[@]}"
     _ci_draft_release_append body "Documentation" "${documentation[@]}"
 
-    local notes; notes="$(mktemp)"
-    printf '%s' "${body}" > "${notes}"
+    local notes; notes="$(mktemp)" || return 1
+    printf '%s' "${body}" > "${notes}" || return 1
+    # What: Edit the draft if it exists, else create it.
+    # Why: A create on an existing draft fails loudly, not twice.
+    # From: Issue #479, PR #544
     if gh release view draft-current_dev --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-        gh release edit draft-current_dev --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}"
+        _ci_mutate gh release edit draft-current_dev --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}" || return 1
     else
-        gh release create draft-current_dev --repo "${GITHUB_REPOSITORY}" --draft \
+        _ci_mutate gh release create draft-current_dev --repo "${GITHUB_REPOSITORY}" --draft \
             --title "Next release (draft)" --notes-file "${notes}" \
-            --target current_dev
+            --target current_dev || return 1
     fi
 }
 
@@ -2089,7 +2094,7 @@ _ci_report_ensure_bug_type() {
           issue(number: \$number) { id issueType { name } }
         }
       }" -F owner="${owner}" -F name="${name}" -F number="${issue_number}" \
-      --jq '.data.repository.issue | .id + " " + (.issueType.name // "-")')"
+      --jq '.data.repository.issue | .id + " " + (.issueType.name // "-")')" || return 1
     read -r issue_node_id current_type <<<"${issue_query_result}"
     [ "${current_type}" != "-" ] && return 0
     bug_type_id="$(gh api graphql -f query="
@@ -2098,7 +2103,7 @@ _ci_report_ensure_bug_type() {
           issueTypes(first: 20) { nodes { id name } }
         }
       }" -F owner="${owner}" -F name="${name}" \
-      --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')"
+      --jq '.data.repository.issueTypes.nodes[] | select(.name == "Bug") | .id')" || return 1
     if [ -z "${bug_type_id}" ]; then
         ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${GITHUB_REPOSITORY}"
         return 1
@@ -2151,7 +2156,7 @@ ci_cmd_report() {
     # From: Issue #479, PR #476
     FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
     existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" --state open \
-        --json number --jq 'sort_by(.number) | .[0].number // empty')"
+        --json number --jq 'sort_by(.number) | .[0].number // empty')" || return 1
     if [ "${OUTCOME}" = "success" ]; then
         if [ -n "${existing}" ]; then
             _ci_report_ensure_bug_type "${existing}" || return 1
@@ -2550,12 +2555,12 @@ _ci_scan_openssf() {
           "VM-01_VM-03":$vm01_vm03,"DO-04_DO-05":$do04_do05}')"
     local existing_id prev_state regressed_keys
     existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
-        --jq "[.[] | select(.body | startswith(\"${MARKER}\"))] | sort_by(.id) | last | .id // empty")"
+        --jq "[.[] | select(.body | startswith(\"${MARKER}\"))] | sort_by(.id) | last | .id // empty")" || return 1
     if [ -z "${existing_id}" ]; then
         prev_state="{}"
     else
         local prev_body state_line
-        prev_body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" --jq '.body')"
+        prev_body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" --jq '.body')" || return 1
         state_line="$(echo "${prev_body}" | grep -o '<!-- openssf-baseline-recheck-state: .*-->')" || [ "$?" -eq 1 ] || return 2
         if [ -z "${state_line}" ]; then
             prev_state="{}"
