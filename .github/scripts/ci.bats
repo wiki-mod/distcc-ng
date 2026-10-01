@@ -372,6 +372,23 @@ _forbid() {
     [ "$(cat "${out}")" = "$(printf '%s\n' tag=v1.2.3-NG publish=true tag_push=true)" ]
 }
 
+@test "release packages are offered as one artifact per tag" {
+    # What: The SOT release assets become the artifact's files.
+    # Why: The checklist verifies a CI-built package pre-tag.
+    # From: Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out" fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/packaging"
+    : > "${fx}/distcc-1.tar.gz"; : > "${fx}/packaging/d.deb"
+    _fixture_manifest 'release:' '  assets: ["distcc-*.tar.gz", "packaging/*.deb"]' 'ci_engine:' '  artifacts:' \
+        '    release_packages:' '      name: "pkgs"' '      retention_days: "90"'
+    CI_REPO_ROOT="${fx}" GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1-NG \
+        GITHUB_REF_NAME=v1-NG run _ci_release_offer_packages
+    [ "${status}" -eq 0 ]
+    grep -qx 'artifact_name=pkgs-v1-NG' "${out}"
+    grep -qx "${fx}/distcc-1.tar.gz" "${out}"
+    grep -qx "${fx}/packaging/d.deb" "${out}"
+}
+
 @test "release image names map variants to their GHCR packages" {
     # What: plain/pump/nightly map to their package and tag.
     # Why: One owner; the workflows no longer build these names.
@@ -527,7 +544,7 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-WORKLOAD-0004"* ]]
     run ci_cmd_workload samba sideways /tmp/x
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-WORKLOAD-0005"* ]]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0008"* ]]
     run ci_cmd_image bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-IMAGE-0001"* ]]

@@ -131,6 +131,14 @@ jobs:
       - run: bash .github/scripts/ci.sh harden start
       - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
+      - id: packages
+        run: bash .github/scripts/ci.sh release packages
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.packages.outputs.artifact_name }}
+          path: ${{ steps.packages.outputs.artifact_path }}
+          retention-days: ${{ steps.packages.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.packages.outputs.artifact_if_missing }}
       - env:
           OUT: distcc-ng-${{ env.TAG }}.spdx.json
         run: bash .github/scripts/ci.sh scan package-sbom "$OUT"

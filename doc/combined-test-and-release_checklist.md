@@ -334,7 +334,7 @@ Opening the release PR triggers the repository's normal `pull_request` CI.
 
 That CI MUST NOT be treated as evidence that the release-specific RPM, DEB, source archives, SBOM, attestations, or release container artifacts have been built or verified.
 
-The release PR alone does not trigger `.github/workflows/package-release.yml`.
+The release PR alone does not trigger `.github/workflows/release.yml`.
 
 **Verification:** See `REL-GOV-01`, `REL-CI-01`, and the applicable `REL-ART-*` items.
 
@@ -346,9 +346,10 @@ The release PR alone does not trigger `.github/workflows/package-release.yml`.
 
 Canonical invocation:
 
-    gh workflow run package-release.yml \
+    gh workflow run release.yml \
       --repo wiki-mod/distcc-ng \
       --ref release/X.Y.Z-NG \
+      -f tag=vX.Y.Z-NG \
       -f publish_container=false
 
 `publish_container=false` MUST be used when container publication is not required by the applicable verification.
@@ -376,7 +377,7 @@ A release MUST NOT proceed to tagging while either condition is true.
 
 **Requirement:** After all applicable pre-tag release requirements pass, `vX.Y.Z-NG` MUST be created on the selected release branch HEAD.
 
-The tag push triggers `package-release.yml`.
+The tag push triggers `release.yml`.
 
 The tag-triggered workflow builds and publishes the real release.
 
@@ -747,7 +748,7 @@ RPM and `alien` shared-library dependency detection can generate dependencies au
 
 **Procedure:**
 
-`gh workflow run package-release.yml --ref <branch> -f publish_container=false`
+`gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z-NG -f publish_container=false`
 
 The resulting artifact can be downloaded through:
 
@@ -1190,7 +1191,7 @@ After PR #406 added `PathQualifiedCompilerNotSubstituted_Case`, the correspondin
 
 `--user` was adopted because it requires no image rebuild and works with the exact unmodified published image.
 
-**References:** Issue #264, Issue #286, PR #405, PR #406, `.github/workflows/verify-image-build.yml`.
+**References:** Issue #264, Issue #286, PR #405, PR #406, `.github/workflows/validate.yml` (`verify_image` job).
 
 ### **VER-CONTAINER-03** Explicit container-internal HOME
 
@@ -1237,7 +1238,7 @@ when no matching entry exists, even when `-f` is supplied.
 
 This surfaced through `SSHMode_Case`.
 
-**References:** `.github/workflows/verify-image-build.yml`, `CONTRIBUTING.md`.
+**References:** `.github/workflows/validate.yml` (`verify_image` job), `CONTRIBUTING.md`.
 
 ### **VER-CONTAINER-05** Rootless Docker status and interpretation
 
@@ -1444,7 +1445,7 @@ A branch name or moving tag MUST NOT be the only provenance identifier.
 
 For `popt/`, the SHA MUST be recorded in `popt/POPT_VERSION`.
 
-The corresponding CI verification, currently `popt_vendor_check` in `c-build.yml`, MUST use the exact same value.
+The corresponding CI verification, currently `ci.sh`'s `popt-vendor` build variant (`_ci_popt_cve_fingerprint_check` against `external_versions.popt_vendor.version` in `.github/yaml/build-manifest.yml`), MUST use the exact same value.
 
 **Failure condition:** Updating the marker without updating the check can break CI. Loosening the check instead of keeping exact equality can silently stop provenance verification and MUST NOT be used as a workaround.
 
@@ -1900,7 +1901,7 @@ A real CI-built package SHOULD be used because local and CI builds can differ in
 
 The real packaging workflow can be dispatched before a tag with:
 
-`gh workflow run package-release.yml --ref <branch> -f publish_container=false`
+`gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z-NG -f publish_container=false`
 
 **Invalid evidence:** `ldd` against only a local development binary.
 
@@ -1969,7 +1970,7 @@ An `N/A` classification MUST state why its trigger does not apply and SHOULD ide
 
 ### **REL-ART-11** Published-stage identity after build-definition changes
 
-**Applies when:** Any `docker/**/Dockerfile` or `package-release.yml` changed.
+**Applies when:** Any `docker/**/Dockerfile` or `release.yml` changed.
 
 **Requirement:** Published-stage identity MUST be reconfirmed through the registry API for every affected Dockerfile target.
 
@@ -2030,7 +2031,7 @@ If the release PR CI is `Failed` or `Blocked`, the release branch relationship c
 
 ### **REL-CI-03** Real tag-triggered package release run
 
-**Requirement:** The actual tag-triggered `package-release.yml` run for the pushed tag MUST exist and MUST succeed.
+**Requirement:** The actual tag-triggered `release.yml` run for the pushed tag MUST exist and MUST succeed.
 
 ### **REL-CI-04** Published-release changelog event
 

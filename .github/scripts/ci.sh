@@ -218,7 +218,11 @@ _ci_sot_set() {
     ' "${CI_MANIFEST}" > "${tmp}" || rc=$?
     if [ "${rc}" -ne 0 ]; then
         rm -f "${tmp}"
-        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"cannot set (rc ${rc})\""
+        if [ "${rc}" -eq 3 ]; then
+            ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
+        else
+            ci_log "[CI-ERROR-SOT-0007]" "path=\"${path}\" reason=\"cannot set (rc ${rc})\""
+        fi
         return 2
     fi
     cat "${tmp}" > "${CI_MANIFEST}" || return 2
@@ -1191,7 +1195,7 @@ _ci_workload_samba() {
     local build=()
     case "${pass}" in
         plain|pump|configure) ;;
-        *) ci_log "[CI-ERROR-WORKLOAD-0005]" "samba pass=${pass} (plain|pump|configure)"; return 2 ;;
+        *) ci_log "[CI-ERROR-WORKLOAD-0008]" "samba pass=${pass} (plain|pump|configure)"; return 2 ;;
     esac
     : "${dir:?workdir required}"
     _ci_workload_samba_fetch "${dir}" >&2 || return 1
@@ -1548,7 +1552,7 @@ _ci_publish_changelog_event() {
                 ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: no release_notes on this dispatch"
                 return 0
             fi ;;
-        *) ci_log "[CI-ERROR-PUBLISH-0007]" "event ${GITHUB_EVENT_NAME} carries no release notes"; return 2 ;;
+        *) ci_log "[CI-ERROR-PUBLISH-0009]" "event ${GITHUB_EVENT_NAME} carries no release notes"; return 2 ;;
     esac
     _ci_changelog_insert "${tag}" "${body}"
 }
@@ -1674,8 +1678,24 @@ ci_cmd_release() {
     if [ "$#" -gt 0 ]; then shift; fi
     case "${sub}" in
         version-check) _ci_release_version_check "$@" ;;
-        *) ci_log "[CI-ERROR-RELEASE-0005]" "unknown release subcommand=\"${sub}\" (version-check)"; return 2 ;;
+        packages) _ci_release_offer_packages ;;
+        *) ci_log "[CI-ERROR-RELEASE-0005]" "unknown release subcommand=\"${sub}\" (version-check|packages)"; return 2 ;;
     esac
+}
+
+# What: Offer the built release assets as a workflow artifact.
+# Why: The checklist checks a CI package before the tag.
+# From: Issue #479, PR #544
+_ci_release_offer_packages() {
+    local ctx=() rel=() files=() f
+    mapfile -t ctx < <(_ci_release_context) || return 2
+    [ "${#ctx[@]}" -eq 4 ] || return 2
+    mapfile -t rel < <(_ci_release_assets)
+    [ "${#rel[@]}" -gt 0 ] || return 1
+    for f in "${rel[@]}"; do
+        files+=("${CI_REPO_ROOT}/${f}")
+    done
+    _ci_artifact_offer release_packages "${ctx[0]}" "${files[@]}"
 }
 
 # What: Print tag, require_new, publish, tag_push of this run.
@@ -1728,7 +1748,7 @@ _ci_release_image() {
         plain) pkg="distcc-ng" ;;
         pump) pkg="distcc-ng-pump" ;;
         nightly) pkg="distcc-ng-nightly" ;;
-        *) ci_log "[CI-ERROR-CONTAINER-0002]" "image variant=${variant} (plain|pump|nightly)"; return 2 ;;
+        *) ci_log "[CI-ERROR-CONTAINER-0005]" "image variant=${variant} (plain|pump|nightly)"; return 2 ;;
     esac
     printf 'ghcr.io/%s/%s:%s%s\n' "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}" \
         "${pkg}" "${tag}" "${platform:+-${platform}}"
@@ -1859,7 +1879,7 @@ _ci_release_asset_sha() {
     raw="$(gh api "repos/${src}/releases/tags/${tag}")" || return 1
     sha="$(jq -r --arg a "${asset}" '.assets[] | select(.name == $a) | .digest // empty' <<< "${raw}")" || return 1
     if ! [[ "${sha}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-        ci_log "[CI-ERROR-SOT-0006]" "${src} ${tag}: no recorded sha256 for ${asset}"
+        ci_log "[CI-ERROR-SOT-0008]" "${src} ${tag}: no recorded sha256 for ${asset}"
         return 1
     fi
     printf '%s\n' "${sha#sha256:}"

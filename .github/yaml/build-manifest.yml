@@ -331,6 +331,9 @@ ci_engine:
     scorecard:
       name: "scorecard-results"
       retention_days: "5"
+    release_packages:
+      name: "distcc-release-packages"
+      retention_days: "90"
 
 # What: GHCR prune policy applied by ci.sh gc.
 # Why: Keeps a rollback set; only whole series groups age out.
