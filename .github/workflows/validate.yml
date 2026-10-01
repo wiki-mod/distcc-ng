@@ -95,6 +95,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    # What: id-token/attestations for the build attestation.
+    # Why: A fork PR gets no id-token; ci.sh logs it NotRun.
+    # From: Issue #38, Issue #479, PR #544
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - if: runner.os == 'Linux'
@@ -111,6 +118,10 @@ jobs:
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: matrix.variant == 'default' && runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh attest build
 
   e2e:
     name: Distributed compile E2E (2-container)

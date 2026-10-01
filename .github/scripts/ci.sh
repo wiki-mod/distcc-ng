@@ -49,7 +49,7 @@ CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update"
+CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -2099,11 +2099,11 @@ _ci_ossf_check_ac04() {
     echo "Met"
 }
 
-# What: Some workflow has a build-provenance attestation.
+# What: Some workflow attests the release assets via ci.sh.
 # Why: Scanning all workflows survives a workflow rename.
-# From: Issue #312, Issue #479
+# From: Issue #312, Issue #479, PR #544
 _ci_ossf_check_br06() {
-    if grep -rq "actions/attest-build-provenance" .github/workflows/; then
+    if grep -rq "ci.sh attest release" .github/workflows/; then
         echo "Met"; else echo "NotMet"; fi
 }
 
@@ -2864,6 +2864,122 @@ ci_cmd_checkout() {
 }
 
 # =========================================================
+# BUILD-PROVENANCE ATTESTATION (cosign, GitHub attestations)
+# =========================================================
+
+# What: Print the claims of this job's GitHub OIDC token.
+# Why: The provenance predicate is built from these claims.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_claims() {
+    local raw token payload pad
+    raw="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?no id-token permission}" \
+        "${ACTIONS_ID_TOKEN_REQUEST_URL:?no id-token permission}&audience=nobody")" || return 1
+    token="$(jq -r '.value' <<< "${raw}")" || return 1
+    payload="${token#*.}"
+    payload="${payload%%.*}"
+    payload="$(tr '_-' '/+' <<< "${payload}")"
+    pad=$(( (4 - ${#payload} % 4) % 4 ))
+    [ "${pad}" -eq 0 ] || payload="${payload}$(printf '=%.0s' $(seq 1 "${pad}"))"
+    base64 -d <<< "${payload}"
+}
+
+# What: Print the SLSA v1 provenance predicate for this run.
+# Why: actions/attest's shape, so gh attestation verify works.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_predicate() {
+    local claims
+    claims="$(_ci_attest_claims)" || return 1
+    jq -e -n --argjson c "${claims}" --arg s "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}" '
+        ($c.workflow_ref | ltrimstr($c.repository + "/") | split("@")[0]) as $path
+        | {buildDefinition: {
+              buildType: "https://actions.github.io/buildtypes/workflow/v1",
+              externalParameters: {workflow: {ref: $c.ref,
+                  repository: ($s + "/" + $c.repository), path: $path}},
+              internalParameters: {github: {event_name: $c.event_name,
+                  repository_id: $c.repository_id, repository_owner_id: $c.repository_owner_id,
+                  runner_environment: $c.runner_environment}},
+              resolvedDependencies: [{uri: ("git+" + $s + "/" + $c.repository + "@" + $c.ref),
+                  digest: {gitCommit: $c.sha}}]},
+           runDetails: {builder: {id: ($s + "/" + $c.job_workflow_ref)},
+              metadata: {invocationId: ($s + "/" + $c.repository + "/actions/runs/"
+                  + $c.run_id + "/attempts/" + $c.run_attempt)}}}'
+}
+
+# What: Sign "name sha256" subjects and store them on GitHub.
+# Why: One owner; the stored bundle must verify right away.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_subjects() {
+    local subjects="$1" verify="$2" cosign work
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    : "${GH_TOKEN:?GH_TOKEN required (attestations: write)}"
+    cosign="$(_ci_tool_bin external_versions.cosign)" || return 2
+    work="$(mktemp -d)" || return 1
+    _ci_attest_predicate > "${work}/predicate.json" || return 1
+    jq -e -n -R --slurpfile p "${work}/predicate.json" '
+        [inputs | select(length > 0) | split(" ") | {name: .[0], digest: {sha256: .[1]}}] as $s
+        | {_type: "https://in-toto.io/Statement/v1", subject: $s,
+           predicateType: "https://slsa.dev/provenance/v1", predicate: $p[0]}
+        | if (.subject | length) == 0 then error("no subject") else . end' \
+        <<< "${subjects}" > "${work}/statement.json" || return 1
+    _ci_mutate _ci_attest_publish "${cosign}" "${work}" "${verify}" || return 1
+    rm -rf "${work}"
+}
+
+# What: cosign-sign the statement, store it, verify it back.
+# Why: One outward step, so _ci_mutate alone gates a dry run.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_publish() {
+    local cosign="$1" work="$2" verify="$3"
+    "${cosign}" attest-blob --yes --statement "${work}/statement.json" \
+        --bundle "${work}/bundle.json" || return 1
+    jq -e '{bundle: .}' "${work}/bundle.json" > "${work}/body.json" || return 1
+    gh api --method POST "repos/${GITHUB_REPOSITORY}/attestations" --input "${work}/body.json" \
+        --jq '"[CI-ATTEST] stored attestation \(.id)"' || return 1
+    gh attestation verify "${verify}" --repo "${GITHUB_REPOSITORY}"
+}
+
+# What: Print "name sha256" for each given file, by basename.
+# Why: A subject names the artifact a consumer downloads.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_file_subjects() {
+    local f sum
+    for f in "$@"; do
+        sum="$(sha256sum "${f}")" || return 1
+        printf '%s %s\n' "$(basename "${f}")" "${sum%% *}"
+    done
+}
+
+# What: Attest build binaries, release assets, or an image.
+# Why: Only a fork-PR build may lack OIDC; a release must not.
+# From: Issue #38, Issue #479, PR #544
+ci_cmd_attest() {
+    local what="${1:-}" subjects ref digest
+    local files=()
+    [ "$#" -eq 0 ] || shift
+    cd "${CI_REPO_ROOT}" || return 1
+    case "${what}" in
+        build)
+            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+                ci_log "[CI-ATTEST]" "build attestation NotRun: no id-token (fork PR or local run)"
+                return 0
+            fi
+            files=(distcc distccd) ;;
+        release)
+            mapfile -t files < <(_ci_release_assets)
+            [ "${#files[@]}" -gt 0 ] || return 1
+            files+=("$@") ;;
+        image)
+            ref="${1:?image ref required}"
+            digest="$(_ci_registry_digest "${ref}")" || return 1
+            _ci_attest_subjects "${ref%:*} ${digest#sha256:}" "oci://${ref}"
+            return ;;
+        *) ci_log "[CI-ERROR-ATTEST-0001]" "unknown attest target=\"${what}\" (build|release|image)"; return 2 ;;
+    esac
+    subjects="$(_ci_attest_file_subjects "${files[@]}")" || return 1
+    _ci_attest_subjects "${subjects}" "${files[0]}"
+}
+
+# =========================================================
 # HARDEN RUNNER (StepSecurity agent, audit-only egress)
 # =========================================================
 
@@ -3573,6 +3689,7 @@ ci_main() {
                 workload) ci_cmd_workload "$@" ;;
                 image) ci_cmd_image "$@" ;;
                 sot-update) ci_cmd_sot_update "$@" ;;
+                attest) ci_cmd_attest "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

@@ -1171,7 +1171,7 @@ _fake_osv() {
 }
 
 @test "OSV PR gate fails only on ids the head's tools add" {
-    # What: A new vuln id in the head SOT fails; a removed one not.
+    # What: A new vuln id in the head fails; a removed one not.
     # Why: Legacy's PR scan blocked newly vulnerable dependencies.
     # From: Issue #267, Issue #479, PR #544
     _fake_osv '    bin: "x"'
@@ -1193,6 +1193,57 @@ _fake_osv() {
     OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" BASE=abc run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"OSV PR gate NotRun"* ]]
+}
+
+@test "attest predicate has the actions/attest SLSA v1 shape" {
+    # What: Claims map to buildType, workflow path, builder, run.
+    # Why: gh attestation verify expects that exact provenance.
+    # From: Issue #38, Issue #479, PR #544
+    _ci_attest_claims() {
+        printf '%s' '{"ref":"refs/heads/x","sha":"abc","repository":"o/r","event_name":"push",
+            "workflow_ref":"o/r/.github/workflows/v.yml@refs/heads/x",
+            "job_workflow_ref":"o/r/.github/workflows/v.yml@refs/heads/x","repository_id":"1",
+            "repository_owner_id":"2","runner_environment":"github-hosted","run_id":"9","run_attempt":"1"}'
+    }
+    GITHUB_SERVER_URL=https://github.com run _ci_attest_predicate
+    [ "${status}" -eq 0 ]
+    [ "$(jq -r .buildDefinition.buildType <<< "${output}")" = "https://actions.github.io/buildtypes/workflow/v1" ]
+    [ "$(jq -r .buildDefinition.externalParameters.workflow.path <<< "${output}")" = ".github/workflows/v.yml" ]
+    [ "$(jq -r .runDetails.builder.id <<< "${output}")" = "https://github.com/o/r/.github/workflows/v.yml@refs/heads/x" ]
+    [ "$(jq -r .runDetails.metadata.invocationId <<< "${output}")" = "https://github.com/o/r/actions/runs/9/attempts/1" ]
+    [ "$(jq -r '.buildDefinition.resolvedDependencies[0].digest.gitCommit' <<< "${output}")" = "abc" ]
+}
+
+@test "attest builds one in-toto statement over all subjects" {
+    # What: Every file is a sha256 subject of one SLSA statement.
+    # Why: One signature covers the whole shipped asset set.
+    # From: Issue #38, Issue #479, PR #544
+    printf 'a' > "${BATS_TEST_TMPDIR}/f1"; printf 'b' > "${BATS_TEST_TMPDIR}/f2"
+    _ci_tool_bin() { echo /bin/true; }
+    _ci_attest_predicate() { echo '{"p":1}'; }
+    _ci_attest_publish() { cat "$2/statement.json" > "${BATS_TEST_TMPDIR}/stmt"; }
+    GITHUB_REPOSITORY=o/r GH_TOKEN=x run _ci_attest_subjects \
+        "$(_ci_attest_file_subjects "${BATS_TEST_TMPDIR}/f1" "${BATS_TEST_TMPDIR}/f2")" f1
+    [ "${status}" -eq 0 ]
+    [ "$(jq -r .predicateType "${BATS_TEST_TMPDIR}/stmt")" = "https://slsa.dev/provenance/v1" ]
+    [ "$(jq -r '.subject | map(.name) | join(",")' "${BATS_TEST_TMPDIR}/stmt")" = "f1,f2" ]
+    [ "$(jq -r '.subject[0].digest.sha256' "${BATS_TEST_TMPDIR}/stmt")" = "$(sha256sum "${BATS_TEST_TMPDIR}/f1" | cut -d' ' -f1)" ]
+    [ "$(jq -c .predicate "${BATS_TEST_TMPDIR}/stmt")" = '{"p":1}' ]
+}
+
+@test "attest: build without OIDC is NotRun, a bad target fails" {
+    # What: A fork-PR build logs NotRun; unknown targets fail.
+    # Why: Fork PRs never get an id-token; releases always do.
+    # From: Issue #38, Issue #479, PR #544
+    _forbid curl gh
+    unset ACTIONS_ID_TOKEN_REQUEST_URL
+    run ci_cmd_attest build
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"build attestation NotRun"* ]]
+    run ci_cmd_attest bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-ATTEST-0001"* ]]
+    [[ "${output}" != *"must not run"* ]]
 }
 
 @test "sot-update with current pins touches neither git nor PRs" {

@@ -66,7 +66,9 @@ jobs:
 
   bidirectional_e2e:
     name: Full bidirectional native-compat E2E
-    # The heavy full build runs only on manual dispatch, never the schedule.
+    # What: The full build runs on manual dispatch only.
+    # Why: It takes hours; a daily schedule cannot afford it.
+    # From: Issue #264, Issue #479
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 340
@@ -84,14 +86,22 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
       - run: bash .github/scripts/ci.sh harden start
       - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
       - run: bash .github/scripts/ci.sh package
       - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh attest release
+      - env:
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh container nightly
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh attest image "$IMAGE_TAG"
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish nightly

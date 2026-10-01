@@ -1,9 +1,8 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
 # What: Release: verify/package/publish/changelog/draft.
-# Why: A real vX.Y.Z-NG tag triggers the real release (POL-RELEASE-07);
-#   dispatch is a pre-tag verification-only dry run (POL-RELEASE-05).
-# From: Issue #479, PR #544
+# Why: A tag push releases; dispatch is a pre-tag dry run.
+# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-07
 name: Release
 
 on:
@@ -46,8 +45,8 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - env:
-          # What: Dispatch checks a not-yet-pushed tag; push checks its own.
-          # Why: POL-RELEASE-05 (pre-tag) vs POL-RELEASE-07 (real tag exists).
+          # What: Dispatch checks a new tag; a push checks its own.
+          # Why: Pre-tag (POL-RELEASE-05) vs pushed (POL-RELEASE-07).
           # From: Issue #479, PR #544
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REQUIRE_NEW: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
@@ -125,6 +124,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
@@ -135,6 +136,10 @@ jobs:
       - env:
           OUT: distcc-ng-${{ env.TAG }}.spdx.json
         run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: distcc-ng-${{ env.TAG }}.spdx.json
+        run: bash .github/scripts/ci.sh attest release "$OUT"
       - if: github.event_name == 'push'
         env:
           # What: Publish with a real PAT, not github.token.
@@ -152,9 +157,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
     runs-on: ${{ matrix.runs_on }}
-    # amd64/arm64 must be a real matrix axis (not bare `include` entries):
-    # an include entry missing an existing axis key overwrites that key
-    # for every generated job in list order, not just its own combination.
+    # What: amd64/arm64 is a real matrix axis, not include rows.
+    # Why: An include row missing an axis key overwrites all jobs.
+    # From: Issue #479, PR #544
     continue-on-error: ${{ matrix.platform == 'arm64' }}
     permissions:
       contents: read
@@ -173,8 +178,8 @@ jobs:
       TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}-${{ matrix.platform }}
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      # What: Real push happens on a real tag, or an explicit opt-in dry run.
-      # Why: POL-RELEASE-05's publish_container input; else build+scan only.
+      # What: Push on a real tag or an opted-in dispatch only.
+      # Why: POL-RELEASE-05: a dry run builds and scans only.
       # From: Issue #479, PR #544
       SHOULD_PUSH: ${{ github.event_name == 'push' || inputs.publish_container == true }}
     steps:
@@ -205,6 +210,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -212,8 +219,8 @@ jobs:
     env:
       TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/distcc-ng${{ matrix.variant == 'pump' && '-pump' || '' }}:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      # What: Only a real tag push moves the floating :latest manifest.
-      # Why: A dispatch dry run must never look like the newest release.
+      # What: Only a real tag push moves the :latest manifest.
+      # Why: A dispatch dry run must never pose as the newest.
       # From: Issue #479, PR #544
       TAG_PUSH: ${{ github.event_name == 'push' }}
     steps:
@@ -222,3 +229,6 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh attest image "$IMAGE_BASE"
