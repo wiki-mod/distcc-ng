@@ -2428,8 +2428,12 @@ _ci_ossf_url() { echo "https://www.bestpractices.dev/en/projects/${PROJECT_ID}/b
 # Why: Catches a ruleset recreated under a new ID.
 # From: Issue #312
 _ci_ossf_check_ac03() {
-    local types
-    types="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/18300729" --jq '[.rules[].type]')" || { echo "NotMet"; return; }
+    local types id
+    id="$(_ci_sot_scalar security.openssf.ruleset_id)" || return 2
+    if ! types="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/${id}" --jq '[.rules[].type]')"; then
+        ci_log "[CI-ERROR-OSSF-0001]" "cannot read ruleset ${id}; no verdict"
+        return 2
+    fi
     if echo "${types}" | jq -e 'contains(["pull_request"]) and contains(["deletion"])' >/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
@@ -2457,7 +2461,17 @@ _ci_ossf_check_br01() {
 # From: Issue #312
 _ci_ossf_check_br07() {
     local analysis
-    analysis="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.security_and_analysis')"
+    if ! analysis="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.security_and_analysis')"; then
+        ci_log "[CI-ERROR-OSSF-0002]" "cannot read ${GITHUB_REPOSITORY}; no verdict"
+        return 2
+    fi
+    # What: An unreadable field is an error, never NotMet.
+    # Why: github.token hides it; a NotMet there would be false.
+    # From: Issue #312, PR #544
+    if ! echo "${analysis}" | jq -e '.secret_scanning.status' >/dev/null; then
+        ci_log "[CI-ERROR-OSSF-0003]" "token cannot read security_and_analysis; no verdict"
+        return 2
+    fi
     if echo "${analysis}" | jq -e '.secret_scanning.status == "enabled" and .secret_scanning_push_protection.status == "enabled"' >/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
@@ -2514,17 +2528,17 @@ _ci_scan_openssf() {
     local MARKER="<!-- openssf-baseline-recheck -->"
     local TODAY; TODAY="$(date -u +%Y-%m-%d)"
     local ac03 br01 br07 qa05 vm02 ac04 br06 br05_do06 gv01 vm01_vm03 do04_do05
-    ac03="$(_ci_ossf_check_ac03)"
-    br01="$(_ci_ossf_check_br01)"
-    br07="$(_ci_ossf_check_br07)"
-    qa05="$(_ci_ossf_check_qa05)"
+    ac03="$(_ci_ossf_check_ac03)" || return 2
+    br01="$(_ci_ossf_check_br01)" || return 2
+    br07="$(_ci_ossf_check_br07)" || return 2
+    qa05="$(_ci_ossf_check_qa05)" || return 2
     vm02="$([ -f SECURITY.md ] && echo Met || echo NotMet)"
-    ac04="$(_ci_ossf_check_ac04)"
-    br06="$(_ci_ossf_check_br06)"
-    br05_do06="$(_ci_ossf_check_br05_do06)"
-    gv01="$(_ci_ossf_grep AGENTS.md 'grant maintainer-level approval')"
-    vm01_vm03="$(_ci_ossf_grep SECURITY.md 'Security Advisor' -i)"
-    do04_do05="$(_ci_ossf_grep SECURITY.md '## Supported Versions')"
+    ac04="$(_ci_ossf_check_ac04)" || return 2
+    br06="$(_ci_ossf_check_br06)" || return 2
+    br05_do06="$(_ci_ossf_check_br05_do06)" || return 2
+    gv01="$(_ci_ossf_grep AGENTS.md 'grant maintainer-level approval')" || return 2
+    vm01_vm03="$(_ci_ossf_grep SECURITY.md 'Security Advisor' -i)" || return 2
+    do04_do05="$(_ci_ossf_grep SECURITY.md '## Supported Versions')" || return 2
     local new_state
     new_state="$(jq -nc \
         --arg ac03 "${ac03}" --arg br01 "${br01}" --arg br07 "${br07}" \
@@ -2552,7 +2566,7 @@ _ci_scan_openssf() {
     regressed_keys="$(jq -rn --argjson prev "${prev_state}" --argjson new "${new_state}" '
         $new | to_entries[] | select(.value == "NotMet" and ($prev[.key] // "") == "Met") | .key')"
     local qs1="" qs2="" qs3="" l1 l2 l3 url1 url2 url3 regressed_block=""
-    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset 18300729 on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
+    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset $(_ci_sot_scalar security.openssf.ruleset_id) on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
     [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.02" "Same ruleset re-verified ${TODAY}; deletion rule present."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.01" "No workflow runs fork code under pull_request_target, re-verified ${TODAY}."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.03" "No workflow interpolates untrusted event title/body, re-verified ${TODAY}."

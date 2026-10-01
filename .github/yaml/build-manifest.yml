@@ -293,12 +293,13 @@ security:
   cfl_base:
     from: "base_images.oss_fuzz_base_builder"
     tag: "distcc-ng-cfl-base:local"
-  # What: OpenSSF recheck tracking issue and Best Practices id.
+  # What: OpenSSF recheck issue, project and ruleset ids.
   # Why: The recheck edits its one comment on that issue.
   # From: Issue #312, Issue #479, PR #544
   openssf:
     issue: "312"
     project_id: "13760"
+    ruleset_id: "18300729"
 
 # What: verify image apt groups atop the default matrix apt.
 # Why: The image builds what CI builds, plus debug tools.

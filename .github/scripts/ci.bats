@@ -1006,6 +1006,29 @@ _forbid() {
     [ ! -e "${out}" ]
 }
 
+@test "OpenSSF API checks fail closed instead of reading NotMet" {
+    # What: An API error or unreadable field errors, never NotMet.
+    # Why: A tool failure must never pose as a compliance finding.
+    # From: Issue #312, Issue #479, PR #544
+    _fixture_manifest 'security:' '  openssf:' '    ruleset_id: "7"'
+    gh() { return 1; }
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0001"*"ruleset 7"* ]]
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0002"* ]]
+    gh() { echo null; }
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0003"* ]]
+    gh() { case "$*" in *rulesets/7*) echo '["pull_request","deletion"]' ;; *) echo '{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}' ;; esac; }
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
+    [ "${output}" = "Met" ]
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
+    [ "${output}" = "NotMet" ]
+}
+
 @test "BR-01 flags only a ref-taking checkout in a target workflow" {
     # What: pull_request_target plus checkout of a ref is NotMet.
     # Why: Base-SHA checkouts run no PR code; a head ref does.
