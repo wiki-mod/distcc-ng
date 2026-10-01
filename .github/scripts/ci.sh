@@ -3134,17 +3134,73 @@ ci_cmd_scorecard_scan() {
 # Why: CLI-native; no osv-scanner reusable workflow.
 # From: Issue #479
 ci_cmd_osv_scan() {
-    local out="${1:-osv-results.sarif}" bin rc=0
+    local out="${1:-osv-results.sarif}" bin base_sot old new added
+    local dirs=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
-    "${bin}" scan source --format=sarif --output-file="${out}" \
-        --allow-no-lockfiles -r . || rc=$?
-    # What: Exit 1-126 means findings; 127+ is a tool failure.
-    # Why: Findings go to SARIF; only a broken scan may fail.
-    # From: Issue #479
+    mapfile -t dirs < <(_ci_osv_tool_dirs)
+    [ "${#dirs[@]}" -gt 0 ] || return 2
+    _ci_osv_run "${bin}" sarif "${out}" "${dirs[@]}" || return 2
+    if [ -z "${BASE:-}" ]; then
+        return 0
+    fi
+    # What: PR gate: fail on vuln ids the head's tools add.
+    # Why: Same scanner and DB on both SOTs; only versions differ.
+    # From: Issue #267, Issue #479, PR #544
+    base_sot="$(mktemp)" || return 1
+    git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${BASE}" || return 1
+    git -C "${CI_REPO_ROOT}" show "${BASE}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
+    if ! grep -q '^    bin:' "${base_sot}"; then
+        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base SOT has no tool pins to compare"
+        return 0
+    fi
+    old="$(_ci_osv_vulns "${bin}" "${base_sot}")" || return 2
+    new="$(_ci_osv_vulns "${bin}" "${CI_MANIFEST}")" || return 2
+    added="$(comm -13 <(printf '%s\n' "${old}") <(printf '%s\n' "${new}"))" || return 2
+    if [ -n "${added}" ]; then
+        ci_error "[CI-ERROR-SCAN-0003]" "this PR adds known-vulnerable CI tool versions" "${added}"
+        return 1
+    fi
+    ci_log "[CI-SCAN]" "OSV PR gate: no new vulnerability in the SOT tools"
+}
+
+# What: Fetch every SOT tool with a bin; print each tool dir.
+# Why: These binaries are CI's real third-party dependencies.
+# From: Issue #267, Issue #479, PR #544
+_ci_osv_tool_dirs() {
+    local keys key dest
+    keys="$(_ci_sot_children external_versions)" || return 2
+    for key in ${keys}; do
+        [ -n "$(_ci_sot_optional "external_versions.${key}.bin")" ] || continue
+        dest="$(_ci_fetch_tool "external_versions.${key}")" || return 2
+        printf '%s\n' "${dest}"
+    done
+}
+
+# What: osv-scanner over tool dirs with the artifact plugins.
+# Why: The default plugins read no binaries; 1-126 = findings.
+# From: Issue #267, Issue #479, PR #544
+_ci_osv_run() {
+    local bin="$1" format="$2" out="$3" rc=0
+    shift 3
+    "${bin}" scan source --experimental-plugins artifact --format="${format}" \
+        --output-file="${out}" -r "$@" || rc=$?
     if [ "${rc}" -ge 127 ]; then
         ci_log "[CI-ERROR-SCAN-0002]" "tool=osv-scanner exit=${rc} reason=\"scan failed\""
         return 2
     fi
+}
+
+# What: Print the sorted vuln ids OSV finds in a SOT's tools.
+# Why: The PR gate diffs these id sets, base against head.
+# From: Issue #267, Issue #479, PR #544
+_ci_osv_vulns() {
+    local bin="$1" sot="$2" json dirs_raw
+    local dirs=()
+    json="$(mktemp)" || return 1
+    dirs_raw="$(CI_MANIFEST="${sot}" _ci_osv_tool_dirs)" || return 2
+    mapfile -t dirs <<< "${dirs_raw}"
+    _ci_osv_run "${bin}" json "${json}" "${dirs[@]}" || return 2
+    jq -r '[.results[]?.packages[]?.vulnerabilities[]?.id] | unique | .[]' "${json}"
 }
 
 # What: Run a ClusterFuzzLite step image; CFL options only.

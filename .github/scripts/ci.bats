@@ -1158,6 +1158,43 @@ _fake_registry() {
     [[ "${output}" == *"CI-ERROR-SOT-0004"* ]]
 }
 
+# What: Stubs for the OSV gate: scanner, fetch, base SOT, ids.
+# Why: The gate logic must be provable without network.
+# From: Issue #267, Issue #479, PR #544
+_fake_osv() {
+    OSV_BASE_SOT="$1"
+    _ci_tool_bin() { echo /bin/true; }
+    _ci_osv_tool_dirs() { echo "${BATS_TEST_TMPDIR}"; }
+    _ci_osv_run() { :; }
+    git() { case "$*" in *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;; esac; }
+    _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
+}
+
+@test "OSV PR gate fails only on ids the head's tools add" {
+    # What: A new vuln id in the head SOT fails; a removed one not.
+    # Why: Legacy's PR scan blocked newly vulnerable dependencies.
+    # From: Issue #267, Issue #479, PR #544
+    _fake_osv '    bin: "x"'
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" BASE=abc run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SCAN-0003"* ]]
+    [[ "${output}" == *"GO-3"* ]]
+    [[ "${output}" != *"GO-2"* ]]
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" BASE=abc run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"no new vulnerability"* ]]
+}
+
+@test "OSV PR gate is NotRun against a base SOT without tool pins" {
+    # What: A base predating tool pins has nothing to compare.
+    # Why: Its tools cannot be fetched; reading 0 would fail all.
+    # From: Issue #267, Issue #479, PR #544
+    _fake_osv '    version: "v1"'
+    OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" BASE=abc run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"OSV PR gate NotRun"* ]]
+}
+
 @test "sot-update with current pins touches neither git nor PRs" {
     # What: Nothing changed means no branch, PR or dispatch.
     # Why: A weekly no-op must not create noise on the repo.
