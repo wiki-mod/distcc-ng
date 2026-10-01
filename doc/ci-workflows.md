@@ -100,7 +100,8 @@ same pull request (`AGENTS.md` `[AG-VAL-007]` review).
 | `distcc-ng-nightly` | `nightly.yml`'s `publish` job | end users only |
 | `distcc-ng-buildtools` | `validate.yml`'s `publish_buildtools` job | CI itself: every lint run, and the toolchain base of the e2e images |
 
-`distcc-ng-e2e` is no longer published; it stays in
+No workflow here publishes `distcc-ng-e2e`; until this CI reaches `master`,
+`master`'s former workflows still push it. It stays in
 `release.ghcr_packages` only so `ci.sh gc` can prune its existing versions.
 
 **Path-based gating**: `security.yml`'s `clusterfuzzlite` job and
