@@ -119,8 +119,11 @@ jobs:
 
   report:
     name: Report heartbeat status
-    needs: [heartbeat]
-    if: always() && needs.heartbeat.result != 'skipped'
+    needs: [route, heartbeat]
+    # What: Report heartbeat runs and runs whose route failed.
+    # Why: A failed route skips heartbeat; it must not go quiet.
+    # From: Issue #479, PR #544
+    if: always() && (needs.route.result != 'success' || needs.heartbeat.result != 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -132,5 +135,6 @@ jobs:
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
           SCOPE: weekly ccache heartbeat
           JOBS: |
+            route=${{ needs.route.result }}
             heartbeat=${{ needs.heartbeat.result }}
         run: bash .github/scripts/ci.sh report
