@@ -190,6 +190,39 @@ _forbid() {
     [ "${status}" -eq 0 ]
 }
 
+@test "board add passes its token to gh but never prints it" {
+    # What: The token reaches gh; a dry run prints only the args.
+    # Why: One board owner; a PAT must not land in a log line.
+    # From: Issue #236, Issue #479, PR #544
+    gh() { echo "token=${GH_TOKEN:-none} args=$*"; }
+    run _ci_board_add https://x/1 s3cret
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"token=s3cret args=project item-add"* ]]
+    DRY_RUN=true run _ci_board_add https://x/1 s3cret
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DRY_RUN would run: gh project item-add"* ]]
+    [[ "${output}" != *"s3cret"* ]]
+    run _ci_board_add https://x/1 ""
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"not added to the board"* ]]
+}
+
+@test "release assets come from the SOT globs and none fails" {
+    # What: Matching files are listed; an empty set is an error.
+    # Why: A release or nightly without packages must not ship.
+    # From: Issue #362, Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/packaging"
+    _fixture_manifest 'release:' '  assets: ["distcc-*.tar.gz", "packaging/*.deb"]'
+    CI_REPO_ROOT="${fx}" run _ci_release_assets
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0007"* ]]
+    touch "${fx}/distcc-1.tar.gz" "${fx}/packaging/a.deb" "${fx}/other.txt"
+    CI_REPO_ROOT="${fx}" run _ci_release_assets
+    [ "${status}" -eq 0 ]
+    [ "${output}" = $'distcc-1.tar.gz\npackaging/a.deb' ]
+}
+
 @test "the SOT refresh bot is exempt from PR tracking metadata" {
     # What: github-actions[bot] PRs skip labels/milestone/board.
     # Why: The sot-update PR has no milestone; AG-VAL-007 reviews.
@@ -520,6 +553,21 @@ _forbid() {
     run cat "${out}"
     [ "${lines[0]}" = "available=true" ]
     [ "${lines[1]}" = "available=false" ]
+}
+
+@test "BR-01 flags only a ref-taking checkout in a target workflow" {
+    # What: pull_request_target plus checkout of a ref is NotMet.
+    # Why: Base-SHA checkouts run no PR code; a head ref does.
+    # From: Issue #312, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx" boot
+    boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
+    mkdir -p "${fx}/.github/workflows"
+    printf '%s\n' 'on: pull_request_target' "      - run: ${boot}" \
+        '        env: {HEAD: "${{ github.event.pull_request.head.sha }}"}' > "${fx}/.github/workflows/a.yml"
+    cd "${fx}"
+    [ "$(_ci_ossf_check_br01)" = "Met" ]
+    printf '%s\n' 'on: pull_request_target' "      - run: ${boot} 1 \"\$HEAD\"" > "${fx}/.github/workflows/b.yml"
+    [ "$(_ci_ossf_check_br01)" = "NotMet" ]
 }
 
 @test "ossf grep helper reports Met, NotMet, and case-insensitive" {

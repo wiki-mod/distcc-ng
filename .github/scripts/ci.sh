@@ -1303,33 +1303,51 @@ _ci_git_auth_setup() {
     gh auth setup-git
 }
 
+# What: Print the built release assets the SOT globs match.
+# Why: Nightly and release ship one set; none found fails.
+# From: Issue #362, Issue #479, PR #544
+_ci_release_assets() {
+    local pats pat found=0
+    pats="$(_ci_sot_list release.assets)" || return 2
+    cd "${CI_REPO_ROOT}" || return 1
+    while IFS= read -r pat; do
+        compgen -G "${pat}" && found=1
+    done <<< "${pats}"
+    if [ "${found}" -eq 0 ]; then
+        ci_log "[CI-ERROR-PUBLISH-0007]" "no release asset matches release.assets"
+        return 1
+    fi
+}
+
 # What: Force-move the nightly tag; republish its prerelease.
 # Why: It refuses to move a real v* release tag.
 # From: Issue #479
 _ci_publish_nightly() {
-    cd "${CI_REPO_ROOT}"
     local tag="${NIGHTLY_TAG:?NIGHTLY_TAG required}" ref repo notes
-    ref="${BUILT_SHA:-$(git rev-parse HEAD)}"
-    repo="${GITHUB_REPOSITORY:-wiki-mod/distcc-ng}"
+    local assets=()
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
     esac
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    repo="${GITHUB_REPOSITORY}"
+    cd "${CI_REPO_ROOT}" || return 1
+    ref="${BUILT_SHA:-$(git rev-parse HEAD)}" || return 1
+    mapfile -t assets < <(_ci_release_assets)
+    [ "${#assets[@]}" -gt 0 ] || return 1
     _ci_git_identity || return 1
-    git tag -f "${tag}"
-    _ci_git_auth_setup
-    git push -f origin "refs/tags/${tag}"
-    shopt -s nullglob
-    local assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
-    notes="$(mktemp)"
+    _ci_mutate git tag -f "${tag}" || return 1
+    _ci_git_auth_setup || return 1
+    _ci_mutate git push -f origin "refs/tags/${tag}" || return 1
+    notes="$(mktemp)" || return 1
     {
         printf 'Automated nightly build of current_dev (%s).\n\n' "${ref}"
         printf 'Unstable nightly channel -- NOT a real release; overwritten each run.\n\n'
         printf 'Container image: %s\n' "${IMAGE_TAG:-}"
     } > "${notes}"
     if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
-        gh release delete "${tag}" --repo "${repo}" --yes
+        _ci_mutate gh release delete "${tag}" --repo "${repo}" --yes || return 1
     fi
-    gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
+    _ci_mutate gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
         --title "distcc-ng nightly" --notes-file "${notes}" \
         --prerelease --latest=false --target "${ref}"
 }
@@ -1361,14 +1379,15 @@ _ci_publish_manifest() {
 # From: Issue #479
 _ci_publish_github_release() {
     local tag="${1:?tag required}" repo notes
-    repo="${GITHUB_REPOSITORY:-wiki-mod/distcc-ng}"
+    local assets=()
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    repo="${GITHUB_REPOSITORY}"
     _ci_check_release_version "${tag}" || return 1
-    cd "${CI_REPO_ROOT}"
-    shopt -s nullglob
-    local assets=(distcc-*.tar.gz distcc-*.tar.bz2 packaging/*.rpm packaging/*.deb)
-    notes="$(mktemp)"
-    printf 'distcc-ng %s\n' "${tag}" > "${notes}"
-    gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
+    mapfile -t assets < <(_ci_release_assets)
+    [ "${#assets[@]}" -gt 0 ] || return 1
+    notes="$(mktemp)" || return 1
+    printf 'distcc-ng %s\n' "${tag}" > "${notes}" || return 1
+    _ci_mutate gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
         --target "${GITHUB_SHA:?GITHUB_SHA required}" \
         --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
 }
@@ -1749,22 +1768,18 @@ _ci_project_board_load() {
     PROJECT_NUMBER="$(_ci_sot_scalar project_board.number)" || return 2
 }
 
-# What: Add the standing issue to the board via PROJECT_PAT.
-# Why: Only a board write needs a real project scope.
-# From: Issue #479, Issue #81, PR #476
-_ci_report_board() {
-    local issue_url="$1"
+# What: Add an issue or PR url to the SOT project board.
+# Why: One board owner; only this write needs a project PAT.
+# From: Issue #236, Issue #479, PR #476, PR #544
+_ci_board_add() {
+    local url="$1" token="$2"
     _ci_project_board_load || return 2
-    if [ -z "${PROJECT_PAT:-}" ]; then
-        echo "::warning::PROJECT_AUTOMATION_PAT not configured; ${issue_url} was not added to the board."
+    if [ -z "${token}" ]; then
+        echo "::warning::PROJECT_AUTOMATION_PAT not configured; ${url} was not added to the board."
         return 0
     fi
-    if [ "${DRY_RUN:-false}" = "true" ]; then
-        echo "DRY_RUN would run: gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url ${issue_url}"
-        return 0
-    fi
-    GH_TOKEN="${PROJECT_PAT}" gh project item-add "${PROJECT_NUMBER}" \
-        --owner "${PROJECT_OWNER}" --url "${issue_url}" >/dev/null
+    GH_TOKEN="${token}" _ci_mutate gh project item-add "${PROJECT_NUMBER}" \
+        --owner "${PROJECT_OWNER}" --url "${url}"
 }
 
 # What: Give issue $1 the Bug type unless it has a type.
@@ -1795,14 +1810,10 @@ _ci_report_ensure_bug_type() {
         ci_log "[CI-ERROR-REPORT-0001]" "no 'Bug' issue type configured for ${REPO}"
         return 1
     fi
-    if [ "${DRY_RUN:-false}" = "true" ]; then
-        echo "DRY_RUN would run: assign Bug type to issue #${issue_number}"
-        return 0
-    fi
-    gh api graphql -f query="
+    _ci_mutate gh api graphql -f query="
       mutation(\$issueId: ID!, \$typeId: ID!) {
         updateIssue(input: {id: \$issueId, issueTypeId: \$typeId}) { issue { id } }
-      }" -F issueId="${issue_node_id}" -F typeId="${bug_type_id}" >/dev/null
+      }" -F issueId="${issue_node_id}" -F typeId="${bug_type_id}"
 }
 
 # What: File, update or close the standing tracking issue.
@@ -1815,10 +1826,7 @@ ci_cmd_report() {
     : "${SCOPE:?SCOPE required, e.g. 'weekly ccache heartbeat (master)'}"
     : "${RUN_URL:?RUN_URL required}"
     local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url
-    local DRY_RUN="${DRY_RUN:-false}" FAILED_JOBS="${FAILED_JOBS:-}"
-    local PROJECT_PAT="${PROJECT_PAT:-}"
-    local PROJECT_OWNER PROJECT_NUMBER
-    _ci_project_board_load || return 2
+    local FAILED_JOBS="${FAILED_JOBS:-}"
     # What: Derive FAILED_JOBS from JOBS name=result lines.
     # Why: Only failure/cancelled are real; skips are upstream.
     # From: Issue #479, PR #476
@@ -1828,8 +1836,8 @@ ci_cmd_report() {
         --json number --jq 'sort_by(.number) | .[0].number // empty')"
     if [ "${OUTCOME}" = "success" ]; then
         if [ -n "${existing}" ]; then
-            _ci_report_ensure_bug_type "${existing}"
-            _ci_report_board "https://github.com/${REPO}/issues/${existing}"
+            _ci_report_ensure_bug_type "${existing}" || return 1
+            _ci_board_add "https://github.com/${REPO}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
             echo "success: closing standing ${LABEL} issue #${existing}"
             _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
                 --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
@@ -1847,8 +1855,8 @@ ci_cmd_report() {
         echo "failure: commenting on standing ${LABEL} issue #${existing}"
         _ci_mutate gh issue comment "${existing}" --repo "${REPO}" \
             --body "Still failing: ${detail}."
-        _ci_report_ensure_bug_type "${existing}"
-        _ci_report_board "https://github.com/${REPO}/issues/${existing}"
+        _ci_report_ensure_bug_type "${existing}" || return 1
+        _ci_board_add "https://github.com/${REPO}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
     else
         echo "failure: opening a new standing ${LABEL} issue"
         new_issue_url="$(_ci_mutate gh issue create --repo "${REPO}" --label "${LABEL}" \
@@ -1856,18 +1864,15 @@ ci_cmd_report() {
             --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
 
 ${detail}.")"
-        if [ "${DRY_RUN}" = "true" ]; then
-            echo "${new_issue_url}"
-            echo "DRY_RUN would run: assign Bug type to the newly created issue"
-            if [ -z "${PROJECT_PAT}" ]; then
-                echo "::warning::PROJECT_PAT not configured; the newly created issue would not be added to the project board."
-            else
-                echo "DRY_RUN would run: gh project item-add ${PROJECT_NUMBER} --owner ${PROJECT_OWNER} --url <new issue URL>"
-            fi
-        else
-            _ci_report_ensure_bug_type "${new_issue_url##*/}"
-            _ci_report_board "${new_issue_url}"
+        # What: A dry run has no new issue url to act on.
+        # Why: Bug type and board both need the created issue.
+        # From: Issue #479, PR #544
+        if [ "${DRY_RUN:-false}" = "true" ]; then
+            printf '%s\n' "${new_issue_url}"
+            return 0
         fi
+        _ci_report_ensure_bug_type "${new_issue_url##*/}" || return 1
+        _ci_board_add "${new_issue_url}" "${PROJECT_PAT:-}" || return 1
     fi
 }
 
@@ -1892,8 +1897,7 @@ _ci_variables_secret_present() {
 # From: Issue #479
 _ci_variables_add_to_project() {
     : "${ITEM_URL:?ITEM_URL required}"
-    _ci_project_board_load || return 2
-    gh project item-add "${PROJECT_NUMBER}" --owner "${PROJECT_OWNER}" --url "${ITEM_URL}"
+    _ci_board_add "${ITEM_URL}" "${GH_TOKEN:-}"
 }
 
 # What: True if a file is under doc/ or a non-CHANGELOG .md.
@@ -2045,13 +2049,13 @@ _ci_ossf_check_ac03() {
 }
 
 # What: No pull_request_target fork code, no raw event text.
-# Why: pull_request_target is risky only with a PR checkout.
-# From: Issue #312
+# Why: Only a ci.sh checkout given a ref can fetch PR code.
+# From: Issue #312, PR #544
 _ci_ossf_check_br01() {
     local hits=0 f
     for f in .github/workflows/*.yml; do
         if grep -q "pull_request_target" "${f}" \
-            && grep -qE 'pull_request\.head\.(sha|ref)' "${f}"; then
+            && grep -qE 'bash -s -- checkout [0-9]+ [^[:space:]]' "${f}"; then
             hits=1
         fi
     done
@@ -2118,7 +2122,7 @@ _ci_ossf_check_br05_do06() {
 _ci_scan_openssf() {
     : "${REPO:?REPO required, e.g. wiki-mod/distcc-ng}"
     : "${ISSUE_NUMBER:?ISSUE_NUMBER required (the tracking issue)}"
-    local PROJECT_ID="${PROJECT_ID:-13760}" DRY_RUN="${DRY_RUN:-false}"
+    local PROJECT_ID="${PROJECT_ID:-13760}"
     local MARKER="<!-- openssf-baseline-recheck -->" RUN_URL="${RUN_URL:-}"
     local TODAY; TODAY="$(date -u +%Y-%m-%d)"
     local ac03 br01 br07 qa05 vm02 ac04 br06 br05_do06 gv01 vm01_vm03 do04_do05
@@ -2232,15 +2236,15 @@ Run: ${RUN_URL}
 <!-- openssf-baseline-recheck-state: ${new_state} -->
 EOF
 )"
-    if [ "${DRY_RUN}" = "true" ]; then
-        echo "--- DRY_RUN: composed comment body ---"
-        echo "${body}"
-        return 0
-    fi
+    local body_file
+    body_file="$(mktemp)" || return 1
+    printf '%s\n' "${body}" | tee "${body_file}"
     if [ -n "${existing_id}" ]; then
-        gh api --method PATCH "repos/${REPO}/issues/comments/${existing_id}" -f body="${body}" >/dev/null
+        _ci_mutate gh api --method PATCH "repos/${REPO}/issues/comments/${existing_id}" \
+            -F "body=@${body_file}" || return 1
     else
-        gh api --method POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" -f body="${body}" >/dev/null
+        _ci_mutate gh api --method POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            -F "body=@${body_file}" || return 1
     fi
 }
 
