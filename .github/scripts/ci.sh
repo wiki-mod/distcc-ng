@@ -3692,15 +3692,35 @@ ci_cmd_codeql_scan() {
 # Why: The body goes in a file; a large SARIF overflows argv.
 # From: Issue #479, PR #544
 ci_cmd_sarif_upload() {
-    local file="${1:?sarif file required}" work
+    local file="${1:?sarif file required}" work try rc id why
     : "${GH_TOKEN:?GH_TOKEN required}"
     work="$(mktemp -d)" || return 1
     gzip -c "${file}" | base64 -w0 > "${work}/sarif.b64" || return 1
     jq -n --arg c "${GITHUB_SHA:?GITHUB_SHA required}" --arg r "${GITHUB_REF:?GITHUB_REF required}" \
         --rawfile s "${work}/sarif.b64" '{commit_sha: $c, ref: $r, sarif: $s}' > "${work}/body.json" || return 1
-    gh api --method POST "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
-        --input "${work}/body.json" --jq '"[CI-SCAN] SARIF upload id \(.id)"' || return 1
+    # What: Retry a 5xx, a 429 or an empty answer, three times.
+    # Why: The API once answered an upload with no body at all.
+    # From: Issue #479, PR #544
+    for try in 1 2 3; do
+        rc=0
+        gh api --method POST "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+            --input "${work}/body.json" > "${work}/resp" 2> "${work}/err" || rc=$?
+        id="$(jq -r '.id // empty' "${work}/resp" 2>/dev/null)" || id=""
+        if [ "${rc}" -eq 0 ] && [ -n "${id}" ]; then
+            ci_log "[CI-SCAN]" "SARIF upload id ${id}"
+            rm -rf "${work}"
+            return 0
+        fi
+        why="$(cat "${work}/err" "${work}/resp")"
+        if [ "${rc}" -ne 0 ] && ! grep -qE 'HTTP (5[0-9][0-9]|429)' <<< "${why}"; then
+            break
+        fi
+        ci_log "[CI-SCAN]" "SARIF upload attempt ${try}/3 failed: ${why:-empty response}"
+        [ "${try}" -eq 3 ] || sleep $((try * 5))
+    done
+    ci_error "[CI-ERROR-SCAN-0004]" "SARIF upload of ${file} failed (rc ${rc})" "${why:-empty response}"
     rm -rf "${work}"
+    return 1
 }
 
 # What: Convert Scorecard's own JSON into real SARIF.

@@ -1820,12 +1820,35 @@ _fake_osv() {
         local in=""
         while [ "$#" -gt 0 ]; do [ "$1" = "--input" ] && in="$2"; shift; done
         jq -r .sarif "${in}" | base64 -d | gunzip > "${BATS_TEST_TMPDIR}/back"
-        jq -r '.commit_sha + " " + .ref' "${in}"
+        jq '{id: (.commit_sha + " " + .ref)}' "${in}"
     }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=abc GITHUB_REF=refs/heads/x run ci_cmd_sarif_upload "${big}"
     [ "${status}" -eq 0 ]
-    [ "${output}" = "abc refs/heads/x" ]
+    [[ "${output}" == *"SARIF upload id abc refs/heads/x"* ]]
     cmp "${big}" "${BATS_TEST_TMPDIR}/back"
+}
+
+@test "SARIF upload retries a 5xx or empty answer, never a 4xx" {
+    # What: 5xx/empty retry up to three times; 4xx fails at once.
+    # Why: A transient API error must not fail a scan job.
+    # From: Issue #479, PR #544
+    local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
+    echo '{}' > "${f}"
+    sleep() { :; }
+    echo 0 > "${n}"
+    gh() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"
+        case "${c}" in 0) echo "gh: Server Error (HTTP 502)" >&2; return 1 ;; 1) return 0 ;; *) echo '{"id":"ok"}' ;; esac; }
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${n}")" -eq 3 ]
+    [[ "${output}" == *"attempt 1/3 failed: gh: Server Error (HTTP 502)"* ]]
+    [[ "${output}" == *"attempt 2/3 failed: empty response"* ]]
+    echo 0 > "${n}"
+    gh() { echo $(( $(cat "${n}") + 1 )) > "${n}"; echo "gh: Not Found (HTTP 404)" >&2; return 1; }
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
+    [ "${status}" -eq 1 ]
+    [ "$(cat "${n}")" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP 404"* ]]
 }
 
 @test "OSV PR gate is NotRun against a base SOT without tool pins" {
