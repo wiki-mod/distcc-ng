@@ -19,7 +19,6 @@ permissions:
 
 env:
   NIGHTLY_TAG: nightly
-  IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/distcc-ng-nightly:latest
 
 jobs:
   build_test:
@@ -106,12 +105,14 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh attest release
-      - env:
+      - id: image
+        env:
           REGISTRY_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh container nightly
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/ci.sh attest image "$IMAGE_TAG"
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: bash .github/scripts/ci.sh attest image "$IMAGE"
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh publish nightly

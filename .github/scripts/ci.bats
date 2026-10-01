@@ -325,6 +325,113 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
 }
 
+@test "release context: a tag push publishes and moves latest" {
+    # What: A v* tag push is the tag, publishes, sets tag_push.
+    # Why: POL-RELEASE-07; release jobs read only these outputs.
+    # From: Issue #479, PR #544
+    GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG run _ci_release_context
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "$(printf '%s\n' v1.2.3-NG false true true)" ]
+}
+
+@test "release context: a dispatch reads tag and opt-in from inputs" {
+    # What: Dispatch tag and publish_container come from inputs.
+    # Why: POL-RELEASE-05: a dry run never moves latest.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '{"inputs":{"tag":"v1.2.3-NG","publish_container":"true"}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "$(printf '%s\n' v1.2.3-NG true true false)" ]
+    printf '{"inputs":{"tag":"v1.2.3-NG"}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
+    [ "${lines[2]}" = "false" ]
+}
+
+@test "release context fails closed off a release trigger" {
+    # What: A branch push or another event has no release tag.
+    # Why: Guessing a tag there would publish the wrong ref.
+    # From: Issue #479, PR #544
+    GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/current_dev GITHUB_REF_NAME=current_dev run _ci_release_context
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-RELEASE-0007"* ]]
+    GITHUB_EVENT_NAME=schedule run _ci_release_context
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-RELEASE-0008"* ]]
+}
+
+@test "release version-check in CI writes tag, publish, tag_push" {
+    # What: The event path checks the tag, then writes outputs.
+    # Why: Downstream jobs gate on these, not on the event.
+    # From: Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    _ci_check_release_version() { [ "$1 $2" = "v1.2.3-NG false" ]; }
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG \
+        run _ci_release_version_check
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${out}")" = "$(printf '%s\n' tag=v1.2.3-NG publish=true tag_push=true)" ]
+}
+
+@test "release image names map variants to their GHCR packages" {
+    # What: plain/pump/nightly map to their package and tag.
+    # Why: One owner; the workflows no longer build these names.
+    # From: Issue #359, Issue #479, PR #544
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image pump v1 arm64
+    [ "${output}" = "ghcr.io/o/distcc-ng-pump:v1-arm64" ]
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image plain v1
+    [ "${output}" = "ghcr.io/o/distcc-ng:v1" ]
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image nightly latest
+    [ "${output}" = "ghcr.io/o/distcc-ng-nightly:latest" ]
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image x v1
+    [ "${status}" -eq 2 ]
+}
+
+@test "changelog skips a pre-release and a dispatch without notes" {
+    # What: Neither event inserts a section or touches git.
+    # Why: Only a published release or explicit notes add one.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    _forbid _ci_changelog_insert
+    printf '{"release":{"prerelease":true,"tag_name":"v1","body":"x"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"skipped: pre-release"* ]]
+    printf '{"inputs":{"tag":"v1","release_notes":""}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"skipped: no release_notes"* ]]
+}
+
+@test "changelog takes a published release's tag and body" {
+    # What: The release payload's tag_name and body are inserted.
+    # Why: The workflow passes neither; ci.sh reads the event.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    _ci_changelog_insert() { printf 'insert %s|%s\n' "$1" "$2"; }
+    printf '{"release":{"prerelease":false,"tag_name":"v1.2","body":"notes"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "insert v1.2|notes" ]
+}
+
+@test "changelog manual retry inserts a notes file, dry run pushes nothing" {
+    # What: A notes file is inserted and committed; push dry-runs.
+    # Why: The release checklist's recovery path runs it locally.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}"
+    ( cd "${fx}" && git init -q && printf '# Changelog\n<!-- insertion marker -->\n' > CHANGELOG.md \
+      && git add CHANGELOG.md && git -c user.name=t -c user.email=t@t commit -q -m x )
+    printf 'line one\n' > "${BATS_TEST_TMPDIR}/notes"
+    _ci_git_auth_setup() { :; }
+    CI_REPO_ROOT="${fx}" DRY_RUN=true run _ci_publish_changelog_update v1.2.3-NG "${BATS_TEST_TMPDIR}/notes"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"DRY_RUN would run: git push origin HEAD:current_dev"* ]]
+    grep -qx '## \[1.2.3-NG\] - .*' "${fx}/CHANGELOG.md"
+    grep -qx 'line one' "${fx}/CHANGELOG.md"
+    [ "$(git -C "${fx}" log -1 --format=%s)" = "CHANGELOG.md: add v1.2.3-NG" ]
+}
+
 @test "container rejects an unimplemented variant" {
     # What: An unknown container variant fails closed.
     # Why: Consistent fail-closed dispatch for outward phases.

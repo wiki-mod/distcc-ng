@@ -1296,12 +1296,13 @@ ci_cmd_container() {
         _ci_container_release "$@"
         return
     fi
-    local short base
+    local short base image
     case "${first}" in
         nightly)
-            _ci_image_build release.images.distcc-ng-nightly nightly \
-                --tag "${IMAGE_TAG:?IMAGE_TAG required}" || return 1
-            _ci_registry_push "${IMAGE_TAG}" ;;
+            image="$(_ci_release_image nightly latest)" || return 2
+            _ci_image_build release.images.distcc-ng-nightly nightly --tag "${image}" || return 1
+            _ci_registry_push "${image}" || return 1
+            _ci_output image "${image}" ;;
         verify-image)
             short="$(git -C "${CI_REPO_ROOT}" rev-parse --short HEAD)" || return 1
             _ci_image_build release.images.distcc-ng-buildtools "${short}" ;;
@@ -1320,18 +1321,21 @@ ci_cmd_container() {
 # Why: Trivy scan needs the built, unpushed image.
 # From: Issue #479, PR #544
 _ci_container_release() {
-    local action="$1" variant platform pkg
+    local action="$1" variant platform version image pkg
     case "${action}" in
         build)
             variant="${2:?variant required}"
             platform="${3:?platform required (amd64|arm64)}"
+            version="${4:?version required}"
             case "${variant}" in
-                plain) pkg="distcc-ng" ;;
-                pump) pkg="distcc-ng-pump" ;;
+                plain|pump) ;;
                 *) ci_log "[CI-ERROR-CONTAINER-0002]" "release variant=${variant} (plain|pump)"; return 2 ;;
             esac
-            _ci_image_build "release.images.${pkg}" "${VERSION:?VERSION required}" \
-                --platform "linux/${platform}" --tag "${IMAGE_TAG:?IMAGE_TAG required}" ;;
+            image="$(_ci_release_image "${variant}" "${version}" "${platform}")" || return 2
+            pkg="${image##*/}"
+            _ci_image_build "release.images.${pkg%%:*}" "${version}" \
+                --platform "linux/${platform}" --tag "${image}" || return 1
+            _ci_output image "${image}" ;;
         push)
             _ci_registry_push "${2:?image tag required}" ;;
         *) ci_log "[CI-ERROR-CONTAINER-0004]" "release action=${action} (build|push)"; return 2 ;;
@@ -1374,11 +1378,12 @@ _ci_release_assets() {
 # Why: It refuses to move a real v* release tag.
 # From: Issue #479
 _ci_publish_nightly() {
-    local tag="${NIGHTLY_TAG:?NIGHTLY_TAG required}" ref repo notes
+    local tag="${NIGHTLY_TAG:?NIGHTLY_TAG required}" ref repo notes image
     local assets=()
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
     esac
+    image="$(_ci_release_image nightly latest)" || return 2
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     repo="${GITHUB_REPOSITORY}"
     cd "${CI_REPO_ROOT}" || return 1
@@ -1393,7 +1398,7 @@ _ci_publish_nightly() {
     {
         printf 'Automated nightly build of current_dev (%s).\n\n' "${ref}"
         printf 'Unstable nightly channel -- NOT a real release; overwritten each run.\n\n'
-        printf 'Container image: %s\n' "${IMAGE_TAG:-}"
+        printf 'Container image: %s\n' "${image}"
     } > "${notes}"
     if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
         _ci_mutate gh release delete "${tag}" --repo "${repo}" --yes || return 1
@@ -1407,22 +1412,28 @@ _ci_publish_nightly() {
 # Why: imagetools reads the registry; no artifact handoff.
 # From: Issue #479
 _ci_publish_manifest() {
-    local variant="${1:?variant required}"
-    : "${IMAGE_BASE:?IMAGE_BASE required}"
-    local out tags=("${IMAGE_BASE}-amd64")
+    local variant="${1:?variant required}" base out ctx=()
+    mapfile -t ctx < <(_ci_release_context) || return 2
+    [ "${#ctx[@]}" -eq 4 ] || return 2
+    base="$(_ci_release_image "${variant}" "${ctx[0]}")" || return 2
+    local tags=("${base}-amd64")
     _ci_registry_login || return 1
-    if out="$(docker buildx imagetools inspect "${IMAGE_BASE}-arm64" 2>&1)"; then
-        tags+=("${IMAGE_BASE}-arm64")
+    if out="$(docker buildx imagetools inspect "${base}-arm64" 2>&1)"; then
+        tags+=("${base}-arm64")
     elif grep -qi 'not found' <<< "${out}"; then
         ci_log "[CI-PUBLISH]" "no arm64 image; amd64-only manifest for ${variant}"
     else
-        ci_error "[CI-ERROR-PUBLISH-0006]" "cannot inspect ${IMAGE_BASE}-arm64" "${out}"
+        ci_error "[CI-ERROR-PUBLISH-0006]" "cannot inspect ${base}-arm64" "${out}"
         return 1
     fi
-    docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}" || return 1
-    if [ "${TAG_PUSH:-false}" = "true" ]; then
-        docker buildx imagetools create --tag "${IMAGE_BASE%:*}:latest" "${tags[@]}" || return 1
+    docker buildx imagetools create --tag "${base}" "${tags[@]}" || return 1
+    # What: Only a real tag push moves the :latest manifest.
+    # Why: A dispatch dry run must never pose as the newest.
+    # From: Issue #479, PR #544
+    if [ "${ctx[3]}" = "true" ]; then
+        docker buildx imagetools create --tag "${base%:*}:latest" "${tags[@]}" || return 1
     fi
+    _ci_output image "${base}"
 }
 
 # What: Cut the GitHub release of a tag with built assets.
@@ -1443,13 +1454,54 @@ _ci_publish_github_release() {
         --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
 }
 
-# What: Add a CHANGELOG.md section; commit to current_dev.
-# Why: Folds two marketplace actions into one git commit.
-# From: Issue #479
+# What: Insert release notes into CHANGELOG.md on current_dev.
+# Why: <tag> <notes-file> is the checklist's manual retry.
+# From: Issue #479, PR #544
 _ci_publish_changelog_update() {
-    local tag="${1:?tag required}"
-    : "${RELEASE_BODY:?RELEASE_BODY required}"
-    local version date tmp
+    local body
+    if [ "$#" -eq 0 ]; then
+        _ci_publish_changelog_event
+        return
+    fi
+    body="$(cat "${2:?notes file required}")" || return 2
+    _ci_changelog_insert "$1" "${body}"
+}
+
+# What: Insert the notes a release or a dispatch carries.
+# Why: A pre-release or a dispatch without notes adds nothing.
+# From: Issue #479, PR #544
+_ci_publish_changelog_event() {
+    local tag body
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
+        release)
+            if [ "$(jq -r '.release.prerelease' "${GITHUB_EVENT_PATH}")" != "false" ]; then
+                ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"
+                return 0
+            fi
+            tag="$(jq -er '.release.tag_name' "${GITHUB_EVENT_PATH}")" || return 2
+            body="$(jq -r '.release.body // ""' "${GITHUB_EVENT_PATH}")" || return 2 ;;
+        workflow_dispatch)
+            tag="$(jq -er '.inputs.tag' "${GITHUB_EVENT_PATH}")" || return 2
+            body="$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" || return 2
+            if [ -z "${body}" ]; then
+                ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: no release_notes on this dispatch"
+                return 0
+            fi ;;
+        *) ci_log "[CI-ERROR-PUBLISH-0007]" "event ${GITHUB_EVENT_NAME} carries no release notes"; return 2 ;;
+    esac
+    _ci_changelog_insert "${tag}" "${body}"
+}
+
+# What: Add a tag's notes as a CHANGELOG.md section; commit.
+# Why: An existing section is kept, so a rerun adds nothing.
+# From: Issue #479, PR #544
+_ci_changelog_insert() {
+    local tag="$1" body="$2" version date tmp
+    if [ -z "${body}" ]; then
+        ci_log "[CI-ERROR-PUBLISH-0008]" "release ${tag} has empty notes"
+        return 1
+    fi
     version="${tag#v}"
     date="$(date -u +%Y-%m-%d)"
     cd "${CI_REPO_ROOT}"
@@ -1461,10 +1513,10 @@ _ci_publish_changelog_update() {
         ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: ${tag} section already present"
         return 0
     fi
-    tmp="$(mktemp)"
+    tmp="$(mktemp)" || return 1
     {
         printf '## [%s] - %s\n\n' "${version}" "${date}"
-        printf '%s\n' "${RELEASE_BODY}"
+        printf '%s\n' "${body}"
     } > "${tmp}"
     awk -v insertfile="${tmp}" '
         /<!-- insertion marker -->/ {
@@ -1474,14 +1526,14 @@ _ci_publish_changelog_update() {
             next
         }
         { print }
-    ' CHANGELOG.md > CHANGELOG.md.new
-    mv CHANGELOG.md.new CHANGELOG.md
+    ' CHANGELOG.md > CHANGELOG.md.new || return 1
+    mv CHANGELOG.md.new CHANGELOG.md || return 1
     rm -f "${tmp}"
     _ci_git_identity || return 1
-    git add CHANGELOG.md
-    git commit -m "CHANGELOG.md: add ${tag}"
-    _ci_git_auth_setup
-    git push origin HEAD:current_dev
+    git add CHANGELOG.md || return 1
+    git commit -m "CHANGELOG.md: add ${tag}" || return 1
+    _ci_git_auth_setup || return 1
+    _ci_mutate git push origin HEAD:current_dev
 }
 
 # What: Append a category section if it has any items.
@@ -1561,9 +1613,65 @@ ci_cmd_release() {
     local sub="${1:-}"
     if [ "$#" -gt 0 ]; then shift; fi
     case "${sub}" in
-        version-check) _ci_check_release_version "$@" ;;
+        version-check) _ci_release_version_check "$@" ;;
         *) ci_log "[CI-ERROR-RELEASE-0005]" "unknown release subcommand=\"${sub}\" (version-check)"; return 2 ;;
     esac
+}
+
+# What: Print tag, require_new, publish, tag_push of this run.
+# Why: A dispatch names its tag in inputs; a tag push is one.
+# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-07
+_ci_release_context() {
+    local tag publish
+    case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
+        workflow_dispatch)
+            : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+            tag="$(jq -er '.inputs.tag' "${GITHUB_EVENT_PATH}")" || {
+                ci_log "[CI-ERROR-RELEASE-0006]" "dispatch without inputs.tag"
+                return 2
+            }
+            publish="$(jq -r '.inputs.publish_container // false' "${GITHUB_EVENT_PATH}")" || return 2
+            printf '%s\n' "${tag}" true "${publish}" false ;;
+        push)
+            case "${GITHUB_REF:?GITHUB_REF required}" in
+                refs/tags/*) ;;
+                *) ci_log "[CI-ERROR-RELEASE-0007]" "push of ${GITHUB_REF} is no release tag"; return 2 ;;
+            esac
+            printf '%s\n' "${GITHUB_REF_NAME:?GITHUB_REF_NAME required}" false true true ;;
+        *)
+            ci_log "[CI-ERROR-RELEASE-0008]" "event ${GITHUB_EVENT_NAME} has no release tag"
+            return 2 ;;
+    esac
+}
+
+# What: Check a tag; in CI also write tag/publish/tag_push.
+# Why: Jobs read the outputs; REL-PRECUT-04 passes a tag.
+# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-06
+_ci_release_version_check() {
+    local ctx=()
+    if [ "$#" -gt 0 ]; then
+        _ci_check_release_version "$1" true
+        return
+    fi
+    mapfile -t ctx < <(_ci_release_context) || return 2
+    [ "${#ctx[@]}" -eq 4 ] || return 2
+    _ci_check_release_version "${ctx[0]}" "${ctx[1]}" || return 1
+    _ci_output tag "${ctx[0]}" publish "${ctx[2]}" tag_push "${ctx[3]}"
+}
+
+# What: Print the GHCR reference of a published image.
+# Why: One owner of variant->package and tag naming.
+# From: Issue #359, Issue #479, PR #544
+_ci_release_image() {
+    local variant="$1" tag="$2" platform="${3:-}" pkg
+    case "${variant}" in
+        plain) pkg="distcc-ng" ;;
+        pump) pkg="distcc-ng-pump" ;;
+        nightly) pkg="distcc-ng-nightly" ;;
+        *) ci_log "[CI-ERROR-CONTAINER-0002]" "image variant=${variant} (plain|pump|nightly)"; return 2 ;;
+    esac
+    printf 'ghcr.io/%s/%s:%s%s\n' "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}" \
+        "${pkg}" "${tag}" "${platform:+-${platform}}"
 }
 
 # What: JSON array of digests a live multi-arch index holds.
