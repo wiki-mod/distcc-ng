@@ -771,6 +771,10 @@ _forbid() {
     chmod +x autogen.sh configure
     run _ci_configure_tree "${BATS_TEST_TMPDIR}/c.log" --x
     [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0005"* ]]
+    printf '#!/bin/sh\nexit 4\n' > autogen.sh
+    run _ci_configure_tree "${BATS_TEST_TMPDIR}/c.log" --x
+    [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0003"* ]]
 }
 

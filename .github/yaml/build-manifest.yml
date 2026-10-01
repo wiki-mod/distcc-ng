@@ -87,13 +87,6 @@ external_versions:
     sha256: "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108"
     archive: "binary"
     bin: "osv-scanner"
-  # What: autoconf built into the ClusterFuzzLite image.
-  # Why: configure.ac needs 2.71; base-builder apt ships 2.69.
-  # From: Issue #267, Issue #479, PR #544
-  autoconf:
-    version: "2.73"
-    url: "https://ftp.gnu.org/gnu/autoconf/autoconf-{version}.tar.gz"
-    sha256: "259ddfa3bddc799cfb81489cc0f17dfdf1bd6d1505dda53c0f45ff60d6a4f9a7"
   # What: Trivy CLI release run directly by ci.sh.
   # Why: Replaces aquasecurity/trivy-action.
   # From: Issue #479
@@ -267,10 +260,14 @@ project_board:
 # From: Issue #479
 security:
   codeql_cpp_apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+  # What: apt packages that generate configure for CFL.
+  # Why: base-builder has autoconf 2.69; 2.71 is needed.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_host_apt: "autoconf"
   # What: apt packages of the ClusterFuzzLite build image.
   # Why: src/auth.h needs gssapi.h, so libkrb5-dev is required.
   # From: Issue #267, Issue #479, PR #544
-  cfl_image_apt: "automake libtool pkg-config libpopt-dev libavahi-client-dev libzstd-dev libseccomp-dev python3-dev python3-setuptools libkrb5-dev"
+  cfl_image_apt: "pkg-config libpopt-dev libavahi-client-dev libzstd-dev libseccomp-dev python3-dev python3-setuptools libkrb5-dev"
   # What: src/*.c the fuzz link skips or renames main in.
   # Why: Only libFuzzer's main may exist in the link.
   # From: Issue #267, Issue #479, PR #544

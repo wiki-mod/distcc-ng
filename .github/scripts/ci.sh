@@ -827,20 +827,13 @@ _ci_image_release_runtime() {
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin distcc
 }
 
-# What: CFL toolchain: SOT packages, autoconf from source.
-# Why: base-builder ships autoconf 2.69; we need 2.71.
+# What: CFL toolchain: the SOT apt packages, nothing compiled.
+# Why: configure comes pre-generated; no autoconf needed.
 # From: Issue #267, Issue #479, PR #544
 _ci_image_cfl_toolchain() {
-    local pkgs ver dest
+    local pkgs
     pkgs="$(_ci_sot_scalar security.cfl_image_apt)" || return 2
-    ver="$(_ci_sot_scalar external_versions.autoconf.version)" || return 2
-    _ci_apt_install "${pkgs}" image || return 1
-    dest="$(_ci_fetch_tool external_versions.autoconf)" || return 1
-    cd "${dest}/autoconf-${ver}" || return 1
-    ./configure || return 1
-    make -j"$(nproc)" || return 1
-    make install || return 1
-    rm -rf "${dest}"
+    _ci_apt_install "${pkgs}" image
 }
 
 # What: Run a check; its output must match /re/ (or not, !re).
@@ -1242,7 +1235,7 @@ _ci_workload_fuzz_build() {
     # What: --with-auth builds auth_common.c's GSSAPI symbols.
     # Why: The link takes every src/*.c, auth_common.c included.
     # From: Issue #267
-    _ci_configure_tree /tmp/fuzz-configure.log PYTHON=python3 --disable-pump-mode --with-auth || return 1
+    _ci_run_configure /tmp/fuzz-configure.log PYTHON=python3 --disable-pump-mode --with-auth || return 1
     # What: Rebuild Makefile.in's DIR_DEFS for direct compiles.
     # Why: They are Makefile-only; config.h never carries them.
     # From: Issue #267
@@ -3872,6 +3865,11 @@ _ci_cfl_run() {
 # From: Issue #267, Issue #479, PR #544
 ci_cmd_clusterfuzzlite_build() {
     local sanitizer="${1:-address}"
+    # What: Generate configure on the host before the CFL build.
+    # Why: base-builder has autoconf 2.69; configure needs 2.71.
+    # From: Issue #267, Issue #479, PR #544
+    ci_cmd_install sot-apt security.cfl_host_apt || return 1
+    ( cd "${CI_REPO_ROOT}" && _ci_run_autogen "${RUNNER_TEMP:-/tmp}/cfl-autogen.log" ) || return 1
     _ci_image_alias security.cfl_base || return 1
     _ci_cfl_run build -e "SANITIZER=${sanitizer}"
 }
@@ -3914,8 +3912,28 @@ _ci_compiler_warnings() {
 _ci_configure_tree() {
     local log="$1"
     shift
-    if ! { ./autogen.sh && ./configure "$@"; } 2>&1 | tee "${log}" >&2; then
-        ci_log "[CI-ERROR-BUILD-0003]" "autogen/configure failed: $*"
+    _ci_run_autogen "${log}" || return 1
+    _ci_run_configure "${log}" "$@"
+}
+
+# What: Generate configure in cwd with autogen.sh; log to $1.
+# Why: CFL runs it on the host, where apt autoconf is new.
+# From: Issue #267, Issue #479, PR #544
+_ci_run_autogen() {
+    if ! ./autogen.sh 2>&1 | tee "$1" >&2; then
+        ci_log "[CI-ERROR-BUILD-0003]" "autogen failed"
+        return 1
+    fi
+}
+
+# What: Run the generated configure in cwd; append to log $1.
+# Why: The CFL base-builder runs it without any autoconf.
+# From: Issue #267, Issue #479, PR #544
+_ci_run_configure() {
+    local log="$1"
+    shift
+    if ! ./configure "$@" 2>&1 | tee -a "${log}" >&2; then
+        ci_log "[CI-ERROR-BUILD-0005]" "configure failed: $*"
         return 1
     fi
 }
