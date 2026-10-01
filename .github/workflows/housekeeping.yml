@@ -109,10 +109,9 @@ jobs:
     if: needs.route.outputs.heartbeat == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # What: Plain-compiler control build, non-gating.
-    # Why: keeps a control failure from failing the run.
-    # From: Issue #263, Issue #479
-    continue-on-error: true
+    # What: Plain-compiler control build; fails on its own only.
+    # Why: report reads heartbeat alone; control never gates it.
+    # From: Issue #263, Issue #479, PR #544
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh e2e control
