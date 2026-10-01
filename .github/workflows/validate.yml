@@ -75,6 +75,7 @@ jobs:
       build: ${{ steps.plan.outputs.build }}
       matrix: ${{ steps.plan.outputs.matrix }}
       phases: ${{ steps.plan.outputs.phases }}
+      container_variants: ${{ steps.plan.outputs.container_variants }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: plan
@@ -151,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [plain, pump]
+        variant: ${{ fromJSON(needs.plan.outputs.container_variants) }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - id: build

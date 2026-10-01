@@ -49,6 +49,8 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       publish: ${{ steps.check.outputs.publish }}
       tag_push: ${{ steps.check.outputs.tag_push }}
+      container_matrix: ${{ steps.check.outputs.container_matrix }}
+      variants: ${{ steps.check.outputs.variants }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: check
@@ -160,23 +162,13 @@ jobs:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
     needs: [version_check, build_test, e2e]
     runs-on: ${{ matrix.runs_on }}
-    # What: amd64/arm64 is a real matrix axis, not include rows.
-    # Why: An include row missing an axis key overwrites all jobs.
-    # From: Issue #479, PR #544
-    continue-on-error: ${{ matrix.platform == 'arm64' }}
+    continue-on-error: ${{ matrix.optional }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        variant: [plain, pump]
-        platform: [amd64, arm64]
-        include:
-          - platform: amd64
-            runs_on: ubuntu-latest
-          - platform: arm64
-            runs_on: ubuntu-24.04-arm
+      matrix: ${{ fromJSON(needs.version_check.outputs.container_matrix) }}
     env:
       TAG: ${{ needs.version_check.outputs.tag }}
     steps:
@@ -215,7 +207,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [plain, pump]
+        variant: ${{ fromJSON(needs.version_check.outputs.variants) }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - id: manifest

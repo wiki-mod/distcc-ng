@@ -232,6 +232,20 @@ release:
   # Why: One asset set for both publishers; none found fails.
   # From: Issue #362, Issue #479, PR #544
   assets: ["distcc-*.tar.gz", "distcc-*.tar.bz2", "packaging/*.rpm", "packaging/*.deb"]
+  # What: Release image variants' packages; platform runners.
+  # Why: One inventory; an optional platform never gates.
+  # From: Issue #479, PR #544
+  container:
+    variants:
+      plain: "distcc-ng"
+      pump: "distcc-ng-pump"
+    platforms:
+      amd64:
+        runner: "ubuntu-latest"
+        optional: "false"
+      arm64:
+        runner: "ubuntu-24.04-arm"
+        optional: "true"
   # What: Git tag and GitHub pre-release name of the nightly.
   # Why: It is force-moved each run, so it must never be v*.
   # From: Issue #479, PR #544

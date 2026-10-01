@@ -366,10 +366,56 @@ _forbid() {
     # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     _ci_check_release_version() { [ "$1 $2" = "v1.2.3-NG false" ]; }
+    _ci_release_matrix() { printf '%s\n' '{"include":[]}' '["a"]'; }
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG \
         run _ci_release_version_check
     [ "${status}" -eq 0 ]
-    [ "$(cat "${out}")" = "$(printf '%s\n' tag=v1.2.3-NG publish=true tag_push=true)" ]
+    [ "$(cat "${out}")" = "$(printf '%s\n' tag=v1.2.3-NG publish=true tag_push=true \
+        'container_matrix={"include":[]}' 'variants=["a"]')" ]
+}
+
+@test "release matrix is every SOT variant on every SOT platform" {
+    # What: Rows carry runner and optional; variants list follows.
+    # Why: The workflows hold no variant or platform list.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' '      pump: "q"' \
+        '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"' \
+        '      arm64:' '        runner: "r2"' '        optional: "true"'
+    run _ci_release_matrix
+    [ "${status}" -eq 0 ]
+    [ "${lines[0]}" = '{"include":[{"variant":"plain","platform":"amd64","runs_on":"r1","optional":false},{"variant":"plain","platform":"arm64","runs_on":"r2","optional":true},{"variant":"pump","platform":"amd64","runs_on":"r1","optional":false},{"variant":"pump","platform":"arm64","runs_on":"r2","optional":true}]}' ]
+    [ "${lines[1]}" = '["plain","pump"]' ]
+    _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' \
+        '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "maybe"'
+    run _ci_release_matrix
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CONTAINER-0005"* ]]
+}
+
+@test "publish manifest takes every platform; only optional may lack" {
+    # What: A missing optional platform skips; a required fails.
+    # Why: arm64 may fail its build; amd64 never ships without.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' \
+        '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"' \
+        '      arm64:' '        runner: "r2"' '        optional: "true"'
+    _ci_registry_login() { :; }
+    docker() {
+        case "$*" in
+            *"inspect "*"-arm64"*) echo "not found"; return 1 ;;
+            *"inspect "*"-amd64"*) [ -z "${AMD_GONE:-}" ] || { echo "not found"; return 1; } ;;
+            *create*) echo "create $*" ;;
+        esac
+    }
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_REPOSITORY_OWNER=o GITHUB_EVENT_NAME=push \
+        GITHUB_REF=refs/tags/v1 GITHUB_REF_NAME=v1 run _ci_publish_manifest plain
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"no arm64 image"* ]]
+    [[ "${output}" == *"create buildx imagetools create --tag ghcr.io/o/p:v1 ghcr.io/o/p:v1-amd64"* ]]
+    AMD_GONE=1 GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_REPOSITORY_OWNER=o GITHUB_EVENT_NAME=push \
+        GITHUB_REF=refs/tags/v1 GITHUB_REF_NAME=v1 run _ci_publish_manifest plain
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0006"*"v1-amd64"* ]]
 }
 
 @test "release packages are offered as one artifact per tag" {
@@ -390,17 +436,18 @@ _forbid() {
 }
 
 @test "release image names map variants to their GHCR packages" {
-    # What: plain/pump/nightly map to their package and tag.
+    # What: A SOT variant maps to its package; names get the tag.
     # Why: One owner; the workflows no longer build these names.
     # From: Issue #359, Issue #479, PR #544
-    GITHUB_REPOSITORY_OWNER=o run _ci_release_image pump v1 arm64
-    [ "${output}" = "ghcr.io/o/distcc-ng-pump:v1-arm64" ]
-    GITHUB_REPOSITORY_OWNER=o run _ci_release_image plain v1
-    [ "${output}" = "ghcr.io/o/distcc-ng:v1" ]
-    GITHUB_REPOSITORY_OWNER=o run _ci_release_image nightly latest
-    [ "${output}" = "ghcr.io/o/distcc-ng-nightly:latest" ]
-    GITHUB_REPOSITORY_OWNER=o run _ci_release_image x v1
+    _fixture_manifest 'release:' '  container:' '    variants:' '      pump: "distcc-ng-pump"'
+    run _ci_release_pkg pump
+    [ "${output}" = "distcc-ng-pump" ]
+    run _ci_release_pkg x
     [ "${status}" -eq 2 ]
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image distcc-ng-pump v1 arm64
+    [ "${output}" = "ghcr.io/o/distcc-ng-pump:v1-arm64" ]
+    GITHUB_REPOSITORY_OWNER=o run _ci_release_image distcc-ng-nightly latest
+    [ "${output}" = "ghcr.io/o/distcc-ng-nightly:latest" ]
 }
 
 @test "changelog skips a pre-release and a dispatch without notes" {

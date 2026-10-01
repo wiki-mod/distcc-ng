@@ -579,7 +579,7 @@ _ci_event_pr_number() {
 # Why: One command feeds the orchestrator; no YAML logic.
 # From: Issue #479, PR #544
 ci_cmd_plan() {
-    local base head phases build=false matrix range=()
+    local base head phases build=false matrix range=() mx=()
     mapfile -t range < <(_ci_event_range) || return 2
     if [ "${#range[@]}" -ne 2 ]; then
         ci_log "[CI-ERROR-PLAN-0001]" "cannot read this run's base and head"
@@ -602,7 +602,10 @@ ci_cmd_plan() {
     if [ "${build}" = "true" ]; then
         matrix="$(ci_cmd_matrix)" || return 2
     fi
-    _ci_output phases "${phases}" build "${build}" matrix "${matrix}"
+    mapfile -t mx < <(_ci_release_matrix) || return 2
+    [ "${#mx[@]}" -eq 2 ] || return 2
+    _ci_output phases "${phases}" build "${build}" matrix "${matrix}" \
+        container_variants "${mx[1]}"
 }
 
 # What: Write the control-build's toolchain/dist verdict.
@@ -1362,7 +1365,7 @@ ci_cmd_container() {
     local short base image
     case "${first}" in
         nightly)
-            image="$(_ci_release_image nightly latest)" || return 2
+            image="$(_ci_release_image distcc-ng-nightly latest)" || return 2
             _ci_image_build release.images.distcc-ng-nightly nightly --tag "${image}" || return 1
             _ci_registry_push "${image}" || return 1
             _ci_output image "${image}" ;;
@@ -1390,13 +1393,10 @@ _ci_container_release() {
             variant="${2:?variant required}"
             platform="${3:?platform required (amd64|arm64)}"
             version="${4:?version required}"
-            case "${variant}" in
-                plain|pump) ;;
-                *) ci_log "[CI-ERROR-CONTAINER-0002]" "release variant=${variant} (plain|pump)"; return 2 ;;
-            esac
-            image="$(_ci_release_image "${variant}" "${version}" "${platform}")" || return 2
-            pkg="${image##*/}"
-            _ci_image_build "release.images.${pkg%%:*}" "${version}" \
+            pkg="$(_ci_release_pkg "${variant}")" || return 2
+            _ci_sot_scalar "release.container.platforms.${platform}.runner" >/dev/null || return 2
+            image="$(_ci_release_image "${pkg}" "${version}" "${platform}")" || return 2
+            _ci_image_build "release.images.${pkg}" "${version}" \
                 --platform "linux/${platform}" --tag "${image}" || return 1
             _ci_output image "${image}" ;;
         push)
@@ -1447,7 +1447,7 @@ _ci_publish_nightly() {
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
     esac
-    image="$(_ci_release_image nightly latest)" || return 2
+    image="$(_ci_release_image distcc-ng-nightly latest)" || return 2
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     repo="${GITHUB_REPOSITORY}"
     cd "${CI_REPO_ROOT}" || return 1
@@ -1474,22 +1474,29 @@ _ci_publish_nightly() {
 
 # What: Create the multi-arch manifest from pushed tags.
 # Why: imagetools reads the registry; no artifact handoff.
-# From: Issue #479
+# From: Issue #479, PR #544
 _ci_publish_manifest() {
-    local variant="${1:?variant required}" base out ctx=()
+    local variant="${1:?variant required}" pkg base out p platforms opt ctx=() tags=()
     mapfile -t ctx < <(_ci_release_context) || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
-    base="$(_ci_release_image "${variant}" "${ctx[0]}")" || return 2
-    local tags=("${base}-amd64")
+    pkg="$(_ci_release_pkg "${variant}")" || return 2
+    base="$(_ci_release_image "${pkg}" "${ctx[0]}")" || return 2
+    platforms="$(_ci_sot_children release.container.platforms)" || return 2
     _ci_registry_login || return 1
-    if out="$(docker buildx imagetools inspect "${base}-arm64" 2>&1)"; then
-        tags+=("${base}-arm64")
-    elif grep -qi 'not found' <<< "${out}"; then
-        ci_log "[CI-PUBLISH]" "no arm64 image; amd64-only manifest for ${variant}"
-    else
-        ci_error "[CI-ERROR-PUBLISH-0006]" "cannot inspect ${base}-arm64" "${out}"
-        return 1
-    fi
+    # What: Take each platform; only an optional one may lack.
+    # Why: An optional platform's build may fail on its own.
+    # From: Issue #479, PR #544
+    for p in ${platforms}; do
+        opt="$(_ci_sot_scalar "release.container.platforms.${p}.optional")" || return 2
+        if out="$(docker buildx imagetools inspect "${base}-${p}" 2>&1)"; then
+            tags+=("${base}-${p}")
+        elif [ "${opt}" = "true" ] && grep -qi 'not found' <<< "${out}"; then
+            ci_log "[CI-PUBLISH]" "no ${p} image; ${variant} manifest goes without it"
+        else
+            ci_error "[CI-ERROR-PUBLISH-0006]" "cannot inspect ${base}-${p}" "${out}"
+            return 1
+        fi
+    done
     docker buildx imagetools create --tag "${base}" "${tags[@]}" || return 1
     # What: Only a real tag push moves the :latest manifest.
     # Why: A dispatch dry run must never pose as the newest.
@@ -1728,7 +1735,7 @@ _ci_release_context() {
 # Why: Jobs read the outputs; REL-PRECUT-04 passes a tag.
 # From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-06
 _ci_release_version_check() {
-    local ctx=()
+    local ctx=() mx=()
     if [ "$#" -gt 0 ]; then
         _ci_check_release_version "$1" true
         return
@@ -1736,22 +1743,48 @@ _ci_release_version_check() {
     mapfile -t ctx < <(_ci_release_context) || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
     _ci_check_release_version "${ctx[0]}" "${ctx[1]}" || return 1
-    _ci_output tag "${ctx[0]}" publish "${ctx[2]}" tag_push "${ctx[3]}"
+    mapfile -t mx < <(_ci_release_matrix) || return 2
+    [ "${#mx[@]}" -eq 2 ] || return 2
+    _ci_output tag "${ctx[0]}" publish "${ctx[2]}" tag_push "${ctx[3]}" \
+        container_matrix "${mx[0]}" variants "${mx[1]}"
 }
 
-# What: Print the GHCR reference of a published image.
-# Why: One owner of variant->package and tag naming.
+# What: Print the GHCR reference of a published package tag.
+# Why: One owner of registry, owner and tag naming.
 # From: Issue #359, Issue #479, PR #544
 _ci_release_image() {
-    local variant="$1" tag="$2" platform="${3:-}" pkg
-    case "${variant}" in
-        plain) pkg="distcc-ng" ;;
-        pump) pkg="distcc-ng-pump" ;;
-        nightly) pkg="distcc-ng-nightly" ;;
-        *) ci_log "[CI-ERROR-CONTAINER-0005]" "image variant=${variant} (plain|pump|nightly)"; return 2 ;;
-    esac
+    local pkg="$1" tag="$2" platform="${3:-}"
     printf 'ghcr.io/%s/%s:%s%s\n' "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}" \
         "${pkg}" "${tag}" "${platform:+-${platform}}"
+}
+
+# What: Print the GHCR package of a SOT release variant.
+# Why: An unknown variant fails; it names no published image.
+# From: Issue #479, PR #544
+_ci_release_pkg() {
+    _ci_sot_scalar "release.container.variants.${1:?variant required}"
+}
+
+# What: Print the container job matrix, then the variant list.
+# Why: Workflows take both from the SOT inventory via outputs.
+# From: Issue #479, PR #544
+_ci_release_matrix() {
+    local variants platforms v p runner opt rows="" names=""
+    variants="$(_ci_sot_children release.container.variants)" || return 2
+    platforms="$(_ci_sot_children release.container.platforms)" || return 2
+    for v in ${variants}; do
+        names="${names:+${names},}\"${v}\""
+        for p in ${platforms}; do
+            runner="$(_ci_sot_scalar "release.container.platforms.${p}.runner")" || return 2
+            opt="$(_ci_sot_scalar "release.container.platforms.${p}.optional")" || return 2
+            case "${opt}" in
+                true|false) ;;
+                *) ci_log "[CI-ERROR-CONTAINER-0005]" "platform ${p} optional=${opt} (true|false)"; return 2 ;;
+            esac
+            rows="${rows:+${rows},}{\"variant\":\"${v}\",\"platform\":\"${p}\",\"runs_on\":\"${runner}\",\"optional\":${opt}}"
+        done
+    done
+    printf '{"include":[%s]}\n[%s]\n' "${rows}" "${names}"
 }
 
 # What: JSON array of digests a live multi-arch index holds.
