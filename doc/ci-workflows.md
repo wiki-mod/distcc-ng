@@ -145,6 +145,8 @@ The crons live in `build-manifest.yml` (`schedules`); each workflow's
 `on.schedule` repeats them literally, and `ci_guard_sot_mirrors` fails
 lint when the two differ. A `route` job (`ci.sh route <workflow>`) reads
 the firing cron from the event and decides which jobs that run starts.
+The security scans run unless `route` wrote `scans=false`, so a failed
+`route` (no output) still runs every required scan instead of skipping it.
 
 **Known collision**: `security.yml`'s two schedules (`0 5 * * 0` and
 `0 6 1,15 * *`) both fire whenever the 1st or 15th of a month falls on a

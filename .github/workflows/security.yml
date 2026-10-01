@@ -47,10 +47,10 @@ jobs:
   codeql:
     name: Analyze (${{ matrix.language }})
     needs: route
-    # What: Off a schedule, the scans run whatever route says.
-    # Why: A failed route must never skip a required check.
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
     # From: Issue #479, PR #544
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -70,10 +70,10 @@ jobs:
   osv-scan:
     name: OSV scan
     needs: route
-    # What: Off a schedule, the scans run whatever route says.
-    # Why: A failed route must never skip a required check.
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
     # From: Issue #479, PR #544
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -89,10 +89,10 @@ jobs:
   scorecard:
     name: Scorecard analysis
     needs: route
-    # What: Off a schedule, the scans run whatever route says.
-    # Why: A failed route must never skip a required check.
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
     # From: Issue #479, PR #544
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,10 +118,10 @@ jobs:
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
     needs: route
-    # What: Off a schedule, the scans run whatever route says.
-    # Why: A failed route must never skip a required check.
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
     # From: Issue #479, PR #544
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
