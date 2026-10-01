@@ -759,14 +759,26 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-GUARD-SHA-0001"* ]]
 }
 
-@test "full-sha guard fails closed on an abbreviated action pin" {
-    # What: A short git SHA on a `uses:` pin must be rejected.
-    # Why: Action pins MUST be full 40-hex SHAs.
-    # From: Issue #479
-    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf '      - uses: actions/checkout@abc1234\n' > "${fx}/w.yml"
-    run ci_guard_full_sha "${fx}"
+@test "guards fail closed on an unreadable tree, not pass" {
+    # What: A grep error in a guard is a failure, not clean.
+    # Why: 2>/dev/null || true once turned read errors green.
+    # From: Issue #479, PR #544
+    run ci_guard_line_endings "${BATS_TEST_TMPDIR}/nope"
+    [ "${status}" -eq 2 ]
+    run ci_guard_full_sha "${BATS_TEST_TMPDIR}/nope"
+    [ "${status}" -eq 2 ]
+}
+
+@test "changelog and comfychair fail closed on bad input" {
+    # What: A bad diff range or a missing log is an error.
+    # Why: Both used to read as "no change" or a parse result.
+    # From: Issue #479, PR #544
+    BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-SHA-0002"* ]]
+    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0002"* ]]
+    run _ci_parse_comfychair "${BATS_TEST_TMPDIR}/nope.log"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
 }
 
 @test "pin guard passes the repo's own Dockerfiles and workflows" {

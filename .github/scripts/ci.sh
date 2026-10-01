@@ -195,7 +195,7 @@ _ci_sot_list() {
     printf '%s' "${raw}" \
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
-        | grep -v '^[[:space:]]*$' || true
+        | grep -v '^[[:space:]]*$' || [ "$?" -eq 1 ]
 }
 
 # What: Set the scalar at a dotted SOT path in place.
@@ -1340,16 +1340,19 @@ _ci_publish_nightly() {
 _ci_publish_manifest() {
     local variant="${1:?variant required}"
     : "${IMAGE_BASE:?IMAGE_BASE required}"
-    _ci_registry_login
-    local tags=("${IMAGE_BASE}-amd64")
-    if docker buildx imagetools inspect "${IMAGE_BASE}-arm64" >/dev/null 2>&1; then
+    local out tags=("${IMAGE_BASE}-amd64")
+    _ci_registry_login || return 1
+    if out="$(docker buildx imagetools inspect "${IMAGE_BASE}-arm64" 2>&1)"; then
         tags+=("${IMAGE_BASE}-arm64")
-    else
+    elif grep -qi 'not found' <<< "${out}"; then
         ci_log "[CI-PUBLISH]" "no arm64 image; amd64-only manifest for ${variant}"
+    else
+        ci_error "[CI-ERROR-PUBLISH-0006]" "cannot inspect ${IMAGE_BASE}-arm64" "${out}"
+        return 1
     fi
-    docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}"
+    docker buildx imagetools create --tag "${IMAGE_BASE}" "${tags[@]}" || return 1
     if [ "${TAG_PUSH:-false}" = "true" ]; then
-        docker buildx imagetools create --tag "${IMAGE_BASE%:*}:latest" "${tags[@]}"
+        docker buildx imagetools create --tag "${IMAGE_BASE%:*}:latest" "${tags[@]}" || return 1
     fi
 }
 
@@ -1836,8 +1839,8 @@ ci_cmd_report() {
         fi
         return 0
     fi
-    _ci_mutate gh label create "${LABEL}" --repo "${REPO}" --color b60205 \
-        --description "A scheduled nightly/heartbeat CI run is failing" 2>/dev/null || true
+    _ci_mutate gh label create "${LABEL}" --repo "${REPO}" --color b60205 --force \
+        --description "A scheduled nightly/heartbeat CI run is failing" || return 1
     detail="${SCOPE} failed in ${RUN_URL}"
     [ -n "${FAILED_JOBS}" ] && detail="${detail} (failed: ${FAILED_JOBS})"
     if [ -n "${existing}" ]; then
@@ -2002,9 +2005,9 @@ ci_cmd_variables() {
 _ci_ossf_grep() {
     local file="$1" pattern="$2" ci="${3:-}"
     if [ -n "${ci}" ]; then
-        grep -qi -- "${pattern}" "${file}" 2>/dev/null && { echo "Met"; return; }
+        grep -qi -- "${pattern}" "${file}" && { echo "Met"; return; }
     else
-        grep -q -- "${pattern}" "${file}" 2>/dev/null && { echo "Met"; return; }
+        grep -q -- "${pattern}" "${file}" && { echo "Met"; return; }
     fi
     echo "NotMet"
 }
@@ -2036,7 +2039,7 @@ _ci_ossf_url() { echo "https://www.bestpractices.dev/en/projects/${PROJECT_ID}/b
 # From: Issue #312
 _ci_ossf_check_ac03() {
     local types
-    types="$(gh api "repos/${REPO}/rulesets/18300729" --jq '[.rules[].type]' 2>/dev/null)" || { echo "NotMet"; return; }
+    types="$(gh api "repos/${REPO}/rulesets/18300729" --jq '[.rules[].type]')" || { echo "NotMet"; return; }
     if echo "${types}" | jq -e 'contains(["pull_request"]) and contains(["deletion"])' >/dev/null; then
         echo "Met"; else echo "NotMet"; fi
 }
@@ -2047,12 +2050,12 @@ _ci_ossf_check_ac03() {
 _ci_ossf_check_br01() {
     local hits=0 f
     for f in .github/workflows/*.yml; do
-        if grep -q "pull_request_target" "${f}" 2>/dev/null \
-            && grep -qE 'pull_request\.head\.(sha|ref)' "${f}" 2>/dev/null; then
+        if grep -q "pull_request_target" "${f}" \
+            && grep -qE 'pull_request\.head\.(sha|ref)' "${f}"; then
             hits=1
         fi
     done
-    if grep -v '^[[:space:]]*#' .github/workflows/*.yml 2>/dev/null \
+    if grep -v '^[[:space:]]*#' .github/workflows/*.yml \
         | grep -qE 'github\.event\.(pull_request|issue|comment)\.(title|body)'; then
         hits=1
     fi
@@ -2096,7 +2099,7 @@ _ci_ossf_check_ac04() {
 # Why: Scanning all workflows survives a workflow rename.
 # From: Issue #312, Issue #479
 _ci_ossf_check_br06() {
-    if grep -rq "actions/attest-build-provenance" .github/workflows/ 2>/dev/null; then
+    if grep -rq "actions/attest-build-provenance" .github/workflows/; then
         echo "Met"; else echo "NotMet"; fi
 }
 
@@ -2147,7 +2150,7 @@ _ci_scan_openssf() {
     else
         local prev_body state_line
         prev_body="$(gh api "repos/${REPO}/issues/comments/${existing_id}" --jq '.body')"
-        state_line="$(echo "${prev_body}" | grep -o '<!-- openssf-baseline-recheck-state: .*-->' || true)"
+        state_line="$(echo "${prev_body}" | grep -o '<!-- openssf-baseline-recheck-state: .*-->')" || [ "$?" -eq 1 ] || return 2
         if [ -z "${state_line}" ]; then
             prev_state="{}"
         else
@@ -2532,8 +2535,13 @@ _ci_check_changelog() {
             ci_log "[CI-META-CHANGELOG]" "skipped: no-changelog-needed label"
             return 0 ;;
     esac
-    cd "${CI_REPO_ROOT}"
-    if git diff --name-only "${BASE:-}" "${HEAD:-HEAD}" 2>/dev/null | grep -qx 'CHANGELOG.md'; then
+    local changed
+    cd "${CI_REPO_ROOT}" || return 1
+    if ! changed="$(git diff --name-only "${BASE:?BASE required}" "${HEAD:-HEAD}")"; then
+        ci_log "[CI-ERROR-META-CHANGELOG-0002]" "cannot diff ${BASE}..${HEAD:-HEAD}"
+        return 1
+    fi
+    if grep -qx 'CHANGELOG.md' <<< "${changed}"; then
         ci_log "[CI-META-CHANGELOG]" "OK: CHANGELOG.md touched"
         return 0
     fi
@@ -2587,11 +2595,13 @@ ci_cmd_metadata() {
 # Why: The repo is LF-only; CRLF breaks shell/heredoc parsing.
 # From: Issue #479
 ci_guard_line_endings() {
-    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 f
+    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 f hits
+    hits="$(grep -rlU "$(printf '\r')" "${root}")" || [ "$?" -eq 1 ] || return 2
     while IFS= read -r f; do
+        [ -n "${f}" ] || continue
         rc=1
         ci_log "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: ${f}"
-    done < <(grep -rlU "$(printf '\r')" "${root}" 2>/dev/null || true)
+    done <<< "${hits}"
     return "${rc}"
 }
 
@@ -2599,20 +2609,13 @@ ci_guard_line_endings() {
 # Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
 ci_guard_full_sha() {
-    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit
+    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit hits
+    hits="$(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}")" || [ "$?" -eq 1 ] || return 2
     while IFS= read -r hit; do
         [ -n "${hit}" ] || continue
         rc=1
         ci_log "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: ${hit}"
-    done < <(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}" 2>/dev/null \
-             | awk -F: 'length($2)!=64 || $2 ~ /[A-F]/ { print }' || true)
-    while IFS= read -r hit; do
-        [ -n "${hit}" ] || continue
-        rc=1
-        ci_log "[CI-ERROR-GUARD-SHA-0002]" "not a full 40-hex action SHA: ${hit}"
-    done < <(grep -rhoE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-fA-F]+([[:space:]]|$)' "${root}" 2>/dev/null \
-             | grep -oE '@[0-9a-fA-F]+' \
-             | grep -vE '^@[0-9a-f]{40}$' || true)
+    done < <(awk -F: 'length($2) != 64 || $2 ~ /[A-F]/ { print }' <<< "${hits}")
     return "${rc}"
 }
 
@@ -3240,7 +3243,7 @@ _ci_popt_strict_compile() {
 _ci_popt_cve_fingerprint_check() {
     local want got rc=0
     want="$(_ci_sot_scalar external_versions.popt_vendor.version)" || return 2
-    got="$(cat popt/POPT_VERSION 2>/dev/null || true)"
+    got="$(cat popt/POPT_VERSION)" || got="<missing popt/POPT_VERSION>"
     if [ "${got}" != "${want}" ]; then
         ci_log "[CI-ERROR-POPT-CVE-0001]" "POPT_VERSION mismatch: got=\"${got}\" want=\"${want}\""
         rc=1
@@ -3328,16 +3331,20 @@ _ci_popt_fallback_smoke_test() {
 # From: Issue #479
 _ci_parse_comfychair() {
     local log="$1" ok notrun failed
-    ok="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "${log}" || true)"
-    notrun="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "${log}" || true)"
-    failed="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" || true)"
+    if [ ! -r "${log}" ]; then
+        ci_log "[CI-ERROR-TEST-0007]" "make check log ${log} is not readable"
+        return 1
+    fi
+    ok="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "${log}")" || [ "$?" -eq 1 ] || return 1
+    notrun="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "${log}")" || [ "$?" -eq 1 ] || return 1
+    failed="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}")" || [ "$?" -eq 1 ] || return 1
     ci_log "[CI-TEST-SUMMARY]" "OK=${ok} NOTRUN=${notrun} FAILED=${failed}"
     if [ "$(( ok + notrun + failed ))" -eq 0 ]; then
         ci_log "[CI-ERROR-TEST-0001]" "parsed zero comfychair result lines"
         return 1
     fi
     if [ "${failed}" -gt 0 ]; then
-        grep -E '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" >&2 || true
+        grep -E '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" >&2
         ci_log "[CI-ERROR-TEST-0002]" "${failed} comfychair case(s) FAILED"
         return 1
     fi
