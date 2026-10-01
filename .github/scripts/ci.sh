@@ -1645,8 +1645,8 @@ $(printf '%s\n' "$@")
 "
 }
 
-# What: Rebuild the draft release from PR titles + rule 71.
-# Why: Category comes from rule 71's type prefix, not regex.
+# What: Rebuild the draft release from PR title types.
+# Why: Category comes from the title's type prefix, not regex.
 # From: Issue #479
 _ci_publish_draft_release() {
     : "${GH_TOKEN:?GH_TOKEN required}"
@@ -2358,7 +2358,7 @@ _ci_variables_add_to_project() {
 }
 
 # What: Map a Commit type prefix to a category label.
-# Why: rule 71 already structures titles; no regex needed.
+# Why: AG-GH-014 already structures titles; no regex needed.
 # From: Issue #479
 _ci_pr_category_label() {
     local title="$1" type=""
@@ -2893,9 +2893,35 @@ _ci_is_dependency_bot() {
     grep -qxF -- "${PR_AUTHOR:-}" <<< "${bots}"
 }
 
-# What: Validate a PR title against the rule-71 taxonomy.
+# What: Print AG-GH-014's allowed types or scopes.
+# Why: The rule is the one taxonomy owner; no checker copy.
+# From: Issue #479, PR #544, AG-GH-014
+_ci_title_taxonomy() {
+    local kind="$1" key line list
+    case "${kind}" in
+        types) key="allowed types MUST remain " ;;
+        scopes) key="optional lowercase scopes MUST remain " ;;
+        *) ci_log "[CI-ERROR-META-TITLE-0003]" "unknown taxonomy kind=\"${kind}\" (types|scopes)"; return 2 ;;
+    esac
+    if ! line="$(grep -F -- '**[AG-GH-014]**' "${CI_REPO_ROOT}/AGENTS.md")"; then
+        ci_log "[CI-ERROR-META-TITLE-0004]" "AGENTS.md has no [AG-GH-014] rule"
+        return 2
+    fi
+    list="${line#*"${key}"}"
+    if [ "${list}" = "${line}" ]; then
+        ci_log "[CI-ERROR-META-TITLE-0005]" "[AG-GH-014] has no \"${key% }\" list"
+        return 2
+    fi
+    list="$(grep -o -E "\`[a-z-]+\`" <<< "${list%%;*}" | tr -d "\`" | tr '\n' ' ')" || {
+        ci_log "[CI-ERROR-META-TITLE-0005]" "[AG-GH-014] ${kind} list is empty"
+        return 2
+    }
+    printf '%s\n' "${list% }"
+}
+
+# What: Validate a PR title against the AG-GH-014 taxonomy.
 # Why: A dependency bot titles its own PRs; it is exempt.
-# From: Issue #479, rule 71
+# From: Issue #479, AG-GH-014
 _ci_check_pr_title() {
     local title="${PR_TITLE:-}"
     if _ci_is_dependency_bot; then
@@ -2909,9 +2935,9 @@ _ci_check_pr_title() {
     fi
     title="${title%$'\r'}"
     title="$(printf '%s' "${title}" | sed 's/[[:space:]]*$//')"
-    local types="feat fix docs refactor perf test build ci chore style revert security"
-    local scopes="distcc distccd pump protocol seccomp zstd config packaging docker ci docs scripts tests governance support-upstream"
-    local errs=() t sc subj tsub
+    local types scopes errs=() t sc subj tsub
+    types="$(_ci_title_taxonomy types)" || return 2
+    scopes="$(_ci_title_taxonomy scopes)" || return 2
     if [[ "${title}" =~ ^([a-zA-Z]+)(\(([a-z0-9-]+)\))?(!)?:[[:space:]](.+)$ ]]; then
         t="${BASH_REMATCH[1]}"; sc="${BASH_REMATCH[3]}"; subj="${BASH_REMATCH[5]}"
         tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
@@ -2927,7 +2953,7 @@ _ci_check_pr_title() {
         ci_log "[CI-META-TITLE]" "OK: ${title}"
         return 0
     fi
-    local msg="PR title check failed (rule 71): '${title}'" e
+    local msg="PR title check failed (AG-GH-014): '${title}'" e
     for e in "${errs[@]}"; do msg="${msg}; ${e}"; done
     if [ "${draft}" = "true" ] || [ "${mode}" = "warn" ]; then
         ci_log "[CI-WARN-META-TITLE]" "${msg} (non-blocking)"

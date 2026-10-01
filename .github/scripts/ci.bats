@@ -178,10 +178,42 @@ _forbid() {
 
 @test "pr-title accepts a valid Conventional-Commit title" {
     # What: A conforming title passes even in block mode.
-    # Why: Proves the green path of the rule-71 taxonomy.
+    # Why: Proves the green path of the AG-GH-014 taxonomy.
     # From: Issue #479
     PR_TITLE="feat(pump): add IPv6 support" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 0 ]
+}
+
+@test "pr-title taxonomy is read from AGENTS.md AG-GH-014" {
+    # What: The real rule yields its 12 types and 15 scopes.
+    # Why: AGENTS.md owns the taxonomy; the checker has no copy.
+    # From: Issue #479, PR #544, AG-GH-014
+    run _ci_title_taxonomy types
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "feat fix security docs refactor perf test build ci chore style revert" ]
+    run _ci_title_taxonomy scopes
+    [ "${status}" -eq 0 ]
+    [ "$(wc -w <<< "${output}")" -eq 15 ]
+    [[ " ${output} " == *" support-upstream "* ]]
+}
+
+@test "pr-title fails closed when AG-GH-014 is missing or unparsable" {
+    # What: No rule or no list fails the check, never passes.
+    # Why: An empty taxonomy must not accept or reject at random.
+    # From: Issue #479, PR #544, AG-GH-014
+    local fx="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${fx}"
+    printf '**[AG-GH-001]** nothing here\n' > "${fx}/AGENTS.md"
+    CI_REPO_ROOT="${fx}" PR_TITLE="feat: x" PR_TITLE_LINT_MODE=warn run _ci_check_pr_title
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0004"* ]]
+    printf '**[AG-GH-014]** titles; allowed types MUST remain none; done\n' > "${fx}/AGENTS.md"
+    CI_REPO_ROOT="${fx}" run _ci_title_taxonomy types
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
+    CI_REPO_ROOT="${fx}" run _ci_title_taxonomy scopes
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
 }
 
 @test "pr-title fails closed on a bad title in block mode" {
@@ -1352,7 +1384,7 @@ _forbid() {
     [[ "${output}" == *"--add-label ci,bug"* ]]
 }
 
-@test "pr category: maps rule-71 types to release-drafter labels" {
+@test "pr category: maps AG-GH-014 types to release-drafter labels" {
     # What: feat/fix/docs/security map to a changelog category.
     # Why: Replaces release-drafter's autolabeler regex entirely.
     # From: Issue #479
