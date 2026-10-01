@@ -1393,6 +1393,66 @@ _forbid() {
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "pull b@sha256:0 tag b@sha256:0 a:local " ]
 }
 
+@test "route security: crons, PRs and dispatch refs pick the jobs" {
+    # What: Each event and SOT cron yields its scans/openssf pair.
+    # Why: The workflow holds no cron and no event decision.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
+    _fixture_manifest 'schedules:' '  security_scans:' '    workflow: "security"' '    cron: "0 5 * * 0"' \
+        '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"'
+    _route() {
+        : > "${out}"
+        GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME="$1" GITHUB_REF_NAME="$2" \
+            ci_cmd_route security || return 1
+        tr '\n' ' ' < "${out}"
+    }
+    echo '{}' > "${ev}"
+    [ "$(_route pull_request 544/merge)" = "scans=true openssf=false " ]
+    [ "$(_route workflow_dispatch master)" = "scans=true openssf=true " ]
+    [ "$(_route workflow_dispatch bot/x)" = "scans=true openssf=false " ]
+    echo '{"schedule":"0 5 * * 0"}' > "${ev}"
+    [ "$(_route schedule master)" = "scans=true openssf=false " ]
+    echo '{"schedule":"0 6 1,15 * *"}' > "${ev}"
+    [ "$(_route schedule master)" = "scans=false openssf=true " ]
+}
+
+@test "route housekeeping: the weekly cron or a dispatch task" {
+    # What: Weekly runs sot-update+heartbeat; a task runs itself.
+    # Why: gc only ever runs on an explicit dispatch.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
+    _fixture_manifest 'schedules:' '  housekeeping_weekly:' '    workflow: "housekeeping"' '    cron: "0 5 * * 1"'
+    echo '{"schedule":"0 5 * * 1"}' > "${ev}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME=schedule run ci_cmd_route housekeeping
+    [ "$(tr '\n' ' ' < "${out}")" = "gc=false sot_update=true heartbeat=true " ]
+    : > "${out}"
+    echo '{"inputs":{"task":"gc"}}' > "${ev}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME=workflow_dispatch run ci_cmd_route housekeeping
+    [ "$(tr '\n' ' ' < "${out}")" = "gc=true sot_update=false heartbeat=false " ]
+    run ci_cmd_route nightly
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
+}
+
+@test "mirror guard passes the real tree and fails closed on drift" {
+    # What: A cron or package choice off the SOT fails lint.
+    # Why: Both must be literal YAML; the SOT owns their values.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    run ci_guard_sot_mirrors "${CI_REPO_ROOT}"
+    [ "${status}" -eq 0 ]
+    mkdir -p "${fx}/.github/workflows"
+    _fixture_manifest 'schedules:' '  n:' '    workflow: "w"' '    cron: "0 1 * * *"' \
+        'release:' '  ghcr_packages: ["p"]'
+    printf '%s\n' 'on:' '  schedule:' "    - cron: '0 2 * * *'" > "${fx}/.github/workflows/w.yml"
+    printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      package:' '        options:' \
+        '          - all' '          - q' '        default: all' > "${fx}/.github/workflows/housekeeping.yml"
+    run ci_guard_sot_mirrors "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0001"*"0 2 * * *"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
+}
+
 @test "verify starts one container and runs every in-image check" {
     # What: One docker run, one exec per check; failures add up.
     # Why: #479: the verify container starts once for all phases.

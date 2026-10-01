@@ -42,9 +42,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # What: Map this run's cron or dispatch task to its jobs.
+  # Why: ci.sh owns that mapping; the cron lives in the SOT.
+  # From: Issue #479, PR #544
+  route:
+    name: Route housekeeping tasks
+    runs-on: ubuntu-latest
+    outputs:
+      gc: ${{ steps.route.outputs.gc }}
+      sot_update: ${{ steps.route.outputs.sot_update }}
+      heartbeat: ${{ steps.route.outputs.heartbeat }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: route
+        run: bash .github/scripts/ci.sh route housekeeping
+
   gc:
     name: GHCR package cleanup
-    if: github.event_name == 'workflow_dispatch' && inputs.task == 'gc'
+    needs: route
+    if: needs.route.outputs.gc == 'true'
     runs-on: ubuntu-latest
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
@@ -57,7 +73,8 @@ jobs:
 
   sot_update:
     name: Refresh SOT pins (images, tools)
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'sot-update'
+    needs: route
+    if: needs.route.outputs.sot_update == 'true'
     runs-on: ubuntu-latest
     # What: Push the update branch, open its PR, dispatch CI.
     # Why: GITHUB_TOKEN PR events start no runs; dispatch does.
@@ -78,7 +95,8 @@ jobs:
 
   heartbeat:
     name: Weekly distributed ccache heartbeat
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
+    needs: route
+    if: needs.route.outputs.heartbeat == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -87,7 +105,8 @@ jobs:
 
   control:
     name: Control build (plain compiler, diagnostic only)
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'heartbeat'
+    needs: route
+    if: needs.route.outputs.heartbeat == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # What: Plain-compiler control build, non-gating.

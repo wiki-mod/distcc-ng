@@ -138,13 +138,15 @@ All `cron:` schedules, sorted (UTC):
 | 05:00 | Mon | `housekeeping.yml` | `sot_update`/`heartbeat`/`control`/`report` |
 | 06:00 | 1st/15th (any weekday) | `security.yml` | `openssf` |
 
-**Known collision**: `security.yml`'s own two schedules (`0 5 * * 0` and
+The crons live in `build-manifest.yml` (`schedules`); each workflow's
+`on.schedule` repeats them literally, and `ci_guard_sot_mirrors` fails
+lint when the two differ. A `route` job (`ci.sh route <workflow>`) reads
+the firing cron from the event and decides which jobs that run starts.
+
+**Known collision**: `security.yml`'s two schedules (`0 5 * * 0` and
 `0 6 1,15 * *`) both fire whenever the 1st or 15th of a month falls on a
-Sunday -- each is explicitly gated to its own `github.event.schedule`
-value (see `codeql`/`osv-scan`/`scorecard`/`clusterfuzzlite`'s `if:` vs.
-`openssf`'s), so this collision runs both sets of jobs in the same
-workflow trigger rather than either being silently skipped; not itself a
-bug, just worth knowing when reading a run's job list.
+Sunday. Each cron starts its own run, and `ci.sh route security` gives
+each run its own job set, so neither is skipped.
 
 ## Branch dormancy
 

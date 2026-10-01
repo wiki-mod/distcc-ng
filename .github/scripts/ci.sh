@@ -49,7 +49,7 @@ CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit build cache test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
+CI_COMMANDS="checkout plan route impact impact-hit build cache test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -2192,6 +2192,66 @@ _ci_output() {
     done
 }
 
+# What: Succeed if this run fired from the SOT schedule $1.
+# Why: The cron string is the only thing naming a schedule.
+# From: Issue #479, PR #544
+_ci_schedule_is() {
+    local want got
+    [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ] || return 1
+    want="$(_ci_sot_scalar "schedules.$1.cron")" || return 2
+    got="$(jq -r '.schedule // ""' "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}")" || return 2
+    [ "${got}" = "${want}" ]
+}
+
+# What: Print true or false for _ci_schedule_is $1.
+# Why: A failed lookup must fail the route, not read as false.
+# From: Issue #479, PR #544
+_ci_schedule_flag() {
+    local rc=0
+    _ci_schedule_is "$1" || rc=$?
+    case "${rc}" in
+        0) echo true ;;
+        1) echo false ;;
+        *) return 2 ;;
+    esac
+}
+
+# What: Write which jobs of a scheduled workflow run now.
+# Why: One owner maps events, crons and tasks to jobs.
+# From: Issue #479, PR #544
+ci_cmd_route() {
+    local wf="${1:?workflow required}" scans openssf weekly task="" ref gc sot hb
+    case "${wf}" in
+        security)
+            if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ]; then
+                scans="$(_ci_schedule_flag security_scans)" || return 2
+            else
+                scans=true
+            fi
+            openssf="$(_ci_schedule_flag openssf)" || return 2
+            # What: A dispatch rechecks only from current_dev or master.
+            # Why: It posts to the tracking issue; a bot branch must not.
+            # From: Issue #312, PR #544
+            ref="${GITHUB_REF_NAME:?GITHUB_REF_NAME required}"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] \
+                && { [ "${ref}" = "current_dev" ] || [ "${ref}" = "master" ]; }; then
+                openssf=true
+            fi
+            _ci_output scans "${scans}" openssf "${openssf}" ;;
+        housekeeping)
+            weekly="$(_ci_schedule_flag housekeeping_weekly)" || return 2
+            if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "workflow_dispatch" ]; then
+                task="$(jq -er '.inputs.task' "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}")" || return 2
+            fi
+            gc=false sot=false hb=false
+            if [ "${task}" = gc ]; then gc=true; fi
+            if [ "${weekly}" = true ] || [ "${task}" = sot-update ]; then sot=true; fi
+            if [ "${weekly}" = true ] || [ "${task}" = heartbeat ]; then hb=true; fi
+            _ci_output gc "${gc}" sot_update "${sot}" heartbeat "${hb}" ;;
+        *) ci_log "[CI-ERROR-ROUTE-0001]" "no route for workflow=${wf} (security|housekeeping)"; return 2 ;;
+    esac
+}
+
 # What: Offer files for upload as one SOT artifact kind.
 # Why: upload-artifact only transports; ci.sh picks the files.
 # From: Issue #267, Issue #479, PR #370, PR #544
@@ -3060,6 +3120,48 @@ _ci_dockerfile_pins() {
     ' "$1"
 }
 
+# What: Fail if a workflow literal no longer mirrors the SOT.
+# Why: Crons and choices are YAML literals; the SOT owns them.
+# From: Issue #479, PR #544
+ci_guard_sot_mirrors() {
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs d
+    want=""
+    names="$(_ci_sot_children schedules)" || return 2
+    for n in ${names}; do
+        want+="$(_ci_sot_scalar "schedules.${n}.workflow")" || return 2
+        want+=" $(_ci_sot_scalar "schedules.${n}.cron")"$'\n' || return 2
+    done
+    got=""
+    for f in "${root}"/.github/workflows/*.yml; do
+        [ -f "${f}" ] || continue
+        wf="$(basename "${f}" .yml)"
+        got+="$(sed -n "s/^ *- cron: '\(.*\)'\$/${wf} \1/p" "${f}")"$'\n' || return 2
+    done
+    want="$(grep -v '^$' <<< "${want}" | sort)" || return 2
+    got="$(grep -v '^$' <<< "${got}" | sort)" || [ "$?" -eq 1 ] || return 2
+    if [ "${want}" != "${got}" ]; then
+        rc=1
+        d="$(diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
+        ci_error "[CI-ERROR-GUARD-MIRROR-0001]" "on.schedule crons differ from SOT schedules" "${d}"
+    fi
+    f="${root}/.github/workflows/housekeeping.yml"
+    if [ -f "${f}" ]; then
+        pkgs="$({ echo all; _ci_sot_list release.ghcr_packages; } | sort)" || return 2
+        got="$(awk '
+            /^      package:$/ { inpkg = 1; next }
+            inpkg && /^        options:$/ { inopt = 1; next }
+            inopt && /^          - / { sub(/^          - /, ""); print; next }
+            inopt { exit }
+        ' "${f}" | sort)" || return 2
+        if [ "${pkgs}" != "${got}" ]; then
+            rc=1
+            d="$(diff <(printf '%s\n' "${pkgs}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
+            ci_error "[CI-ERROR-GUARD-MIRROR-0002]" "housekeeping package options differ from all + release.ghcr_packages" "${d}"
+        fi
+    fi
+    return "${rc}"
+}
+
 # What: Print each SOT action as its exact uses: value.
 # Why: uses: takes no expression; YAML repeats this literal.
 # From: Issue #479, PR #544
@@ -3241,6 +3343,7 @@ ci_cmd_lint() {
     done
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
+    ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
     # What: Every workflow must be a pure orchestrator.
     # Why: No legacy exemption remains after the rewrite.
     # From: Issue #479, PR #544
@@ -4289,6 +4392,7 @@ ci_main() {
                 impact) ci_cmd_impact "$@" ;;
                 impact-hit) ci_cmd_impact_hit "$@" ;;
                 plan) ci_cmd_plan "$@" ;;
+                route) ci_cmd_route "$@" ;;
                 build) ci_cmd_build "$@" ;;
                 cache) ci_cmd_cache "$@" ;;
                 test) ci_cmd_test "$@" ;;

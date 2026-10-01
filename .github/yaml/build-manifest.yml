@@ -346,6 +346,23 @@ ci_engine:
       name: "distcc-release-packages"
       retention_days: "90"
 
+# What: Each scheduled workflow cron; ci.sh route reads it.
+# Why: on.schedule must repeat it; a guard keeps both equal.
+# From: Issue #479, PR #544
+schedules:
+  security_scans:
+    workflow: "security"
+    cron: "0 5 * * 0"
+  openssf:
+    workflow: "security"
+    cron: "0 6 1,15 * *"
+  housekeeping_weekly:
+    workflow: "housekeeping"
+    cron: "0 5 * * 1"
+  nightly:
+    workflow: "nightly"
+    cron: "0 4 * * *"
+
 # What: GHCR prune policy applied by ci.sh gc.
 # Why: Keeps a rollback set; only whole series groups age out.
 # From: Issue #479, PR #544

@@ -28,9 +28,27 @@ permissions:
   contents: read
 
 jobs:
+  # What: Map this run's event and cron to the jobs it runs.
+  # Why: ci.sh owns that mapping; the crons live in the SOT.
+  # From: Issue #479, PR #544
+  route:
+    name: Route scheduled jobs
+    runs-on: ubuntu-latest
+    outputs:
+      scans: ${{ steps.route.outputs.scans }}
+      openssf: ${{ steps.route.outputs.openssf }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: route
+        run: bash .github/scripts/ci.sh route security
+
   codeql:
     name: Analyze (${{ matrix.language }})
-    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    needs: route
+    # What: Off a schedule, the scans run whatever route says.
+    # Why: A failed route must never skip a required check.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,7 +67,11 @@ jobs:
 
   osv-scan:
     name: OSV scan
-    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    needs: route
+    # What: Off a schedule, the scans run whatever route says.
+    # Why: A failed route must never skip a required check.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -64,7 +86,11 @@ jobs:
 
   scorecard:
     name: Scorecard analysis
-    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    needs: route
+    # What: Off a schedule, the scans run whatever route says.
+    # Why: A failed route must never skip a required check.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -89,7 +115,11 @@ jobs:
 
   clusterfuzzlite:
     name: ClusterFuzzLite fuzzing
-    if: github.event_name != 'schedule' || github.event.schedule == '0 5 * * 0'
+    needs: route
+    # What: Off a schedule, the scans run whatever route says.
+    # Why: A failed route must never skip a required check.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.route.outputs.scans == 'true') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -116,13 +146,8 @@ jobs:
 
   openssf:
     name: OpenSSF Baseline recheck
-    # What: A dispatch rechecks only from current_dev or master.
-    # Why: It posts to issue #312; a bot branch must not.
-    # From: Issue #312, PR #544
-    if: >-
-      (github.event_name == 'workflow_dispatch' &&
-      (github.ref_name == 'current_dev' || github.ref_name == 'master')) ||
-      github.event.schedule == '0 6 1,15 * *'
+    needs: route
+    if: needs.route.outputs.openssf == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
