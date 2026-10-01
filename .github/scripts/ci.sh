@@ -49,7 +49,7 @@ CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit build test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
+CI_COMMANDS="checkout plan impact impact-hit build cache test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -486,12 +486,11 @@ ci_cmd_impact() {
 # From: Issue #479
 ci_cmd_impact_hit() {
     local class="${1:?class required}" base="${2:?base ref required}" head="${3:?head ref required}"
-    : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
     cd "${CI_REPO_ROOT}"
     if git diff --name-only "${base}" "${head}" | _ci_classify_paths | grep -qx "${class}"; then
-        echo "hit=true" >> "${GITHUB_OUTPUT}"
+        _ci_output hit true
     else
-        echo "hit=false" >> "${GITHUB_OUTPUT}"
+        _ci_output hit false
     fi
 }
 
@@ -540,11 +539,7 @@ ci_cmd_plan() {
     if [ "${build}" = "true" ]; then
         matrix="$(ci_cmd_matrix)" || return 2
     fi
-    {
-        printf 'phases=%s\n' "${phases}"
-        printf 'build=%s\n' "${build}"
-        printf 'matrix=%s\n' "${matrix}"
-    } >> "${GITHUB_OUTPUT:-/dev/stdout}"
+    _ci_output phases "${phases}" build "${build}" matrix "${matrix}"
 }
 
 # What: Write the control-build's toolchain/dist verdict.
@@ -1936,15 +1931,59 @@ ${detail}.")"
 # VARIABLES (workflow output helpers)
 # =========================================================
 
+# What: Append name/value pairs to GITHUB_OUTPUT.
+# Why: A multi-line value needs the delimiter form.
+# From: Issue #479, PR #544
+_ci_output() {
+    : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
+    local delim
+    if [ $(( $# % 2 )) -ne 0 ]; then
+        ci_log "[CI-ERROR-CORE-0004]" "_ci_output needs name/value pairs, got $#"
+        return 2
+    fi
+    while [ "$#" -gt 0 ]; do
+        case "$2" in
+            *$'\n'*)
+                delim="ci_eof_${RANDOM}${RANDOM}"
+                printf '%s<<%s\n%s\n%s\n' "$1" "${delim}" "$2" "${delim}" >> "${GITHUB_OUTPUT}" || return 1 ;;
+            *)
+                printf '%s=%s\n' "$1" "$2" >> "${GITHUB_OUTPUT}" || return 1 ;;
+        esac
+        shift 2
+    done
+}
+
+# What: Offer files for upload as one SOT artifact kind.
+# Why: upload-artifact only transports; ci.sh picks the files.
+# From: Issue #267, Issue #479, PR #370, PR #544
+_ci_artifact_offer() {
+    local kind="$1" suffix="$2" name days f
+    shift 2
+    name="$(_ci_sot_scalar "ci_engine.artifacts.${kind}.name")" || return 2
+    days="$(_ci_sot_scalar "ci_engine.artifacts.${kind}.retention_days")" || return 2
+    if [ "$#" -eq 0 ]; then
+        ci_log "[CI-ERROR-ARTIFACT-0001]" "kind=${kind} offers no files"
+        return 2
+    fi
+    for f in "$@"; do
+        if [ ! -e "${f}" ]; then
+            ci_log "[CI-ERROR-ARTIFACT-0002]" "kind=${kind} file missing: ${f}"
+            return 1
+        fi
+    done
+    _ci_output artifact_name "${name}${suffix:+-${suffix}}" \
+        artifact_path "$(printf '%s\n' "$@")" \
+        artifact_retention_days "${days}" artifact_if_missing error
+}
+
 # What: Write available=true|false from SECRET_VALUE.
 # Why: GitHub forbids the secrets context inside an if:.
 # From: Issue #479, PR #329
 _ci_variables_secret_present() {
-    : "${GITHUB_OUTPUT:?GITHUB_OUTPUT required}"
     if [ -n "${SECRET_VALUE:-}" ]; then
-        echo "available=true" >> "${GITHUB_OUTPUT}"
+        _ci_output available true
     else
-        echo "available=false" >> "${GITHUB_OUTPUT}"
+        _ci_output available false
     fi
 }
 
@@ -2708,22 +2747,48 @@ _ci_dockerfile_pins() {
     ' "$1"
 }
 
-# What: Fail on any image or action pin outside the SOT.
-# Why: The SOT is the sole pin owner; ci.sh passes its pins.
+# What: Print each SOT action as its exact uses: value.
+# Why: uses: takes no expression; YAML repeats this literal.
+# From: Issue #479, PR #544
+_ci_action_pins() {
+    local names a uses ver
+    names="$(_ci_sot_children ci_engine.actions)" || return 2
+    for a in ${names}; do
+        uses="$(_ci_sot_scalar "ci_engine.actions.${a}.uses")" || return 2
+        ver="$(_ci_sot_scalar "ci_engine.actions.${a}.version")" || return 2
+        printf '%s # %s\n' "${uses}" "${ver}"
+    done
+}
+
+# What: Fail on a pin outside the SOT or an unused SOT action.
+# Why: The SOT is the sole pin owner; uses: lines mirror it.
 # From: Issue #479, PR #544
 ci_guard_pins_in_sot() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out line kind ref
-    local files=()
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out line text kind ref pins pin
+    local files=() wfs=()
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
+        wfs+=("${f}")
         out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^ {4,}(image|container):' "${f}")" \
             || [ "$?" -eq 1 ] || return 2
-        while IFS=: read -r line _; do
+        while IFS=: read -r line text; do
             [ -n "${line}" ] || continue
+            # What: uses: lines belong to the orchestrator guard.
+            # Why: It matches each one against the SOT action pins.
+            # From: Issue #479, PR #544
+            [[ "${text}" =~ ^[[:space:]]*(-[[:space:]]+)?uses: ]] && continue
             rc=1
             ci_log "[CI-ERROR-GUARD-PIN-0001]" "${f}:${line}: image or action pin outside the SOT"
         done <<< "${out}"
     done
+    pins="$(_ci_action_pins)" || return 2
+    while IFS= read -r pin; do
+        [ -n "${pin}" ] || continue
+        if [ "${#wfs[@]}" -eq 0 ] || ! grep -qF -- "uses: ${pin}" "${wfs[@]}"; then
+            rc=1
+            ci_log "[CI-ERROR-GUARD-PIN-0003]" "SOT action ${pin} is used by no workflow"
+        fi
+    done <<< "${pins}"
     mapfile -t files < <(find "${root}" -name Dockerfile -type f -not -path '*/.git/*')
     for f in "${files[@]}"; do
         out="$(_ci_dockerfile_pins "${f}")" || return 2
@@ -2736,13 +2801,36 @@ ci_guard_pins_in_sot() {
     return "${rc}"
 }
 
-# What: Print orchestrator violations in run: blocks.
-# Why: A run: step may call exactly one ci.sh command.
-# From: Issue #479
+# What: Print orchestrator violations in run: and uses: steps.
+# Why: run: calls one ci.sh command; uses: only transports.
+# From: Issue #479, PR #544
 _ci_scan_run_blocks() {
-    awk -v F="$1" '
+    awk -v F="$1" -v allowed="$2" '
         function flag(r){ print F":"NR": "r }
-        /^[ ]*(- )?uses:[ ]/ { flag("uses: step (only ci.sh may run)"); next }
+        BEGIN { n = split(allowed, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") ok[a[i]] = 1 }
+        /^[ ]*(- )?uses:[ ]/ {
+            match($0, /^[ ]*(- )?/); uind = RLENGTH
+            ref = $0; sub(/^[ ]*(- )?uses:[ ]+/, "", ref); sub(/[ ]+$/, "", ref)
+            if (!(ref in ok)) flag("uses: " ref " is not an SOT action pin")
+            instep = 1; inwith = 0; inrun = 0; next
+        }
+        instep && $0 !~ /^[ ]*$/ {
+            match($0, /^[ ]*/); ind = RLENGTH
+            if (ind < uind || $0 ~ /^[ ]*- /) { instep = 0; inwith = 0 }
+            else if (ind == uind) { inwith = ($0 ~ /^[ ]*with:[ ]*$/); next }
+            else if (inwith) {
+                # What: A uses: input must forward one ci.sh output.
+                # Why: Keys, paths and names are ci.sh decisions.
+                # From: Issue #479, PR #544
+                v = $0; sub(/^[ ]*[A-Za-z0-9_-]+:[ ]*/, "", v)
+                mid = substr(v, 11, length(v) - 13)
+                if (substr(v, 1, 10) != "${{ steps." || substr(v, length(v) - 2) != " }}" \
+                    || mid !~ /^[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+$/)
+                    flag("uses: input is not a ci.sh step output: " v)
+                next
+            }
+            else next
+        }
         { match($0,/^[ ]*/); ind=RLENGTH
           if (inrun && $0 !~ /^[ ]*$/ && ind <= runind) inrun=0
           if ($0 ~ /^[ ]*(- )?run:[ ]*[|>]/) { inrun=1; runind=ind; next }
@@ -2769,18 +2857,20 @@ _ci_scan_run_blocks() {
     ' "$1"
 }
 
-# What: Fail if a workflow run: block holds inline logic.
+# What: Fail on step logic or an action outside the SOT.
 # Why: Logic belongs in ci.sh; workflows only orchestrate.
-# From: Issue #479
+# From: Issue #479, PR #544
 ci_guard_orchestrator_only() {
-    local rc=0 f hit
+    local rc=0 f hit pins out
+    pins="$(_ci_action_pins)" || return 2
     for f in "$@"; do
         [ -f "${f}" ] || continue
+        out="$(_ci_scan_run_blocks "${f}" "${pins}")" || return 2
         while IFS= read -r hit; do
             [ -n "${hit}" ] || continue
             rc=1
             ci_log "[CI-ERROR-GUARD-ORCH-0001]" "${hit}"
-        done < <(_ci_scan_run_blocks "${f}")
+        done <<< "${out}"
     done
     return "${rc}"
 }
@@ -3319,8 +3409,13 @@ ci_cmd_scorecard_scan() {
     bin="$(_ci_tool_bin external_versions.scorecard)" || return 2
     json="${RUNNER_TEMP:-/tmp}/scorecard-results.json"
     "${bin}" --repo="github.com/${GITHUB_REPOSITORY}" \
-        --format=json --show-details > "${json}"
-    _ci_scorecard_json_to_sarif < "${json}" > "${out}"
+        --format=json --show-details > "${json}" || return 1
+    _ci_scorecard_json_to_sarif < "${json}" > "${out}" || return 1
+    case "${out}" in
+        /*) ;;
+        *) out="${PWD}/${out}" ;;
+    esac
+    _ci_artifact_offer scorecard "" "${out}"
 }
 
 # What: Scan the repo with OSV-Scanner, writing a SARIF file.
@@ -3404,6 +3499,13 @@ _ci_osv_vulns() {
     jq -r '[.results[]?.packages[]?.vulnerabilities[]?.id] | unique | .[]' "${json}"
 }
 
+# What: Print the ClusterFuzzLite workspace directory.
+# Why: The run and the crash offer must read the same tree.
+# From: Issue #267, Issue #479, PR #544
+_ci_cfl_workspace() {
+    printf '%s\n' "${RUNNER_TEMP:-/tmp}/cfl-workspace"
+}
+
 # What: Run a ClusterFuzzLite step image; CFL options only.
 # Why: CFL runs docker itself; --volumes-from needs our name.
 # From: Issue #267, Issue #479, PR #544
@@ -3414,7 +3516,7 @@ _ci_cfl_run() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     repo="${GITHUB_REPOSITORY#*/}"
     name="$(_ci_run_name "cfl-${step}")"
-    work="${RUNNER_TEMP:-/tmp}/cfl-workspace"
+    work="$(_ci_cfl_workspace)"
     mkdir -p "${work}" || return 1
     # What: CFL reads the checkout from PROJECT_SRC_PATH.
     # Why: Standalone mode has no other source; unset is None.
@@ -3441,8 +3543,20 @@ ci_cmd_clusterfuzzlite_build() {
 # From: Issue #267, Issue #479
 ci_cmd_clusterfuzzlite_run() {
     local sanitizer="${1:-address}" fuzz_seconds="${2:-300}" mode="${3:-code-change}"
+    local rc=0 crashes found
     _ci_cfl_run run -e "SANITIZER=${sanitizer}" -e "FUZZ_SECONDS=${fuzz_seconds}" \
-        -e "MODE=${mode}" -e OUTPUT_SARIF=true
+        -e "MODE=${mode}" -e OUTPUT_SARIF=true || rc=$?
+    # What: Offer the crash reproducers CFL left in its workspace.
+    # Why: A crash fails this step; the upload still needs them.
+    # From: Issue #267, Issue #479, PR #544
+    crashes="$(_ci_cfl_workspace)/out/artifacts"
+    if [ -d "${crashes}" ]; then
+        found="$(find "${crashes}" -mindepth 1 -print -quit)" || return 1
+        if [ -n "${found}" ]; then
+            _ci_artifact_offer cfl_crashes "${sanitizer}" "${crashes}" || return 1
+        fi
+    fi
+    return "${rc}"
 }
 
 # =========================================================
@@ -3532,6 +3646,36 @@ _ci_popt_cve_fingerprint_check() {
     return "${rc}"
 }
 
+# What: Succeed if a variant compiles through ccache.
+# Why: Build and cache plan must name the same variants.
+# From: Issue #54, Issue #479, PR #544
+_ci_variant_ccache() {
+    [ "$1" = "default" ]
+}
+
+# What: Write the compile-cache path, key and restore keys.
+# Why: actions/cache only transports; ci.sh owns the policy.
+# From: Issue #54, Issue #362, Issue #479, PR #166, PR #544
+ci_cmd_cache() {
+    local variant="${1:?variant required}" dir sum scope
+    if ! _ci_variant_ccache "${variant}"; then
+        ci_log "[CI-CACHE]" "variant=${variant} has no compile cache"
+        return 0
+    fi
+    : "${RUNNER_OS:?RUNNER_OS required}" "${RUNNER_ARCH:?RUNNER_ARCH required}"
+    : "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
+    cd "${CI_REPO_ROOT}" || return 1
+    dir="$(ccache --get-config cache_dir)" || return 1
+    # What: Key on the autoconf inputs plus the run id.
+    # Why: A key is never overwritten; restore takes the newest.
+    # From: Issue #54, Issue #362, PR #166
+    sum="$(git ls-tree HEAD -- configure.ac m4 | git hash-object --stdin)" || return 1
+    scope="build-${RUNNER_OS}-${RUNNER_ARCH}"
+    _ci_output path "${dir}"$'\n'"${CI_REPO_ROOT}/autom4te.cache" \
+        key "${scope}-${sum}-${GITHUB_RUN_ID}" \
+        restore_keys "${scope}-${sum}-"$'\n'"${scope}-"
+}
+
 # What: Build one configure variant from the SOT matrix.
 # Why: Variants differ only in configure; warnings fail.
 # From: Issue #479
@@ -3540,11 +3684,14 @@ ci_cmd_build() {
     local flags=()
     log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
     py="$(command -v python3)" || return 1
+    # What: Use ccache only where the job installed it.
+    # Why: CodeQL's build has none; a cache hit would hide code.
+    # From: Issue #54, Issue #479, PR #544
+    if _ci_variant_ccache "${variant}" && command -v ccache >/dev/null 2>&1; then
+        cc="$(command -v ccache) cc"
+    fi
     case "${variant}" in
         default)
-            if command -v ccache >/dev/null 2>&1; then
-                cc="$(command -v ccache) cc"
-            fi
             flags=(CC="${cc}" PYTHON="$(command -v python3.13 || command -v python3)") ;;
         popt-fallback) flags=(PYTHON="${py}") ;;
         popt-vendor) flags=(--without-system-popt PYTHON="${py}") ;;
@@ -3568,6 +3715,9 @@ ci_cmd_build() {
             return ;;
     esac
     _ci_make_gated "${log}" || return 1
+    if [ "${cc}" != "cc" ]; then
+        ccache --show-stats || return 1
+    fi
     if [ "${variant}" = "popt-fallback" ]; then
         _ci_popt_fallback_smoke_test || return 1
     fi
@@ -3665,16 +3815,17 @@ _ci_coverage_lcov() {
     lcov --list coverage.info --rc branch_coverage=1
 }
 
-# What: Report include_server/*.py coverage from the run.
-# Why: lcov alone hides Python's coverage.
-# From: Issue #479
-_ci_coverage_python_report() {
-    python3-coverage report --include="${CI_REPO_ROOT}/include_server/*"
+# What: Run python3-coverage on include_server's data file.
+# Why: make check runs those tests from include_server/.
+# From: Issue #479, PR #370, PR #544
+_ci_coverage_python() {
+    python3-coverage "$@" --data-file="${CI_REPO_ROOT}/include_server/.coverage" \
+        --include="${CI_REPO_ROOT}/include_server/*"
 }
 
 # What: Append C+Python coverage to the job summary.
-# Why: No artifact upload; summary page is the readout.
-# From: Issue #479
+# Why: The run page shows coverage without a download.
+# From: Issue #479, PR #370
 _ci_coverage_step_summary() {
     [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
     local fence
@@ -3683,7 +3834,7 @@ _ci_coverage_step_summary() {
         printf '## Coverage summary\n\n### C (lcov)\n%s\n' "${fence}"
         lcov --list coverage.info --rc branch_coverage=1
         printf '%s\n\n### Python (include_server)\n%s\n' "${fence}" "${fence}"
-        _ci_coverage_python_report
+        _ci_coverage_python report
         printf '%s\n' "${fence}"
     } >> "${GITHUB_STEP_SUMMARY}"
 }
@@ -3725,8 +3876,11 @@ ci_cmd_test() {
         default|coverage) _ci_privileged_single_test || return 1 ;;
     esac
     if [ "${variant}" = "coverage" ]; then
-        _ci_coverage_lcov
-        _ci_coverage_step_summary
+        _ci_coverage_lcov || return 1
+        _ci_coverage_python xml -o "${CI_REPO_ROOT}/coverage-python.xml" || return 1
+        _ci_coverage_step_summary || return 1
+        _ci_artifact_offer coverage "" "${CI_REPO_ROOT}/coverage.info" \
+            "${CI_REPO_ROOT}/coverage-python.xml" || return 1
     fi
     return 0
 }
@@ -3753,6 +3907,7 @@ ci_main() {
                 impact-hit) ci_cmd_impact_hit "$@" ;;
                 plan) ci_cmd_plan "$@" ;;
                 build) ci_cmd_build "$@" ;;
+                cache) ci_cmd_cache "$@" ;;
                 test) ci_cmd_test "$@" ;;
                 e2e) ci_cmd_e2e "$@" ;;
                 selftest) ci_cmd_selftest "$@" ;;

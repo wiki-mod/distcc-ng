@@ -90,8 +90,12 @@ dependencies (raised by issue #267's OSSF Scorecard/Baseline review,
 criterion `OSPS-DO-06.01`).
 
 - **CI container images and CI tools** are the one category of dependency
-  with automated update tooling. The workflows use no third-party actions;
-  every image and tool is pinned in `.github/yaml/build-manifest.yml`:
+  with automated update tooling. The only third-party actions are
+  `actions/cache` and `actions/upload-artifact`, pinned by commit SHA in
+  `ci_engine.actions` and mirrored literally in the workflows;
+  `.github/dependabot.yml` proposes their bumps weekly, because
+  `GITHUB_TOKEN` cannot edit workflow files. Every image and tool is
+  pinned in `.github/yaml/build-manifest.yml`:
   images as `name:tag@sha256:<digest>` (the tag is the tracked channel),
   tools as a release version plus the sha256 of the downloaded asset, which
   `ci.sh` checks on every fetch. `housekeeping.yml` runs `ci.sh sot-update`

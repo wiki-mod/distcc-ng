@@ -97,6 +97,16 @@ jobs:
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
+      - id: cache
+        env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh cache "$VARIANT"
+      - if: steps.cache.outputs.key != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
+          restore-keys: ${{ steps.cache.outputs.restore_keys }}
       - env:
           VARIANT: default
         run: bash .github/scripts/ci.sh build "$VARIANT"

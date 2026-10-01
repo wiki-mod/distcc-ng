@@ -36,10 +36,48 @@ in `build-manifest.yml` (`external_versions.harden_runner_agent`), policy and
 endpoints in its `harden_runner` section. On runners the agent does not
 support (arm64, non-Linux) both steps log `NotRun` with the reason.
 
-**No composite or marketplace actions**: workflows contain no `uses:` step
-at all (enforced by `ci_guard_orchestrator_only`). All shared logic,
+**Transport-only actions, no composite actions**: the only `uses:` steps
+are `actions/cache` and `actions/upload-artifact`. The cache and artifact
+services need the Actions runtime token, which the runner passes to
+JavaScript and container actions but never to a `run:` step, so `ci.sh`
+cannot reach them itself. Both pins live in `build-manifest.yml`
+(`ci_engine.actions`). Because `uses:` takes no expression, each workflow
+repeats the exact `<repo>@<sha> # <version>` literal. `ci_guard_orchestrator_only`
+fails on any `uses:` line that is not such a literal, and on any `with:`
+input that does not forward a `${{ steps.<id>.outputs.<name> }}` value.
+`ci_guard_pins_in_sot` fails on a SOT action that no workflow uses. Every
+decision (cache path, key and restore keys; artifact name, files and
+retention) comes from a `ci.sh` step output. All other shared logic,
 including labeler rules, project-board add, standing-issue reporting,
 apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`.
+
+**Compile cache**: every job that builds the `default` variant (the
+`validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)
+runs `ci.sh cache default` first, and `actions/cache` restores and saves
+ccache's own `cache_dir` plus `autom4te.cache` under one key:
+`build-<os>-<arch>-<autoconf inputs>-<run id>`. Restore takes the newest
+entry with the same `configure.ac`/`m4/` content, else the newest for the
+platform. A stale entry only makes the build slower: ccache is
+content-addressed and autom4te invalidates a stale trace itself.
+`config.cache` is never cached. The CodeQL build installs no ccache and
+gets no cache, since a ccache hit would skip a compile CodeQL must trace.
+No cache step runs in a job reachable from `pull_request_target`
+(`plan` excludes that event), so a pull request cannot seed a cache that
+base-branch runs restore.
+
+**Artifacts**: the `coverage` leg uploads `coverage.info` and
+`coverage-python.xml` (`coverage-reports`, 90 days), ClusterFuzzLite
+uploads any crash reproducers even when the fuzz step fails
+(`cfl-crashes-<sanitizer>`, 90 days), and Scorecard uploads its SARIF
+(`scorecard-results`, 5 days). Names and retention live in
+`ci_engine.artifacts`.
+
+**Action pin updates**: `GITHUB_TOKEN` cannot be granted the `workflows`
+permission that editing `.github/workflows/` requires, so `sot-update`
+cannot move these pins. `.github/dependabot.yml` bumps them weekly
+instead. A Dependabot pull request changes only the YAML literal, so the
+lint guards fail until its reviewer updates `ci_engine.actions` in the
+same pull request (`AGENTS.md` `[AG-VAL-007]` review).
 
 **GHCR image namespace** -- four published package names, no tag overlap:
 
@@ -109,4 +147,6 @@ changed workflow file has been promoted to `master`. This includes
 `ci.sh sot-update`'s own `gh workflow run` of `validate.yml` and
 `security.yml` on its update branch: until those files exist on `master`,
 that dispatch returns 404 and the `sot_update` job fails instead of
-leaving an untested pull request behind.
+leaving an untested pull request behind. Dependabot likewise reads
+`.github/dependabot.yml` only from the default branch, so `master`'s copy
+stays the active configuration until the release promotes this one.

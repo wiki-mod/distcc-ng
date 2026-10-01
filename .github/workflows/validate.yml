@@ -112,12 +112,30 @@ jobs:
         env:
           BREW_PACKAGES: ${{ matrix.brew }}
         run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
+      - id: cache
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh cache "$VARIANT"
+      - if: steps.cache.outputs.key != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
+          restore-keys: ${{ steps.cache.outputs.restore_keys }}
       - env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"
-      - env:
+      - id: test
+        env:
           VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: steps.test.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.test.outputs.artifact_name }}
+          path: ${{ steps.test.outputs.artifact_path }}
+          retention-days: ${{ steps.test.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.test.outputs.artifact_if_missing }}
       - if: matrix.variant == 'default' && runner.os == 'Linux'
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,26 @@
+# What: Weekly bumps of the workflow uses: action pins.
+# Why: sot-update's GITHUB_TOKEN cannot edit workflows.
+# From: Issue #479, PR #544
+version: 2
+updates:
+  # What: One entry per branch Dependabot opens PRs against.
+  # Why: master and current_dev both carry the workflows.
+  # From: Issue #479, PR #544
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: master
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [dependencies, no-changelog-needed]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: current_dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [dependencies, no-changelog-needed]

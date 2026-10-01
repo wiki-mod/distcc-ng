@@ -298,6 +298,29 @@ verify:
 ci_engine:
   selftest_apt: "bats parallel"
   dependency_bots: ["dependabot[bot]", "github-actions[bot]"]
+  # What: The only actions a workflow may use; transport only.
+  # Why: Cache/artifact APIs need a token run: steps never get.
+  # From: Issue #479, PR #544
+  actions:
+    cache:
+      uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+      version: "v6.1.0"
+    upload_artifact:
+      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+      version: "v7.0.1"
+  # What: Upload name and retention days per artifact kind.
+  # Why: ci.sh picks the files; these reports outlive the run.
+  # From: Issue #267, Issue #479, PR #370, PR #544
+  artifacts:
+    coverage:
+      name: "coverage-reports"
+      retention_days: "90"
+    cfl_crashes:
+      name: "cfl-crashes"
+      retention_days: "90"
+    scorecard:
+      name: "scorecard-results"
+      retention_days: "5"
 
 # What: GHCR prune policy applied by ci.sh gc.
 # Why: Keeps a rollback set; only whole series groups age out.

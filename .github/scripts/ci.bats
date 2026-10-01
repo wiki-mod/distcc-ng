@@ -22,6 +22,17 @@ _fixture_manifest() {
     printf '%s\n' "$@" > "${CI_MANIFEST}"
 }
 
+# What: Fixture SOT with one action; FX_PIN is its pin.
+# Why: Guard tests must not copy the real SOT action pins.
+# From: Issue #479, PR #544
+_fixture_actions() {
+    local sha
+    sha="$(printf 'a%.0s' {1..40})"
+    _fixture_manifest 'ci_engine:' '  actions:' '    a:' "      uses: \"o/a@${sha}\"" '      version: "v1"' \
+        '  artifacts:' '    k:' '      name: "kind"' '      retention_days: "7"'
+    FX_PIN="o/a@${sha} # v1"
+}
+
 # What: Make each named command fail loudly if it is run.
 # Why: Proves a fail-closed path stops before any side effect.
 # From: Issue #479, PR #544
@@ -555,6 +566,131 @@ _forbid() {
     [ "${lines[1]}" = "available=false" ]
 }
 
+@test "output writer uses the delimiter form for multi-line values" {
+    # What: One-line pairs stay k=v; multi-line ones get k<<EOF.
+    # Why: A newline in k=v would end the value early.
+    # From: Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    GITHUB_OUTPUT="${out}" _ci_output a 1 b $'x\ny'
+    run cat "${out}"
+    [ "${lines[0]}" = "a=1" ]
+    [[ "${lines[1]}" == "b<<ci_eof_"* ]]
+    [ "${lines[2]}" = "x" ]
+    [ "${lines[3]}" = "y" ]
+    [ "${lines[4]}" = "${lines[1]#b<<}" ]
+}
+
+@test "output writer fails closed on an odd argument count" {
+    # What: A name without a value is a caller bug.
+    # Why: Writing half a pair would shift every later output.
+    # From: Issue #479, PR #544
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_output a 1 b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CORE-0004"* ]]
+}
+
+@test "artifact offer writes SOT name, files and retention" {
+    # What: The offer emits every upload-artifact input.
+    # Why: The workflow step only forwards these outputs.
+    # From: Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out" f1="${BATS_TEST_TMPDIR}/f1" f2="${BATS_TEST_TMPDIR}/f2"
+    _fixture_actions
+    : > "${f1}"; : > "${f2}"
+    GITHUB_OUTPUT="${out}" _ci_artifact_offer k address "${f1}" "${f2}"
+    run cat "${out}"
+    [ "${lines[0]}" = "artifact_name=kind-address" ]
+    [ "${lines[2]}" = "${f1}" ]
+    [ "${lines[3]}" = "${f2}" ]
+    [ "${lines[5]}" = "artifact_retention_days=7" ]
+    [ "${lines[6]}" = "artifact_if_missing=error" ]
+}
+
+@test "artifact offer fails closed on a missing or empty file set" {
+    # What: No files or a missing file is an error, not a skip.
+    # Why: An upload of nothing would hide a lost report.
+    # From: Issue #479, PR #544
+    _fixture_actions
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_artifact_offer k ""
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-ARTIFACT-0001"* ]]
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_artifact_offer k "" "${BATS_TEST_TMPDIR}/none"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-ARTIFACT-0002"* ]]
+    [ ! -s "${BATS_TEST_TMPDIR}/out" ]
+}
+
+@test "cache plan keys default on OS, arch, autoconf inputs, run" {
+    # What: Only configure.ac or m4/ changes move the input hash.
+    # Why: A key is never overwritten; restore takes the newest.
+    # From: Issue #54, Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out" sum1 sum2
+    CI_REPO_ROOT="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "${CI_REPO_ROOT}/m4"
+    git -C "${CI_REPO_ROOT}" init -q
+    echo a > "${CI_REPO_ROOT}/configure.ac"; echo b > "${CI_REPO_ROOT}/m4/x.m4"; echo c > "${CI_REPO_ROOT}/README"
+    git -C "${CI_REPO_ROOT}" add -A
+    git -C "${CI_REPO_ROOT}" -c user.name=t -c user.email=t@t commit -q -m one
+    ccache() { [ "$*" = "--get-config cache_dir" ] && echo /c/dir; }
+    GITHUB_OUTPUT="${out}" RUNNER_OS=Linux RUNNER_ARCH=X64 GITHUB_RUN_ID=7 ci_cmd_cache default
+    sum1="$(sed -n 's/^key=build-Linux-X64-\(.*\)-7$/\1/p' "${out}")"
+    [ -n "${sum1}" ]
+    echo d > "${CI_REPO_ROOT}/README"
+    git -C "${CI_REPO_ROOT}" -c user.name=t -c user.email=t@t commit -q -am two
+    GITHUB_OUTPUT="${out}.2" RUNNER_OS=Linux RUNNER_ARCH=X64 GITHUB_RUN_ID=7 ci_cmd_cache default
+    grep -qx "key=build-Linux-X64-${sum1}-7" "${out}.2"
+    echo e > "${CI_REPO_ROOT}/m4/x.m4"
+    git -C "${CI_REPO_ROOT}" -c user.name=t -c user.email=t@t commit -q -am three
+    GITHUB_OUTPUT="${out}.3" RUNNER_OS=Linux RUNNER_ARCH=X64 GITHUB_RUN_ID=7 ci_cmd_cache default
+    sum2="$(sed -n 's/^key=build-Linux-X64-\(.*\)-7$/\1/p' "${out}.3")"
+    [ -n "${sum2}" ] && [ "${sum2}" != "${sum1}" ]
+    run cat "${out}"
+    [ "${lines[1]}" = "/c/dir" ]
+    [ "${lines[2]}" = "${CI_REPO_ROOT}/autom4te.cache" ]
+    [ "${lines[4]}" = "key=build-Linux-X64-${sum1}-7" ]
+    [ "${lines[6]}" = "build-Linux-X64-${sum1}-" ]
+    [ "${lines[7]}" = "build-Linux-X64-" ]
+}
+
+@test "CFL run offers crash reproducers and keeps its exit code" {
+    # What: A failed run with crashes offers them, still failing.
+    # Why: The upload step runs after the failure via always().
+    # From: Issue #267, Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
+    _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"'
+    _ci_cfl_run() { return 1; }
+    mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x"
+    : > "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x/crash-1"
+    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address 1 batch
+    [ "${status}" -eq 1 ]
+    grep -qx 'artifact_name=cfl-crashes-address' "${out}"
+    grep -qx "artifact_path=${RUNNER_TEMP}/cfl-workspace/out/artifacts" "${out}"
+}
+
+@test "CFL run without crashes offers nothing and passes rc" {
+    # What: An empty artifacts dir yields no upload outputs.
+    # Why: No reproducer means no artifact; rc is never masked.
+    # From: Issue #267, Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
+    _ci_cfl_run() { return 3; }
+    mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
+    GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address 1 batch
+    [ "${status}" -eq 3 ]
+    [ ! -e "${out}" ]
+}
+
+@test "cache plan writes nothing for a variant without ccache" {
+    # What: Non-ccache variants get no key, so no cache step runs.
+    # Why: Build and cache must agree on the ccache variants.
+    # From: Issue #54, Issue #479, PR #544
+    local out="${BATS_TEST_TMPDIR}/out"
+    _forbid ccache
+    GITHUB_OUTPUT="${out}" run ci_cmd_cache coverage
+    [ "${status}" -eq 0 ]
+    [ ! -e "${out}" ]
+}
+
 @test "BR-01 flags only a ref-taking checkout in a target workflow" {
     # What: pull_request_target plus checkout of a ref is NotMet.
     # Why: Base-SHA checkouts run no PR code; a head ref does.
@@ -874,9 +1010,11 @@ _forbid() {
     # Why: None of them can pull an image the SOT did not pin.
     # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
+    _fixture_actions
     mkdir -p "${fx}/d" "${fx}/.github/workflows"
     printf '%s\n' 'ARG BASE' 'FROM ${BASE} AS one' 'FROM one AS two' 'FROM x-y:local' > "${fx}/d/Dockerfile"
-    printf '%s\n' 'jobs:' '  container:' '    steps:' '      - run: bash .github/scripts/ci.sh build' > "${fx}/.github/workflows/w.yml"
+    printf '%s\n' 'jobs:' '  container:' '    steps:' '      - run: bash .github/scripts/ci.sh build' \
+        "      - uses: ${FX_PIN}" > "${fx}/.github/workflows/w.yml"
     run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 0 ]
 }
@@ -887,9 +1025,11 @@ _forbid() {
     # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" d
     d="$(printf 'a%.0s' {1..64})"
+    _fixture_actions
     mkdir -p "${fx}/d" "${fx}/.github/workflows"
     printf '%s\n' "ARG BASE=debian@sha256:${d}" 'FROM debian:trixie' 'FROM --platform=linux/amd64 golang:1' > "${fx}/d/Dockerfile"
-    printf '%s\n' "      - uses: foo/bar@$(printf 'b%.0s' {1..40})" '    container: debian:13' > "${fx}/.github/workflows/w.yml"
+    printf '%s\n' "        image: foo/bar@sha256:${d}" '    container: debian:13' "      - uses: ${FX_PIN}" \
+        > "${fx}/.github/workflows/w.yml"
     run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"d/Dockerfile:1: digest"* ]]
@@ -898,6 +1038,20 @@ _forbid() {
     [[ "${output}" == *"d/Dockerfile:3: from golang:1"* ]]
     [[ "${output}" == *"w.yml:1: image or action pin"* ]]
     [[ "${output}" == *"w.yml:2: image or action pin"* ]]
+    [[ "${output}" != *"w.yml:3:"* ]]
+}
+
+@test "pin guard fails closed on a SOT action no workflow uses" {
+    # What: A SOT action pin absent from every workflow fails.
+    # Why: Dependabot bumps only YAML; an unused pin goes stale.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    _fixture_actions
+    mkdir -p "${fx}/.github/workflows"
+    printf '%s\n' '      - run: bash .github/scripts/ci.sh build' > "${fx}/.github/workflows/w.yml"
+    run ci_guard_pins_in_sot "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-PIN-0003"*"${FX_PIN}"* ]]
 }
 
 @test "the CFL Dockerfile FROM is the SOT base-builder tag" {
@@ -941,15 +1095,47 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
 }
 
-@test "orchestrator guard fails closed on any uses: step" {
-    # What: A composite or marketplace uses: step is rejected.
-    # Why: #479: workflows only invoke ci.sh, no actions at all.
+@test "orchestrator guard passes a SOT action fed by step outputs" {
+    # What: An exact SOT pin whose inputs forward outputs passes.
+    # Why: Transport-only actions are the one allowed uses: form.
     # From: Issue #479, PR #544
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
-    printf 'jobs:\n  x:\n    steps:\n      - uses: ./.github/actions/foo\n' > "${fx}/wf.yml"
+    _fixture_actions
+    printf '%s\n' 'jobs:' '  x:' '    steps:' '      - run: |' '          bash .github/scripts/ci.sh cache default' \
+        "      - if: steps.c.outputs.key != ''" "        uses: ${FX_PIN}" '        with:' \
+        '          path: ${{ steps.c.outputs.path }}' '          restore-keys: ${{ steps.c.outputs.restore_keys }}' \
+        '        env:' '          A: b' '      - run: bash .github/scripts/ci.sh build' > "${fx}/wf.yml"
+    run ci_guard_orchestrator_only "${fx}/wf.yml"
+    [ "${status}" -eq 0 ]
+}
+
+@test "orchestrator guard fails closed on a uses: outside the SOT" {
+    # What: Local, tag-ref and wrong-SHA uses: lines all fail.
+    # Why: Only the exact SOT literal may run an action.
+    # From: Issue #479, PR #544
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
+    _fixture_actions
+    printf '%s\n' 'jobs:' '  x:' '    steps:' '      - uses: ./.github/actions/foo' '      - uses: o/a@v1' \
+        "      - uses: o/a@$(printf 'b%.0s' {1..40}) # v1" > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"uses: step"* ]]
+    [[ "${output}" == *"wf.yml:4: uses: ./.github/actions/foo is not an SOT action pin"* ]]
+    [[ "${output}" == *"wf.yml:5: uses: o/a@v1 is not an SOT action pin"* ]]
+    [[ "${output}" == *"wf.yml:6: uses: o/a@bbbb"* ]]
+}
+
+@test "orchestrator guard fails closed on a decided uses: input" {
+    # What: A literal or computed with: input is rejected.
+    # Why: Keys, paths and names are ci.sh decisions, not YAML.
+    # From: Issue #479, PR #544
+    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
+    _fixture_actions
+    printf '%s\n' 'jobs:' '  x:' '    steps:' "      - uses: ${FX_PIN}" '        with:' '          path: ~/.ccache' \
+        "          key: ccache-\${{ github.run_id }}" > "${fx}/wf.yml"
+    run ci_guard_orchestrator_only "${fx}/wf.yml"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"wf.yml:6: uses: input is not a ci.sh step output: ~/.ccache"* ]]
+    [[ "${output}" == *"wf.yml:7: uses: input is not a ci.sh step output"* ]]
 }
 
 # =========================================================

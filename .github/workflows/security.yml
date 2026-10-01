@@ -73,9 +73,17 @@ jobs:
       id-token: write
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
-      - env:
+      - id: scorecard
+        env:
           GITHUB_AUTH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh scan scorecard results.sarif
+      - if: steps.scorecard.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.scorecard.outputs.artifact_name }}
+          path: ${{ steps.scorecard.outputs.artifact_path }}
+          retention-days: ${{ steps.scorecard.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.scorecard.outputs.artifact_if_missing }}
       - env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh scan sarif-upload results.sarif
@@ -100,8 +108,16 @@ jobs:
         name: Build fuzzers (${{ matrix.sanitizer }})
         run: bash .github/scripts/ci.sh scan clusterfuzzlite-build "${{ matrix.sanitizer }}"
       - if: github.event_name != 'pull_request' || steps.relevant.outputs.hit == 'true'
+        id: fuzz
         name: Run fuzzers (${{ matrix.sanitizer }})
         run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}" 300 code-change
+      - if: always() && steps.fuzz.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.fuzz.outputs.artifact_name }}
+          path: ${{ steps.fuzz.outputs.artifact_path }}
+          retention-days: ${{ steps.fuzz.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.fuzz.outputs.artifact_if_missing }}
 
   openssf:
     name: OpenSSF Baseline recheck
