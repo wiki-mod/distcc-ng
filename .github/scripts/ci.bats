@@ -743,6 +743,31 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+@test "apt retry first finishes a dpkg run the timeout cut off" {
+    # What: After a failed attempt, dpkg --configure -a runs.
+    # Why: A killed install leaves dpkg interrupted for the retry.
+    # From: Issue #493, Issue #479, PR #544
+    local log="${BATS_TEST_TMPDIR}/calls"
+    sudo() { "$@"; }
+    sleep() { :; }
+    timeout() {
+        shift 3
+        echo "$*" >> "${log}"
+        case "$*" in
+            *"dpkg --configure -a"*) [ -z "${DPKG_FAIL:-}" ] ;;
+            *) [ "$(grep -c 'apt-get' "${log}")" -ge 2 ] ;;
+        esac
+    }
+    run _ci_apt_install "p q"
+    [ "${status}" -eq 0 ]
+    [[ "$(sed -n 2p "${log}")" == *"dpkg --configure -a"* ]]
+    [ "$(grep -c 'apt-get' "${log}")" -eq 2 ]
+    : > "${log}"
+    DPKG_FAIL=1 run _ci_apt_install "p q"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-INSTALL-0004"* ]]
+}
+
 @test "make gate passes a clean build and fails on a warning" {
     # What: A compiler warning in make output fails the build.
     # Why: Warnings are errors (rule 31) on every tree build.

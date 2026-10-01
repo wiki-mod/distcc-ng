@@ -3289,6 +3289,13 @@ _ci_apt_install() {
             return 1
         fi
         ci_log "[CI-INSTALL-APT]" "attempt ${attempt} failed or timed out, retrying"
+        # What: Finish a dpkg run the timeout cut off mid-install.
+        # Why: Else every retry stops at "dpkg was interrupted".
+        # From: Issue #493, Issue #479, PR #544
+        if ! "${as_root[@]}" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+            ci_log "[CI-ERROR-INSTALL-0004]" "dpkg --configure -a failed after attempt ${attempt}"
+            return 1
+        fi
         attempt=$((attempt + 1))
         sleep 10
     done
