@@ -1255,7 +1255,7 @@ _ci_workload_samba() {
 _ci_workload_fuzz_build() {
     : "${CC:?CC required}" "${CXX:?CXX required}" "${OUT:?OUT required}"
     : "${LIB_FUZZING_ENGINE:?LIB_FUZZING_ENGINE required}"
-    local skip rename raw f base prefix sysconfdir datarootdir t lib
+    local skip rename raw f base prefix sysconfdir datarootdir t lib deps=()
     local cflags=() cxxflags=() engine=() libs=() defs=() extra=() objs=()
     read -ra cflags <<< "${CFLAGS:-}"
     read -ra cxxflags <<< "${CXXFLAGS:-}"
@@ -1300,11 +1300,12 @@ _ci_workload_fuzz_build() {
         # Why: The run image lacks them; a copied glibc crashes it.
         # From: Issue #267
         raw="$(ldd "${OUT}/$(basename "${t}" .c)")" || return 1
-        while read -r lib; do
+        _ci_mapfile deps awk "/=>/ {print \$3} !/=>/ {if (\$1 ~ /^\//) print \$1}" <<< "${raw}" || return 1
+        for lib in "${deps[@]}"; do
             case "$(basename "${lib}")" in
                 libavahi-*|libpopt.*) cp -L "${lib}" "${OUT}/" || return 1 ;;
             esac
-        done < <(awk '/=>/ {print $3} !/=>/ {if ($1 ~ /^\//) print $1}' <<< "${raw}")
+        done
     done
 }
 
@@ -3233,13 +3234,14 @@ ci_guard_comment_format() {
 # Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
 ci_guard_full_sha() {
-    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit hits
+    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit hits bad=()
     hits="$(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}")" || [ "$?" -eq 1 ] || return 2
-    while IFS= read -r hit; do
+    _ci_mapfile bad awk -F: "length(\$2) != 64 || \$2 ~ /[A-F]/ { print }" <<< "${hits}" || return 2
+    for hit in "${bad[@]}"; do
         [ -n "${hit}" ] || continue
         rc=1
         ci_log "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: ${hit}"
-    done < <(awk -F: 'length($2) != 64 || $2 ~ /[A-F]/ { print }' <<< "${hits}")
+    done
     return "${rc}"
 }
 
