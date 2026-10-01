@@ -466,6 +466,22 @@ _forbid() {
     [[ "${output}" == *"skipped: no release_notes"* ]]
 }
 
+@test "changelog plan says insert only when the event has notes" {
+    # What: Pre-release and note-less dispatch plan insert=false.
+    # Why: The write token step must not run without a section.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
+    printf '{"release":{"prerelease":false,"tag_name":"v1","body":"n"}}' > "${ev}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_plan
+    [ "$(cat "${out}")" = "insert=true" ]
+    : > "${out}"
+    printf '{"inputs":{"tag":"v1","release_notes":""}}' > "${ev}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_changelog_plan
+    [ "$(cat "${out}")" = "insert=false" ]
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="${ev}" run _ci_changelog_plan
+    [ "${status}" -eq 2 ]
+}
+
 @test "changelog takes a published release's tag and body" {
     # What: The release payload's tag_name and body are inserted.
     # Why: The workflow passes neither; ci.sh reads the event.

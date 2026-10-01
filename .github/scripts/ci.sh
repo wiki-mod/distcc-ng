@@ -1531,29 +1531,56 @@ _ci_publish_changelog_update() {
     _ci_changelog_insert "$1" "${body}"
 }
 
-# What: Insert the notes a release or a dispatch carries.
+# What: Print {tag, body} the event carries; rc 3 means skip.
 # Why: A pre-release or a dispatch without notes adds nothing.
 # From: Issue #479, PR #544
-_ci_publish_changelog_event() {
-    local tag body
+_ci_changelog_from_event() {
     : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         release)
             if [ "$(jq -r '.release.prerelease' "${GITHUB_EVENT_PATH}")" != "false" ]; then
                 ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"
-                return 0
+                return 3
             fi
-            tag="$(jq -er '.release.tag_name' "${GITHUB_EVENT_PATH}")" || return 2
-            body="$(jq -r '.release.body // ""' "${GITHUB_EVENT_PATH}")" || return 2 ;;
+            jq -e '{tag: .release.tag_name, body: (.release.body // "")} | select(.tag != null)' \
+                "${GITHUB_EVENT_PATH}" || return 2 ;;
         workflow_dispatch)
-            tag="$(jq -er '.inputs.tag' "${GITHUB_EVENT_PATH}")" || return 2
-            body="$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" || return 2
-            if [ -z "${body}" ]; then
+            if [ -z "$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" ]; then
                 ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: no release_notes on this dispatch"
-                return 0
-            fi ;;
+                return 3
+            fi
+            jq -e '{tag: .inputs.tag, body: .inputs.release_notes} | select(.tag != null)' \
+                "${GITHUB_EVENT_PATH}" || return 2 ;;
         *) ci_log "[CI-ERROR-PUBLISH-0009]" "event ${GITHUB_EVENT_NAME} carries no release notes"; return 2 ;;
     esac
+}
+
+# What: Write insert=true unless the event's notes skip.
+# Why: The write token step runs only when there is a section.
+# From: Issue #479, PR #544
+_ci_changelog_plan() {
+    local rc=0
+    _ci_changelog_from_event >/dev/null || rc=$?
+    case "${rc}" in
+        0) _ci_output insert true ;;
+        3) _ci_output insert false ;;
+        *) return "${rc}" ;;
+    esac
+}
+
+# What: Insert the notes a release or a dispatch carries.
+# Why: The plan step already skipped events without notes.
+# From: Issue #479, PR #544
+_ci_publish_changelog_event() {
+    local rc=0 json tag body
+    json="$(_ci_changelog_from_event)" || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) return 0 ;;
+        *) return "${rc}" ;;
+    esac
+    tag="$(jq -r .tag <<< "${json}")" || return 2
+    body="$(jq -r .body <<< "${json}")" || return 2
     _ci_changelog_insert "${tag}" "${body}"
 }
 
@@ -1665,6 +1692,7 @@ ci_cmd_publish() {
         manifest)       _ci_publish_manifest "$@" ;;
         github-release) _ci_publish_github_release "$@" ;;
         changelog)      _ci_publish_changelog_update "$@" ;;
+        changelog-plan) _ci_changelog_plan ;;
         draft-release)  _ci_publish_draft_release ;;
         *) ci_log "[CI-ERROR-PUBLISH-0001]" "unimplemented publish target=\"${sub}\""; return 2 ;;
     esac

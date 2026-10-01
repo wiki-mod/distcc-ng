@@ -64,7 +64,10 @@ jobs:
       contents: write
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
-      - env:
+      - id: plan
+        run: bash .github/scripts/ci.sh publish changelog-plan
+      - if: steps.plan.outputs.insert == 'true'
+        env:
           # What: Push with the PAT, not github.token.
           # Why: current_dev's ruleset has no bot bypass actor.
           # From: Issue #479, PR #544, Issue #460
