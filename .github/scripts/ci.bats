@@ -172,6 +172,18 @@ _forbid() {
     [ "${output}" -ge 16 ]
 }
 
+@test "job count fails closed when nproc fails" {
+    # What: No CPU count is an error, not a silent guess of 4.
+    # Why: AG-VAL-001: a failed tool is never worked around.
+    # From: Issue #479, PR #544
+    nproc() { return 1; }
+    run _ci_jobs
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
+    run ci_cmd_selftest
+    [ "${status}" -eq 2 ]
+}
+
 # =========================================================
 # PHASES
 # =========================================================
@@ -1205,6 +1217,46 @@ _forbid() {
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
+}
+
+@test "gc protection fails closed on unreadable tags or manifests" {
+    # What: Bad versions JSON or a bad manifest aborts pruning.
+    # Why: A jq error must not drop a child from the keep-set.
+    # From: Issue #479, PR #544
+    docker() { printf 'not json\n'; }
+    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng 'not json'
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GC-0003"* ]]
+    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GC-0004"* ]]
+    docker() { printf '{"manifests":[{"digest":"sha256:a"},{"digest":"sha256:b"}]}\n'; }
+    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
+    [ "${status}" -eq 0 ]
+    [ "${output}" = '["sha256:a","sha256:b"]' ]
+}
+
+@test "changelog event: pre-release skips, a bad event fails" {
+    # What: true skips (rc 3); non-boolean or unreadable fails.
+    # Why: A jq error must not read as "pre-release, skip".
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    echo '{"release":{"prerelease":true,"tag_name":"v1-NG"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 3 ]
+    echo '{"release":{"tag_name":"v1-NG"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0003"* ]]
+    echo 'not json' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 2 ]
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 2 ]
+    echo '{"release":{"prerelease":false,"tag_name":"v1-NG","body":"n"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *'"tag": "v1-NG"'* ]]
 }
 
 @test "project board identity comes only from the SOT" {

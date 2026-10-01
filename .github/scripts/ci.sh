@@ -304,7 +304,10 @@ _ci_phases_for_paths() {
 # From: Issue #479
 _ci_jobs() {
     local n j
-    n="$(nproc 2>/dev/null || printf '4')"
+    if ! n="$(nproc)"; then
+        ci_log "[CI-ERROR-CORE-0005]" "nproc failed; no CPU count for the bats job count"
+        return 2
+    fi
     j=$(( n * 2 ))
     [ "${j}" -lt 16 ] && j=16
     printf '%s\n' "${j}"
@@ -531,10 +534,11 @@ ci_cmd_impact_hit() {
 # Why: One owner feeds strategy.matrix; opt-in excluded.
 # From: Issue #479
 ci_cmd_matrix() {
-    local v os first=1 out='{"include":[' apt brew variants oses
+    local v os first=1 out='{"include":[' apt brew variants oses opt_in
     variants="$(_ci_sot_children build_matrix.variants)" || return 2
     for v in ${variants}; do
-        [ "$(_ci_sot_optional "build_matrix.variants.${v}.opt_in")" = "true" ] && continue
+        opt_in="$(_ci_sot_optional "build_matrix.variants.${v}.opt_in")" || return 2
+        [ "${opt_in}" = "true" ] && continue
         apt="$(_ci_sot_scalar "build_matrix.variants.${v}.apt")" || return 2
         brew="$(_ci_sot_optional "build_matrix.variants.${v}.brew")" || return 2
         oses="$(_ci_sot_list "build_matrix.variants.${v}.os")" || return 2
@@ -688,9 +692,11 @@ _ci_e2e_leg() {
     srv_image="$(_ci_sot_scalar "e2e.images.${srv_flavor}.tag")" || return 2
     cli_image="$(_ci_sot_scalar "e2e.images.${cli}.tag")" || return 2
     ci_log "[CI-E2E]" "${mode}: leg ${cli} -> ${srv_flavor}, pass ${pass}"
+    local nj
+    nj="$(nproc)" || return 1
     _ci_container_run "${srv_image}" -d --name "${srv}" --network-alias distccd-server -- \
         distccd --no-detach --daemon --verbose --log-stderr --port 3632 \
-        --allow "${subnet}" --jobs "$(nproc)" >/dev/null || return 1
+        --allow "${subnet}" --jobs "${nj}" >/dev/null || return 1
     # What: Wait for distccd's own "listening on" log line.
     # Why: A TCP probe is a denied client; listen() follows it.
     # From: Issue #479, PR #544
@@ -816,7 +822,9 @@ _ci_image_release_build() {
     cd "${CI_REPO_ROOT}" || return 1
     _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local \
         --enable-Werror --without-system-popt || return 1
-    _ci_make_gated /tmp/make.log -j"$(nproc)" || return 1
+    local nj
+    nj="$(nproc)" || return 1
+    _ci_make_gated /tmp/make.log -j"${nj}" || return 1
     install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text || return 1
     make install DESTDIR=/out-pump || return 1
     mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump || return 1
@@ -1042,7 +1050,9 @@ _ci_image_e2e() {
     if [ "${flavor}" = "ng" ]; then
         cd "${CI_REPO_ROOT}" || return 1
         _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local || return 1
-        _ci_make_gated /tmp/make.log -j"$(nproc)" || return 1
+        local nj
+        nj="$(nproc)" || return 1
+        _ci_make_gated /tmp/make.log -j"${nj}" || return 1
         make install || return 1
         rm -f /tmp/configure.log /tmp/make.log || return 1
     fi
@@ -1142,7 +1152,9 @@ _ci_workload_self_compile() {
     cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
     cd "${dir}/src" || return 1
     _ci_configure_tree "${dir}/configure.log" PYTHON=python3 || return 1
-    "${runner[@]}" make -j"$(nproc)" "${make_cc[@]}" >&2 || return 1
+    local nj
+    nj="$(nproc)" || return 1
+    "${runner[@]}" make -j"${nj}" "${make_cc[@]}" >&2 || return 1
     test -x ./distcc && test -x ./distccd || return 1
     if [ "${pass}" = "plain" ]; then
         probe="$(mktemp -d)"
@@ -1183,7 +1195,9 @@ _ci_workload_ccache() {
     cmake -S "${dir}/src" -B "${dir}/build" -DCMAKE_BUILD_TYPE=Release "${launcher[@]}" \
         -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=restrict" \
         -DENABLE_TESTING=OFF >&2 || return 1
-    cmake --build "${dir}/build" -j"$(nproc)" >&2 || return 1
+    local nj
+    nj="$(nproc)" || return 1
+    cmake --build "${dir}/build" -j"${nj}" >&2 || return 1
     "${dir}/build/ccache" --version >&2 || return 1
     find "${dir}/build" -name '*.o' | wc -l
 }
@@ -1211,7 +1225,9 @@ _ci_workload_samba() {
     # From: Issue #264
     env -u DISTCC_FALLBACK CC="distcc gcc" ./configure >&2 || return 1
     export PYTHONHASHSEED=1
-    build=(./buildtools/bin/waf build -j"$(nproc)")
+    local nj
+    nj="$(nproc)" || return 1
+    build=(./buildtools/bin/waf build -j"${nj}")
     [ -z "${targets}" ] || build+=(--targets="${targets}")
     if [ "${pass}" = "pump" ]; then
         _ci_workload_pump "${build[@]}" >&2 || return 1
@@ -1543,14 +1559,19 @@ _ci_changelog_from_event() {
     : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         release)
-            if [ "$(jq -r '.release.prerelease' "${GITHUB_EVENT_PATH}")" != "false" ]; then
-                ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"
-                return 3
-            fi
+            local pre
+            pre="$(jq -r '.release.prerelease' "${GITHUB_EVENT_PATH}")" || return 2
+            case "${pre}" in
+                true) ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"; return 3 ;;
+                false) ;;
+                *) ci_log "[CI-ERROR-PUBLISH-0003]" "release.prerelease is \"${pre}\", not a boolean"; return 2 ;;
+            esac
             jq -e '{tag: .release.tag_name, body: (.release.body // "")} | select(.tag != null)' \
                 "${GITHUB_EVENT_PATH}" || return 2 ;;
         workflow_dispatch)
-            if [ -z "$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" ]; then
+            local notes
+            notes="$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" || return 2
+            if [ -z "${notes}" ]; then
                 ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: no release_notes on this dispatch"
                 return 3
             fi
@@ -1822,15 +1843,23 @@ _ci_release_matrix() {
 # Why: Deleting such a child breaks pulls; errors abort.
 # From: Issue #479, PR #544
 _ci_gc_protected_digests() {
-    local pkg="$1" versions="$2" tag raw children=""
+    local pkg="$1" versions="$2" tags tag raw kids children=""
+    if ! tags="$(jq -r '[.[].metadata.container.tags[]?] | unique | .[]' <<< "${versions}")"; then
+        ci_log "[CI-ERROR-GC-0003]" "cannot read ${pkg}'s version tags; refusing to prune ${pkg}"
+        return 1
+    fi
     while IFS= read -r tag; do
         [ -n "${tag}" ] || continue
         if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}/${pkg}:${tag}")"; then
             ci_log "[CI-ERROR-GC-0002]" "cannot inspect ${pkg}:${tag}; refusing to prune ${pkg}"
             return 1
         fi
-        children+="$(jq -r '.manifests[]?.digest' <<< "${raw}")"$'\n'
-    done < <(jq -r '[.[].metadata.container.tags[]?] | unique | .[]' <<< "${versions}")
+        if ! kids="$(jq -r '.manifests[]?.digest' <<< "${raw}")"; then
+            ci_log "[CI-ERROR-GC-0004]" "cannot parse ${pkg}:${tag}'s manifest; refusing to prune ${pkg}"
+            return 1
+        fi
+        children+="${kids}"$'\n'
+    done <<< "${tags}"
     printf '%s' "${children}" | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
@@ -1953,7 +1982,7 @@ _ci_release_asset_sha() {
 # Why: Prints one markdown row per change for the PR body.
 # From: Issue #479, PR #544
 _ci_sot_refresh() {
-    local sect key keys path ref tag old new src ver latest sha
+    local sect key keys path ref tag old new src ver latest sha url
     for sect in base_images external_services; do
         keys="$(_ci_sot_children "${sect}")" || return 2
         for key in ${keys}; do
@@ -1980,7 +2009,8 @@ _ci_sot_refresh() {
         latest="$(_ci_tool_latest_version "${path}")" || return 1
         [ "${latest}" != "${ver}" ] || continue
         _ci_sot_set "${path}.version" "${latest}" || return 2
-        if [ -n "$(_ci_sot_optional "${path}.url")" ]; then
+        url="$(_ci_sot_optional "${path}.url")" || return 2
+        if [ -n "${url}" ]; then
             sha="$(_ci_release_asset_sha "${path}" "${latest}")" || return 1
             _ci_sot_set "${path}.sha256" "${sha}" || return 2
         fi
@@ -3392,7 +3422,9 @@ ci_guard_orchestrator_only() {
 # Why: The engine tests itself when .github/scripts changes.
 # From: Issue #479
 ci_cmd_selftest() {
-    bats --jobs "$(_ci_jobs)" "${CI_SCRIPT_DIR}/ci.bats"
+    local jobs
+    jobs="$(_ci_jobs)" || return 2
+    bats --jobs "${jobs}" "${CI_SCRIPT_DIR}/ci.bats"
 }
 
 # What: Run a lint tool in the published buildtools image.
@@ -4018,10 +4050,11 @@ ci_cmd_osv_scan() {
 # Why: These binaries are CI's real third-party dependencies.
 # From: Issue #267, Issue #479, PR #544
 _ci_osv_tool_dirs() {
-    local keys key dest
+    local keys key dest bin
     keys="$(_ci_sot_children external_versions)" || return 2
     for key in ${keys}; do
-        [ -n "$(_ci_sot_optional "external_versions.${key}.bin")" ] || continue
+        bin="$(_ci_sot_optional "external_versions.${key}.bin")" || return 2
+        [ -n "${bin}" ] || continue
         dest="$(_ci_fetch_tool "external_versions.${key}")" || return 2
         printf '%s\n' "${dest}"
     done
