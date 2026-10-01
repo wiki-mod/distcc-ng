@@ -739,6 +739,30 @@ _forbid() {
     grep -qx 'publish_buildtools=true' "${out}"
 }
 
+@test "plan classifies the push diff through ci.sh impact" {
+    # What: A push's before..sha diff yields impact's phases.
+    # Why: impact is the one diff-to-phases owner for plan.
+    # From: Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/repo" ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" b h
+    _fixture_manifest 'impact_classes:' '  pk:' '    paths: ["packaging/**"]' '    phases: ["package"]' \
+        '  docs:' '    paths: ["**/*.md"]' '    phases: []' 'release:' '  container:' '    variants:' \
+        '      plain: "p"' '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"'
+    ( cd "${BATS_TEST_TMPDIR}" && git init -q repo && cd repo && git config user.email t@t \
+        && git config user.name t && echo a > README.md && git add . && git commit -qm a \
+        && mkdir packaging && echo b > packaging/x && git add . && git commit -qm b )
+    b="$(git -C "${fx}" rev-parse HEAD~1)" h="$(git -C "${fx}" rev-parse HEAD)"
+    CI_REPO_ROOT="${fx}" run ci_cmd_impact "${b}" "${h}"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "package" ]
+    printf '{"before":"%s","after":"%s"}' "${b}" "${h}" > "${ev}"
+    ci_cmd_matrix() { echo '{"include":[]}'; }
+    CI_REPO_ROOT="${fx}" GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="${ev}" \
+        GITHUB_SHA="${h}" GITHUB_REF_NAME=current_dev run ci_cmd_plan
+    [ "${status}" -eq 0 ]
+    grep -qx 'phases=package' "${out}"
+    grep -qx 'publish_buildtools=false' "${out}"
+}
+
 @test "plan publishes buildtools only from a protected ref" {
     # What: A bot-branch dispatch plans verify but no publish.
     # Why: Only current_dev and master may push buildtools:latest.

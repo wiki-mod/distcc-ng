@@ -495,7 +495,7 @@ _ci_registry_push() {
 # From: Issue #479
 ci_cmd_impact() {
     local base="${1:?base ref required}" head="${2:?head ref required}"
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     git diff --name-only "${base}" "${head}" | _ci_phases_for_paths
 }
 
@@ -593,8 +593,7 @@ ci_cmd_plan() {
         # From: Issue #479
         phases="build e2e verify container package"
     else
-        phases="$(git diff --name-only "${base}" "${head}" \
-            | _ci_phases_for_paths | tr '\n' ' ')" || return 2
+        phases="$(ci_cmd_impact "${base}" "${head}" | tr '\n' ' ')" || return 2
         phases="${phases% }"
     fi
     case " ${phases} " in *" build "*) build=true ;; esac
