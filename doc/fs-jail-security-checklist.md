@@ -4,7 +4,7 @@ This is the living verification checklist for Issue #289, the filesystem jail fo
 
 The original detailed implementation plan remains in Issue #289 for historical context. This document is the maintained verification record and release gate.
 
-This checklist follows the repository's `doc/combined-test-and-release_checklist.md` convention: `make check` is necessary but does not prove new behavior. Tests must exercise the claimed behavior directly and record the actual result. See `AGENTS.md` rules 27 and 31 through 32.
+This checklist follows the repository's `doc/combined-test-and-release_checklist.md` convention: `make check` is necessary but does not prove new behavior. Tests must exercise the claimed behavior directly and record the actual result. See `AGENTS.md` `[AG-WF-013]`, `[AG-INT-001]`, `[AG-INT-003]` and `[AG-VAL-003]`.
 
 ## Status vocabulary
 
@@ -400,7 +400,7 @@ Expected result: every unauthorized access is denied or otherwise prevented by t
 - [ ] Re-run all existing Issue #95 filesystem or sandbox escape regressions relevant to the jail.
 - [ ] Re-run all existing Issue #292 filesystem or sandbox escape regressions relevant to the jail.
 - [ ] Add each newly discovered escape technique as a permanent named regression test rather than leaving it only in an issue comment.
-- [ ] Apply the repository Rule 27 principle: when a finding is discovered, test the whole failure class across build, test, CI, documentation, and release paths where applicable, not only the original line.
+- [ ] Apply the repository `[AG-WF-013]` principle: when a finding is discovered, test the whole failure class across build, test, CI, documentation, and release paths where applicable, not only the original line.
 
 ## 25. Seccomp interaction
 

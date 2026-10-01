@@ -19,15 +19,15 @@ Stated 2026-09-10: the filesystem jail explored in Issue #289 has not yet been i
 
 ## Authority and AGENTS.md
 
-`AGENTS.md` Rule 0 applies at all times.
+`AGENTS.md` `[AG-LAW-001]` applies at all times.
 
 Compliance with this checklist MUST NOT be interpreted as compliance with only the rules referenced by an individual check. Every affected file, artifact, generated output, behavior, test environment, workflow, package, and the complete change MUST still satisfy every applicable rule in `AGENTS.md`.
 
 Passing one checklist item, one checklist section, or this checklist as a whole MUST NOT be used to bypass, weaken, replace, or omit any independently applicable `AGENTS.md` requirement.
 
-The authoritative `AGENTS.md` is the complete copy from `current_dev`. It MUST be read as required by `AGENTS.md` Rules 83 and 84 before work governed by it is performed.
+The authoritative `AGENTS.md` is the complete copy from `current_dev`. It MUST be read as required by `AGENTS.md` `[AG-LAW-005]` before work governed by it is performed.
 
-Verification evidence MUST satisfy the current `AGENTS.md` evidence requirements. In particular, evidence cited as actual verification MUST run in `ghcr.io/wiki-mod/distcc-ng-buildtools` or in the repository's actual CI when required by `AGENTS.md` Rule 87. A host-local, WSL2, ad hoc, or substitute environment MAY be used for non-authoritative development iteration where permitted, but MUST NOT be represented as qualifying verification evidence when Rule 87 applies.
+Verification evidence MUST satisfy the current `AGENTS.md` evidence requirements. In particular, evidence cited as actual verification MUST run in `ghcr.io/wiki-mod/distcc-ng-buildtools` or in the repository's actual CI when required by `AGENTS.md` `[AG-VAL-003]`. A host-local, WSL2, ad hoc, or substitute environment MAY be used for non-authoritative development iteration where permitted, but MUST NOT be represented as qualifying verification evidence when `[AG-VAL-003]` applies.
 
 ## Normative language
 
@@ -226,11 +226,11 @@ The cut MUST use the normal throwaway promotion flow. `current_dev` itself MUST 
 
 The release branch MUST NOT become a development branch.
 
-A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix, as required by `AGENTS.md` Rule 70.
+A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix, as required by `AGENTS.md` `[AG-REL-004]`.
 
-Once the fix has reached `current_dev`, the release branch MUST be re-cut fresh from `current_dev`'s updated tip per Rule 70, rather than developed further on the already-cut branch.
+Once the fix has reached `current_dev`, the release branch MUST be re-cut fresh from `current_dev`'s updated tip per `[AG-REL-004]`, rather than developed further on the already-cut branch.
 
-The existing release branch MUST NOT be force-pushed or deleted. How a required re-cut is reconciled with that constraint for a specific release is an explicit maintainer decision under Rule 70 and MUST NOT be pre-canonicalized here as a fixed mechanism.
+The existing release branch MUST NOT be force-pushed or deleted. How a required re-cut is reconciled with that constraint for a specific release is an explicit maintainer decision under `[AG-REL-004]` and MUST NOT be pre-canonicalized here as a fixed mechanism.
 
 **Verification:** See `REL-PRECUT-07`, `REL-PRECUT-08`, and `REL-PRECUT-10`.
 
@@ -435,7 +435,7 @@ Therefore, merging only the frozen release candidate state can omit the later ch
 
 **Requirement:** The actual release promotion MUST explicitly account for the post-tag changelog commit as required by `REL-PROMO-04`.
 
-This MUST NOT be routed around by convention each release. It requires the maintainer's own explicit, justified exception for how that specific release resolves it, applying Rule 70's own "release branch is frozen, patch `current_dev` instead" principle. The resolution MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
+This MUST NOT be routed around by convention each release. It requires the maintainer's own explicit, justified exception for how that specific release resolves it, applying `[AG-REL-004]`'s own "release branch is frozen, patch `current_dev` instead" principle. The resolution MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
 
 PR #461 and PR #463 are real precedents showing one historical resolution path.
 
@@ -570,7 +570,7 @@ Relevant examples include CodeQL `cpp/world-writable-file-creation` fixes, tempo
 
 **Invalid evidence:** Windows-hosted WSL2 `/mnt/c/...` through 9p or DrvFs, because that environment can ignore the mode and umask behavior being tested.
 
-A native WSL ext4 filesystem can exercise the filesystem semantic itself, but MUST NOT be cited as qualifying verification evidence when `AGENTS.md` Rule 87 requires the buildtools container or actual CI.
+A native WSL ext4 filesystem can exercise the filesystem semantic itself, but MUST NOT be cited as qualifying verification evidence when `AGENTS.md` `[AG-VAL-003]` requires the buildtools container or actual CI.
 
 ### **VER-PERM-02** Real second-user access test
 
@@ -1672,21 +1672,21 @@ A release MUST execute the applicable development and behavioral checks for ever
 
 ### **REL-GOV-03** Final AGENTS.md self-check
 
-**Requirement:** A final `AGENTS.md` self-check required by Rule 78(c) MUST be performed.
+**Requirement:** A final `AGENTS.md` self-check required by `[AG-WF-017]`'s self-audit gate MUST be performed.
 
 At minimum it MUST include:
 
-* tracking metadata under Rule 3;
-* PR scope under Rule 58;
-* comment style under Rules 38 through 42;
-* real validation evidence under Rules 31 through 37;
-* support-upstream handling under Rule 57.
+* tracking metadata under `[AG-GH-002]`;
+* PR scope under `[AG-WF-014]`;
+* comment style under `[AG-CODE-001]` through `[AG-CODE-003]`;
+* real validation evidence under `[AG-INT-001]`, `[AG-INT-003]`, `[AG-VAL-001]` and `[AG-VAL-003]` through `[AG-VAL-006]`;
+* support-upstream handling under `[AG-UP-001]`.
 
 **Invalid evidence:** Assuming the release complies because its task-specific checks passed.
 
 ### **REL-GOV-04** Independent release PR review
 
-**Requirement:** An independent review of the finished release PR required by Rule 78(a) MUST be performed.
+**Requirement:** An independent review of the finished release PR required by `[AG-WF-017]`'s independent-review gate MUST be performed.
 
 It MUST be distinct from `REL-GOV-03`.
 
@@ -1749,7 +1749,7 @@ The decision MUST identify what is accepted and why.
 
 **Invalid evidence:** CI green alone.
 
-**Reference:** `AGENTS.md` Rule 58.
+**Reference:** `AGENTS.md` `[AG-WF-014]`.
 
 ### **REL-PRECUT-06** Default-branch release-event workflow parity
 
@@ -2067,7 +2067,7 @@ A change belonging to an already shipped release MUST NOT remain stranded under 
 
 Approval from an earlier promotion or another PR MUST NOT be reused.
 
-**References:** `AGENTS.md` Rule 21 and the current replacement status of Rule 52.
+**References:** `AGENTS.md` `[AG-WF-007]`.
 
 ### **REL-PROMO-02** Read actual promotion commit range
 
@@ -2192,7 +2192,7 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 ### **RECERT-02** Authority and governance
 
 * [ ] Current `AGENTS.md` read in full from the recorded `current_dev` SHA.
-* [ ] Rule 0 relationship remains correct.
+* [ ] `[AG-LAW-001]` relationship remains correct.
 * [ ] Current verification-evidence environment rules remain correctly represented.
 * [ ] Current release governance rules remain correctly represented.
 * [ ] No checklist wording conflicts with a newer `AGENTS.md` rule.

@@ -4,7 +4,7 @@
 source, following the exception carve-out this README describes (same
 pattern as `issue-264-verification-container.md`, `issue-063-popt-current-
 vendor-alternative.md`, `issue-074-lto-distribution-revert.md`). The required
-support-upstream check (AGENTS.md rule 57) is documented here as a negative
+support-upstream check (`AGENTS.md` `[AG-UP-001]`) is documented here as a negative
 finding, not skipped.
 
 **Fork issue:** [wiki-mod/distcc-ng#264](https://github.com/wiki-mod/distcc-ng/issues/264)
@@ -53,7 +53,7 @@ client against this fork's server), in both plain and pump mode, building a
 real third-party project (Samba). Porting an equivalent capability into
 upstream's own CI is out of scope for this fork's own governance (this
 fork never opens anything against `distcc/distcc` itself — see AGENTS.md
-rule 50); this entry exists so the gap and the reasoning are on record.
+`[AG-SEC-003]`); this entry exists so the gap and the reasoning are on record.
 
 ## Empirical verification
 

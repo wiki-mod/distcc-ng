@@ -5,7 +5,7 @@ REL-* item ID used below, live in doc/combined-test-and-release_checklist.md. Th
 records execution state and evidence for one concrete release only.
 -->
 
-> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every completed item still requires the evidence required by `AGENTS.md`, especially rules 62 and 87.
+> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every completed item still requires the evidence required by `AGENTS.md`, especially `[AG-INT-001]` and `[AG-VAL-003]`.
 
 ## Release Identity
 
@@ -44,8 +44,8 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution
 | --- | --- | --- | --- | --- | --- |
 | REL-GOV-01 | Candidate SHA still matches the intended release candidate |  | | | |
 | REL-GOV-02 | No unresolved release blocker remains |  | | | |
-| REL-GOV-03 | Final AGENTS.md self-check performed (rule 78(c)) |  | | | |
-| REL-GOV-04 | Independent review of the finished release PR performed (rule 78(a)) |  | | | |
+| REL-GOV-03 | Final AGENTS.md self-check performed (`[AG-WF-017]` self-audit gate) |  | | | |
+| REL-GOV-04 | Independent review of the finished release PR performed (`[AG-WF-017]` independent-review gate) |  | | | |
 | REL-PRECUT-01 | `[Unreleased]` reviewed end-to-end against real PR history since last tag |  | | | |
 | REL-PRECUT-02 | A real, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section exists for every tag since the last checklist run |  | | | |
 | REL-PRECUT-03 | No open unresolved `security`-labeled issue blocking, or a documented maintainer decision to ship anyway |  | | | |
@@ -211,7 +211,7 @@ A real pre-publication gate requires a separate workflow change and is outside t
 
 Promotion readiness is determined by the single Live Release Checklist above (`REL-PROMO-*` and `REL-GOV-*`). Do not duplicate CI, artifact, blocker, or governance completion state here.
 
-Maintainer approval is governed by `AGENTS.md` rule 81 and is never inferred from a previous release, another PR, silence, or a generic request to work through this checklist.
+Maintainer approval is governed by `AGENTS.md` `[AG-WF-018]` and is never inferred from a previous release, another PR, silence, or a generic request to work through this checklist.
 
 Approval reference:
 Approved Candidate SHA / tag:
@@ -239,7 +239,7 @@ During this release, did verification discover a gap in the canonical release co
 
 Required `doc/combined-test-and-release_checklist.md` update (name the new or changed ID explicitly):
 
-If a gap is discovered, update the canonical checklist — assign the next unused `REL-*` ID in the relevant family (never reuse or renumber an existing one, same discipline as AGENTS.md rule 64 for rule numbers) — so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
+If a gap is discovered, update the canonical checklist — assign the next unused `REL-*` ID in the relevant family (never reuse or renumber an existing one, same discipline as `AGENTS.md` `[AG-LAW-003]` for rule identifiers) — so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
 
 ## Final Release Record
 
