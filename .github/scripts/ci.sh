@@ -49,7 +49,7 @@ CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
 # From: Issue #479
-CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image"
+CI_COMMANDS="checkout plan impact impact-hit identity build test e2e analyze scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update"
 
 # =========================================================
 # LOGGING / EXIT HANDLING
@@ -196,6 +196,41 @@ _ci_sot_list() {
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
         | grep -v '^[[:space:]]*$' || true
+}
+
+# What: Set the scalar at a dotted SOT path in place.
+# Why: The one SOT writer; an absent path fails closed.
+# From: Issue #479, PR #544
+_ci_sot_set() {
+    local path="$1" value="$2" tmp rc=0
+    tmp="$(mktemp)" || return 2
+    awk -v path="${path}" -v value="${value}" '
+        BEGIN { n = split(path, want, "."); need = 1; done = 0 }
+        done || /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
+        {
+            match($0, /^ */); ind = RLENGTH / 2
+            if (ind + 1 < need) { need = ind + 1 }
+            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
+            if (ind + 1 == need && key == want[need]) {
+                if (need == n) {
+                    match($0, /^ *[^:]*:/)
+                    print substr($0, 1, RLENGTH) " \"" value "\""
+                    done = 1
+                    next
+                }
+                need++
+            }
+            print
+        }
+        END { if (!done) exit 3 }
+    ' "${CI_MANIFEST}" > "${tmp}" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        rm -f "${tmp}"
+        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"cannot set (rc ${rc})\""
+        return 2
+    fi
+    cat "${tmp}" > "${CI_MANIFEST}" || return 2
+    rm -f "${tmp}"
 }
 
 # =========================================================
@@ -739,13 +774,11 @@ _ci_image_release_runtime() {
 # Why: base-builder ships autoconf 2.69; we need 2.71.
 # From: Issue #267, Issue #479, PR #544
 _ci_image_cfl_toolchain() {
-    local pkgs ver sha dest
+    local pkgs ver dest
     pkgs="$(_ci_sot_scalar security.cfl_image_apt)" || return 2
     ver="$(_ci_sot_scalar external_versions.autoconf.version)" || return 2
-    sha="$(_ci_sot_scalar external_versions.autoconf.sha256)" || return 2
     _ci_apt_install "${pkgs}" image || return 1
-    dest="$(_ci_fetch_release_tarball autoconf "${ver}" \
-        "https://ftp.gnu.org/gnu/autoconf/autoconf-${ver}.tar.gz" "${sha}")" || return 1
+    dest="$(_ci_fetch_tool external_versions.autoconf)" || return 1
     cd "${dest}/autoconf-${ver}" || return 1
     ./configure || return 1
     make -j"$(nproc)" || return 1
@@ -1254,6 +1287,14 @@ _ci_container_release() {
     esac
 }
 
+# What: Commit as the github-actions bot in this checkout.
+# Why: One identity owner; GitHub's bot email carries its id.
+# From: Issue #479, PR #544
+_ci_git_identity() {
+    git config user.name "github-actions[bot]" || return 1
+    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+}
+
 # What: Wire GH_TOKEN into git's own credential helper.
 # Why: ci_cmd_checkout's remote has no credentials at all.
 # From: Issue #479, PR #544
@@ -1273,8 +1314,7 @@ _ci_publish_nightly() {
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
     esac
-    git config user.name "github-actions[bot]"
-    git config user.email "github-actions[bot]@users.noreply.github.com"
+    _ci_git_identity || return 1
     git tag -f "${tag}"
     _ci_git_auth_setup
     git push -f origin "refs/tags/${tag}"
@@ -1364,8 +1404,7 @@ _ci_publish_changelog_update() {
     ' CHANGELOG.md > CHANGELOG.md.new
     mv CHANGELOG.md.new CHANGELOG.md
     rm -f "${tmp}"
-    git config user.name "github-actions[bot]"
-    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    _ci_git_identity || return 1
     git add CHANGELOG.md
     git commit -m "CHANGELOG.md: add ${tag}"
     _ci_git_auth_setup
@@ -1522,6 +1561,144 @@ ci_cmd_gc() {
             _ci_mutate gh api --method DELETE "orgs/${OWNER}/packages/container/${pkg}/versions/${id}" --silent
         done <<< "${candidates}"
         echo "::endgroup::"
+    done
+}
+
+# =========================================================
+# SOT PIN REFRESH (ci.sh owns every pin update)
+# =========================================================
+
+# What: Print the current index digest of an image tag.
+# Why: One multi-arch index digest pins every platform.
+# From: Issue #479, PR #544
+_ci_registry_digest() {
+    local raw digest
+    raw="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}')" || return 1
+    digest="$(jq -r '.digest' <<< "${raw}")" || return 1
+    if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        ci_log "[CI-ERROR-SOT-0003]" "no index digest for $1"
+        return 1
+    fi
+    printf '%s\n' "${digest}"
+}
+
+# What: Print a tool's highest stable release version.
+# Why: Version sort, so a backport never reads as newest.
+# From: Issue #479, PR #544
+_ci_tool_latest_version() {
+    local spec="$1" src prefix tags best
+    src="$(_ci_sot_scalar "${spec}.source")" || return 2
+    prefix="$(_ci_sot_optional "${spec}.tag_prefix")" || return 2
+    tags="$(gh api "repos/${src}/releases?per_page=100" \
+        --jq '.[] | select((.draft or .prerelease) | not) | .tag_name')" || return 1
+    best="$(while IFS= read -r tag; do
+        case "${tag}" in "${prefix}"*) printf '%s\n' "${tag#"${prefix}"}" ;; esac
+    done <<< "${tags}" | sort -V | tail -n 1)"
+    if [ -z "${best}" ]; then
+        ci_log "[CI-ERROR-SOT-0005]" "${src}: no stable release tag with prefix \"${prefix}\""
+        return 1
+    fi
+    printf '%s\n' "${best}"
+}
+
+# What: Print the sha256 GitHub records for a tool's asset.
+# Why: The pin comes from the source, not a re-download.
+# From: Issue #479, PR #544
+_ci_release_asset_sha() {
+    local spec="$1" ver="$2" src url tag asset raw sha
+    src="$(_ci_sot_scalar "${spec}.source")" || return 2
+    url="$(_ci_tool_url "${spec}" "${ver}")" || return 2
+    case "${url}" in
+        "https://github.com/${src}/releases/download/"*) ;;
+        *) ci_log "[CI-ERROR-SOT-0006]" "${spec}.url is no ${src} release asset"; return 2 ;;
+    esac
+    tag="${url#"https://github.com/${src}/releases/download/"}"
+    tag="${tag%%/*}"
+    asset="${url##*/}"
+    raw="$(gh api "repos/${src}/releases/tags/${tag}")" || return 1
+    sha="$(jq -r --arg a "${asset}" '.assets[] | select(.name == $a) | .digest // empty' <<< "${raw}")" || return 1
+    if ! [[ "${sha}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        ci_log "[CI-ERROR-SOT-0006]" "${src} ${tag}: no recorded sha256 for ${asset}"
+        return 1
+    fi
+    printf '%s\n' "${sha#sha256:}"
+}
+
+# What: Move every SOT pin to its channel's newest release.
+# Why: Prints one markdown row per change for the PR body.
+# From: Issue #479, PR #544
+_ci_sot_refresh() {
+    local sect key keys path ref tag old new src ver latest sha
+    for sect in base_images external_services; do
+        keys="$(_ci_sot_children "${sect}")" || return 2
+        for key in ${keys}; do
+            path="${sect}.${key}"
+            ref="$(_ci_sot_scalar "${path}")" || return 2
+            tag="${ref%@*}"
+            old="${ref##*@}"
+            if [ "${tag}" = "${ref}" ] || [[ "${tag##*/}" != *:* ]]; then
+                ci_log "[CI-ERROR-SOT-0004]" "${path}=${ref}: no tracked tag (name:tag@sha256:...)"
+                return 2
+            fi
+            new="$(_ci_registry_digest "${tag}")" || return 1
+            [ "${new}" != "${old}" ] || continue
+            _ci_sot_set "${path}" "${tag}@${new}" || return 2
+            printf "| \`%s\` | \`%s\` | \`%s\` | \`%s\` |\n" "${path}" "${tag}" "${old}" "${new}"
+        done
+    done
+    keys="$(_ci_sot_children external_versions)" || return 2
+    for key in ${keys}; do
+        path="external_versions.${key}"
+        src="$(_ci_sot_optional "${path}.source")" || return 2
+        [ -n "${src}" ] || continue
+        ver="$(_ci_sot_scalar "${path}.version")" || return 2
+        latest="$(_ci_tool_latest_version "${path}")" || return 1
+        [ "${latest}" != "${ver}" ] || continue
+        _ci_sot_set "${path}.version" "${latest}" || return 2
+        if [ -n "$(_ci_sot_optional "${path}.url")" ]; then
+            sha="$(_ci_release_asset_sha "${path}" "${latest}")" || return 1
+            _ci_sot_set "${path}.sha256" "${sha}" || return 2
+        fi
+        printf "| \`%s\` | \`%s\` | \`%s\` | \`%s\` |\n" "${path}" "${src}" "${ver}" "${latest}"
+    done
+}
+
+# What: Open or refresh the one SOT pin update pull request.
+# Why: GITHUB_TOKEN PRs start no CI, so a dispatch runs it.
+# From: Issue #479, PR #544
+ci_cmd_sot_update() {
+    : "${GH_TOKEN:?GH_TOKEN required}"
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    local branch="sot-update" title="chore(deps): refresh SOT pins" rows body open wf
+    cd "${CI_REPO_ROOT}" || return 1
+    rows="$(_ci_sot_refresh)" || return 1
+    if [ -z "${rows}" ]; then
+        ci_log "[CI-SOT-UPDATE]" "every SOT pin is current"
+        return 0
+    fi
+    body="$(mktemp)" || return 1
+    {
+        printf '%s\n\n' "Moves SOT pins to the newest release of their channel."
+        printf '%s\n%s\n%s\n\n' '| Pin | Channel | Old | New |' '|---|---|---|---|' "${rows}"
+        printf '%s\n' "AG-VAL-007: review each crossed release range before merging."
+    } > "${body}" || return 1
+    cat "${body}"
+    _ci_git_identity || return 1
+    _ci_mutate git checkout -q -B "${branch}" || return 1
+    _ci_mutate git commit -q -m "${title}" -- "${CI_MANIFEST}" || return 1
+    _ci_git_auth_setup || return 1
+    _ci_mutate git push -q -f origin "HEAD:refs/heads/${branch}" || return 1
+    open="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state open \
+        --json number --jq '.[0].number // empty')" || return 1
+    if [ -z "${open}" ]; then
+        _ci_mutate gh pr create --repo "${GITHUB_REPOSITORY}" --base current_dev --head "${branch}" \
+            --title "${title}" --body-file "${body}" \
+            --label dependencies --label no-changelog-needed || return 1
+    else
+        _ci_mutate gh pr edit "${open}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}" || return 1
+    fi
+    for wf in validate.yml security.yml; do
+        _ci_mutate gh workflow run "${wf}" --repo "${GITHUB_REPOSITORY}" --ref "${branch}" || return 1
     done
 }
 
@@ -1923,11 +2100,12 @@ _ci_ossf_check_br06() {
         echo "Met"; else echo "NotMet"; fi
 }
 
-# What: dependabot.yml and the dependency policy doc exist.
+# What: The SOT pin refresh is scheduled; its policy is doc'd.
 # Why: Both must hold for OSPS-BR-05.01/DO-06.01.
-# From: Issue #312
+# From: Issue #312, PR #544
 _ci_ossf_check_br05_do06() {
-    if [ -f .github/dependabot.yml ] && grep -q "## Dependency management policy" doc/compatibility-policy.md 2>/dev/null; then
+    if grep -q 'ci.sh sot-update' .github/workflows/housekeeping.yml \
+        && grep -q "## Dependency management policy" doc/compatibility-policy.md; then
         echo "Met"; else echo "NotMet"; fi
 }
 
@@ -1994,7 +2172,7 @@ _ci_scan_openssf() {
 - VM-02.01 (SECURITY.md present): ${vm02}"
     [ "${ac04}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-AC-04.01" "Every workflow top-level permissions block is contents:read or narrower, re-verified ${TODAY}."
     [ "${br06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-BR-06.01" "A build-provenance attestation step is present, re-verified ${TODAY}."
-    [ "${br05_do06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-BR-05.01" ".github/dependabot.yml still exists, re-verified ${TODAY}."
+    [ "${br05_do06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-BR-05.01" "housekeeping.yml schedules the ci.sh SOT pin refresh, re-verified ${TODAY}."
     [ "${br05_do06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-DO-06.01" "doc/compatibility-policy.md documents the dependency policy, re-verified ${TODAY}."
     [ "${gv01}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-GV-01.01" "AGENTS.md documents maintainer approval authority, re-verified ${TODAY}."
     [ "${gv01}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-GV-01.02" "Same rule, re-verified ${TODAY}."
@@ -2002,7 +2180,7 @@ _ci_scan_openssf() {
     [ "${vm01_vm03}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-VM-03.01" "Same document, re-verified ${TODAY}."
     l2="- AC-04.01 (workflow permissions spot-check): ${ac04}
 - BR-06.01 (build provenance attestation present): ${br06}
-- BR-05.01/DO-06.01 (dependabot.yml + dependency policy doc): ${br05_do06}
+- BR-05.01/DO-06.01 (scheduled SOT pin refresh + dependency policy doc): ${br05_do06}
 - GV-01.01/01.02 (AGENTS.md maintainer authority): ${gv01}
 - VM-01.01/03.01 (SECURITY.md documents GH Security Advisories): ${vm01_vm03}"
     [ "${ac04}" = "Met" ] && _ci_ossf_add_met qs3 "OSPS-AC-04.02" "Same workflow-permissions spot-check as AC-04.01, re-verified ${TODAY}."
@@ -2063,38 +2241,56 @@ EOF
     fi
 }
 
-# What: Download, verify, cache a release tarball; print dir.
-# Why: One owner for every SOT-pinned tool download.
+# What: Expand {version} and {bare} in a SOT tool url.
+# Why: One url owner for fetch and the sot-update digest.
 # From: Issue #479, PR #544
-_ci_fetch_release_tarball() {
-    local name="${1:?name required}" ver="${2:?version required}"
-    local url="${3:?url required}" sha256="${4:-}" dest archive
-    dest="${RUNNER_TEMP:-/tmp}/${name}-${ver}"
+_ci_tool_url() {
+    local spec="$1" ver="$2" url
+    url="$(_ci_sot_scalar "${spec}.url")" || return 2
+    url="${url//\{version\}/${ver}}"
+    printf '%s\n' "${url//\{bare\}/${ver#v}}"
+}
+
+# What: Fetch, sha256-check and cache one SOT tool; print dir.
+# Why: One download owner; a missing sha256 pin fails closed.
+# From: Issue #479, PR #544
+_ci_fetch_tool() {
+    local spec="$1" ver sha url kind dest file
+    ver="$(_ci_sot_scalar "${spec}.version")" || return 2
+    sha="$(_ci_sot_scalar "${spec}.sha256")" || return 2
+    url="$(_ci_tool_url "${spec}" "${ver}")" || return 2
+    kind="$(_ci_sot_optional "${spec}.archive")" || return 2
+    dest="${RUNNER_TEMP:-/tmp}/${spec##*.}-${ver}"
     if [ ! -f "${dest}/.complete" ]; then
         rm -rf "${dest}"
-        mkdir -p "${dest}"
-        archive="${dest}.tar.gz"
-        curl -fsSL --retry 3 -o "${archive}" "${url}" || return 2
-        if [ -n "${sha256}" ] && ! printf '%s  %s\n' "${sha256}" "${archive}" | sha256sum -c --quiet -; then
-            ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${name} ${ver}"
+        mkdir -p "${dest}" || return 2
+        file="${dest}.download"
+        curl -fsSL --retry 3 -o "${file}" "${url}" || return 2
+        if ! printf '%s  %s\n' "${sha}" "${file}" | sha256sum -c --quiet -; then
+            ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${spec} ${ver}"
+            rm -f "${file}"
             return 2
         fi
-        tar -xzf "${archive}" -C "${dest}" || return 2
-        rm -f "${archive}"
-        touch "${dest}/.complete"
+        case "${kind:-tar.gz}" in
+            tar.gz) tar -xzf "${file}" -C "${dest}" || return 2; rm -f "${file}" ;;
+            binary) mv "${file}" "${dest}/$(_ci_sot_scalar "${spec}.bin")" || return 2 ;;
+            *) ci_log "[CI-ERROR-FETCH-0002]" "${spec}.archive=${kind} (tar.gz|binary)"; return 2 ;;
+        esac
+        chmod -R u+rwX "${dest}" || return 2
+        touch "${dest}/.complete" || return 2
     fi
     printf '%s' "${dest}"
 }
 
-# What: Download+cache the pinned Trivy CLI; print its path.
-# Why: No marketplace action; version owned by SOT.
-# From: Issue #479
-_ci_trivy_bin() {
-    local ver dest
-    ver="$(_ci_sot_scalar external_versions.trivy.version)" || return 2
-    dest="$(_ci_fetch_release_tarball trivy "${ver}" \
-        "https://github.com/aquasecurity/trivy/releases/download/${ver}/trivy_${ver#v}_Linux-64bit.tar.gz")" || return 2
-    printf '%s/trivy' "${dest}"
+# What: Print the path of a fetched SOT tool's executable.
+# Why: The SOT bin key owns where each archive keeps it.
+# From: Issue #479, PR #544
+_ci_tool_bin() {
+    local spec="$1" dest bin
+    dest="$(_ci_fetch_tool "${spec}")" || return 2
+    bin="$(_ci_sot_scalar "${spec}.bin")" || return 2
+    chmod +x "${dest}/${bin}" || return 2
+    printf '%s/%s' "${dest}" "${bin}"
 }
 
 # What: Scan a local image ref for HIGH/CRITICAL vulns.
@@ -2102,21 +2298,10 @@ _ci_trivy_bin() {
 # From: Issue #479
 ci_cmd_trivy_scan() {
     local image_ref="${1:?image ref required}" bin
-    bin="$(_ci_trivy_bin)" || return 2
+    bin="$(_ci_tool_bin external_versions.trivy)" || return 2
     "${bin}" image --scanners vuln,secret --severity HIGH,CRITICAL \
         --ignore-unfixed --ignorefile "${CI_REPO_ROOT}/.trivyignore.yaml" \
         --exit-code 1 --timeout 10m "${image_ref}"
-}
-
-# What: Download+cache the pinned Syft CLI; print its path.
-# Why: No marketplace action; version owned by SOT.
-# From: Issue #479
-_ci_syft_bin() {
-    local ver dest
-    ver="$(_ci_sot_scalar external_versions.syft.version)" || return 2
-    dest="$(_ci_fetch_release_tarball syft "${ver}" \
-        "https://github.com/anchore/syft/releases/download/${ver}/syft_${ver#v}_linux_amd64.tar.gz")" || return 2
-    printf '%s/syft' "${dest}"
 }
 
 # What: Generate an SPDX-JSON SBOM for an image/path.
@@ -2124,7 +2309,7 @@ _ci_syft_bin() {
 # From: Issue #479
 ci_cmd_sbom() {
     local target="${1:?image ref or path required}" out="${2:?output file required}" bin
-    bin="$(_ci_syft_bin)" || return 2
+    bin="$(_ci_tool_bin external_versions.syft)" || return 2
     "${bin}" "${target}" -o "spdx-json=${out}"
 }
 
@@ -2213,13 +2398,22 @@ _ci_verify_ccache_redis() {
 # METADATA CHECKS (PR context)
 # =========================================================
 
+# What: True if PR_AUTHOR is a SOT dependency-bump bot.
+# Why: Bots cannot set milestones; AG-VAL-007 reviews them.
+# From: Issue #479, PR #544
+_ci_is_dependency_bot() {
+    local bots
+    bots="$(_ci_sot_list ci_engine.dependency_bots)" || return 2
+    grep -qxF -- "${PR_AUTHOR:-}" <<< "${bots}"
+}
+
 # What: Validate a PR title against the rule-71 taxonomy.
-# Why: Folds check-pr-title-convention.sh; dependabot exempt.
+# Why: A dependency bot titles its own PRs; it is exempt.
 # From: Issue #479, rule 71
 _ci_check_pr_title() {
     local title="${PR_TITLE:-}"
-    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
-        ci_log "[CI-META-TITLE]" "skipped: dependabot[bot] cannot conform"
+    if _ci_is_dependency_bot; then
+        ci_log "[CI-META-TITLE]" "skipped: dependency bot ${PR_AUTHOR} sets its own title"
         return 0
     fi
     local mode="${PR_TITLE_LINT_MODE:-warn}" draft="${PR_DRAFT:-false}"
@@ -2302,8 +2496,8 @@ _ci_check_pr_board() {
 # Why: Board fails once the PAT is configured.
 # From: Issue #479, PR #544
 _ci_check_pr_tracking() {
-    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
-        ci_log "[CI-META-TRACKING]" "skipped: dependabot[bot]"
+    if _ci_is_dependency_bot; then
+        ci_log "[CI-META-TRACKING]" "skipped: dependency bot ${PR_AUTHOR}"
         return 0
     fi
     local errs=()
@@ -2329,8 +2523,8 @@ _ci_check_pr_tracking() {
 # Why: Every user-facing change needs a changelog entry.
 # From: Issue #479
 _ci_check_changelog() {
-    if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
-        ci_log "[CI-META-CHANGELOG]" "skipped: dependabot[bot]"
+    if _ci_is_dependency_bot; then
+        ci_log "[CI-META-CHANGELOG]" "skipped: dependency bot ${PR_AUTHOR}"
         return 0
     fi
     case " ${PR_LABELS:-} " in
@@ -2711,8 +2905,8 @@ EOF
 # Why: Monitor API is third-party; an outage must not fail CI.
 # From: Issue #479, PR #544, Issue #58
 _ci_harden_start() {
-    local why ver sha api tel web egress cid resp code otk="" summary="false"
-    local private dest
+    local why api tel web egress cid resp code otk="" summary="false"
+    local private bin
     why="$(_ci_harden_unsupported)"
     if [ -n "${why}" ]; then
         ci_log "[CI-HARDEN]" "NotRun: agent unsupported on ${why}"
@@ -2724,8 +2918,6 @@ _ci_harden_start() {
     : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
     : "${USER:?USER required}"
     : "${RUNNER_TEMP:?RUNNER_TEMP required}"
-    ver="$(_ci_sot_scalar external_versions.harden_runner_agent.version)" || return 2
-    sha="$(_ci_sot_scalar external_versions.harden_runner_agent.sha256)" || return 2
     api="$(_ci_sot_scalar harden_runner.api_url)" || return 2
     tel="$(_ci_sot_scalar harden_runner.telemetry_url)" || return 2
     web="$(_ci_sot_scalar harden_runner.web_url)" || return 2
@@ -2746,12 +2938,10 @@ _ci_harden_start() {
         summary="$(jq -r 'if .monitoring_started then "true" else "false" end' "${resp}")"
     fi
     private="$(jq -r '.repository.private // false' "${GITHUB_EVENT_PATH}")"
-    dest="$(_ci_fetch_release_tarball harden-runner-agent "${ver}" \
-        "https://github.com/step-security/agent/releases/download/${ver}/agent_${ver#v}_linux_amd64.tar.gz" \
-        "${sha}")" || return 2
+    bin="$(_ci_tool_bin external_versions.harden_runner_agent)" || return 2
     sudo mkdir -p "${_CI_HARDEN_DIR}"
     sudo chown -R "${USER}" "${_CI_HARDEN_DIR}"
-    cp "${dest}/agent" "${_CI_HARDEN_DIR}/agent"
+    cp "${bin}" "${_CI_HARDEN_DIR}/agent"
     chmod +x "${_CI_HARDEN_DIR}/agent"
     jq -n --arg repo "${GITHUB_REPOSITORY}" --arg run_id "${GITHUB_RUN_ID}" \
         --arg cid "${cid}" --arg wd "${GITHUB_WORKSPACE}" --arg api "${api}" \
@@ -2837,17 +3027,6 @@ ci_cmd_harden() {
 # SECURITY TOOLS (own CLI invocations; no marketplace actions)
 # =========================================================
 
-# What: Download+cache the pinned CodeQL CLI; print its path.
-# Why: Own invocation, no JS action; version owned by SOT.
-# From: Issue #479
-_ci_codeql_bin() {
-    local ver dest
-    ver="$(_ci_sot_scalar external_versions.codeql_cli.version)" || return 2
-    dest="$(_ci_fetch_release_tarball codeql "${ver}" \
-        "https://github.com/github/codeql-action/releases/download/codeql-bundle-${ver}/codeql-bundle-linux64.tar.gz")" || return 2
-    printf '%s/codeql/codeql' "${dest}"
-}
-
 # What: Map language+suite to a CodeQL query-pack reference.
 # Why: One mapping; callers pass only a plain suite name.
 # From: Issue #479
@@ -2866,7 +3045,7 @@ _ci_codeql_query_pack() {
 ci_cmd_codeql_scan() {
     local lang="${1:?language required}" suite="${2:-security-extended}" \
         out="${3:-results-${1}.sarif}" bin db pack
-    bin="$(_ci_codeql_bin)" || return 2
+    bin="$(_ci_tool_bin external_versions.codeql_cli)" || return 2
     db="${RUNNER_TEMP:-/tmp}/codeql-db-${lang}"
     pack="$(_ci_codeql_query_pack "${lang}" "${suite}")"
     rm -rf "${db}"
@@ -2897,17 +3076,6 @@ ci_cmd_sarif_upload() {
         -f "commit_sha=${GITHUB_SHA}" \
         -f "ref=${GITHUB_REF}" \
         -f "sarif=${payload}" >/dev/null
-}
-
-# What: Fetch and cache the SOT Scorecard CLI; print path.
-# Why: Own invocation, no action; the SOT owns the version.
-# From: Issue #479
-_ci_scorecard_bin() {
-    local ver dest
-    ver="$(_ci_sot_scalar external_versions.scorecard.version)" || return 2
-    dest="$(_ci_fetch_release_tarball scorecard "${ver}" \
-        "https://github.com/ossf/scorecard/releases/download/${ver}/scorecard_${ver#v}_linux_amd64.tar.gz")" || return 2
-    printf '%s/scorecard' "${dest}"
 }
 
 # What: Convert Scorecard's own JSON into real SARIF.
@@ -2948,28 +3116,11 @@ _ci_scorecard_json_to_sarif() {
 ci_cmd_scorecard_scan() {
     local out="${1:-results.sarif}" bin json
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    bin="$(_ci_scorecard_bin)" || return 2
+    bin="$(_ci_tool_bin external_versions.scorecard)" || return 2
     json="${RUNNER_TEMP:-/tmp}/scorecard-results.json"
     "${bin}" --repo="github.com/${GITHUB_REPOSITORY}" \
         --format=json --show-details > "${json}"
     _ci_scorecard_json_to_sarif < "${json}" > "${out}"
-}
-
-# What: Fetch and cache the SOT OSV-Scanner; print its path.
-# Why: Own invocation, no action; the SOT owns the version.
-# From: Issue #479
-_ci_osv_scanner_bin() {
-    local ver dest bin
-    ver="$(_ci_sot_scalar external_versions.osv_scanner.version)" || return 2
-    dest="${RUNNER_TEMP:-/tmp}/osv-scanner-${ver}"
-    bin="${dest}/osv-scanner"
-    if [ ! -x "${bin}" ]; then
-        mkdir -p "${dest}"
-        curl -fsSL --retry 3 -o "${bin}" \
-            "https://github.com/google/osv-scanner/releases/download/${ver}/osv-scanner_linux_amd64"
-        chmod +x "${bin}"
-    fi
-    printf '%s' "${bin}"
 }
 
 # What: Scan the repo with OSV-Scanner, writing a SARIF file.
@@ -2977,7 +3128,7 @@ _ci_osv_scanner_bin() {
 # From: Issue #479
 ci_cmd_osv_scan() {
     local out="${1:-osv-results.sarif}" bin rc=0
-    bin="$(_ci_osv_scanner_bin)" || return 2
+    bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
     "${bin}" scan source --format=sarif --output-file="${out}" \
         --allow-no-lockfiles -r . || rc=$?
     # What: Exit 1-126 means findings; 127+ is a tool failure.
@@ -3354,6 +3505,7 @@ ci_main() {
                 harden) ci_cmd_harden "$@" ;;
                 workload) ci_cmd_workload "$@" ;;
                 image) ci_cmd_image "$@" ;;
+                sot-update) ci_cmd_sot_update "$@" ;;
                 *) ci_not_implemented "${command}" "$@" ;;
             esac
             ;;

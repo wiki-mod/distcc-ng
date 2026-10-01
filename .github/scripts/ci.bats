@@ -67,15 +67,46 @@ _forbid() {
     [ "$(_ci_sot_scalar a.c.d)" = "y:z@sha256:0" ]
 }
 
-@test "every SOT base image is pinned by a full sha256 digest" {
-    # What: base_images holds only name@sha256:<64 hex> values.
-    # Why: A tag-only base image would float under every build.
+@test "every SOT image pin is name:tag at a full sha256 digest" {
+    # What: Each image pin names its channel tag and a digest.
+    # Why: No tag, no refresh; no digest, a floating build.
     # From: Issue #479, PR #544
-    local k v
-    for k in $(_ci_sot_children base_images); do
-        v="$(_ci_sot_scalar "base_images.${k}")"
-        [[ "${v}" =~ @sha256:[0-9a-f]{64}$ ]]
+    local s k v
+    for s in base_images external_services; do
+        for k in $(_ci_sot_children "${s}"); do
+            v="$(_ci_sot_scalar "${s}.${k}")"
+            [[ "${v}" =~ ^[^@]+/?[^/@]*:[^/@]+@sha256:[0-9a-f]{64}$ ]] || { echo "${s}.${k}=${v}"; false; }
+        done
     done
+}
+
+@test "every SOT tool with a url carries a full sha256" {
+    # What: A downloaded tool is always checked against a pin.
+    # Why: A url without sha256 would run an unverified binary.
+    # From: Issue #479, PR #544
+    local k
+    for k in $(_ci_sot_children external_versions); do
+        [ -n "$(_ci_sot_optional "external_versions.${k}.url")" ] || continue
+        [[ "$(_ci_sot_scalar "external_versions.${k}.sha256")" =~ ^[0-9a-f]{64}$ ]] || { echo "${k}"; false; }
+    done
+}
+
+@test "sot set rewrites one path and fails closed on a missing one" {
+    # What: The writer changes exactly the addressed scalar.
+    # Why: sot-update must never touch a neighbouring pin.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'a:' '  # note' '  b: "x"' '  c:' '    b: "y"' 'b: "z"'
+    run _ci_sot_set a.c.b "new"
+    [ "${status}" -eq 0 ]
+    [ "$(_ci_sot_scalar a.c.b)" = "new" ]
+    [ "$(_ci_sot_scalar a.b)" = "x" ]
+    [ "$(_ci_sot_scalar b)" = "z" ]
+    grep -qx '  # note' "${CI_MANIFEST}"
+    cp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
+    run _ci_sot_set a.nope "v"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+    cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
 }
 
 @test "sot scalar fails closed on a missing key" {
@@ -157,6 +188,17 @@ _forbid() {
     # From: Issue #479
     PR_AUTHOR="dependabot[bot]" PR_TITLE="Bump foo from 1 to 2" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 0 ]
+}
+
+@test "the SOT refresh bot is exempt from PR tracking metadata" {
+    # What: github-actions[bot] PRs skip labels/milestone/board.
+    # Why: The sot-update PR has no milestone; AG-VAL-007 reviews.
+    # From: Issue #479, PR #544
+    PR_AUTHOR="github-actions[bot]" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"dependency bot github-actions[bot]"* ]]
+    PR_AUTHOR="someone" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
+    [ "${status}" -eq 1 ]
 }
 
 @test "tracking passes with labels and a milestone" {
@@ -948,31 +990,127 @@ _capture_docker() {
 # TOOL FETCH + HARDEN RUNNER
 # =========================================================
 
-@test "release-tarball fetch extracts when the sha256 matches" {
-    # What: A matching checksum extracts and caches the tarball.
-    # Why: Green path of the one shared tool downloader.
-    # From: Issue #479, PR #544
-    local src="${BATS_TEST_TMPDIR}/src" sum dir
-    mkdir -p "${src}"; printf 'bin' > "${src}/tool"
-    tar -czf "${BATS_TEST_TMPDIR}/t.tar.gz" -C "${src}" tool
-    sum="$(sha256sum "${BATS_TEST_TMPDIR}/t.tar.gz" | cut -d' ' -f1)"
-    curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${BATS_TEST_TMPDIR}/t.tar.gz" "$2"; fi; shift; done; }
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_fetch_release_tarball tool v1 https://example.invalid/t.tar.gz "${sum}"
-    [ "${status}" -eq 0 ]
-    dir="${output}"
-    [ "$(cat "${dir}/tool")" = "bin" ]
-    [ -f "${dir}/.complete" ]
+# What: curl stub that copies fixture file $1 to every -o.
+# Why: Fetch tests need a deterministic, offline download.
+# From: Issue #479, PR #544
+_fake_curl() {
+    FAKE_DOWNLOAD="$1"
+    curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${FAKE_DOWNLOAD}" "$2"; fi; shift; done; }
 }
 
-@test "release-tarball fetch fails closed on a sha256 mismatch" {
-    # What: A wrong checksum MUST NOT extract anything.
-    # Why: A tampered agent binary must never run.
+@test "tool fetch expands the url and extracts on a matching sha256" {
+    # What: A matching checksum extracts; bin names the binary.
+    # Why: Green path of the one SOT-driven tool downloader.
     # From: Issue #479, PR #544
-    curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then printf 'evil' > "$2"; fi; shift; done; }
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_fetch_release_tarball tool v1 https://example.invalid/t.tar.gz "$(printf '0%.0s' {1..64})"
+    local src="${BATS_TEST_TMPDIR}/src" sum
+    mkdir -p "${src}/d"; printf 'bin' > "${src}/d/tool"
+    tar -czf "${BATS_TEST_TMPDIR}/t.tar.gz" -C "${src}" d
+    sum="$(sha256sum "${BATS_TEST_TMPDIR}/t.tar.gz" | cut -d' ' -f1)"
+    _fixture_manifest 'x:' '  tool:' '    version: "v1.2"' '    url: "https://h/{version}/t_{bare}.tgz"' \
+        "    sha256: \"${sum}\"" '    bin: "d/tool"'
+    [ "$(_ci_tool_url x.tool v1.2)" = "https://h/v1.2/t_1.2.tgz" ]
+    _fake_curl "${BATS_TEST_TMPDIR}/t.tar.gz"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.tool
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${output}")" = "bin" ]
+    [ -x "${output}" ]
+}
+
+@test "tool fetch keeps a bare binary under its bin name" {
+    # What: archive binary stores the download as the bin file.
+    # Why: Some upstreams ship no archive, only the executable.
+    # From: Issue #479, PR #544
+    local sum
+    printf 'exe' > "${BATS_TEST_TMPDIR}/raw"
+    sum="$(sha256sum "${BATS_TEST_TMPDIR}/raw" | cut -d' ' -f1)"
+    _fixture_manifest 'x:' '  osv:' '    version: "v2"' '    url: "https://h/osv"' \
+        "    sha256: \"${sum}\"" '    archive: "binary"' '    bin: "osv-scanner"'
+    _fake_curl "${BATS_TEST_TMPDIR}/raw"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.osv
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${output}")" = "exe" ]
+}
+
+@test "tool fetch fails closed on a sha256 mismatch or no pin" {
+    # What: A wrong or missing checksum never yields a binary.
+    # Why: A tampered or unpinned binary must never run.
+    # From: Issue #479, PR #544
+    printf 'evil' > "${BATS_TEST_TMPDIR}/evil"
+    _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
+        "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"' '  bare:' '    version: "v1"' \
+        '    url: "https://h/t.tgz"' '    bin: "tool"'
+    _fake_curl "${BATS_TEST_TMPDIR}/evil"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.tool
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-FETCH-0001"* ]]
     [ ! -f "${BATS_TEST_TMPDIR}/tool-v1/.complete" ]
+    _forbid curl
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.bare
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+# What: gh and docker stubs for the SOT refresh tests.
+# Why: Release lists and registry digests must be offline.
+# From: Issue #479, PR #544
+_fake_registry() {
+    docker() { printf '{"digest":"sha256:%s"}\n' "$(printf 'b%.0s' {1..64})"; }
+    gh() {
+        case "$*" in
+            *"releases?per_page"*) printf '%s\n' v1.9.9 v1.10.0 v1.2.0 ;;
+            *"releases/tags/v1.10.0"*) printf '{"assets":[{"name":"t_1.10.0.tgz","digest":"sha256:%s"}]}\n' "$(printf 'c%.0s' {1..64})" ;;
+            *) echo "gh $* must not run"; return 99 ;;
+        esac
+    }
+}
+
+@test "sot refresh moves digests and tool versions, one row each" {
+    # What: New digest and newest stable version land in the SOT.
+    # Why: ci.sh is the sole pin owner; sort -V beats backports.
+    # From: Issue #479, PR #544
+    local a b c
+    a="$(printf 'a%.0s' {1..64})"; b="$(printf 'b%.0s' {1..64})"; c="$(printf 'c%.0s' {1..64})"
+    _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${a}\"" 'external_services:' \
+        "  red: \"redis:8@sha256:${b}\"" 'external_versions:' '  t:' '    version: "v1.9.9"' \
+        '    source: "o/t"' '    url: "https://github.com/o/t/releases/download/{version}/t_{bare}.tgz"' \
+        "    sha256: \"${a}\"" '  manual:' '    version: "1"'
+    _fake_registry
+    run _ci_sot_refresh
+    [ "${status}" -eq 0 ]
+    [ "${#lines[@]}" -eq 2 ]
+    [ "$(_ci_sot_scalar base_images.deb)" = "debian:trixie@sha256:${b}" ]
+    [ "$(_ci_sot_scalar external_services.red)" = "redis:8@sha256:${b}" ]
+    [ "$(_ci_sot_scalar external_versions.t.version)" = "v1.10.0" ]
+    [ "$(_ci_sot_scalar external_versions.t.sha256)" = "${c}" ]
+    [ "$(_ci_sot_scalar external_versions.manual.version)" = "1" ]
+}
+
+@test "sot refresh fails closed on an image pin without a tag" {
+    # What: name@sha256 with no tag has no channel to follow.
+    # Why: Refreshing it would silently track latest.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'base_images:' "  deb: \"debian@sha256:$(printf 'a%.0s' {1..64})\"" 'external_services:' \
+        '  none: "x:1@sha256:0"' 'external_versions:' '  m:' '    version: "1"'
+    _fake_registry
+    run _ci_sot_refresh
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0004"* ]]
+}
+
+@test "sot-update with current pins touches neither git nor PRs" {
+    # What: Nothing changed means no branch, PR or dispatch.
+    # Why: A weekly no-op must not create noise on the repo.
+    # From: Issue #479, PR #544
+    local b; b="$(printf 'b%.0s' {1..64})"
+    _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${b}\"" 'external_services:' \
+        "  red: \"redis:8@sha256:${b}\"" 'external_versions:' '  m:' '    version: "1"'
+    _fake_registry
+    _forbid git
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"every SOT pin is current"* ]]
+    [[ "${output}" != *"must not run"* ]]
 }
 
 @test "harden rejects an unknown subcommand" {

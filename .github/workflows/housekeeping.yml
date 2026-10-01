@@ -1,6 +1,6 @@
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: GHCR cleanup, weekly ccache heartbeat and control.
+# What: GHCR cleanup, SOT pin refresh, ccache heartbeat.
 # Why: One owner for housekeeping; logic lives in ci.sh.
 # From: Issue #479
 name: Housekeeping
@@ -14,6 +14,7 @@ on:
         options:
           - gc
           - heartbeat
+          - sot-update
         default: gc
       package:
         description: "Which GHCR package to prune (gc task)"
@@ -54,6 +55,29 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           PACKAGE: ${{ inputs.package }}
         run: bash .github/scripts/ci.sh gc "$PACKAGE"
+
+  sot_update:
+    name: Refresh SOT pins (images, tools)
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || inputs.task == 'sot-update'
+    runs-on: ubuntu-latest
+    # What: Push the update branch, open its PR, dispatch CI.
+    # Why: GITHUB_TOKEN PR events start no runs; dispatch does.
+    # From: Issue #479, PR #544
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # What: A schedule refreshes current_dev; a dispatch its ref.
+      # Why: Schedules fire on master, whose SOT is not the target.
+      # From: Issue #479, PR #544
+      - env:
+          REF: ${{ github.event_name == 'schedule' && 'current_dev' || github.ref_name }}
+        run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 1 "$REF"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: bash .github/scripts/ci.sh sot-update
 
   heartbeat:
     name: Weekly distributed ccache heartbeat

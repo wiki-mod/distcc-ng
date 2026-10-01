@@ -5,35 +5,35 @@
 # From: Issue #479
 schema: build-manifest/v1
 
-# What: Pinned external base images by full digest.
-# Why: Sole owner of every base-image pin, no per-file copy.
-# From: Issue #479
+# What: Base images as name:tag@sha256; tag is the channel.
+# Why: ci.sh sot-update moves each digest along its tag.
+# From: Issue #479, PR #544
 base_images:
   # What: Debian base of the verify/build-tools image.
-  # Why: docker/verify consumes this; one owner only.
-  # From: Issue #479
-  debian_verify: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"
+  # Why: Full, not slim: the image carries a large toolchain.
+  # From: Issue #264, Issue #479
+  debian_verify: "debian:trixie@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"
   # What: Debian base of the release runtime images.
   # Why: docker/release consumes this; distinct from verify.
   # From: Issue #479
-  debian_release: "debian@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
+  debian_release: "debian:trixie@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
   # What: Go base that builds the pinned actionlint binary.
   # Why: verify's actionlint-builder stage consumes it.
   # From: Issue #479
-  golang_actionlint: "golang@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
+  golang_actionlint: "golang:1-trixie@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
   # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
   # Why: :v1 lineage; its old glibc matches the host check.
   # From: Issue #267, Issue #479, PR #544
-  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder@sha256:5d8ad2d0945830c9cae00441202025e0609eb2d846e351a3217cb5355c1f2109"
+  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder:v1@sha256:5d8ad2d0945830c9cae00441202025e0609eb2d846e351a3217cb5355c1f2109"
   # What: ClusterFuzzLite build/run step images run by ci.sh.
-  # Why: Pinned by digest, not the floating v1 tag.
+  # Why: Pinned by digest along the v1 channel.
   # From: Issue #267, Issue #479, PR #544
-  cfl_build_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers@sha256:9407058df630a7f8af9c8f371abc6aacae8362dd99e68b40a06fa0ea75caec2e"
-  cfl_run_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers@sha256:f8223bc628dc8c5cd458ae1a58ba6e5fdc5d6b3831f3f5fe737f3a6e9f1c2021"
+  cfl_build_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers:v1@sha256:9407058df630a7f8af9c8f371abc6aacae8362dd99e68b40a06fa0ea75caec2e"
+  cfl_run_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers:v1@sha256:f8223bc628dc8c5cd458ae1a58ba6e5fdc5d6b3831f3f5fe737f3a6e9f1c2021"
 
-# What: Pinned external tool/asset versions.
-# Why: Central version owner; consumers never re-pin.
-# From: Issue #479
+# What: Tool pins: version, GitHub source, asset url, sha256.
+# Why: sot-update follows source; fetch checks sha256 always.
+# From: Issue #479, PR #544
 external_versions:
   # What: The vendored popt/ tree's expected identity.
   # Why: vendor-check compares it to POPT_VERSION.
@@ -41,57 +41,86 @@ external_versions:
   popt_vendor:
     version: "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)"
   # What: Samba release used by the source-adequacy check.
-  # Why: verify configure-dryrun downloads exactly this tag.
-  # From: Issue #479
+  # Why: GPG-verified at fetch; bumped by hand with its key.
+  # From: Issue #264, Issue #479
   samba:
     version: "4.22.4"
-  # What: actionlint release built into the verify image.
-  # Why: pins the workflow linter to one reproducible build.
-  # From: Issue #479
+  # What: actionlint built from source into the verify image.
+  # Why: go install verifies the module via sum.golang.org.
+  # From: Issue #267, Issue #479
   actionlint:
     version: "1.7.12"
+    source: "rhysd/actionlint"
+    tag_prefix: "v"
   # What: ccache release built by the weekly heartbeat.
   # Why: heartbeat/control build the same revision.
   # From: Issue #479, Issue #81
   ccache_heartbeat:
     version: "v4.13.6"
+    source: "ccache/ccache"
   # What: CodeQL CLI bundle, downloaded/run by ci.sh.
-  # Why: codeql-action's tag names its own bundle.
+  # Why: codeql-action's codeql-bundle- tags name the bundle.
   # From: Issue #479
   codeql_cli:
     version: "v2.27.0"
+    source: "github/codeql-action"
+    tag_prefix: "codeql-bundle-"
+    url: "https://github.com/github/codeql-action/releases/download/codeql-bundle-{version}/codeql-bundle-linux64.tar.gz"
+    sha256: "8e870433e5c80d0e916c3c1aa9005fc88aab990bcdcc649fade9dfc4d7e94305"
+    bin: "codeql/codeql"
   # What: OSSF Scorecard CLI release run directly by ci.sh.
   # Why: Replaces ossf/scorecard-action.
   # From: Issue #479
   scorecard:
     version: "v5.5.0"
+    source: "ossf/scorecard"
+    url: "https://github.com/ossf/scorecard/releases/download/{version}/scorecard_{bare}_linux_amd64.tar.gz"
+    sha256: "83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff"
+    bin: "scorecard"
   # What: OSV-Scanner CLI release run directly by ci.sh.
-  # Why: Replaces google/osv-scanner-action.
+  # Why: Upstream ships a bare binary, not an archive.
   # From: Issue #479
   osv_scanner:
     version: "v2.6.0"
+    source: "google/osv-scanner"
+    url: "https://github.com/google/osv-scanner/releases/download/{version}/osv-scanner_linux_amd64"
+    sha256: "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108"
+    archive: "binary"
+    bin: "osv-scanner"
   # What: autoconf built into the ClusterFuzzLite image.
   # Why: configure.ac needs 2.71; base-builder apt ships 2.69.
   # From: Issue #267, Issue #479, PR #544
   autoconf:
     version: "2.71"
+    url: "https://ftp.gnu.org/gnu/autoconf/autoconf-{version}.tar.gz"
     sha256: "431075ad0bf529ef13cb41e9042c542381103e80015686222b8a9d4abef42a1c"
   # What: Trivy CLI release run directly by ci.sh.
   # Why: Replaces aquasecurity/trivy-action.
   # From: Issue #479
   trivy:
     version: "v0.74.0"
+    source: "aquasecurity/trivy"
+    url: "https://github.com/aquasecurity/trivy/releases/download/{version}/trivy_{bare}_Linux-64bit.tar.gz"
+    sha256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+    bin: "trivy"
   # What: Syft CLI release ci.sh runs for SBOM gen.
   # Why: Replaces anchore/sbom-action.
   # From: Issue #479
   syft:
     version: "v1.52.0"
+    source: "anchore/syft"
+    url: "https://github.com/anchore/syft/releases/download/{version}/syft_{bare}_linux_amd64.tar.gz"
+    sha256: "caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d"
+    bin: "syft"
   # What: StepSecurity agent tarball run by ci.sh harden.
   # Why: Org has no TLS inspection: non-TLS agent, amd64 only.
   # From: Issue #479, PR #544
   harden_runner_agent:
     version: "v0.16.2"
+    source: "step-security/agent"
+    url: "https://github.com/step-security/agent/releases/download/{version}/agent_{bare}_linux_amd64.tar.gz"
     sha256: "4b14d8a3a5fbcef95af55e0c54d3bee6f44da802878c10289a4ca0b79b6d0237"
+    bin: "agent"
 
 # What: harden-runner policy and StepSecurity endpoints.
 # Why: Audit-only egress monitoring, never block (Issue #58).
@@ -102,11 +131,11 @@ harden_runner:
   telemetry_url: "https://prod.app-api.stepsecurity.io/v1"
   web_url: "https://app.stepsecurity.io"
 
-# What: Pinned external service images used by CI steps.
-# Why: Full-digest pin, never a floating tag anywhere.
-# From: Issue #479
+# What: Service images run by CI steps, as name:tag@sha256.
+# Why: ci.sh sot-update moves each digest along its tag.
+# From: Issue #479, PR #544
 external_services:
-  redis: "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+  redis: "redis:8@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
 
 # What: The configure variants CI builds/tests, per OS.
 # Why: One matrix owner; workflows read, never hardcode.
@@ -243,11 +272,12 @@ verify:
     # From: Issue #275, Issue #440
     ssh: "openssh-server openssh-client"
 
-# What: apt packages the engine self-test job needs.
-# Why: One owner; validate.yml installs this first.
-# From: Issue #479
+# What: Engine self-test packages and dependency-bump bots.
+# Why: Bots skip PR metadata checks; AG-VAL-007 reviews them.
+# From: Issue #479, PR #544
 ci_engine:
   selftest_apt: "bats parallel"
+  dependency_bots: ["dependabot[bot]", "github-actions[bot]"]
 
 # What: GHCR prune policy applied by ci.sh gc.
 # Why: Keeps a rollback set; only whole series groups age out.

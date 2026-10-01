@@ -20,7 +20,7 @@ changes.
 | `security.yml` | `push`/`pull_request` (`current_dev`/`master`), `workflow_dispatch`, `schedule` (`0 5 * * 0` weekly, `0 6 1,15 * *` monthly), `branch_protection_rule` | CodeQL (matrix `c-cpp`/`python`/`actions`), OSV-Scanner, OpenSSF Scorecard, ClusterFuzzLite fuzzing (path-filtered on `pull_request` via content-based impact classification), and the OpenSSF Best Practices Baseline recheck (`workflow_dispatch`/monthly cron only) |
 | `release.yml` | `push` (`v*` tags, `current_dev`), `workflow_dispatch` (`tag`, `publish_container`, `release_notes`), `release: published` | A `v*` tag push is the real release (POL-RELEASE-07): version check, build+test, e2e, packages+SBOM, `gh release create`, container build+scan+push, multi-arch manifest incl. `:latest`. `workflow_dispatch` is the pre-tag dry run (POL-RELEASE-05): same path without a GitHub Release, containers pushed only with `publish_container=true`, `:latest` never moved. `release: published` inserts the notes into `CHANGELOG.md`; a `current_dev` push refreshes the draft release. |
 | `nightly.yml` | `workflow_dispatch`, `schedule` (`0 4 * * *`) | Builds+tests the `default` and `sanitizer` variants against `current_dev`, runs distributed e2e (plus the full bidirectional e2e on manual dispatch only), publishes `distcc-ng-nightly:latest`, and reports status |
-| `housekeeping.yml` | `workflow_dispatch` (`task` choice), `schedule` (`0 5 * * 1`) | GHCR package pruning (`gc`), and the weekly distributed ccache heartbeat plus its non-gating plain-compiler control build |
+| `housekeeping.yml` | `workflow_dispatch` (`task` choice), `schedule` (`0 5 * * 1`) | GHCR package pruning (`gc`), the weekly SOT pin refresh (`sot-update`: one pull request moving image digests and tool versions, with Validate/Security dispatched on it), and the weekly distributed ccache heartbeat plus its non-gating plain-compiler control build |
 
 ## Cross-reference matrix
 
@@ -82,7 +82,7 @@ All `cron:` schedules, sorted (UTC):
 |---|---|---|---|
 | 04:00 | daily | `nightly.yml` | `build_test`/`sanitizer`/`e2e`/`publish`/`report` |
 | 05:00 | Sun | `security.yml` | `codeql`/`osv-scan`/`scorecard`/`clusterfuzzlite` |
-| 05:00 | Mon | `housekeeping.yml` | `heartbeat`/`control`/`report` |
+| 05:00 | Mon | `housekeeping.yml` | `sot_update`/`heartbeat`/`control`/`report` |
 | 06:00 | 1st/15th (any weekday) | `security.yml` | `openssf` |
 
 **Known collision**: `security.yml`'s own two schedules (`0 5 * * 0` and

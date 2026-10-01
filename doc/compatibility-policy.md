@@ -89,15 +89,18 @@ This section documents how this fork selects, obtains, and tracks its
 dependencies (raised by issue #267's OSSF Scorecard/Baseline review,
 criterion `OSPS-DO-06.01`).
 
-- **GitHub Actions** (the workflows under `.github/workflows/`) are the one
-  category of dependency with automated update tooling: `.github/dependabot.yml`
-  opens a weekly update PR per action, for both `master` and `current_dev`.
-  Each such PR still goes through the same review, CI, and (for `master`)
-  explicit maintainer-approval gates as any other pull request — Dependabot
-  only proposes the update, it never merges one itself. `security.yml`'s
-  `osv-scan` job adds a real-time gate on top of that periodic cadence: every pull request
-  and push is checked against OSV.dev's advisory database for known-
-  vulnerable action versions (see `SECURITY.md`'s SCA policy section).
+- **CI container images and CI tools** are the one category of dependency
+  with automated update tooling. The workflows use no third-party actions;
+  every image and tool is pinned in `.github/yaml/build-manifest.yml`:
+  images as `name:tag@sha256:<digest>` (the tag is the tracked channel),
+  tools as a release version plus the sha256 of the downloaded asset, which
+  `ci.sh` checks on every fetch. `housekeeping.yml` runs `ci.sh sot-update`
+  weekly: it moves each pin to the newest stable release of its channel
+  (a tool's new sha256 is the digest GitHub records for that release
+  asset), opens or refreshes one pull request against `current_dev`, and
+  dispatches `Validate` and `Security` on it. That pull request goes
+  through the same review and approval gates as any other (`AGENTS.md`
+  `[AG-VAL-007]`); the job only proposes, it never merges.
 - **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`)
   are detected at `./configure` time via `configure.ac`'s `PKG_CHECK_MODULES`
   calls against whatever the build host already provides, per the

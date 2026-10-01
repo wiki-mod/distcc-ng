@@ -138,9 +138,13 @@ jobs:
   publish_buildtools:
     name: Publish distcc-ng-buildtools:latest
     needs: [plan, verify_image]
+    # What: Publish only from current_dev or master.
+    # Why: A dispatch on a bot branch must never publish :latest.
+    # From: Issue #479, PR #544
     if: >-
+      (github.ref_name == 'current_dev' || github.ref_name == 'master') && (
       (github.event_name == 'push' && contains(needs.plan.outputs.phases, 'verify')) ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read

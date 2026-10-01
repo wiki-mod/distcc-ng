@@ -103,7 +103,13 @@ jobs:
 
   openssf:
     name: OpenSSF Baseline recheck
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 1,15 * *'
+    # What: A dispatch rechecks only from current_dev or master.
+    # Why: It posts to issue #312; a bot branch must not.
+    # From: Issue #312, PR #544
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+      (github.ref_name == 'current_dev' || github.ref_name == 'master')) ||
+      github.event.schedule == '0 6 1,15 * *'
     runs-on: ubuntu-latest
     permissions:
       contents: read
