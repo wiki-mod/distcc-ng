@@ -177,6 +177,8 @@ _forbid() {
     # Why: mapfile < <(cmd) hid partial and total failures.
     # From: Issue #479, PR #544
     local arr=(stale)
+    # What: Stub: two lines of output, then exit 4.
+    # Why: A half-failed command must still return its rc.
     _half() { printf 'a\nb c\n'; return 4; }
     run _ci_mapfile arr _half
     [ "${status}" -eq 4 ]
@@ -194,6 +196,9 @@ _forbid() {
     # What: No CPU count is an error, not a silent guess of 4.
     # Why: AG-VAL-001: a failed tool is never worked around.
     # From: Issue #479, PR #544
+
+    # What: Stub nproc as a failing tool.
+    # Why: The job count must fail, never guess a CPU count.
     nproc() { return 1; }
     run _ci_jobs
     [ "${status}" -eq 2 ]
@@ -267,6 +272,9 @@ _forbid() {
     # What: The token reaches gh; a dry run prints only the args.
     # Why: One board owner; a PAT must not land in a log line.
     # From: Issue #236, Issue #479, PR #544
+
+    # What: Stub gh to echo the token it was handed.
+    # Why: Shows the token reaches gh but not the log.
     gh() { echo "token=${GH_TOKEN:-none} args=$*"; }
     run _ci_board_add https://x/1 s3cret
     [ "${status}" -eq 0 ]
@@ -427,7 +435,11 @@ _forbid() {
     # Why: Downstream jobs gate on these, not on the event.
     # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
+    # What: Stub: accept only v1.2.3-NG, require_new=false.
+    # Why: Pins the arguments the CI path must pass.
     _ci_check_release_version() { [ "$1 $2" = "v1.2.3-NG false" ]; }
+    # What: Stub an empty container matrix and one variant.
+    # Why: Keeps the test off the real SOT inventory.
     _ci_release_matrix() { printf '%s\n' '{"include":[]}' '["a"]'; }
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG \
         run _ci_release_version_check
@@ -461,7 +473,11 @@ _forbid() {
     _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' \
         '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"' \
         '      arm64:' '        runner: "r2"' '        optional: "true"'
+    # What: Stub the registry login as a no-op.
+    # Why: The manifest test needs no registry or token.
     _ci_registry_login() { :; }
+    # What: Stub inspect per platform tag; echo create.
+    # Why: arm64 is missing; AMD_GONE drops amd64 too.
     docker() {
         case "$*" in
             *"inspect "*"-arm64"*) echo "not found"; return 1 ;;
@@ -549,6 +565,8 @@ _forbid() {
     # Why: The workflow passes neither; ci.sh reads the event.
     # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
+    # What: Stub the insert to print its tag and notes file.
+    # Why: The test checks the event parse, not git.
     _ci_changelog_insert() { printf 'insert %s|%s\n' "$1" "$2"; }
     printf '{"release":{"prerelease":false,"tag_name":"v1.2","body":"notes"}}' > "${ev}"
     GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
@@ -565,6 +583,8 @@ _forbid() {
     ( cd "${fx}" && git init -q && printf '# Changelog\n<!-- insertion marker -->\n' > CHANGELOG.md \
       && git add CHANGELOG.md && git -c user.name=t -c user.email=t@t commit -q -m x )
     printf 'line one\n' > "${BATS_TEST_TMPDIR}/notes"
+    # What: Stub git auth setup as a no-op.
+    # Why: A dry run must not need a token or a remote.
     _ci_git_auth_setup() { :; }
     CI_REPO_ROOT="${fx}" DRY_RUN=true run _ci_publish_changelog_update v1.2.3-NG "${BATS_TEST_TMPDIR}/notes"
     [ "${status}" -eq 0 ]
@@ -599,6 +619,9 @@ _forbid() {
     # What: Token goes via stdin, never argv; user is the actor.
     # Why: argv leaks into process listings and logs.
     # From: Issue #479, PR #544
+
+    # What: Stub docker to record its stdin and argv.
+    # Why: Proves the token goes on stdin, not in argv.
     docker() { cat > "${BATS_TEST_TMPDIR}/stdin"; echo "$*" > "${BATS_TEST_TMPDIR}/argv"; }
     REGISTRY_TOKEN=s3cret GITHUB_ACTOR=octo run _ci_registry_login
     [ "${status}" -eq 0 ]
@@ -728,6 +751,8 @@ _forbid() {
     printf '{"pull_request":{"number":7,"html_url":"https://h/pr/7"}}' > "${ev}"
     GITHUB_EVENT_PATH="${ev}" run _ci_event_pr_number
     [ "${output}" = "7" ]
+    # What: Stub the board add to print the URL it gets.
+    # Why: The test checks the URL from the payload.
     _ci_board_add() { printf 'add %s\n' "$1"; }
     GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
     [ "${output}" = "add https://h/pr/7" ]
@@ -750,11 +775,17 @@ _forbid() {
     local out="${BATS_TEST_TMPDIR}/out"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
+    # What: Stub the PR range as base b, head h.
+    # Why: The test needs a range without a real event.
     _ci_event_range() { printf '%s\n' b h; }
+    # What: Stub git diff as a docs-only change.
+    # Why: A docs diff must miss the fuzz class.
     git() { [ "$1" = diff ] && printf '%s\n' doc/x.md; }
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=false" ]
+    # What: Stub git diff as a fuzz test change.
+    # Why: A test/fuzz diff must hit the fuzz class.
     git() { [ "$1" = diff ] && printf '%s\n' test/fuzz/a.c; }
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
@@ -765,7 +796,12 @@ _forbid() {
     # What: A failing git diff is an error, never a miss.
     # Why: A false miss would skip fuzzing on a broken diff.
     # From: Issue #479, PR #544
+
+    # What: Stub the PR range as base b, head h.
+    # Why: The diff below must fail, not the range read.
     _ci_event_range() { printf '%s\n' b h; }
+    # What: Stub git as a failing diff (rc 128).
+    # Why: A failed diff must fail closed, not miss.
     git() { return 128; }
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "${status}" -eq 1 ]
@@ -792,6 +828,8 @@ _forbid() {
     # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     printf '{"inputs":{}}' > "${ev}"
+    # What: Stub the build matrix as empty.
+    # Why: The test checks phases, not the matrix SOT.
     ci_cmd_matrix() { echo '{"include":[]}'; }
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
         GITHUB_REF_NAME=current_dev run ci_cmd_plan
@@ -817,6 +855,8 @@ _forbid() {
     [ "${status}" -eq 0 ]
     [ "${output}" = "package" ]
     printf '{"before":"%s","after":"%s"}' "${b}" "${h}" > "${ev}"
+    # What: Stub the build matrix as empty.
+    # Why: The test checks phases, not the matrix SOT.
     ci_cmd_matrix() { echo '{"include":[]}'; }
     CI_REPO_ROOT="${fx}" GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="${ev}" \
         GITHUB_SHA="${h}" GITHUB_REF_NAME=current_dev run ci_cmd_plan
@@ -831,6 +871,8 @@ _forbid() {
     # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" ref
     printf '{"inputs":{}}' > "${ev}"
+    # What: Stub the build matrix as empty.
+    # Why: The test checks the publish flag, not the matrix.
     ci_cmd_matrix() { echo '{"include":[]}'; }
     for ref in bot/x 544/merge; do
         : > "${out}"
@@ -872,8 +914,14 @@ _forbid() {
     # Why: A killed install leaves dpkg interrupted for the retry.
     # From: Issue #493, Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/calls"
+    # What: Stub sudo to run its command directly.
+    # Why: The test runs as a plain user without sudo.
     sudo() { "$@"; }
+    # What: Stub sleep as a no-op.
+    # Why: Retry backoff must not slow the suite.
     sleep() { :; }
+    # What: Stub timeout: log calls, fail the first apt run.
+    # Why: Replays an apt run the timeout cut off mid-dpkg.
     timeout() {
         shift 3
         echo "$*" >> "${log}"
@@ -896,9 +944,14 @@ _forbid() {
     # What: A compiler warning in make output fails the build.
     # Why: Warnings are errors (AG-INT-003) on every tree build.
     # From: Issue #479, PR #544
+
+    # What: Stub make as a clean compile line.
+    # Why: A clean build must pass the warning gate.
     make() { echo "gcc -c src/x.c"; }
     run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
     [ "${status}" -eq 0 ]
+    # What: Stub make as a compile with one warning.
+    # Why: Any compiler warning must fail the gate.
     make() { echo "src/x.c:12:5: warning: unused variable 'y'"; }
     run _ci_make_gated "${BATS_TEST_TMPDIR}/warn.log" all
     [ "${status}" -eq 1 ]
@@ -910,6 +963,9 @@ _forbid() {
     # What: A failing make or configure is an error, not a pass.
     # Why: Build steps once relied on set -e, lost inside ||.
     # From: Issue #479, PR #544
+
+    # What: Stub make as a failing tool (rc 2).
+    # Why: A failed make must fail, not read as clean.
     make() { echo "boom"; return 2; }
     run _ci_make_gated "${BATS_TEST_TMPDIR}/m.log"
     [ "${status}" -eq 1 ]
@@ -1052,6 +1108,8 @@ _forbid() {
     echo a > "${CI_REPO_ROOT}/configure.ac"; echo b > "${CI_REPO_ROOT}/m4/x.m4"; echo c > "${CI_REPO_ROOT}/README"
     git -C "${CI_REPO_ROOT}" add -A
     git -C "${CI_REPO_ROOT}" -c user.name=t -c user.email=t@t commit -q -m one
+    # What: Stub ccache to report /c/dir as cache_dir.
+    # Why: The cache plan path must come from ccache.
     ccache() { [ "$*" = "--get-config cache_dir" ] && echo /c/dir; }
     GITHUB_OUTPUT="${out}" RUNNER_OS=Linux RUNNER_ARCH=X64 GITHUB_RUN_ID=7 ci_cmd_cache default
     sum1="$(sed -n 's/^key=build-Linux-X64-\(.*\)-7$/\1/p' "${out}")"
@@ -1081,6 +1139,8 @@ _forbid() {
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
     _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"' \
         'security:' '  cfl_run:' '    seconds: "1"' '    mode: "batch"'
+    # What: Stub the fuzz run as a crash (rc 1).
+    # Why: A crash must offer reproducers, keep its rc.
     _ci_cfl_run() { return 1; }
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x"
     : > "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x/crash-1"
@@ -1096,6 +1156,8 @@ _forbid() {
     # From: Issue #267, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
+    # What: Stub the fuzz run with rc 3 and no crash.
+    # Why: No reproducer is offered; the rc passes on.
     _ci_cfl_run() { return 3; }
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
     GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
@@ -1119,11 +1181,15 @@ _forbid() {
     # Why: Empty lookups would publish a wrong, empty draft.
     # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/gh"
+    # What: Stub gh: log calls; release list fails.
+    # Why: An API error must stop before any write.
     gh() { echo "$*" >> "${log}"; case "$1 $2" in "release list") return 1 ;; esac; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
     [ "${status}" -eq 1 ]
     run grep -c -E 'release (edit|create)' "${log}"
     [ "${output}" = "0" ]
+    # What: Stub gh: one release, one PR, no draft yet.
+    # Why: Drives the dry-run create path end to end.
     gh() {
         case "$1 $2" in
             "release list") echo 2026-01-01 ;;
@@ -1151,6 +1217,8 @@ _forbid() {
     # Why: A tool failure must never pose as a compliance finding.
     # From: Issue #312, Issue #479, PR #544
     _fixture_manifest 'security:' '  openssf:' '    ruleset_id: "7"'
+    # What: Stub every gh call as failing.
+    # Why: API errors must fail, not read as NotMet.
     gh() { return 1; }
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
     [ "${status}" -eq 2 ]
@@ -1158,10 +1226,14 @@ _forbid() {
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0002"* ]]
+    # What: Stub gh to answer null for the field.
+    # Why: A hidden field must fail, not read as NotMet.
     gh() { echo null; }
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0003"* ]]
+    # What: Stub gh: a met ruleset, scanning on, push off.
+    # Why: Real Met and NotMet verdicts must still come out.
     gh() { case "$*" in *rulesets/7*) echo '["pull_request","deletion"]' ;; *) echo '{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}' ;; esac; }
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
     [ "${output}" = "Met" ]
@@ -1231,6 +1303,9 @@ _forbid() {
     # What: An uninspectable tag aborts pruning of that package.
     # Why: Unknown children would otherwise lose their protection.
     # From: Issue #479, PR #544
+
+    # What: Stub docker as failing to inspect.
+    # Why: An uninspectable tag must stop the prune.
     docker() { return 1; }
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
@@ -1241,6 +1316,9 @@ _forbid() {
     # What: Bad versions JSON or a bad manifest aborts pruning.
     # Why: A jq error must not drop a child from the keep-set.
     # From: Issue #479, PR #544
+
+    # What: Stub docker to print a non-JSON manifest.
+    # Why: A bad manifest must stop the prune.
     docker() { printf 'not json\n'; }
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng 'not json'
     [ "${status}" -eq 1 ]
@@ -1248,6 +1326,8 @@ _forbid() {
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0004"* ]]
+    # What: Stub docker with a two-child index manifest.
+    # Why: Both children must land in the keep-set.
     docker() { printf '{"manifests":[{"digest":"sha256:a"},{"digest":"sha256:b"}]}\n'; }
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 0 ]
@@ -1466,7 +1546,11 @@ _forbid() {
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"number":5}}' > "${ev}"
     _fixture_manifest 'labels:' '  ci:' '    paths: [".github/workflows/**"]'
+    # What: Stub gh: a workflow diff; echo pr edit.
+    # Why: Labels must come from the SOT path map.
     gh() { case "$1 $2" in "pr diff") echo .github/workflows/v.yml ;; "pr edit") echo "edit $*" ;; esac; }
+    # What: Stub live PR data with a fix(ci) title.
+    # Why: The title sets the category label offline.
     _ci_metadata_fetch_live() { export PR_TITLE="fix(ci): x"; }
     GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" run _ci_variables_label_pr
     [ "${status}" -eq 0 ]
@@ -1640,6 +1724,8 @@ _forbid() {
     _fixture_manifest 'schedules:' '  security_scans:' '    workflow: "security"' '    cron: "0 5 * * 0"' \
         '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"' 'security:' '  cfl_run:' \
         '    sanitizers: ["address"]' '  codeql:' '    languages: ["c-cpp", "python"]'
+    # What: Run route security for one event and ref.
+    # Why: Each case reads the scans/openssf pair.
     _route() {
         : > "${out}"
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME="$1" GITHUB_REF_NAME="$2" \
@@ -1700,6 +1786,8 @@ _forbid() {
     # Why: #479: the verify container starts once for all phases.
     # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/docker"
+    # What: Stub docker: log calls; in-image checkout fails.
+    # Why: Proves one container and the failed check name.
     docker() {
         echo "$1 $*" >> "${log}"
         [ "$1" = exec ] && [ "$4" = "${CI_CONTAINER_SH}" ] && [ "$6" = checkout ] && return 1
@@ -1828,6 +1916,8 @@ _forbid() {
 # Why: Owner tests assert the exact flags, not a real daemon.
 # From: Issue #479, PR #544
 _capture_docker() {
+    # What: Record each docker argument on its own line.
+    # Why: Owner tests assert flags, not a real daemon.
     docker() { printf '%s\n' "$@" >> "${BATS_TEST_TMPDIR}/argv"; }
 }
 
@@ -1923,7 +2013,12 @@ _capture_docker() {
     # What: Success on a later try passes; N failures fail.
     # Why: One bounded poll owner for every readiness wait.
     # From: Issue #479, PR #544
+
+    # What: Stub sleep as a no-op.
+    # Why: Probe retries must not slow the suite.
     sleep() { :; }
+    # What: Probe that succeeds on its third call.
+    # Why: Proves wait-until retries, then stops.
     _probe() { echo x >> "${BATS_TEST_TMPDIR}/tries"; [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -ge 3 ]; }
     run _ci_wait_until 5 1 _probe
     [ "${status}" -eq 0 ]
@@ -1955,6 +2050,8 @@ _capture_docker() {
 # From: Issue #479, PR #544
 _fake_curl() {
     FAKE_DOWNLOAD="$1"
+    # What: Stub curl to copy FAKE_DOWNLOAD to its -o file.
+    # Why: Downloads stay offline and deterministic.
     curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${FAKE_DOWNLOAD}" "$2"; fi; shift; done; }
 }
 
@@ -1962,7 +2059,12 @@ _fake_curl() {
     # What: curl's failure surfaces as FETCH-0003 with the URL.
     # Why: A failed fetch must never fail without an error line.
     # From: Issue #479, PR #544
+
+    # What: Stub curl as an HTTP failure (rc 22).
+    # Why: A failed fetch must name its URL and fail.
     curl() { return 22; }
+    # What: Stub sleep as a no-op.
+    # Why: Retry backoff must not slow the suite.
     sleep() { :; }
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
@@ -1976,7 +2078,11 @@ _fake_curl() {
     # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n"
     echo 0 > "${n}"
+    # What: Stub curl: the first call fails, later ones pass.
+    # Why: Proves a later attempt recovers the fetch.
     curl() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"; [ "${c}" -ge 1 ]; }
+    # What: Stub sleep as a no-op.
+    # Why: Retry backoff must not slow the suite.
     sleep() { :; }
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 0 ]
@@ -2041,7 +2147,11 @@ _fake_curl() {
 # Why: Release lists and registry digests must be offline.
 # From: Issue #479, PR #544
 _fake_registry() {
+    # What: Stub docker to return a fixed 64-hex digest.
+    # Why: Registry digests must stay offline.
     docker() { printf '{"digest":"sha256:%s"}\n' "$(printf 'b%.0s' {1..64})"; }
+    # What: Stub gh release lists and one asset digest.
+    # Why: Any other gh call is a test failure.
     gh() {
         case "$*" in
             *"releases?per_page"*) printf '%s\n' v1.9.9 v1.10.0 v1.2.0 ;;
@@ -2089,11 +2199,23 @@ _fake_registry() {
 # From: Issue #267, Issue #479, PR #544
 _fake_osv() {
     OSV_BASE_SOT="$1"
+    # What: Stub the scanner binary as /bin/true.
+    # Why: The gate test needs no real OSV scanner.
     _ci_tool_bin() { echo /bin/true; }
+    # What: Stub the scanned tool dirs as the temp dir.
+    # Why: No tool is fetched in the gate test.
     _ci_osv_tool_dirs() { echo "${BATS_TEST_TMPDIR}"; }
+    # What: Stub the OSV run as a no-op.
+    # Why: Vulnerability ids come from the stub below.
     _ci_osv_run() { :; }
+    # What: Stub the PR range as abc..def.
+    # Why: The gate reads the base SOT at the base.
     _ci_event_range() { printf '%s\n' abc def; }
+    # What: Stub git show to print the base SOT.
+    # Why: The base side must use OSV_BASE_SOT.
     git() { case "$*" in *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;; esac; }
+    # What: Stub ids: head SOT and base SOT sets.
+    # Why: The gate must fail only on head-added ids.
     _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
 }
 
@@ -2118,6 +2240,8 @@ _fake_osv() {
     # From: Issue #479, PR #544
     local big="${BATS_TEST_TMPDIR}/big.sarif"
     head -c 3000000 /dev/urandom | base64 > "${big}"
+    # What: Stub gh: decode the --input body, echo an id.
+    # Why: Proves the SARIF travels in the body file.
     gh() {
         local in=""
         while [ "$#" -gt 0 ]; do [ "$1" = "--input" ] && in="$2"; shift; done
@@ -2136,8 +2260,12 @@ _fake_osv() {
     # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
     echo '{}' > "${f}"
+    # What: Stub sleep as a no-op.
+    # Why: Retry backoff must not slow the suite.
     sleep() { :; }
     echo 0 > "${n}"
+    # What: Stub gh: a 502, then empty, then an id.
+    # Why: Both transient answers must be retried.
     gh() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"
         case "${c}" in 0) echo "gh: Server Error (HTTP 502)" >&2; return 1 ;; 1) return 0 ;; *) echo '{"id":"ok"}' ;; esac; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
@@ -2146,6 +2274,8 @@ _fake_osv() {
     [[ "${output}" == *"attempt 1/3 failed: gh: Server Error (HTTP 502)"* ]]
     [[ "${output}" == *"attempt 2/3 failed: empty response"* ]]
     echo 0 > "${n}"
+    # What: Stub gh as HTTP 404, counting calls.
+    # Why: A 4xx must fail at once, never retry.
     gh() { echo $(( $(cat "${n}") + 1 )) > "${n}"; echo "gh: Not Found (HTTP 404)" >&2; return 1; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
     [ "${status}" -eq 1 ]
@@ -2167,6 +2297,9 @@ _fake_osv() {
     # What: Claims map to buildType, workflow path, builder, run.
     # Why: gh attestation verify expects that exact provenance.
     # From: Issue #38, Issue #479, PR #544
+
+    # What: Stub the OIDC claims of a push run.
+    # Why: The predicate shape is checked offline.
     _ci_attest_claims() {
         printf '%s' '{"ref":"refs/heads/x","sha":"abc","repository":"o/r","event_name":"push",
             "workflow_ref":"o/r/.github/workflows/v.yml@refs/heads/x",
@@ -2187,8 +2320,14 @@ _fake_osv() {
     # Why: One signature covers the whole shipped asset set.
     # From: Issue #38, Issue #479, PR #544
     printf 'a' > "${BATS_TEST_TMPDIR}/f1"; printf 'b' > "${BATS_TEST_TMPDIR}/f2"
+    # What: Stub cosign as /bin/true.
+    # Why: The statement test needs no real signer.
     _ci_tool_bin() { echo /bin/true; }
+    # What: Stub the SLSA predicate as a fixed object.
+    # Why: The test checks subjects, not the predicate.
     _ci_attest_predicate() { echo '{"p":1}'; }
+    # What: Stub publish to keep the statement it gets.
+    # Why: The test reads back the built statement.
     _ci_attest_publish() { cat "$2/statement.json" > "${BATS_TEST_TMPDIR}/stmt"; }
     GITHUB_REPOSITORY=o/r GH_TOKEN=x run _ci_attest_subjects \
         "$(_ci_attest_file_subjects "${BATS_TEST_TMPDIR}/f1" "${BATS_TEST_TMPDIR}/f2")" f1
@@ -2269,6 +2408,8 @@ _fake_osv() {
     # From: Issue #479, PR #544
     _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"; mkdir -p "${_CI_HARDEN_DIR}"
     printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
+    # What: Stub sleep as a no-op.
+    # Why: Waiting for the agent must not slow the suite.
     sleep() { :; }
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 1 ]
