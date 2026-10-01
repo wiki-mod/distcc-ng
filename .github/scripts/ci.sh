@@ -579,7 +579,7 @@ _ci_event_pr_number() {
 # Why: One command feeds the orchestrator; no YAML logic.
 # From: Issue #479, PR #544
 ci_cmd_plan() {
-    local base head phases build=false matrix range=() mx=()
+    local base head phases build=false publish=false matrix range=() mx=()
     mapfile -t range < <(_ci_event_range) || return 2
     if [ "${#range[@]}" -ne 2 ]; then
         ci_log "[CI-ERROR-PLAN-0001]" "cannot read this run's base and head"
@@ -598,6 +598,12 @@ ci_cmd_plan() {
         phases="${phases% }"
     fi
     case " ${phases} " in *" build "*) build=true ;; esac
+    # What: buildtools:latest publishes from a protected ref only.
+    # Why: A dispatch on a bot branch must never publish :latest.
+    # From: Issue #479, PR #544
+    case " ${phases} " in
+        *" verify "*) if _ci_ref_protected; then publish=true; fi ;;
+    esac
     matrix='{"include":[]}'
     if [ "${build}" = "true" ]; then
         matrix="$(ci_cmd_matrix)" || return 2
@@ -605,7 +611,7 @@ ci_cmd_plan() {
     mapfile -t mx < <(_ci_release_matrix) || return 2
     [ "${#mx[@]}" -eq 2 ] || return 2
     _ci_output phases "${phases}" build "${build}" matrix "${matrix}" \
-        container_variants "${mx[1]}"
+        container_variants "${mx[1]}" publish_buildtools "${publish}"
 }
 
 # What: Write the control-build's toolchain/dist verdict.
@@ -2258,11 +2264,21 @@ _ci_schedule_flag() {
     esac
 }
 
+# What: Succeed when this run's ref is current_dev or master.
+# Why: One owner for "only these branches publish or post".
+# From: Issue #312, Issue #479, PR #544
+_ci_ref_protected() {
+    case "${GITHUB_REF_NAME:?GITHUB_REF_NAME required}" in
+        current_dev|master) return 0 ;;
+    esac
+    return 1
+}
+
 # What: Write which jobs of a scheduled workflow run now.
 # Why: One owner maps events, crons and tasks to jobs.
 # From: Issue #479, PR #544
 ci_cmd_route() {
-    local wf="${1:?workflow required}" scans openssf weekly task="" ref gc sot hb langs sans
+    local wf="${1:?workflow required}" scans openssf weekly task="" gc sot hb langs sans
     case "${wf}" in
         security)
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ]; then
@@ -2274,9 +2290,7 @@ ci_cmd_route() {
             # What: A dispatch rechecks only from current_dev or master.
             # Why: It posts to the tracking issue; a bot branch must not.
             # From: Issue #312, PR #544
-            ref="${GITHUB_REF_NAME:?GITHUB_REF_NAME required}"
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] \
-                && { [ "${ref}" = "current_dev" ] || [ "${ref}" = "master" ]; }; then
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && _ci_ref_protected; then
                 openssf=true
             fi
             langs="$(_ci_sot_json_list security.codeql.languages)" || return 2

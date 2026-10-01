@@ -732,10 +732,32 @@ _forbid() {
     printf '{"inputs":{}}' > "${ev}"
     ci_cmd_matrix() { echo '{"include":[]}'; }
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
-        run ci_cmd_plan
+        GITHUB_REF_NAME=current_dev run ci_cmd_plan
     [ "${status}" -eq 0 ]
     grep -qx 'phases=build e2e verify container package' "${out}"
     grep -qx 'build=true' "${out}"
+    grep -qx 'publish_buildtools=true' "${out}"
+}
+
+@test "plan publishes buildtools only from a protected ref" {
+    # What: A bot-branch dispatch plans verify but no publish.
+    # Why: Only current_dev and master may push buildtools:latest.
+    # From: Issue #479, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" ref
+    printf '{"inputs":{}}' > "${ev}"
+    ci_cmd_matrix() { echo '{"include":[]}'; }
+    for ref in bot/x 544/merge; do
+        : > "${out}"
+        GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
+            GITHUB_SHA=HEAD GITHUB_REF_NAME="${ref}" run ci_cmd_plan
+        [ "${status}" -eq 0 ]
+        grep -qx 'phases=build e2e verify container package' "${out}"
+        grep -qx 'publish_buildtools=false' "${out}"
+    done
+    unset GITHUB_REF_NAME
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
+        GITHUB_SHA=HEAD run ci_cmd_plan
+    [ "${status}" -ne 0 ]
 }
 
 @test "matrix expands variant x os and excludes opt-in variants" {

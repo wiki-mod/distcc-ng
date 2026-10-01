@@ -76,6 +76,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       phases: ${{ steps.plan.outputs.phases }}
       container_variants: ${{ steps.plan.outputs.container_variants }}
+      publish_buildtools: ${{ steps.plan.outputs.publish_buildtools }}
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
       - id: plan
@@ -187,12 +188,10 @@ jobs:
   publish_buildtools:
     name: Publish distcc-ng-buildtools:latest
     needs: [plan, verify_image]
-    # What: Publish only from current_dev or master.
-    # Why: A dispatch on a bot branch must never publish :latest.
+    # What: Publish when plan says so (verify, protected ref).
+    # Why: ci.sh owns the ref policy; YAML only forwards it.
     # From: Issue #479, PR #544
-    if: >-
-      contains(needs.plan.outputs.phases, 'verify') &&
-      (github.ref_name == 'current_dev' || github.ref_name == 'master')
+    if: needs.plan.outputs.publish_buildtools == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
