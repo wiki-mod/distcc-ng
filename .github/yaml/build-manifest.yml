@@ -12,19 +12,19 @@ base_images:
   # What: Debian base of the verify/build-tools image.
   # Why: Full, not slim: the image carries a large toolchain.
   # From: Issue #264, Issue #479
-  debian_verify: "debian:trixie@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"
+  debian_verify: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
   # What: Debian base of the release runtime images.
   # Why: docker/release consumes this; distinct from verify.
   # From: Issue #479
-  debian_release: "debian:trixie@sha256:d07d1b51c39f51188e60be9b64e6bf769fa94e187f092bc32b91305cfa34ba5a"
+  debian_release: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
   # What: Go base that builds the pinned actionlint binary.
   # Why: verify's actionlint-builder stage consumes it.
   # From: Issue #479
-  golang_actionlint: "golang:1-trixie@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea"
+  golang_actionlint: "golang:1-trixie@sha256:3b77fc618ec235a1ab412de7737f120dd507c57e8d87de4cbb7994fb94275ed5"
   # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
   # Why: :v1 lineage; its old glibc matches the host check.
   # From: Issue #267, Issue #479, PR #544
-  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder:v1@sha256:5d8ad2d0945830c9cae00441202025e0609eb2d846e351a3217cb5355c1f2109"
+  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder:v1@sha256:e67da2b0f6156b29b62734305a8c74db61aaf3158c7ab96386a07974fb33cdc8"
   # What: ClusterFuzzLite build/run step images run by ci.sh.
   # Why: Pinned by digest along the v1 channel.
   # From: Issue #267, Issue #479, PR #544
@@ -44,7 +44,7 @@ external_versions:
   # Why: GPG-verified at fetch; bumped by hand with its key.
   # From: Issue #264, Issue #479
   samba:
-    version: "4.22.4"
+    version: "4.25.0"
   # What: actionlint built from source into the verify image.
   # Why: go install verifies the module via sum.golang.org.
   # From: Issue #267, Issue #479
@@ -56,17 +56,17 @@ external_versions:
   # Why: heartbeat/control build the same revision.
   # From: Issue #479, Issue #81
   ccache_heartbeat:
-    version: "v4.13.6"
+    version: "v4.14.1"
     source: "ccache/ccache"
   # What: CodeQL CLI bundle, downloaded/run by ci.sh.
   # Why: codeql-action's codeql-bundle- tags name the bundle.
   # From: Issue #479
   codeql_cli:
-    version: "v2.27.0"
+    version: "v2.27.1"
     source: "github/codeql-action"
     tag_prefix: "codeql-bundle-"
     url: "https://github.com/github/codeql-action/releases/download/codeql-bundle-{version}/codeql-bundle-linux64.tar.gz"
-    sha256: "8e870433e5c80d0e916c3c1aa9005fc88aab990bcdcc649fade9dfc4d7e94305"
+    sha256: "1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815"
     bin: "codeql/codeql"
   # What: OSSF Scorecard CLI release run directly by ci.sh.
   # Why: Replaces ossf/scorecard-action.
@@ -91,9 +91,9 @@ external_versions:
   # Why: configure.ac needs 2.71; base-builder apt ships 2.69.
   # From: Issue #267, Issue #479, PR #544
   autoconf:
-    version: "2.71"
+    version: "2.73"
     url: "https://ftp.gnu.org/gnu/autoconf/autoconf-{version}.tar.gz"
-    sha256: "431075ad0bf529ef13cb41e9042c542381103e80015686222b8a9d4abef42a1c"
+    sha256: "259ddfa3bddc799cfb81489cc0f17dfdf1bd6d1505dda53c0f45ff60d6a4f9a7"
   # What: Trivy CLI release run directly by ci.sh.
   # Why: Replaces aquasecurity/trivy-action.
   # From: Issue #479
@@ -126,10 +126,10 @@ external_versions:
   # Why: Org has no TLS inspection: non-TLS agent, amd64 only.
   # From: Issue #479, PR #544
   harden_runner_agent:
-    version: "v0.16.2"
+    version: "v0.17.0"
     source: "step-security/agent"
     url: "https://github.com/step-security/agent/releases/download/{version}/agent_{bare}_linux_amd64.tar.gz"
-    sha256: "4b14d8a3a5fbcef95af55e0c54d3bee6f44da802878c10289a4ca0b79b6d0237"
+    sha256: "e0faa2687554ebd5629595bcd5531360781abe3e2746ef8ce5a030961a3acab0"
     bin: "agent"
 
 # What: harden-runner policy and StepSecurity endpoints.
@@ -145,7 +145,7 @@ harden_runner:
 # Why: ci.sh sot-update moves each digest along its tag.
 # From: Issue #479, PR #544
 external_services:
-  redis: "redis:8@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576"
+  redis: "redis:8@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee"
 
 # What: The configure variants CI builds/tests, per OS.
 # Why: One matrix owner; workflows read, never hardcode.
