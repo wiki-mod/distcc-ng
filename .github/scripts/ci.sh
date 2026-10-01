@@ -1422,7 +1422,8 @@ _ci_release_assets() {
 # Why: It refuses to move a real v* release tag.
 # From: Issue #479
 _ci_publish_nightly() {
-    local tag="${NIGHTLY_TAG:?NIGHTLY_TAG required}" ref repo notes image
+    local tag ref repo notes image
+    tag="$(_ci_sot_scalar release.nightly_tag)" || return 2
     local assets=()
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;

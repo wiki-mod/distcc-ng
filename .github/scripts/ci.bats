@@ -538,7 +538,8 @@ _forbid() {
     # What: The nightly publisher never moves a release tag.
     # Why: git push -f on a v* tag would clobber a real release.
     # From: Issue #479
-    NIGHTLY_TAG="v3.6.6-NG" run _ci_publish_nightly
+    _fixture_manifest 'release:' '  nightly_tag: "v3.6.6-NG"'
+    run _ci_publish_nightly
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0002"* ]]
 }
