@@ -717,9 +717,9 @@ _ci_image_release_build() {
     pkgs="$(_ci_sot_scalar release.image_build_apt)" || return 2
     _ci_apt_install "${pkgs}" image || return 1
     cd "${CI_REPO_ROOT}" || return 1
-    ./autogen.sh || return 1
-    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt || return 1
-    make -j"$(nproc)" || return 1
+    _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local \
+        --enable-Werror --without-system-popt || return 1
+    _ci_make_gated /tmp/make.log -j"$(nproc)" || return 1
     install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text || return 1
     make install DESTDIR=/out-pump || return 1
     mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump || return 1
@@ -953,10 +953,10 @@ _ci_image_e2e() {
     chown -R e2e:e2e /work || return 1
     if [ "${flavor}" = "ng" ]; then
         cd "${CI_REPO_ROOT}" || return 1
-        ./autogen.sh || return 1
-        ./configure PYTHON=python3 --prefix=/usr/local || return 1
-        make -j"$(nproc)" || return 1
+        _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local || return 1
+        _ci_make_gated /tmp/make.log -j"$(nproc)" || return 1
         make install || return 1
+        rm -f /tmp/configure.log /tmp/make.log || return 1
     fi
     update-distcc-symlinks
 }
@@ -1053,7 +1053,7 @@ _ci_workload_self_compile() {
     mkdir -p "${dir}"
     cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
     cd "${dir}/src" || return 1
-    { ./autogen.sh && ./configure PYTHON=python3; } >&2 || return 1
+    _ci_configure_tree "${dir}/configure.log" PYTHON=python3 || return 1
     "${runner[@]}" make -j"$(nproc)" "${make_cc[@]}" >&2 || return 1
     test -x ./distcc && test -x ./distccd || return 1
     if [ "${pass}" = "plain" ]; then
@@ -1157,16 +1157,15 @@ ci_cmd_workload() {
 # Why: A missing packaging tool fails before any build.
 # From: Issue #479
 ci_cmd_package() {
-    cd "${CI_REPO_ROOT}"
-    local py tool
-    py="$(command -v python3.13 || command -v python3)"
+    local py tool log="${RUNNER_TEMP:-/tmp}/ci-package.log"
+    cd "${CI_REPO_ROOT}" || return 1
+    py="$(command -v python3.13 || command -v python3)" || return 1
     for tool in "${py}" pkg-config eu-strip rpmbuild alien fakeroot; do
         command -v "${tool}" >/dev/null 2>&1 \
             || { ci_log "[CI-ERROR-PACKAGE-0001]" "missing tool: ${tool}"; return 1; }
     done
-    ./autogen.sh
-    ./configure PYTHON="${py}" --enable-Werror
-    make -j"${JOBS:-2}" deb
+    _ci_configure_tree "${log}.configure" PYTHON="${py}" --enable-Werror || return 1
+    _ci_make_gated "${log}" -j"${JOBS:-2}" deb
 }
 
 # What: Generate an SBOM for the just-built source tarball.
@@ -3035,11 +3034,39 @@ ci_cmd_clusterfuzzlite_run() {
 # BUILD / TEST
 # =========================================================
 
-# What: True if a build log holds a real gcc/clang warning.
+# What: Print every real gcc/clang warning line of a log.
 # Why: Warnings are errors (rule 31); anchored to diag shape.
 # From: Issue #479
-_ci_has_compiler_warning() {
-    grep -qE '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
+_ci_compiler_warnings() {
+    grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
+}
+
+# What: autogen and configure the tree in cwd; log to $1.
+# Why: One configure owner; stdout stays free for callers.
+# From: Issue #479, PR #544
+_ci_configure_tree() {
+    local log="$1"
+    shift
+    if ! { ./autogen.sh && ./configure "$@"; } 2>&1 | tee "${log}" >&2; then
+        ci_log "[CI-ERROR-BUILD-0003]" "autogen/configure failed: $*"
+        return 1
+    fi
+}
+
+# What: make in cwd; fail on an error or a compiler warning.
+# Why: One make owner, so every tree build gets the gate.
+# From: Issue #479, PR #544
+_ci_make_gated() {
+    local log="$1" warnings
+    shift
+    if ! make "$@" 2>&1 | tee "${log}" >&2; then
+        ci_log "[CI-ERROR-BUILD-0004]" "make $* failed"
+        return 1
+    fi
+    if warnings="$(_ci_compiler_warnings "${log}")"; then
+        ci_error "[CI-ERROR-BUILD-WARN-0001]" "make $* emitted compiler warnings (rule 31)" "${warnings}"
+        return 1
+    fi
 }
 
 # What: Compile vendored popt/*.c under this repo's flags.
@@ -3052,7 +3079,7 @@ _ci_popt_strict_compile() {
         "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" \
         -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
     for f in popt/popt.c popt/poptconfig.c popt/popthelp.c popt/poptparse.c popt/poptint.c; do
-        gcc "${cflags[@]}" -c "${f}" -o "${out}/$(basename "${f}").o"
+        gcc "${cflags[@]}" -c "${f}" -o "${out}/$(basename "${f}").o" || return 1
     done
 }
 
@@ -3094,45 +3121,38 @@ _ci_popt_cve_fingerprint_check() {
 # Why: Variants differ only in configure; warnings fail.
 # From: Issue #479
 ci_cmd_build() {
-    local variant="${1:?variant required}" log
-    cd "${CI_REPO_ROOT}"
+    local variant="${1:?variant required}" log py cc="cc"
+    local flags=()
     log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
-    case "${variant}" in
-        default|popt-fallback|popt-vendor|coverage|sanitizer) ;;
-        *) ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""; return 2 ;;
-    esac
-    ./autogen.sh
+    py="$(command -v python3)" || return 1
     case "${variant}" in
         default)
-            local cc="cc"
-            command -v ccache >/dev/null 2>&1 && cc="$(command -v ccache) cc"
-            ./configure CC="${cc}" \
-                PYTHON="$(command -v python3.13 || command -v python3)" ;;
+            if command -v ccache >/dev/null 2>&1; then
+                cc="$(command -v ccache) cc"
+            fi
+            flags=(CC="${cc}" PYTHON="$(command -v python3.13 || command -v python3)") ;;
+        popt-fallback) flags=(PYTHON="${py}") ;;
+        popt-vendor) flags=(--without-system-popt PYTHON="${py}") ;;
+        coverage) flags=(PYTHON="${py}" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp) ;;
+        sanitizer)
+            flags=(PYTHON="${py}" --without-seccomp
+                CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation") ;;
+        *) ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""; return 2 ;;
+    esac
+    cd "${CI_REPO_ROOT}" || return 1
+    _ci_configure_tree "${log}.configure" "${flags[@]}" || return 1
+    case "${variant}" in
         popt-fallback)
-            ./configure PYTHON="$(command -v python3)" 2>&1 | tee "${log}"
-            grep -q "system libpopt not found (or disabled); building bundled popt" "${log}" \
-                || { ci_log "[CI-ERROR-BUILD-POPT-0001]" "configure did not fall back to bundled popt (libpopt-dev leaking?)"; return 1; } ;;
+            if ! grep -q "system libpopt not found (or disabled); building bundled popt" "${log}.configure"; then
+                ci_log "[CI-ERROR-BUILD-POPT-0001]" "configure did not fall back to bundled popt (libpopt-dev leaking?)"
+                return 1
+            fi ;;
         popt-vendor)
-            ./configure --without-system-popt PYTHON="$(command -v python3)"
             _ci_popt_cve_fingerprint_check || return 1
             _ci_popt_strict_compile
-            return 0 ;;
-        coverage)
-            ./configure PYTHON="$(command -v python3)" \
-                CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp ;;
-        sanitizer)
-            ./configure PYTHON="$(command -v python3)" --without-seccomp \
-                CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation" ;;
-        *)
-            ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""
-            return 2 ;;
+            return ;;
     esac
-    make 2>&1 | tee "${log}"
-    if _ci_has_compiler_warning "${log}"; then
-        ci_error "[CI-ERROR-BUILD-WARN-0001]" "variant=${variant} compiler warning (rule 31)" \
-            "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
-        return 1
-    fi
+    _ci_make_gated "${log}" || return 1
     if [ "${variant}" = "popt-fallback" ]; then
         _ci_popt_fallback_smoke_test || return 1
     fi
@@ -3253,7 +3273,7 @@ _ci_coverage_step_summary() {
 # Why: Folds run-tests.sh parse + c-build.yml per-variant env.
 # From: Issue #479
 ci_cmd_test() {
-    local variant="${1:-default}" log wrapper st=0
+    local variant="${1:-default}" log wrapper warnings st=0
     cd "${CI_REPO_ROOT}"
     log="${RUNNER_TEMP:-/tmp}/ci-check-${variant}.log"
     case "${variant}" in
@@ -3273,9 +3293,8 @@ ci_cmd_test() {
             return 2 ;;
     esac
     cat "${log}"
-    if _ci_has_compiler_warning "${log}"; then
-        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (rule 31)" \
-            "$(grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "${log}")"
+    if warnings="$(_ci_compiler_warnings "${log}")"; then
+        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (rule 31)" "${warnings}"
         return 1
     fi
     _ci_parse_comfychair "${log}" || return 1

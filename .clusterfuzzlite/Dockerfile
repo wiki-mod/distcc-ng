@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # What: ClusterFuzzLite image on the SOT-pinned base-builder.
-# Why: CFL passes no build-args; ci.sh tags the SOT base first.
+# Why: CFL passes no build-args; ci.sh tags the SOT pin first.
 # From: Issue #267, Issue #479, PR #544
 FROM distcc-ng-cfl-base:local
 # What: Bind-mount the checkout for this one step only.

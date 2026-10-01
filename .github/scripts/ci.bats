@@ -388,6 +388,37 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+@test "make gate passes a clean build and fails on a warning" {
+    # What: A compiler warning in make output fails the build.
+    # Why: Warnings are errors (rule 31) on every tree build.
+    # From: Issue #479, PR #544
+    make() { echo "gcc -c src/x.c"; }
+    run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
+    [ "${status}" -eq 0 ]
+    make() { echo "src/x.c:12:5: warning: unused variable 'y'"; }
+    run _ci_make_gated "${BATS_TEST_TMPDIR}/warn.log" all
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
+    [[ "${output}" == *"src/x.c:12:5: warning"* ]]
+}
+
+@test "make gate and configure fail closed when the tool fails" {
+    # What: A failing make or configure is an error, not a pass.
+    # Why: Build steps once relied on set -e, lost inside ||.
+    # From: Issue #479, PR #544
+    make() { echo "boom"; return 2; }
+    run _ci_make_gated "${BATS_TEST_TMPDIR}/m.log"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0004"* ]]
+    cd "${BATS_TEST_TMPDIR}"
+    printf '#!/bin/sh\nexit 0\n' > autogen.sh
+    printf '#!/bin/sh\nexit 3\n' > configure
+    chmod +x autogen.sh configure
+    run _ci_configure_tree "${BATS_TEST_TMPDIR}/c.log" --x
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0003"* ]]
+}
+
 @test "comfychair parse passes on all-OK/NOTRUN output" {
     # What: A run with only OK/NOTRUN lines passes.
     # Why: Proves the green parse path.
