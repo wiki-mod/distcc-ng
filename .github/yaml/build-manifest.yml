@@ -24,7 +24,7 @@ base_images:
   # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
   # Why: :v1 lineage; its old glibc matches the host check.
   # From: Issue #267, Issue #479, PR #544
-  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder@sha256:47bcf5c42c4863af02843d16315014011571e31ece4ac9110a77a2e43949c5d2"
+  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder@sha256:5d8ad2d0945830c9cae00441202025e0609eb2d846e351a3217cb5355c1f2109"
   # What: ClusterFuzzLite build/run step images run by ci.sh.
   # Why: Pinned by digest, not the floating v1 tag.
   # From: Issue #267, Issue #479, PR #544
