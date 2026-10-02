@@ -9,7 +9,7 @@ set -euo pipefail
 # What: Absolute directory of this script, if it has one.
 # Why: curl|bash bootstrap has no BASH_SOURCE; must not crash.
 # From: Issue #479
-CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+CI_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
 CI_SCRIPT_DIR="${CI_SCRIPT_DIR:-$(pwd)}"
 
 # What: Path to the single source-of-truth manifest.
@@ -211,9 +211,9 @@ _ci_sot_set() {
     rm -f "${tmp}"
 }
 
-# What: Match one SOT path glob to a path.
+# What: Match one SOT path glob to a path; 2 if sed fails.
 # Why: The SOT owns the patterns; this owns matching.
-# From: Issue #479
+# From: Issue #479, PR #544
 _ci_glob_match() {
     local pat="$1" path="$2" re
     # What: Escape metachars; '**/' may match no directory.
@@ -221,7 +221,7 @@ _ci_glob_match() {
     # From: Issue #479, PR #544
     re="${pat//\*\*\//$'\x02'}"
     re="${re//\*/$'\x01'}"
-    re="$(printf '%s' "${re}" | sed 's/[.^$+?()[\]{}|]/\\&/g')"
+    re="$(printf '%s' "${re}" | sed 's/[.^$+?()[\]{}|]/\\&/g')" || return 2
     re="${re//$'\x02'/(.*/)?}"
     re="${re//$'\x01'/.*}"
     [[ "${path}" =~ ^${re}$ ]]
@@ -231,31 +231,40 @@ _ci_glob_match() {
 # Why: impact_classes and labels share one glob classifier.
 # From: Issue #479, PR #544
 _ci_classify_paths() {
-    local map="${1:-impact_classes}" classes path cls pats excl
+    local map="${1:-impact_classes}" classes path cls pats excl rc
     classes="$(_ci_sot_children "${map}")" || return 2
     while IFS= read -r path; do
         [ -n "${path}" ] || continue
         for cls in ${classes}; do
             pats="$(_ci_sot_list "${map}.${cls}.paths")" || return 2
-            _ci_paths_hit "${path}" "${pats}" || continue
+            rc=0
+            _ci_paths_hit "${path}" "${pats}" || rc=$?
+            [ "${rc}" -le 1 ] || return 2
+            [ "${rc}" -eq 0 ] || continue
             excl="$(_ci_sot_optional "${map}.${cls}.exclude")" || return 2
             if [ -n "${excl}" ]; then
                 excl="$(_ci_sot_list "${map}.${cls}.exclude")" || return 2
-                _ci_paths_hit "${path}" "${excl}" && continue
+                rc=0
+                _ci_paths_hit "${path}" "${excl}" || rc=$?
+                [ "${rc}" -le 1 ] || return 2
+                [ "${rc}" -eq 1 ] || continue
             fi
             printf '%s\n' "${cls}"
         done
     done | sort -u
 }
 
-# What: Succeed if a path matches one of the glob lines.
+# What: 0 if a glob line matches the path, 1 if none, 2 error.
 # Why: A class's paths and its exclude list match alike.
 # From: Issue #479, PR #544
 _ci_paths_hit() {
-    local path="$1" pat
+    local path="$1" pat rc
     while IFS= read -r pat; do
         [ -n "${pat}" ] || continue
-        _ci_glob_match "${pat}" "${path}" && return 0
+        rc=0
+        _ci_glob_match "${pat}" "${path}" || rc=$?
+        [ "${rc}" -ne 0 ] || return 0
+        [ "${rc}" -eq 1 ] || return 2
     done <<< "$2"
     return 1
 }
@@ -401,7 +410,7 @@ _ci_container_logged() {
 # Why: Sole pin path; Dockerfiles carry no default or LABEL.
 # From: Issue #359, Issue #479, PR #544
 _ci_image_build() {
-    local spec="$1" version="$2" file target arg val tag desc ref
+    local spec="$1" version="$2" file target arg val tag desc ref created
     shift 2
     local specs=() opts=()
     file="$(_ci_sot_scalar "${spec}.dockerfile")" || return 2
@@ -426,11 +435,12 @@ _ci_image_build() {
         : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
         ref="$(_ci_built_sha)" || return 1
         val="$(_ci_sot_scalar release.licenses)" || return 2
+        created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
         opts+=(--label "org.opencontainers.image.title=${spec##*.}"
             --label "org.opencontainers.image.description=${desc}"
             --label "org.opencontainers.image.version=${version}"
             --label "org.opencontainers.image.revision=${ref}"
-            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --label "org.opencontainers.image.created=${created}"
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
             --label "org.opencontainers.image.licenses=${val}")
     fi
@@ -507,7 +517,9 @@ _ci_stack_teardown() {
     if [ "${#vols[@]}" -gt 0 ]; then
         docker volume rm "${vols[@]}" >/dev/null || rc=1
     fi
-    if docker network inspect "${net}" >/dev/null 2>&1; then
+    local nets=""
+    nets="$(docker network ls --format '{{.Name}}')" || rc=1
+    if [[ $'\n'"${nets}"$'\n' == *$'\n'"${net}"$'\n'* ]]; then
         docker network rm "${net}" >/dev/null || rc=1
     fi
     if [ "${rc}" -ne 0 ]; then
@@ -801,7 +813,7 @@ _ci_e2e_leg() {
     fi
     need="${floor}"
     if [ "${floor}" = "objects" ]; then
-        need="$(tail -n 1 "${out}.client" | tr -dc '0-9')"
+        need="$(tail -n 1 "${out}.client" | tr -dc '0-9')" || return 1
         if [ -z "${need}" ] || [ "${need}" -le 0 ]; then
             ci_log "[CI-ERROR-E2E-0010]" "${id}: workload printed no object count"
             cat "${out}.client" >&2
@@ -970,29 +982,29 @@ _ci_verify_selftest() {
     clang ok.c -o ok_clang || return 1
     ./ok_clang || return 1
     gcc -g -O0 ok.c -o ok_dbg || return 1
-    printf '#include <stdlib.h>\nint main(void) { char *p = malloc(8); p[8] = 1; return 0; }\n' > asan.c
+    printf '#include <stdlib.h>\nint main(void) { char *p = malloc(8); p[8] = 1; return 0; }\n' > asan.c || return 1
     gcc -fsanitize=address -g asan.c -o asan || return 1
     _ci_expect_output asan 'AddressSanitizer: heap-buffer-overflow' ./asan || return 1
-    printf '#include <limits.h>\nint main(void) { int x = INT_MAX; return x + 1; }\n' > ubsan.c
+    printf '#include <limits.h>\nint main(void) { int x = INT_MAX; return x + 1; }\n' > ubsan.c || return 1
     gcc -fsanitize=undefined -g ubsan.c -o ubsan || return 1
     _ci_expect_output ubsan 'runtime error: signed integer overflow' ./ubsan || return 1
-    printf '#include <stdlib.h>\nint main(void) { malloc(16); return 0; }\n' > leak.c
+    printf '#include <stdlib.h>\nint main(void) { malloc(16); return 0; }\n' > leak.c || return 1
     gcc -g -O0 leak.c -o leak || return 1
     _ci_expect_output valgrind 'definitely lost: 16 bytes' valgrind --leak-check=full ./leak || return 1
     _ci_expect_output objdump 'main>:' objdump -d ok_gcc || return 1
     _ci_expect_output readelf 'ELF Header' readelf -h ok_gcc || return 1
     _ci_expect_output nm ' T main$' nm ok_gcc || return 1
-    addr="$(nm ok_dbg | awk '$3 == "main" {print $1}')"
+    addr="$(nm ok_dbg | awk '$3 == "main" {print $1}')" || return 1
     _ci_expect_output addr2line '^main$' addr2line -f -e ok_dbg "${addr}" || return 1
     printf '%s\n' '#include <fcntl.h>' '#include <stdio.h>' '#include <libelf.h>' '#include <gelf.h>' \
         'int main(void) { GElf_Ehdr h; Elf *e; int fd = open("ok_gcc", O_RDONLY);' \
         '  if (fd < 0 || elf_version(EV_CURRENT) == EV_NONE) return 1;' \
         '  e = elf_begin(fd, ELF_C_READ, NULL);' \
         '  if (!e || !gelf_getehdr(e, &h)) return 1;' \
-        '  printf("libelf_ok e_type=%d\n", h.e_type); return 0; }' > libelf.c
+        '  printf("libelf_ok e_type=%d\n", h.e_type); return 0; }' > libelf.c || return 1
     gcc libelf.c -lelf -o libelf_check || return 1
     _ci_expect_output libelf 'libelf_ok' ./libelf_check || return 1
-    printf 'needle_marker\nhaystack\n' > hay.txt
+    printf 'needle_marker\nhaystack\n' > hay.txt || return 1
     _ci_expect_output ripgrep '^needle_marker$' rg needle_marker hay.txt || return 1
     _ci_expect_output grep '^needle_marker$' grep needle_marker hay.txt || return 1
     ccache --zero-stats >/dev/null || return 1
@@ -1002,7 +1014,7 @@ _ci_verify_selftest() {
     python3 -u -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(1); print(s.getsockname()[1]); time.sleep(60)' > port.txt &
     pid=$!
     _ci_wait_until 20 0.5 test -s port.txt || return 1
-    port="$(head -n 1 port.txt)"
+    port="$(head -n 1 port.txt)" || return 1
     _ci_expect_output ss ":${port} " ss -tln || return 1
     kill "${pid}" || return 1
     wait "${pid}" || [ "$?" -eq 143 ] || return 1
@@ -1012,12 +1024,12 @@ _ci_verify_selftest() {
     _ci_expect_output dig '^[0-9]+\.' dig +short deb.debian.org || return 1
     _ci_expect_output nslookup 'Address' nslookup deb.debian.org || return 1
     _ci_verify_selftest_ssh "${d}" || return 1
-    printf '{"ok": true}\n' > doc.json
+    printf '{"ok": true}\n' > doc.json || return 1
     _ci_expect_output jq '^true$' jq -e .ok doc.json || return 1
-    printf '#!/bin/sh\nx="a b"\necho %sx\n' "\$" > sc.sh
+    printf '#!/bin/sh\nx="a b"\necho %sx\n' "\$" > sc.sh || return 1
     _ci_expect_output shellcheck 'SC2086' shellcheck sc.sh || return 1
     mkdir -p al/.github/workflows || return 1
-    printf 'on: push\njobs:\n  test:\n    steps:\n      - run: echo hi\n' > al/.github/workflows/broken.yml
+    printf 'on: push\njobs:\n  test:\n    steps:\n      - run: echo hi\n' > al/.github/workflows/broken.yml || return 1
     _ci_expect_output actionlint 'runs-on' actionlint al/.github/workflows/broken.yml || return 1
     cd / || return 1
     rm -rf "${d}"
@@ -1033,7 +1045,7 @@ _ci_verify_selftest_ssh() {
     cp "${d}/client_key.pub" "${d}/authorized_keys" || return 1
     printf '%s\n' 'Port 2222' 'ListenAddress 127.0.0.1' "HostKey ${d}/host_key" \
         "AuthorizedKeysFile ${d}/authorized_keys" "PidFile ${d}/sshd.pid" 'UsePAM no' \
-        'StrictModes no' 'PasswordAuthentication no' > "${d}/sshd_config"
+        'StrictModes no' 'PasswordAuthentication no' > "${d}/sshd_config" || return 1
     mkdir -p /run/sshd || return 1
     /usr/sbin/sshd -f "${d}/sshd_config" -E "${d}/sshd.log" || return 1
     _ci_expect_output ssh '^ssh_marker$' ssh -p 2222 -i "${d}/client_key" \
@@ -1059,13 +1071,13 @@ _ci_workload_ptrace() {
     _ci_expect_output gdb-aslr '!Error disabling address space randomization' \
         gdb -q -batch -ex 'break main' -ex run -ex continue ./ok_gcc || return 1
     _ci_expect_output strace '\+\+\+ exited with 0 \+\+\+' strace -f -e trace=execve ./ok_gcc || return 1
-    printf '#include <stdlib.h>\nint main(void) { free(malloc(1)); return 0; }\n' > lt.c
+    printf '#include <stdlib.h>\nint main(void) { free(malloc(1)); return 0; }\n' > lt.c || return 1
     gcc -g -O0 lt.c -o lt || return 1
     _ci_expect_output ltrace 'malloc' ltrace -e 'malloc+free' ./lt || return 1
     # What: gdb runs python3-dbg itself, then py-bt.
     # Why: Yama ptrace_scope=1 forbids attaching to a sibling.
     # From: Issue #285
-    printf 'import time\ndef target_function():\n    time.sleep(5)\ntarget_function()\n' > py.py
+    printf 'import time\ndef target_function():\n    time.sleep(5)\ntarget_function()\n' > py.py || return 1
     _ci_expect_output py-bt 'target_function' gdb -q -batch -ex 'break time_sleep' \
         -ex run -ex 'py-bt' --args python3-dbg py.py || return 1
     cd / || return 1
@@ -1227,7 +1239,7 @@ _ci_workload_self_compile() {
     test -x ./distcc && test -x ./distccd || return 1
     if [ "${pass}" = "plain" ]; then
         probe="$(mktemp -d)" || return 1
-        printf 'int distcc_e2e_probe(int x) { return (x * 2) + 1; }\n' > "${probe}/probe.c"
+        printf 'int distcc_e2e_probe(int x) { return (x * 2) + 1; }\n' > "${probe}/probe.c" || return 1
         gcc -O2 -c "${probe}/probe.c" -o "${probe}/local.o" || return 1
         env -u DISTCC_VERBOSE distcc gcc -O2 -c "${probe}/probe.c" -o "${probe}/dist.o" 2> "${probe}/err" || return 1
         if [ -s "${probe}/err" ] || ! cmp "${probe}/local.o" "${probe}/dist.o"; then
@@ -1317,9 +1329,11 @@ _ci_workload_fuzz_build() {
     read -ra cxxflags <<< "${CXXFLAGS:-}"
     read -ra engine <<< "${LIB_FUZZING_ENGINE}"
     raw="$(_ci_sot_list security.cfl_fuzz.exclude_main)" || return 2
-    skip=" $(tr '\n' ' ' <<< "${raw}")"
+    skip="$(tr '\n' ' ' <<< "${raw}")" || return 1
+    skip=" ${skip}"
     raw="$(_ci_sot_list security.cfl_fuzz.rename_main)" || return 2
-    rename=" $(tr '\n' ' ' <<< "${raw}")"
+    rename="$(tr '\n' ' ' <<< "${raw}")" || return 1
+    rename=" ${rename}"
     cd "${CI_REPO_ROOT}" || return 1
     # What: --with-auth builds auth_common.c's GSSAPI symbols.
     # Why: The link takes every src/*.c, auth_common.c included.
@@ -1337,7 +1351,7 @@ _ci_workload_fuzz_build() {
     datarootdir="${datarootdir//\$(prefix)/${prefix}}"
     defs=("-DLIBDIR=\"${prefix}/lib\"" "-DSYSCONFDIR=\"${sysconfdir}\"" "-DICONDIR=\"${datarootdir}/pixmaps\"")
     for f in src/*.c lzo/minilzo.c; do
-        base="$(basename "${f}" .c)"
+        base="$(basename "${f}" .c)" || return 1
         case "${skip}" in *" ${base} "*) continue ;; esac
         extra=()
         case "${rename}" in *" ${base} "*) extra=("-Dmain=distccng_disabled_main_${base}") ;; esac
@@ -1417,7 +1431,7 @@ ci_cmd_package() {
 _ci_package_sbom() {
     local out="${1:?output file required}" tarball
     cd "${CI_REPO_ROOT}" || return 1
-    tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
+    tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)" || return 1
     [ -n "${tarball}" ] || {
         ci_log "[CI-ERROR-PACKAGE-0002]" "no distcc-*.tar.gz found"
         return 1
@@ -1429,19 +1443,22 @@ _ci_package_sbom() {
 # Why: POL-RELEASE-05/07; require_new=false once pushed.
 # From: Issue #479, PR #544
 _ci_check_release_version() {
-    local tag="${1:?tag required}" require_new="${2:-true}" version configured
+    local tag="${1:?tag required}" require_new="${2:-true}" version configured existing
     version="${tag#v}"
     cd "${CI_REPO_ROOT}" || return 1
     [ -f configure.ac ] || { ci_log "[CI-ERROR-RELEASE-0001]" "no configure.ac"; return 1; }
-    configured="$(sed -n 's/^AC_INIT(\[distcc-ng\],\[\([^]]*\)\].*/\1/p' configure.ac)"
+    configured="$(sed -n 's/^AC_INIT(\[distcc-ng\],\[\([^]]*\)\].*/\1/p' configure.ac)" || return 1
     [ -n "${configured}" ] || { ci_log "[CI-ERROR-RELEASE-0002]" "cannot parse AC_INIT version"; return 1; }
     if [ "${configured}" != "${version}" ]; then
         ci_log "[CI-ERROR-RELEASE-0003]" "configure.ac=${configured} != tag ${tag}"
         return 1
     fi
-    if [ "${require_new}" = "true" ] && git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
-        ci_log "[CI-ERROR-RELEASE-0004]" "tag ${tag} already exists"
-        return 1
+    if [ "${require_new}" = "true" ]; then
+        existing="$(git tag -l -- "${tag}")" || return 1
+        if [ -n "${existing}" ]; then
+            ci_log "[CI-ERROR-RELEASE-0004]" "tag ${tag} already exists"
+            return 1
+        fi
     fi
     ci_log "[CI-RELEASE]" "OK: ${tag} matches configure.ac"
 }
@@ -1715,7 +1732,7 @@ _ci_changelog_insert() {
         return 1
     fi
     version="${tag#v}"
-    date="$(date -u +%Y-%m-%d)"
+    date="$(date -u +%Y-%m-%d)" || return 1
     cd "${CI_REPO_ROOT}" || return 1
     grep -qF '<!-- insertion marker -->' CHANGELOG.md || {
         ci_log "[CI-ERROR-PUBLISH-0005]" "CHANGELOG.md insertion marker not found"
@@ -1729,7 +1746,7 @@ _ci_changelog_insert() {
     {
         printf '## [%s] - %s\n\n' "${version}" "${date}"
         printf '%s\n' "${body}"
-    } > "${tmp}"
+    } > "${tmp}" || return 1
     awk -v insertfile="${tmp}" '
         /<!-- insertion marker -->/ {
             print
@@ -2038,7 +2055,7 @@ _ci_tool_latest_version() {
         --jq '.[] | select((.draft or .prerelease) | not) | .tag_name')" || return 1
     best="$(while IFS= read -r tag; do
         case "${tag}" in "${prefix}"*) printf '%s\n' "${tag#"${prefix}"}" ;; esac
-    done <<< "${tags}" | sort -V | tail -n 1)"
+    done <<< "${tags}" | sort -V | tail -n 1)" || return 1
     if [ -z "${best}" ]; then
         ci_log "[CI-ERROR-SOT-0005]" "${src}: no stable release tag with prefix \"${prefix}\""
         return 1
@@ -2537,15 +2554,17 @@ _ci_ossf_verdict() {
 # From: Issue #312
 _ci_ossf_urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
 
-# What: Append one status=Met&justification query pair.
+# What: Append a status=Met&justification pair if $2 is Met.
 # Why: Only currently-Met criteria enter the proposal URL.
-# From: Issue #312
+# From: Issue #312, PR #544
 _ci_ossf_add_met() {
     local -n _qs="$1"
-    local osps_id="$2" justification="$3" param_key enc_just
-    param_key="$(echo "${osps_id}" | tr '[:upper:]' '[:lower:]' | tr '-' '_')"
-    enc_just="$(_ci_ossf_urlencode "${justification}")"
-    [ -n "${_qs}" ] && _qs="${_qs}&"
+    local verdict="$2" osps_id="$3" justification="$4" param_key enc_just
+    [ "${verdict}" = "Met" ] || return 0
+    param_key="${osps_id,,}"
+    param_key="${param_key//-/_}"
+    enc_just="$(_ci_ossf_urlencode "${justification}")" || return 1
+    [ -z "${_qs}" ] || _qs="${_qs}&"
     _qs="${_qs}${param_key}_status=Met&${param_key}_justification=${enc_just}"
 }
 
@@ -2660,7 +2679,7 @@ _ci_scan_openssf() {
     RULESET_ID="$(_ci_sot_scalar security.openssf.ruleset_id)" || return 2
     RUN_URL="$(_ci_run_url)" || return 2
     local MARKER="<!-- openssf-baseline-recheck -->"
-    local TODAY; TODAY="$(date -u +%Y-%m-%d)"
+    local TODAY; TODAY="$(date -u +%Y-%m-%d)" || return 1
     local ac03 br01 br07 qa05 vm02 ac04 br06 br05_do06 gv01 vm01_vm03 do04_do05
     ac03="$(_ci_ossf_verdict _ci_ossf_check_ac03 "${RULESET_ID}")" || return 2
     br01="$(_ci_ossf_verdict _ci_ossf_check_br01)" || return 2
@@ -2681,7 +2700,7 @@ _ci_scan_openssf() {
         --arg vm01_vm03 "${vm01_vm03}" --arg do04_do05 "${do04_do05}" \
         '{"AC-03":$ac03,"BR-01":$br01,"BR-07":$br07,"QA-05":$qa05,"VM-02":$vm02,
           "AC-04":$ac04,"BR-06":$br06,"BR-05_DO-06":$br05_do06,"GV-01":$gv01,
-          "VM-01_VM-03":$vm01_vm03,"DO-04_DO-05":$do04_do05}')"
+          "VM-01_VM-03":$vm01_vm03,"DO-04_DO-05":$do04_do05}')" || return 1
     local existing_id prev_state regressed_keys
     existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
         --jq "[.[] | select(.body | startswith(\"${MARKER}\"))] | sort_by(.id) | last | .id // empty")" || return 1
@@ -2695,42 +2714,43 @@ _ci_scan_openssf() {
         if [ -z "${state_line}" ]; then
             prev_state="{}"
         else
-            prev_state="$(echo "${state_line}" | sed -e 's/^<!-- openssf-baseline-recheck-state: //' -e 's/ -->$//')"
+            prev_state="$(echo "${state_line}" | sed -e 's/^<!-- openssf-baseline-recheck-state: //' -e 's/ -->$//')" \
+                || return 2
         fi
     fi
     regressed_keys="$(jq -rn --argjson prev "${prev_state}" --argjson new "${new_state}" '
-        $new | to_entries[] | select(.value == "NotMet" and ($prev[.key] // "") == "Met") | .key')"
+        $new | to_entries[] | select(.value == "NotMet" and ($prev[.key] // "") == "Met") | .key')" || return 2
     local qs1="" qs2="" qs3="" l1 l2 l3 url1 url2 url3 regressed_block=""
-    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset ${RULESET_ID} on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
-    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.02" "Same ruleset re-verified ${TODAY}; deletion rule present."
-    [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.01" "No workflow runs fork code under pull_request_target, re-verified ${TODAY}."
-    [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.03" "No workflow interpolates untrusted event title/body, re-verified ${TODAY}."
-    [ "${br07}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-07.01" "Secret scanning and push protection are enabled on ${GITHUB_REPOSITORY}, re-verified ${TODAY}."
-    [ "${qa05}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-QA-05.01" "No compiled binary is tracked in the git tree, re-verified ${TODAY}."
-    [ "${qa05}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-QA-05.02" "Same check, re-verified ${TODAY}."
-    [ "${vm02}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-VM-02.01" "SECURITY.md still exists at the repo root, re-verified ${TODAY}."
+    _ci_ossf_add_met qs1 "${ac03}" "OSPS-AC-03.01" "Ruleset ${RULESET_ID} on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${ac03}" "OSPS-AC-03.02" "Same ruleset re-verified ${TODAY}; deletion rule present." || return 1
+    _ci_ossf_add_met qs1 "${br01}" "OSPS-BR-01.01" "No workflow runs fork code under pull_request_target, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${br01}" "OSPS-BR-01.03" "No workflow interpolates untrusted event title/body, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${br07}" "OSPS-BR-07.01" "Secret scanning and push protection are enabled on ${GITHUB_REPOSITORY}, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${qa05}" "OSPS-QA-05.01" "No compiled binary is tracked in the git tree, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${qa05}" "OSPS-QA-05.02" "Same check, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs1 "${vm02}" "OSPS-VM-02.01" "SECURITY.md still exists at the repo root, re-verified ${TODAY}." || return 1
     l1="- AC-03.01/03.02 (ruleset PR+deletion rules): ${ac03}
 - BR-01.01/01.03 (no fork-code pull_request_target / no unsanitized event interpolation): ${br01}
 - BR-07.01 (secret scanning + push protection): ${br07}
 - QA-05.01/05.02 (no tracked binary artifacts): ${qa05}
 - VM-02.01 (SECURITY.md present): ${vm02}"
-    [ "${ac04}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-AC-04.01" "Every workflow top-level permissions block is contents:read or narrower, re-verified ${TODAY}."
-    [ "${br06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-BR-06.01" "A build-provenance attestation step is present, re-verified ${TODAY}."
-    [ "${br05_do06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-BR-05.01" "housekeeping.yml schedules the ci.sh SOT pin refresh, re-verified ${TODAY}."
-    [ "${br05_do06}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-DO-06.01" "doc/compatibility-policy.md documents the dependency policy, re-verified ${TODAY}."
-    [ "${gv01}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-GV-01.01" "AGENTS.md documents maintainer approval authority, re-verified ${TODAY}."
-    [ "${gv01}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-GV-01.02" "Same rule, re-verified ${TODAY}."
-    [ "${vm01_vm03}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-VM-01.01" "SECURITY.md documents GitHub Security Advisories as the channel, re-verified ${TODAY}."
-    [ "${vm01_vm03}" = "Met" ] && _ci_ossf_add_met qs2 "OSPS-VM-03.01" "Same document, re-verified ${TODAY}."
+    _ci_ossf_add_met qs2 "${ac04}" "OSPS-AC-04.01" "Every workflow top-level permissions block is contents:read or narrower, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${br06}" "OSPS-BR-06.01" "A build-provenance attestation step is present, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${br05_do06}" "OSPS-BR-05.01" "housekeeping.yml schedules the ci.sh SOT pin refresh, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${br05_do06}" "OSPS-DO-06.01" "doc/compatibility-policy.md documents the dependency policy, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${gv01}" "OSPS-GV-01.01" "AGENTS.md documents maintainer approval authority, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${gv01}" "OSPS-GV-01.02" "Same rule, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${vm01_vm03}" "OSPS-VM-01.01" "SECURITY.md documents GitHub Security Advisories as the channel, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs2 "${vm01_vm03}" "OSPS-VM-03.01" "Same document, re-verified ${TODAY}." || return 1
     l2="- AC-04.01 (workflow permissions spot-check): ${ac04}
 - BR-06.01 (build provenance attestation present): ${br06}
 - BR-05.01/DO-06.01 (scheduled SOT pin refresh + dependency policy doc): ${br05_do06}
 - GV-01.01/01.02 (AGENTS.md maintainer authority): ${gv01}
 - VM-01.01/03.01 (SECURITY.md documents GH Security Advisories): ${vm01_vm03}"
-    [ "${ac04}" = "Met" ] && _ci_ossf_add_met qs3 "OSPS-AC-04.02" "Same workflow-permissions spot-check as AC-04.01, re-verified ${TODAY}."
-    [ "${br01}" = "Met" ] && _ci_ossf_add_met qs3 "OSPS-BR-01.04" "Same untrusted-input grep as BR-01.01, re-verified ${TODAY}."
-    [ "${do04_do05}" = "Met" ] && _ci_ossf_add_met qs3 "OSPS-DO-04.01" "SECURITY.md documents a Supported Versions table, re-verified ${TODAY}."
-    [ "${do04_do05}" = "Met" ] && _ci_ossf_add_met qs3 "OSPS-DO-05.01" "Same table, re-verified ${TODAY}."
+    _ci_ossf_add_met qs3 "${ac04}" "OSPS-AC-04.02" "Same workflow-permissions spot-check as AC-04.01, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs3 "${br01}" "OSPS-BR-01.04" "Same untrusted-input grep as BR-01.01, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs3 "${do04_do05}" "OSPS-DO-04.01" "SECURITY.md documents a Supported Versions table, re-verified ${TODAY}." || return 1
+    _ci_ossf_add_met qs3 "${do04_do05}" "OSPS-DO-05.01" "Same table, re-verified ${TODAY}." || return 1
     l3="- AC-04.02 (workflow permissions, stricter framing): ${ac04}
 - BR-01.04 (untrusted-input sanitization, stricter framing): ${br01}
 - DO-04.01/05.01 (SECURITY.md Supported Versions table): ${do04_do05}
@@ -2772,10 +2792,10 @@ Proposal link (Level 3, currently-Met criteria only): ${url3}
 Run: ${RUN_URL}
 <!-- openssf-baseline-recheck-state: ${new_state} -->
 EOF
-)"
+)" || return 1
     local body_file
     body_file="$(mktemp)" || return 1
-    printf '%s\n' "${body}" | tee "${body_file}"
+    printf '%s\n' "${body}" | tee "${body_file}" || return 1
     if [ -n "${existing_id}" ]; then
         _ci_mutate gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" \
             -F "body=@${body_file}" || return 1
@@ -3050,13 +3070,13 @@ _ci_check_pr_title() {
         return 1
     fi
     title="${title%$'\r'}"
-    title="$(printf '%s' "${title}" | sed 's/[[:space:]]*$//')"
+    title="$(printf '%s' "${title}" | sed 's/[[:space:]]*$//')" || return 2
     local types scopes errs=() t sc subj tsub
     types="$(_ci_title_taxonomy types)" || return 2
     scopes="$(_ci_title_taxonomy scopes)" || return 2
     if [[ "${title}" =~ ${CI_TITLE_RE} ]]; then
         t="${BASH_REMATCH[1]}"; sc="${BASH_REMATCH[3]}"; subj="${BASH_REMATCH[5]}"
-        tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" || return 2
         case " ${types} " in *" ${t} "*) ;; *) errs+=("type '${t}' not in: ${types}") ;; esac
         if [ -n "${sc}" ]; then
             case " ${scopes} " in *" ${sc} "*) ;; *) errs+=("scope '(${sc})' not a documented area") ;; esac
@@ -3384,7 +3404,7 @@ ci_guard_sot_mirrors() {
     got=""
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
-        wf="$(basename "${f}" .yml)"
+        wf="$(basename "${f}" .yml)" || return 2
         got+="$(sed -n "s/^ *- cron: '\(.*\)'\$/${wf} \1/p" "${f}")"$'\n' || return 2
     done
     want="$(awk 'NF' <<< "${want}" | sort)" || return 2
@@ -3736,9 +3756,12 @@ _ci_attest_claims() {
     token="$(jq -r '.value' <<< "${raw}")" || return 1
     payload="${token#*.}"
     payload="${payload%%.*}"
-    payload="$(tr '_-' '/+' <<< "${payload}")"
+    payload="$(tr '_-' '/+' <<< "${payload}")" || return 1
     pad=$(( (4 - ${#payload} % 4) % 4 ))
-    [ "${pad}" -eq 0 ] || payload="${payload}$(printf '=%.0s' $(seq 1 "${pad}"))"
+    while [ "${pad}" -gt 0 ]; do
+        payload+="="
+        pad=$(( pad - 1 ))
+    done
     base64 -d <<< "${payload}"
 }
 
@@ -3909,7 +3932,7 @@ _ci_harden_start() {
     tel="$(_ci_sot_scalar harden_runner.telemetry_url)" || return 2
     web="$(_ci_sot_scalar harden_runner.web_url)" || return 2
     egress="$(_ci_sot_scalar harden_runner.egress_policy)" || return 2
-    cid="$(cat /proc/sys/kernel/random/uuid)"
+    cid="$(cat /proc/sys/kernel/random/uuid)" || return 1
     resp="${RUNNER_TEMP:-/tmp}/harden-monitor.json"
     code="$(curl -sS --max-time 3 -o "${resp}" -w '%{http_code}' -X POST \
         -H 'content-type: application/json' \
@@ -3921,8 +3944,12 @@ _ci_harden_start() {
         return 0
     fi
     if [ "${code}" = "200" ]; then
-        otk="$(jq -r '.one_time_key // ""' "${resp}")"
-        summary="$(jq -r 'if .monitoring_started then "true" else "false" end' "${resp}")"
+        if ! otk="$(jq -r '.one_time_key // ""' "${resp}")" \
+            || ! summary="$(jq -r 'if .monitoring_started then "true" else "false" end' "${resp}")"; then
+            ci_log "[CI-HARDEN]" "monitor endpoint HTTP 200 body is not JSON; agent runs without its key"
+            cat "${resp}" >&2
+            otk="" summary="false"
+        fi
     fi
     private="$(_ci_event_value '.repository.private // false')" || return 2
     bin="$(_ci_tool_bin external_versions.harden_runner_agent)" || return 2
@@ -3943,7 +3970,7 @@ _ci_harden_start() {
           one_time_key: $otk, deploy_on_self_hosted_vm: false}' \
         > "${_CI_HARDEN_DIR}/agent.json" || return 1
     printf 'correlation_id=%s\nadd_summary=%s\n' "${cid}" "${summary}" \
-        > "${RUNNER_TEMP}/ci-harden.state"
+        > "${RUNNER_TEMP}/ci-harden.state" || return 1
     _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null || return 1
     sudo systemctl daemon-reload || return 1
     timeout 15 sudo service agent start || return 1
@@ -3978,9 +4005,9 @@ _ci_harden_stop() {
         ci_log "[CI-HARDEN]" "NotRun: no agent was started in this job"
         return 0
     fi
-    cid="$(sed -n 's/^correlation_id=//p' "${state}")"
-    summary="$(sed -n 's/^add_summary=//p' "${state}")"
-    printf '{"event":"post"}' > "${_CI_HARDEN_DIR}/post_event.json"
+    cid="$(sed -n 's/^correlation_id=//p' "${state}")" || return 1
+    summary="$(sed -n 's/^add_summary=//p' "${state}")" || return 1
+    printf '{"event":"post"}' > "${_CI_HARDEN_DIR}/post_event.json" || return 1
     if ! _ci_wait_until 11 1 test -f "${_CI_HARDEN_DIR}/done.json"; then
         ci_log "[CI-ERROR-HARDEN-0003]" "agent did not confirm job end within 10s"
         _ci_harden_agent_log
@@ -4058,7 +4085,7 @@ ci_cmd_codeql_scan() {
 # From: Issue #479, PR #544
 _ci_sarif_post() {
     local work="$1" rc=0 id why
-    : > "${work}/jqerr"
+    : > "${work}/jqerr" || return 2
     gh api --method POST "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/code-scanning/sarifs" \
         --input "${work}/body.json" > "${work}/resp" 2> "${work}/err" || rc=$?
     if [ "${rc}" -eq 0 ] && id="$(jq -er '.id // empty' "${work}/resp" 2> "${work}/jqerr")"; then

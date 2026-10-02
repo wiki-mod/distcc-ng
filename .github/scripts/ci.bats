@@ -436,6 +436,19 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
 }
 
+@test "release version-check fails when git cannot list tags" {
+    # What: Breaks git inside the require_new tag lookup.
+    # Why: POL-RELEASE-05 needs proof the tag is new.
+    # From: Issue #479, PR #544
+    fx="$(_fixture_tag_repo)"
+    git() { echo "git broke" >&2; return 128; }
+    CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"git broke"* ]]
+    [[ "${output}" != *"CI-ERROR-RELEASE-0004"* ]]
+    [[ "${output}" != *"OK"* ]]
+}
+
 @test "release context: a tag push publishes and moves latest" {
     # What: A v* tag push is the tag, publishes, sets tag_push.
     # Why: POL-RELEASE-07; release jobs read only these outputs.
@@ -1425,6 +1438,22 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
+@test "ossf add_met: only Met adds a pair; an encode error fails" {
+    # What: Builds one proposal query over three calls.
+    # Why: The link may carry only criteria re-verified as Met.
+    # From: Issue #312, PR #544
+    local qs=""
+    _ci_ossf_add_met qs NotMet "OSPS-AC-03.01" "x y"
+    [ -z "${qs}" ]
+    _ci_ossf_add_met qs Met "OSPS-AC-03.01" "x y"
+    _ci_ossf_add_met qs Met "OSPS-BR-01.01" "z"
+    [ "${qs}" = "osps_ac_03.01_status=Met&osps_ac_03.01_justification=x%20y&osps_br_01.01_status=Met&osps_br_01.01_justification=z" ]
+    _ci_ossf_urlencode() { echo "jq broke" >&2; return 1; }
+    run _ci_ossf_add_met qs Met "OSPS-VM-02.01" "w"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"jq broke"* ]]
+}
+
 @test "ossf verdict: Met, NotMet, and a tool error is no verdict" {
     # What: rc 0 is Met, rc 1 NotMet, any other rc an error.
     # Why: A missing file once read as a NotMet finding.
@@ -1758,6 +1787,24 @@ _fixture_harden_state() {
     [ -z "${output}" ]
     run _ci_classify_paths labels < <(printf '%s\n' CHANGELOG.md README.md .github/workflows/v.yml)
     [ "${output}" = "$(printf '%s\n' ci documentation)" ]
+}
+
+@test "classifier: a glob matcher error is rc 2, never no match" {
+    # What: Breaks sed, then the matcher, at each chain level.
+    # Why: A lost class skips the jobs that guard its paths.
+    # From: Issue #479, PR #544
+    sed() { echo "sed broke" >&2; return 1; }
+    run _ci_glob_match "src/*.c" "src/dopt.c"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"sed broke"* ]]
+    unset -f sed
+    _fixture_manifest 'labels:' '  documentation:' '    paths: ["**/*.md"]' '    exclude: ["CHANGELOG.md"]'
+    _ci_glob_match() { [ "$1" != "CHANGELOG.md" ] || return 2; }
+    run _ci_classify_paths labels <<< "CHANGELOG.md"
+    [ "${status}" -eq 2 ]
+    _ci_glob_match() { return 2; }
+    run _ci_classify_paths labels <<< "README.md"
+    [ "${status}" -eq 2 ]
 }
 
 @test "label-pr applies path labels and the title category" {
@@ -2271,6 +2318,31 @@ _capture_docker() {
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --rm -e K=V img bash x " ]
 }
 
+@test "stack teardown removes only a listed net; a list error fails" {
+    # What: Fakes docker with one net, ci-x-1, and ci-x beside it.
+    # Why: Teardown must delete its own net and no other.
+    # From: Issue #479, PR #544
+    docker() {
+        case "$1 $2" in
+            "network ls")
+                [ -z "${FX_LS_FAIL:-}" ] || { echo "ls broke" >&2; return 1; }
+                printf 'bridge\nci-x-1\n' ;;
+            "network rm") echo "$3" >> "${BATS_TEST_TMPDIR}/rm" ;;
+        esac
+    }
+    run _ci_stack_teardown ci-x-1
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/rm")" = "ci-x-1" ]
+    run _ci_stack_teardown ci-x
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/rm")" = "ci-x-1" ]
+    FX_LS_FAIL=1 run _ci_stack_teardown ci-x-1
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"ls broke"* ]]
+    [[ "${output}" == *"CI-ERROR-STACK-0001"* ]]
+    [ "$(cat "${BATS_TEST_TMPDIR}/rm")" = "ci-x-1" ]
+}
+
 @test "container run: inside a stack it joins net and label, no --rm" {
     # What: A stack member is labelled; teardown removes it.
     # Why: --rm would drop a crashed server's log too early.
@@ -2635,6 +2707,26 @@ _fake_osv() {
     [ "$(jq -r '.buildDefinition.resolvedDependencies[0].digest.gitCommit' <<< "${output}")" = "abc" ]
 }
 
+@test "attest claims decode an unpadded base64url token payload" {
+    # What: Encodes 7, 8 and 9 byte claims as a JWT does.
+    # Why: Each length restores a different '=' count.
+    # From: Issue #38, PR #544
+    local j p
+    export ACTIONS_ID_TOKEN_REQUEST_TOKEN=t ACTIONS_ID_TOKEN_REQUEST_URL=u
+    curl() { printf '{"value":"%s"}' "${FX_TOKEN}"; }
+    for j in '{"a":1}' '{"ab":1}' '{"abc":1}'; do
+        p="$(printf '%s' "${j}" | base64 -w0 | tr '/+' '_-' | tr -d '=')"
+        FX_TOKEN="h.${p}.s"
+        run _ci_attest_claims
+        [ "${status}" -eq 0 ]
+        [ "${output}" = "${j}" ]
+    done
+    tr() { echo "tr broke" >&2; return 1; }
+    run _ci_attest_claims
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"tr broke"* ]]
+}
+
 @test "attest builds one in-toto statement over all subjects" {
     # What: Every file is a sha256 subject of one SLSA statement.
     # Why: One signature covers the whole shipped asset set.
@@ -2712,6 +2804,36 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+@test "harden start: a 200 body that is not JSON runs keyless" {
+    # What: Answers the monitor call once in JSON, once in text.
+    # Why: Agent is audit-only (Issue #58); bad reply drops key.
+    # From: Issue #479, PR #544, Issue #58
+    export RUNNER_OS=Linux RUNNER_ARCH=X64 RUNNER_ENVIRONMENT=github-hosted USER=u
+    export GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 GITHUB_WORKSPACE=/w RUNNER_TEMP="${BATS_TEST_TMPDIR}"
+    export GITHUB_EVENT_PATH="${BATS_TEST_TMPDIR}/event.json"
+    printf '{"repository":{"private":false}}' > "${GITHUB_EVENT_PATH}"
+    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
+    mkdir -p "${_CI_HARDEN_DIR}"
+    printf 'ok' > "${_CI_HARDEN_DIR}/agent.status"
+    _ci_tool_bin() { echo /bin/true; }
+    sudo() { [ "$1" != tee ] || cat > /dev/null; }
+    _pass timeout
+    curl() {
+        while [ "$#" -gt 0 ]; do [ "$1" != -o ] || FX_RESP="$2"; shift; done
+        printf '%s' "${FX_BODY}" > "${FX_RESP}"
+        printf '200'
+    }
+    FX_BODY='{"one_time_key":"k","monitoring_started":true}' run _ci_harden_start
+    [ "${status}" -eq 0 ]
+    [ "$(jq -r .one_time_key "${_CI_HARDEN_DIR}/agent.json")" = "k" ]
+    grep -qx 'add_summary=true' "${RUNNER_TEMP}/ci-harden.state"
+    FX_BODY='not json' run _ci_harden_start
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"body is not JSON"*"not json"* ]]
+    [ "$(jq -r .one_time_key "${_CI_HARDEN_DIR}/agent.json")" = "" ]
+    grep -qx 'add_summary=false' "${RUNNER_TEMP}/ci-harden.state"
+}
+
 @test "harden stop is NotRun when no agent was started" {
     # What: No state file means nothing to stop.
     # Why: Stop runs under if: always(), also after skips.
@@ -2732,6 +2854,18 @@ _fake_osv() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-HARDEN-0003"* ]]
     [ -f "${_CI_HARDEN_DIR}/post_event.json" ]
+}
+
+@test "harden stop fails closed when its state file cannot be read" {
+    # What: Breaks sed while the start-written state is read.
+    # Why: The correlation id selects which summary is fetched.
+    # From: Issue #479, PR #544
+    _fixture_harden_state
+    sed() { echo "sed broke" >&2; return 1; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"sed broke"* ]]
+    [ ! -e "${_CI_HARDEN_DIR}/post_event.json" ]
 }
 
 @test "harden stop passes once the agent wrote done.json" {
