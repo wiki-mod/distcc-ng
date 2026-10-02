@@ -83,6 +83,28 @@ this reason.
   other. This reduces, rather than removes, a pre-existing hard requirement,
   and does not raise any minimum version.
 
+## Documented warning exceptions
+
+`AGENTS.md` `[AG-INT-003]` treats every warning as an error unless this
+section documents it as an exception. Each entry names the exact warning,
+where it comes from, and the maintainer decision that accepts it.
+
+- **rpmbuild: "It's not recommended to have unversioned Obsoletes"**, four
+  times, for `packaging/RedHat/rpm.spec`'s `Obsoletes: distcc`,
+  `Obsoletes: distcc-server`, `Obsoletes: crosstool-distcc
+  distcc-include-server` and `Obsoletes: crosstool-distcc-server`. This
+  fork's packages install at the same paths as the real `distcc` and
+  `distcc-server` packages at every version, so there is no version
+  boundary to draw; the Conflicts/Obsoletes stay unversioned on purpose.
+  Decided in PR #437 (issue #412, merged 2026-08-06), which recorded in the
+  spec that rpm warns about this and accepted it; the two `crosstool-*`
+  lines come unchanged from upstream `distcc/distcc`'s spec and carry the
+  same warning for the same reason.
+
+Not covered here, and therefore still open warnings of `ci.sh package`:
+rpmbuild's "bogus date in %changelog" for the 2008 "Sat Mar 12 2008"
+entry, and setuptools' "setup.py install is deprecated".
+
 ## Dependency management policy
 
 This section documents how this fork selects, obtains, and tracks its
