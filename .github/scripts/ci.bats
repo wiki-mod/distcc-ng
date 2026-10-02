@@ -101,6 +101,27 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-CORE-0002"* ]]
 }
 
+# What: Print each CI-ERROR id that occurs twice in file $1.
+# Why: Triage greps an id to find the one place it is raised.
+# From: Issue #479, PR #544
+_dup_error_ids() {
+    grep -oE 'CI-ERROR-[A-Z0-9-]+-[0-9]{4}' "$1" | sort | uniq -d
+}
+
+# What: Lists duplicate ids in ci.sh, then in a copy with one.
+# Why: A shared id would point triage at the wrong failure.
+# From: Issue #479, PR #544
+@test "every CI-ERROR id in ci.sh is raised in one place" {
+    local fx="${BATS_TEST_TMPDIR}/ci.sh"
+    run _dup_error_ids "${CI_SH}"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    cp "${CI_SH}" "${fx}"
+    printf '%s\n' 'ci_log "[CI-ERROR-CORE-0002]" "again"' >> "${fx}"
+    run _dup_error_ids "${fx}"
+    [ "${output}" = "CI-ERROR-CORE-0002" ]
+}
+
 # What: Points CI_MANIFEST at a path that does not exist.
 # Why: Without the SOT every pin and spec would read empty.
 # From: Issue #479
@@ -1626,30 +1647,50 @@ _fixture_harden_state() {
     done
 }
 
-# What: Parses validate.yml's job gates and ci.sh commands.
+# What: Print each SOT phase no gated job of file $1 runs.
 # Why: A phase nobody runs is policy that changes nothing.
 # From: Issue #479, PR #544
-@test "every SOT impact phase gates a validate.yml job" {
-    local ph wiring
+_unwired_phases() {
+    local ph gate wiring rc
     local phases=()
-    _ci_mapfile phases _ci_all_phases
-    [ "${#phases[@]}" -gt 0 ]
+    _ci_mapfile phases _ci_all_phases || return 2
+    [ "${#phases[@]}" -gt 0 ] || return 2
     wiring="$(awk '
         /^  [A-Za-z0-9_-]+:$/ { job = substr($1, 1, length($1) - 1) }
         /^    if:/ { gate[job] = $0 }
         match($0, /run: bash \.github\/scripts\/ci\.sh [a-z0-9-]+/) {
             c = substr($0, RSTART, RLENGTH); sub(/.* /, "", c); cmds[job] = cmds[job] " " c " " }
         END { for (j in gate) print j "|" gate[j] "|" cmds[j] }
-    ' "${CI_REPO_ROOT}/.github/workflows/validate.yml")"
+    ' "$1")" || return 2
     for ph in "${phases[@]}"; do
-        if [ "${ph}" = build ]; then
-            awk -F'|' -v ph="${ph}" 'index($2, "needs.plan.outputs.build == '\''true'\''") && index($3, " " ph " ") { f = 1 }
-                END { exit !f }' <<< "${wiring}" || { echo "no job runs ${ph}"; false; }
-        else
-            awk -F'|' -v ph="${ph}" 'index($2, "contains(needs.plan.outputs.phases, '\''" ph "'\'')") && index($3, " " ph " ") { f = 1 }
-                END { exit !f }' <<< "${wiring}" || { echo "no job runs ${ph}"; false; }
-        fi
+        gate="contains(needs.plan.outputs.phases, '${ph}')"
+        [ "${ph}" != build ] || gate="needs.plan.outputs.build == 'true'"
+        rc=0
+        awk -F'|' -v g="${gate}" -v ph="${ph}" 'index($2, g) && index($3, " " ph " ") { f = 1 }
+            END { exit !f }' <<< "${wiring}" || rc=$?
+        case "${rc}" in
+            0) ;;
+            1) printf '%s\n' "${ph}" ;;
+            *) return 2 ;;
+        esac
     done
+}
+
+# What: Checks validate.yml, then 2 copies with e2e cut off.
+# Why: The copies prove the wiring check can fail at all.
+# From: Issue #479, PR #544
+@test "every SOT impact phase gates a validate.yml job" {
+    local wf="${CI_REPO_ROOT}/.github/workflows/validate.yml" fx="${BATS_TEST_TMPDIR}/validate.yml"
+    run _unwired_phases "${wf}"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    sed "s/contains(needs.plan.outputs.phases, 'e2e')/false/" "${wf}" > "${fx}"
+    run _unwired_phases "${fx}"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "e2e" ]
+    sed 's#scripts/ci\.sh e2e#scripts/ci.sh lint#' "${wf}" > "${fx}"
+    run _unwired_phases "${fx}"
+    [ "${output}" = "e2e" ]
 }
 
 # What: Reads timeout-minutes of each listed workflow job.
@@ -1671,30 +1712,58 @@ _fixture_harden_state() {
     done
 }
 
-# What: Routes every registered command; lists every arm.
-# Why: A listed command without an arm would be a dead stub.
+# What: Print each registered command ci_main of $1 misroutes.
+# Why: A listed command without its own arm is a dead stub.
 # From: Issue #479, PR #544
-@test "every CI_COMMANDS entry has its own dispatch arm" {
-    local c fn arm
+_dispatch_misroutes() {
+    (
+        local c fn out
+        # shellcheck source=.github/scripts/ci.sh
+        source "$1" || exit 2
+        for c in ${CI_COMMANDS}; do
+            fn="ci_cmd_${c//-/_}"
+            # What: Stub the command's phase function to report itself.
+            # Why: The real phases would run builds and API calls.
+            eval "${fn}() { echo \"reached ${fn} \$*\"; }"
+            out="$(ci_main "${c}" a1 2>&1)" || { printf '%s\n' "${c}"; continue; }
+            [ "${out}" = "reached ${fn} a1" ] || printf '%s\n' "${c}"
+        done
+    )
+}
+
+# What: Print each ci_main arm of file $1 not in CI_COMMANDS.
+# Why: An arm missing from CI_COMMANDS can never be reached.
+# From: Issue #479, PR #544
+_unregistered_arms() {
+    local arm
     local arms=()
-    for c in ${CI_COMMANDS}; do
-        fn="ci_cmd_${c//-/_}"
-        # What: Stub the command's phase function to report itself.
-        # Why: The real phases would run builds and API calls.
-        eval "${fn}() { echo \"reached ${fn} \$*\"; }"
-        run ci_main "${c}" a1
-        [ "${status}" -eq 0 ] || { echo "${c}: ${output}"; false; }
-        [ "${output}" = "reached ${fn} a1" ] || { echo "${c}: ${output}"; false; }
-    done
-    # What: List ci_main's case arms from the ci.sh source.
-    # Why: An arm missing from CI_COMMANDS can never be reached.
     _ci_mapfile arms awk '/^ci_main\(\)/ { m = 1 } m && /^}/ { exit }
         m && match($0, /^ +[a-z-]+\) ci_cmd_/) {
-            a = substr($0, RSTART, RLENGTH); sub(/^ +/, "", a); sub(/\).*/, "", a); print a }' "${CI_SH}"
-    [ "${#arms[@]}" -gt 0 ]
+            a = substr($0, RSTART, RLENGTH); sub(/^ +/, "", a); sub(/\).*/, "", a); print a }' "$1" || return 2
+    [ "${#arms[@]}" -gt 0 ] || return 2
     for arm in "${arms[@]}"; do
-        [[ " ${CI_COMMANDS} " == *" ${arm} "* ]] || { echo "unregistered arm: ${arm}"; false; }
+        [[ " ${CI_COMMANDS} " == *" ${arm} "* ]] || printf '%s\n' "${arm}"
     done
+}
+
+# What: Checks ci.sh, then copies: gc misrouted, zap added.
+# Why: The copies prove both dispatch checks can fail at all.
+# From: Issue #479, PR #544
+@test "every CI_COMMANDS entry has its own dispatch arm" {
+    local fx="${BATS_TEST_TMPDIR}/ci.sh"
+    run _dispatch_misroutes "${CI_SH}"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    run _unregistered_arms "${CI_SH}"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    sed 's/^\( *gc)\) ci_cmd_gc /\1 ci_cmd_report /' "${CI_SH}" > "${fx}"
+    run _dispatch_misroutes "${fx}"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "gc" ]
+    sed 's/^\( *\)gate) ci_cmd_gate "\$@" ;;/&\n\1zap) ci_cmd_zap "$@" ;;/' "${CI_SH}" > "${fx}"
+    run _unregistered_arms "${fx}"
+    [ "${output}" = "zap" ]
 }
 
 # What: Classifies include_server/basics.py into phases.
