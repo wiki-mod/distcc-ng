@@ -159,6 +159,24 @@ _forbid() {
     [ "${lines[1]}" = "two" ]
 }
 
+@test "sot walker: one path rule for value, children and set" {
+    # What: The one walker serves every mode, or fails closed.
+    # Why: Readers and the writer must never disagree on a path.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: 1' 'e: "y"'
+    run _ci_sot_lookup bogus a.b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0009"* ]]
+    run _ci_sot_children a.b
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    run _ci_sot_lookup value a.c.zz
+    [ "${status}" -eq 3 ]
+    _ci_sot_set a.c.d "2"
+    [ "$(_ci_sot_scalar a.c.d)" = "2" ]
+    [ "$(_ci_sot_children a)" = "$(printf 'b\nc')" ]
+}
+
 # =========================================================
 # PARALLELISM
 # =========================================================
@@ -205,6 +223,12 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
     run ci_cmd_selftest
     [ "${status}" -eq 2 ]
+    # What: Stub nproc printing zero CPUs.
+    # Why: A count that is not a positive integer is no count.
+    nproc() { echo 0; }
+    run _ci_nproc
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
 }
 
 # =========================================================
@@ -416,6 +440,10 @@ _forbid() {
     printf '{"inputs":{"tag":"v1.2.3-NG"}}' > "${ev}"
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
     [ "${lines[2]}" = "false" ]
+    printf '{"inputs":{}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"*".inputs.tag"* ]]
 }
 
 @test "release context fails closed off a release trigger" {
@@ -572,6 +600,10 @@ _forbid() {
     GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
     [ "${status}" -eq 0 ]
     [ "${output}" = "insert v1.2|notes" ]
+    printf '{"inputs":{"tag":"v2-NG","release_notes":"rn"}}' > "${ev}"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "insert v2-NG|rn" ]
 }
 
 @test "changelog manual retry inserts a notes file, dry run pushes nothing" {
@@ -749,7 +781,7 @@ _forbid() {
     # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"number":7,"html_url":"https://h/pr/7"}}' > "${ev}"
-    GITHUB_EVENT_PATH="${ev}" run _ci_event_pr_number
+    GITHUB_EVENT_PATH="${ev}" run _ci_event_value .pull_request.number
     [ "${output}" = "7" ]
     # What: Stub the board add to print the URL it gets.
     # Why: The test checks the URL from the payload.
@@ -760,12 +792,12 @@ _forbid() {
     GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
     [ "${output}" = "add https://h/i/3" ]
     printf '{}' > "${ev}"
-    GITHUB_EVENT_PATH="${ev}" run _ci_event_pr_number
+    GITHUB_EVENT_PATH="${ev}" run _ci_event_value .pull_request.number
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
     GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-EVENT-0002"* ]]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
 }
 
 @test "impact-hit runs every class off a PR, diffs on a PR" {
@@ -778,15 +810,15 @@ _forbid() {
     # What: Stub the PR range as base b, head h.
     # Why: The test needs a range without a real event.
     _ci_event_range() { printf '%s\n' b h; }
-    # What: Stub git diff as a docs-only change.
+    # What: Stub the diff owner as a docs-only change.
     # Why: A docs diff must miss the fuzz class.
-    git() { [ "$1" = diff ] && printf '%s\n' doc/x.md; }
+    _ci_changed_paths() { printf '%s\n' doc/x.md; }
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=false" ]
-    # What: Stub git diff as a fuzz test change.
+    # What: Stub the diff owner as a fuzz test change.
     # Why: A test/fuzz diff must hit the fuzz class.
-    git() { [ "$1" = diff ] && printf '%s\n' test/fuzz/a.c; }
+    _ci_changed_paths() { printf '%s\n' test/fuzz/a.c; }
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
@@ -805,7 +837,7 @@ _forbid() {
     git() { return 128; }
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-IMPACT-0001"* ]]
+    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
 }
 
 @test "report outcome is success only if every job succeeded" {
@@ -834,7 +866,7 @@ _forbid() {
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
         GITHUB_REF_NAME=current_dev run ci_cmd_plan
     [ "${status}" -eq 0 ]
-    grep -qx 'phases=build e2e verify container package' "${out}"
+    grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
     grep -qx 'build=true' "${out}"
     grep -qx 'publish_buildtools=true' "${out}"
 }
@@ -879,7 +911,7 @@ _forbid() {
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
             GITHUB_SHA=HEAD GITHUB_REF_NAME="${ref}" run ci_cmd_plan
         [ "${status}" -eq 0 ]
-        grep -qx 'phases=build e2e verify container package' "${out}"
+        grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
         grep -qx 'publish_buildtools=false' "${out}"
     done
     unset GITHUB_REF_NAME
@@ -898,6 +930,22 @@ _forbid() {
     run ci_cmd_matrix
     [ "${status}" -eq 0 ]
     [ "${output}" = '{"include":[{"variant":"a","os":"ubuntu-latest","apt":"p"},{"variant":"a","os":"macos-latest","brew":"q"}]}' ]
+}
+
+@test "both matrices stay valid JSON for any SOT value" {
+    # What: A backslash in a SOT value is escaped, not raw.
+    # Why: Hand-built JSON once let a value break the matrix.
+    # From: Issue #479, PR #544
+    _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p\q"' '      os: [ubuntu-latest]' \
+        'release:' '  container:' '    variants:' '      plain: "p"' '    platforms:' '      amd64:' \
+        '        runner: "r\1"' '        optional: "false"'
+    run ci_cmd_matrix
+    [ "${status}" -eq 0 ]
+    [ "$(jq -r '.include[0].apt' <<< "${output}")" = 'p\q' ]
+    run _ci_release_matrix
+    [ "${status}" -eq 0 ]
+    [ "$(jq -r '.include[0].runs_on' <<< "${lines[0]}")" = 'r\1' ]
+    [ "$(jq -c . <<< "${lines[1]}")" = '["plain"]' ]
 }
 
 @test "build fails closed on an unknown variant before touching the tree" {
@@ -957,6 +1005,9 @@ _forbid() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
     [[ "${output}" == *"src/x.c:12:5: warning"* ]]
+    run _ci_warning_gate "${BATS_TEST_TMPDIR}/missing.log" "make check"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-WARN-0002"* ]]
 }
 
 @test "make gate and configure fail closed when the tool fails" {
@@ -1032,16 +1083,21 @@ _forbid() {
     [ "${status}" -ne 0 ]
 }
 
-@test "variables secret-present writes available true/false" {
-    # What: The secret-presence gate writes true, then false.
-    # Why: GitHub forbids the secrets context inside an if:.
-    # From: Issue #479, PR #329
-    local out="${BATS_TEST_TMPDIR}/out"
-    GITHUB_OUTPUT="${out}" SECRET_VALUE="x" _ci_variables_secret_present
-    GITHUB_OUTPUT="${out}" SECRET_VALUE="" _ci_variables_secret_present
-    run cat "${out}"
-    [ "${lines[0]}" = "available=true" ]
-    [ "${lines[1]}" = "available=false" ]
+@test "add-to-project leaves the PAT decision to the board owner" {
+    # What: PROJECT_PAT, set or empty, goes to _ci_board_add.
+    # Why: A YAML secret gate once made the same call twice.
+    # From: Issue #479, PR #329, PR #544
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '{"issue":{"html_url":"https://h/i/3"}}' > "${ev}"
+    # What: Stub the board add to print the token it gets.
+    # Why: The test checks which token is handed over.
+    _ci_board_add() { printf 'add %s token=%s\n' "$1" "${2:-empty}"; }
+    GITHUB_EVENT_PATH="${ev}" PROJECT_PAT=p GH_TOKEN=g run _ci_variables_add_to_project
+    [ "${output}" = "add https://h/i/3 token=p" ]
+    GITHUB_EVENT_PATH="${ev}" PROJECT_PAT="" GH_TOKEN=g run _ci_variables_add_to_project
+    [ "${output}" = "add https://h/i/3 token=empty" ]
+    run ci_cmd_variables secret-present
+    [ "${status}" -eq 2 ]
 }
 
 @test "output writer uses the delimiter form for multi-line values" {
@@ -1056,6 +1112,24 @@ _forbid() {
     [ "${lines[2]}" = "x" ]
     [ "${lines[3]}" = "y" ]
     [ "${lines[4]}" = "${lines[1]#b<<}" ]
+}
+
+@test "step summary appends a command's output, else NotRun" {
+    # What: One writer: append when set, NotRun when unset.
+    # Why: Three writers once had two different unset rules.
+    # From: Issue #479, PR #544
+    local s="${BATS_TEST_TMPDIR}/summary"
+    GITHUB_STEP_SUMMARY="${s}" _ci_step_summary _ci_control_build_summary 0
+    grep -q '^## Control build: OK' "${s}"
+    GITHUB_STEP_SUMMARY="${s}" _ci_step_summary _ci_control_build_summary 3
+    grep -q '^## Control build: FAILED (exit 3)' "${s}"
+    unset GITHUB_STEP_SUMMARY
+    run _ci_step_summary _ci_control_build_summary 0
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[CI-SUMMARY] NotRun"* ]]
+    [[ "${output}" != *"Control build"* ]]
+    GITHUB_STEP_SUMMARY="${s}" run _ci_step_summary false
+    [ "${status}" -eq 1 ]
 }
 
 @test "output writer fails closed on an odd argument count" {
@@ -1194,12 +1268,25 @@ _forbid() {
         case "$1 $2" in
             "release list") echo 2026-01-01 ;;
             "pr list") echo '[{"number":5,"title":"fix(ci): a"}]' ;;
-            "release view") return 1 ;;
+            "release view") echo "release not found" >&2; return 1 ;;
         esac
     }
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"DRY_RUN would run: gh release create draft-current_dev"* ]]
+    # What: Stub gh: the draft lookup fails on auth, not 404.
+    # Why: An API error must not read as "no draft, create".
+    gh() {
+        case "$1 $2" in
+            "release list") echo 2026-01-01 ;;
+            "pr list") echo '[]' ;;
+            "release view") echo "HTTP 401: Bad credentials" >&2; return 1 ;;
+        esac
+    }
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0010"*"Bad credentials"* ]]
+    [[ "${output}" != *"would run: gh release"* ]]
 }
 
 @test "draft release body groups PRs under their category heading" {
@@ -1216,13 +1303,17 @@ _forbid() {
     # What: An API error or unreadable field errors, never NotMet.
     # Why: A tool failure must never pose as a compliance finding.
     # From: Issue #312, Issue #479, PR #544
-    _fixture_manifest 'security:' '  openssf:' '    ruleset_id: "7"'
+
     # What: Stub every gh call as failing.
     # Why: API errors must fail, not read as NotMet.
     gh() { return 1; }
-    GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
+    GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03 7
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0001"*"ruleset 7"* ]]
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_ac03 7
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
+    [[ "${output}" != *"NotMet"* ]]
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0002"* ]]
@@ -1235,9 +1326,9 @@ _forbid() {
     # What: Stub gh: a met ruleset, scanning on, push off.
     # Why: Real Met and NotMet verdicts must still come out.
     gh() { case "$*" in *rulesets/7*) echo '["pull_request","deletion"]' ;; *) echo '{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}' ;; esac; }
-    GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_ac03 7
     [ "${output}" = "Met" ]
-    GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
     [ "${output}" = "NotMet" ]
 }
 
@@ -1251,20 +1342,24 @@ _forbid() {
     printf '%s\n' 'on: pull_request_target' "      - run: ${boot}" \
         '        env: {HEAD: "${{ github.event.pull_request.head.sha }}"}' > "${fx}/.github/workflows/a.yml"
     cd "${fx}"
-    [ "$(_ci_ossf_check_br01)" = "Met" ]
+    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "Met" ]
     printf '%s\n' 'on: pull_request_target' "      - run: ${boot} 1 \"\$HEAD\"" > "${fx}/.github/workflows/b.yml"
-    [ "$(_ci_ossf_check_br01)" = "NotMet" ]
+    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "NotMet" ]
 }
 
-@test "ossf grep helper reports Met, NotMet, and case-insensitive" {
-    # What: The baseline grep helper backs many openssf checks.
-    # Why: A wrong Met/NotMet misreports a security criterion.
-    # From: Issue #479, Issue #312
+@test "ossf verdict: Met, NotMet, and a tool error is no verdict" {
+    # What: rc 0 is Met, rc 1 NotMet, any other rc an error.
+    # Why: A missing file once read as a NotMet finding.
+    # From: Issue #479, Issue #312, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     printf 'has Security Advisory here\n' > "${fx}"
-    [ "$(_ci_ossf_grep "${fx}" 'Security Advisor')" = "Met" ]
-    [ "$(_ci_ossf_grep "${fx}" 'nope-xyz')" = "NotMet" ]
-    [ "$(_ci_ossf_grep "${fx}" 'SECURITY ADVISOR' -i)" = "Met" ]
+    [ "$(_ci_ossf_verdict grep -q 'Security Advisor' "${fx}")" = "Met" ]
+    [ "$(_ci_ossf_verdict grep -q 'nope-xyz' "${fx}")" = "NotMet" ]
+    [ "$(_ci_ossf_verdict grep -qi 'SECURITY ADVISOR' "${fx}")" = "Met" ]
+    run _ci_ossf_verdict grep -q 'x' "${BATS_TEST_TMPDIR}/missing"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
+    [[ "${output}" != *"NotMet"* ]]
 }
 
 @test "gc candidates keep protected, rollback set, and real tags" {
@@ -1345,7 +1440,15 @@ _forbid() {
     echo '{"release":{"tag_name":"v1-NG"}}' > "${ev}"
     GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
     [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
+    echo '{"release":{"prerelease":"yes","tag_name":"v1-NG"}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0003"* ]]
+    echo '{"release":{"prerelease":false}}' > "${ev}"
+    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"*".release.tag_name"* ]]
     echo 'not json' > "${ev}"
     GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
     [ "${status}" -eq 2 ]
@@ -1392,6 +1495,20 @@ _forbid() {
     JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
+}
+
+@test "gate fails closed on a JOBS list with no or bad pairs" {
+    # What: No parsable pair, or a bad one, is an error.
+    # Why: An empty job list once passed the required gate.
+    # From: Issue #479, PR #544
+    JOBS=" " run ci_cmd_gate
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-JOBS-0002"* ]]
+    JOBS="$(printf 'build=success\ne2e:failure\n')" run ci_cmd_gate
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e:failure"* ]]
+    JOBS="build=" run ci_cmd_gate
+    [ "${status}" -eq 2 ]
 }
 
 # =========================================================
@@ -1574,6 +1691,19 @@ _forbid() {
     [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
 }
 
+@test "pr category: a title not in AG-GH-014 shape gets no label" {
+    # What: "fix stuff" has no type, so it gets no category.
+    # Why: Labels and the title check share one title parser.
+    # From: Issue #479, PR #544
+    run _ci_pr_category_label 'fix stuff'
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    run _ci_title_type 'fix(ci)!: x'
+    [ "${output}" = "fix" ]
+    run _ci_title_type 'fix stuff'
+    [ "${status}" -eq 1 ]
+}
+
 # =========================================================
 # GOVERNANCE GUARDS (green + red)
 # =========================================================
@@ -1633,7 +1763,7 @@ _forbid() {
     # From: Issue #479, PR #544
     BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0002"* ]]
+    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
     run _ci_parse_comfychair "${BATS_TEST_TMPDIR}/nope.log"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
@@ -2025,6 +2155,22 @@ _capture_docker() {
     [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -eq 3 ]
     run _ci_wait_until 2 1 false
     [ "${status}" -eq 1 ]
+}
+
+@test "wait-until stops at once on a probe error and names tries" {
+    # What: rc >= 2 aborts; the probe sees CI_ATTEMPT/CI_TRIES.
+    # Why: A hard error must never be retried as transient.
+    # From: Issue #479, PR #544
+
+    # What: Stub sleep as a no-op.
+    # Why: Probe retries must not slow the suite.
+    sleep() { :; }
+    # What: Probe that logs its attempt, then fails hard.
+    # Why: Proves a single call and the attempt counters.
+    _probe() { echo "${CI_ATTEMPT}/${CI_TRIES}" >> "${BATS_TEST_TMPDIR}/tries"; return 5; }
+    run _ci_wait_until 4 1 _probe
+    [ "${status}" -eq 5 ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/tries")" = "1/4" ]
 }
 
 @test "expect-output checks presence, and absence with !re" {

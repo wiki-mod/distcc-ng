@@ -243,14 +243,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci.sh variables label-pr
-      - name: Check for automation PAT
-        id: check-pat
-        env:
-          SECRET_VALUE: ${{ secrets.PROJECT_AUTOMATION_PAT }}
-        run: bash .github/scripts/ci.sh variables secret-present
-      - if: steps.check-pat.outputs.available == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+      - env:
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
         run: bash .github/scripts/ci.sh variables add-to-project
       - if: always()
         run: bash .github/scripts/ci.sh harden stop

@@ -97,17 +97,75 @@ ci_require_manifest() {
 # SOT READERS (awk only; no yq/jq/python)
 # =========================================================
 
+# What: Walk the SOT to a dotted path; exit 3 if absent.
+# Why: One path walker for value, children and set modes.
+# From: Issue #479, PR #544
+_ci_sot_lookup() {
+    local mode="$1" path="$2" value="${3:-}"
+    case "${mode}" in
+        value|children|set) ;;
+        *) ci_log "[CI-ERROR-SOT-0009]" "unknown SOT walk mode=\"${mode}\""; return 2 ;;
+    esac
+    awk -v mode="${mode}" -v path="${path}" -v value="${value}" '
+        BEGIN { n = split(path, want, "."); need = 1; hit = 0; childind = -1 }
+        END { if (!hit) exit 3 }
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { if (mode == "set") print; next }
+        {
+            match($0, /^ */); ind = RLENGTH / 2
+            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
+            if (childind >= 0) {
+                if (ind < childind) { exit }
+                if (ind == childind) { print key }
+                next
+            }
+            if (!hit) {
+                if (ind + 1 < need) { need = ind + 1 }
+                if (ind + 1 == need && key == want[need]) {
+                    if (need == n) {
+                        hit = 1
+                        if (mode == "value") {
+                            val = $0; sub(/^[^:]*:[[:space:]]*/, "", val)
+                            gsub(/^"|"[[:space:]]*$/, "", val)
+                            print val; exit
+                        }
+                        if (mode == "children") { childind = ind + 1; next }
+                        match($0, /^ *[^:]*:/)
+                        print substr($0, 1, RLENGTH) " \"" value "\""
+                        next
+                    }
+                    need++
+                }
+            }
+            if (mode == "set") print
+        }
+    ' "${CI_MANIFEST}"
+}
+
+# What: Log a SOT path that the manifest does not have.
+# Why: Scalar, children and set share one absent-path error.
+# From: Issue #479, PR #544
+_ci_sot_absent() {
+    ci_log "[CI-ERROR-SOT-0002]" "path=\"$1\" reason=\"not found in SOT\""
+}
+
+# What: Walk one SOT path; an absent path is an error.
+# Why: A missing pin or section must never read as empty.
+# From: Issue #479, PR #544
+_ci_sot_required() {
+    local rc=0
+    _ci_sot_lookup "$@" || rc=$?
+    if [ "${rc}" -eq 3 ]; then
+        _ci_sot_absent "$2"
+        return 2
+    fi
+    return "${rc}"
+}
+
 # What: Print the scalar at a dotted SOT path; fail if absent.
 # Why: A missing pin must never read as an empty value.
 # From: Issue #479, PR #544
 _ci_sot_scalar() {
-    local path="$1" rc=0
-    _ci_sot_lookup "${path}" || rc=$?
-    if [ "${rc}" -eq 3 ]; then
-        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
-        return 2
-    fi
-    return "${rc}"
+    _ci_sot_required value "$1"
 }
 
 # What: Print an optional SOT value; empty if absent.
@@ -115,65 +173,15 @@ _ci_sot_scalar() {
 # From: Issue #479, PR #544
 _ci_sot_optional() {
     local rc=0
-    _ci_sot_lookup "$1" || rc=$?
+    _ci_sot_lookup value "$1" || rc=$?
     [ "${rc}" -eq 3 ] || return "${rc}"
-}
-
-# What: awk lookup of a dotted SOT path; exit 3 if absent.
-# Why: Lets scalar fail closed and optional stay explicit.
-# From: Issue #479, PR #544
-_ci_sot_lookup() {
-    local path="$1"
-    awk -v path="${path}" '
-        BEGIN { n = split(path, want, "."); need = 1; found = 0 }
-        END { if (!found) exit 3 }
-        /^[[:space:]]*#/ { next }
-        /^[[:space:]]*$/ { next }
-        {
-            match($0, /^ */); ind = RLENGTH / 2
-            if (ind + 1 < need) { need = ind + 1 }
-            if (ind + 1 != need) { next }
-            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
-            if (key != want[need]) { next }
-            if (need == n) {
-                val = $0; sub(/^[^:]*:[[:space:]]*/, "", val)
-                gsub(/^"|"[[:space:]]*$/, "", val)
-                print val; found = 1; exit
-            }
-            need++
-        }
-    ' "${CI_MANIFEST}"
 }
 
 # What: Print child keys of a dotted SOT path; fail if absent.
 # Why: A missing section must not read as zero variants.
 # From: Issue #479, PR #544
 _ci_sot_children() {
-    local path="$1" rc=0
-    awk -v path="${path}" '
-        BEGIN { n = split(path, want, "."); need = 1; inside = 0; childind = 0 }
-        END { if (!inside) exit 3 }
-        /^[[:space:]]*#/ { next }
-        /^[[:space:]]*$/ { next }
-        {
-            match($0, /^ */); ind = RLENGTH / 2
-            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
-            if (!inside) {
-                if (ind + 1 < need) { need = ind + 1 }
-                if (ind + 1 != need) { next }
-                if (key != want[need]) { next }
-                if (need == n) { inside = 1; childind = ind + 1; next }
-                need++; next
-            }
-            if (ind < childind) { exit }
-            if (ind == childind) { print key }
-        }
-    ' "${CI_MANIFEST}" || rc=$?
-    if [ "${rc}" -eq 3 ]; then
-        ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
-        return 2
-    fi
-    return "${rc}"
+    _ci_sot_required children "$1"
 }
 
 # What: Print each item of an inline `key: [a, b]` list.
@@ -196,30 +204,11 @@ _ci_sot_list() {
 _ci_sot_set() {
     local path="$1" value="$2" tmp rc=0
     tmp="$(mktemp)" || return 2
-    awk -v path="${path}" -v value="${value}" '
-        BEGIN { n = split(path, want, "."); need = 1; done = 0 }
-        done || /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
-        {
-            match($0, /^ */); ind = RLENGTH / 2
-            if (ind + 1 < need) { need = ind + 1 }
-            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
-            if (ind + 1 == need && key == want[need]) {
-                if (need == n) {
-                    match($0, /^ *[^:]*:/)
-                    print substr($0, 1, RLENGTH) " \"" value "\""
-                    done = 1
-                    next
-                }
-                need++
-            }
-            print
-        }
-        END { if (!done) exit 3 }
-    ' "${CI_MANIFEST}" > "${tmp}" || rc=$?
+    _ci_sot_lookup set "${path}" "${value}" > "${tmp}" || rc=$?
     if [ "${rc}" -ne 0 ]; then
         rm -f "${tmp}"
         if [ "${rc}" -eq 3 ]; then
-            ci_log "[CI-ERROR-SOT-0002]" "path=\"${path}\" reason=\"not found in SOT\""
+            _ci_sot_absent "${path}"
         else
             ci_log "[CI-ERROR-SOT-0007]" "path=\"${path}\" reason=\"cannot set (rc ${rc})\""
         fi
@@ -286,28 +275,55 @@ _ci_paths_hit() {
 # Why: NOOP when no matched class selects any job (docs only).
 # From: Issue #479, PR #544
 _ci_phases_for_paths() {
-    local classes cls phases=""
-    classes="$(_ci_classify_paths)" || return 2
-    for cls in ${classes}; do
+    local phases classes=()
+    _ci_mapfile classes _ci_classify_paths || return 2
+    phases="$(_ci_class_phases "${classes[@]}")" || return 2
+    printf '%s\n' "${phases:-NOOP}"
+}
+
+# What: Print the sorted phase union of the given classes.
+# Why: A diff's classes and the all-phases fallback agree.
+# From: Issue #479, PR #544
+_ci_class_phases() {
+    local cls phases=""
+    for cls in "$@"; do
         phases="${phases}$(_ci_sot_list "impact_classes.${cls}.phases")"$'\n' || return 2
     done
-    phases="$(grep -v '^$' <<< "${phases}" | sort -u)" || [ "$?" -eq 1 ] || return 2
-    printf '%s\n' "${phases:-NOOP}"
+    grep -v '^$' <<< "${phases}" | sort -u || [ "$?" -eq 1 ]
+}
+
+# What: Print every phase any SOT impact class can select.
+# Why: An unclassifiable diff runs all; the SOT owns the set.
+# From: Issue #479, PR #544
+_ci_all_phases() {
+    local classes=()
+    _ci_mapfile classes _ci_sot_children impact_classes || return 2
+    _ci_class_phases "${classes[@]}"
 }
 
 # =========================================================
 # PARALLELISM
 # =========================================================
 
+# What: Print this host's CPU count; fail closed if unknown.
+# Why: One count for bats jobs, make -j, waf -j and distccd.
+# From: Issue #479, PR #544
+_ci_nproc() {
+    local n rc=0
+    n="$(nproc)" || rc=$?
+    if [ "${rc}" -ne 0 ] || ! [[ "${n}" =~ ^[1-9][0-9]*$ ]]; then
+        ci_error "[CI-ERROR-CORE-0005]" "nproc failed (rc ${rc}); no CPU count" "${n}"
+        return 2
+    fi
+    printf '%s\n' "${n}"
+}
+
 # What: bats job count = max(16, nproc*2).
 # Why: Parallel is mandatory; a floor keeps runners busy.
 # From: Issue #479
 _ci_jobs() {
     local n j
-    if ! n="$(nproc)"; then
-        ci_log "[CI-ERROR-CORE-0005]" "nproc failed; no CPU count for the bats job count"
-        return 2
-    fi
+    n="$(_ci_nproc)" || return 2
     j=$(( n * 2 ))
     [ "${j}" -lt 16 ] && j=16
     printf '%s\n' "${j}"
@@ -331,20 +347,54 @@ _ci_mapfile() {
 # =========================================================
 
 # What: Retry a probe until it succeeds; fail after N tries.
-# Why: One bounded poll owner; callers own only the probe.
+# Why: One bounded retry owner; probe rc >= 2 aborts at once.
 # From: Issue #479, PR #544
 _ci_wait_until() {
-    local tries="$1" pause="$2" i
+    local CI_TRIES="$1" pause="$2" CI_ATTEMPT rc
     shift 2
-    for ((i = 1; i <= tries; i++)); do
-        if "$@"; then
+    for ((CI_ATTEMPT = 1; CI_ATTEMPT <= CI_TRIES; CI_ATTEMPT++)); do
+        rc=0
+        "$@" || rc=$?
+        if [ "${rc}" -eq 0 ]; then
             return 0
         fi
-        if [ "${i}" -lt "${tries}" ]; then
-            sleep "${pause}"
+        if [ "${rc}" -ne 1 ]; then
+            return "${rc}"
+        fi
+        if [ "${CI_ATTEMPT}" -lt "${CI_TRIES}" ]; then
+            sleep "${pause}" || return 2
         fi
     done
     return 1
+}
+
+# What: Recreate a directory empty; fail closed if it cannot.
+# Why: A stale tree from an earlier pass must never be reused.
+# From: Issue #479, PR #544
+_ci_fresh_dir() {
+    : "${1:?directory required}"
+    if ! rm -rf "$1" || ! mkdir -p "$1"; then
+        ci_log "[CI-ERROR-CORE-0006]" "cannot recreate directory $1"
+        return 1
+    fi
+}
+
+# What: Copy the checkout into a fresh <dir>/src.
+# Why: The /ci mount stays read-only; builds need a copy.
+# From: Issue #479, PR #544
+_ci_tree_copy() {
+    _ci_fresh_dir "$1" || return 1
+    cp -a "${CI_REPO_ROOT}/." "$1/src"
+}
+
+# What: Make a temp dir holding a trivial ok.c; print it.
+# Why: Tool self-tests compile and trace the same program.
+# From: Issue #264, Issue #285, PR #544
+_ci_scratch_c() {
+    local d
+    d="$(mktemp -d)" || return 1
+    printf 'int main(void) { return 0; }\n' > "${d}/ok.c" || return 1
+    printf '%s\n' "${d}"
 }
 
 # What: Print a run-unique resource name for one purpose.
@@ -390,7 +440,7 @@ _ci_image_build() {
         : "${version:?published image ${spec} needs a version}"
         : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
         : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-        ref="${BUILT_SHA:-$(git -C "${CI_REPO_ROOT}" rev-parse HEAD)}" || return 1
+        ref="$(_ci_built_sha)" || return 1
         val="$(_ci_sot_scalar release.licenses)" || return 2
         opts+=(--label "org.opencontainers.image.title=${spec##*.}"
             --label "org.opencontainers.image.description=${desc}"
@@ -402,6 +452,21 @@ _ci_image_build() {
     fi
     docker build "$@" --file "${CI_REPO_ROOT}/${file}" --target "${target}" \
         "${opts[@]}" "${CI_REPO_ROOT}"
+}
+
+# What: Print the commit this run builds; --short abbreviates.
+# Why: Image labels, tags and release notes name one commit.
+# From: Issue #479, PR #544
+_ci_built_sha() {
+    local sha="${BUILT_SHA:-}"
+    if [ -z "${sha}" ]; then
+        sha="$(git -C "${CI_REPO_ROOT}" rev-parse HEAD)" || return 1
+    fi
+    if [ "${1:-}" = "--short" ]; then
+        git -C "${CI_REPO_ROOT}" rev-parse --short "${sha}"
+        return
+    fi
+    printf '%s\n' "${sha}"
 }
 
 # What: Pull a SOT-pinned image and give it a local tag.
@@ -505,13 +570,25 @@ _ci_registry_push() {
 # PHASES
 # =========================================================
 
+# What: Print the paths that differ between two commits.
+# Why: One diff source for impact, impact-hit and changelog.
+# From: Issue #479, PR #544
+_ci_changed_paths() {
+    local out
+    if ! out="$(git -C "${CI_REPO_ROOT}" diff --name-only "$1" "$2")"; then
+        ci_log "[CI-ERROR-DIFF-0001]" "cannot diff $1..$2"
+        return 1
+    fi
+    printf '%s\n' "${out}"
+}
+
 # What: Print the phases selected by the base..head diff.
 # Why: A docs-only diff selects doc-lint, never a compile.
 # From: Issue #479
 ci_cmd_impact() {
-    local base="${1:?base ref required}" head="${2:?head ref required}"
-    cd "${CI_REPO_ROOT}" || return 1
-    git diff --name-only "${base}" "${head}" | _ci_phases_for_paths
+    local paths
+    paths="$(_ci_changed_paths "${1:?base ref required}" "${2:?head ref required}")" || return 1
+    _ci_phases_for_paths <<< "${paths}"
 }
 
 # What: Write hit=true/false for one impact class.
@@ -529,11 +606,7 @@ ci_cmd_impact_hit() {
     fi
     _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
-    cd "${CI_REPO_ROOT}" || return 1
-    if ! changed="$(git diff --name-only "${range[0]}" "${range[1]}")"; then
-        ci_log "[CI-ERROR-IMPACT-0001]" "cannot diff ${range[0]}..${range[1]}"
-        return 1
-    fi
+    changed="$(_ci_changed_paths "${range[0]}" "${range[1]}")" || return 1
     classes="$(_ci_classify_paths <<< "${changed}")" || return 2
     if grep -qx "${class}" <<< "${classes}"; then
         _ci_output hit true
@@ -546,49 +619,48 @@ ci_cmd_impact_hit() {
 # Why: One owner feeds strategy.matrix; opt-in excluded.
 # From: Issue #479
 ci_cmd_matrix() {
-    local v os first=1 out='{"include":[' apt brew variants oses opt_in
+    local v os rows="" apt brew variants oses opt_in
     variants="$(_ci_sot_children build_matrix.variants)" || return 2
     for v in ${variants}; do
         opt_in="$(_ci_sot_optional "build_matrix.variants.${v}.opt_in")" || return 2
-        [ "${opt_in}" = "true" ] && continue
+        [ "${opt_in}" != "true" ] || continue
         apt="$(_ci_sot_scalar "build_matrix.variants.${v}.apt")" || return 2
         brew="$(_ci_sot_optional "build_matrix.variants.${v}.brew")" || return 2
         oses="$(_ci_sot_list "build_matrix.variants.${v}.os")" || return 2
         for os in ${oses}; do
-            [ "${first}" -eq 1 ] || out="${out},"
-            first=0
             case "${os}" in
-                macos*) out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\",\"brew\":\"${brew}\"}" ;;
-                *)      out="${out}{\"variant\":\"${v}\",\"os\":\"${os}\",\"apt\":\"${apt}\"}" ;;
+                macos*) rows+="$(jq -cn --arg v "${v}" --arg o "${os}" --arg b "${brew}" \
+                    '{variant: $v, os: $o, brew: $b}')"$'\n' || return 2 ;;
+                *)      rows+="$(jq -cn --arg v "${v}" --arg o "${os}" --arg a "${apt}" \
+                    '{variant: $v, os: $o, apt: $a}')"$'\n' || return 2 ;;
             esac
         done
     done
-    printf '%s]}\n' "${out}"
+    jq -cs '{include: .}' <<< "${rows}"
+}
+
+# What: Print the value(s) of a jq filter on this run's event.
+# Why: An absent or null field fails; it never reads empty.
+# From: Issue #479, PR #544
+_ci_event_value() {
+    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    if ! jq -r "($1) | if . == null then error(\"absent\") else . end" "${GITHUB_EVENT_PATH}"; then
+        ci_log "[CI-ERROR-EVENT-0001]" "${GITHUB_EVENT_NAME:-event} payload has no $1"
+        return 2
+    fi
 }
 
 # What: Print the base and head commit of this run's diff.
 # Why: A PR diffs base..head; a push or dispatch before..sha.
 # From: Issue #479, PR #544
 _ci_event_range() {
-    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         pull_request)
-            jq -r '.pull_request.base.sha, .pull_request.head.sha' "${GITHUB_EVENT_PATH}" ;;
+            _ci_event_value '.pull_request.base.sha, .pull_request.head.sha' ;;
         *)
-            jq -r '.before // ""' "${GITHUB_EVENT_PATH}" || return 2
+            _ci_event_value '.before // ""' || return 2
             printf '%s\n' "${GITHUB_SHA:?GITHUB_SHA required}" ;;
     esac
-}
-
-# What: Print the number of this run's pull request.
-# Why: pull_request and pull_request_target carry it alike.
-# From: Issue #479, PR #544
-_ci_event_pr_number() {
-    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
-    if ! jq -er '.pull_request.number' "${GITHUB_EVENT_PATH}"; then
-        ci_log "[CI-ERROR-EVENT-0001]" "${GITHUB_EVENT_NAME:-event} has no pull_request.number"
-        return 2
-    fi
 }
 
 # What: Write phases/build/matrix for this run's diff.
@@ -603,11 +675,12 @@ ci_cmd_plan() {
     fi
     base="${range[0]}" head="${range[1]}"
     cd "${CI_REPO_ROOT}" || return 1
-    if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
+    if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
         # What: An unknown base (first push) selects every phase.
         # Why: No diff exists to classify; NOOP would skip all.
         # From: Issue #479
-        phases="build e2e verify container package"
+        phases="$(_ci_all_phases | tr '\n' ' ')" || return 2
+        phases="${phases% }"
     else
         phases="$(ci_cmd_impact "${base}" "${head}" | tr '\n' ' ')" || return 2
         phases="${phases% }"
@@ -629,18 +702,25 @@ ci_cmd_plan() {
         container_variants "${mx[1]}" publish_buildtools "${publish}"
 }
 
-# What: Write the control-build's toolchain/dist verdict.
+# What: Append a command's output to the job summary.
+# Why: One summary writer; outside Actions it is NotRun.
+# From: Issue #479, PR #544
+_ci_step_summary() {
+    if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
+        ci_log "[CI-SUMMARY]" "NotRun: GITHUB_STEP_SUMMARY unset, $1 not written"
+        return 0
+    fi
+    "$@" >> "${GITHUB_STEP_SUMMARY}"
+}
+
+# What: Print the control-build's toolchain/dist verdict.
 # Why: The raw trace log alone was hard to untangle.
 # From: Issue #263, Issue #479
-_ci_control_build_step_summary() {
-    local st="$1"
-    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    if [ "${st}" -eq 0 ]; then
-        printf '## Control build: OK\n\nPlain-compiler ccache build succeeded; a same-run heartbeat failure is a distccd/distribution bug, not a toolchain issue.\n' \
-            >> "${GITHUB_STEP_SUMMARY}"
+_ci_control_build_summary() {
+    if [ "$1" -eq 0 ]; then
+        printf '## Control build: OK\n\nPlain-compiler ccache build succeeded; a same-run heartbeat failure is a distccd/distribution bug, not a toolchain issue.\n'
     else
-        printf '## Control build: FAILED (exit %s)\n\nThe plain-compiler ccache build itself failed, with no distcc involved; a same-run heartbeat failure is toolchain/ccache-related, not a distccd bug.\n' \
-            "${st}" >> "${GITHUB_STEP_SUMMARY}"
+        printf '## Control build: FAILED (exit %s)\n\nThe plain-compiler ccache build itself failed, with no distcc involved; a same-run heartbeat failure is toolchain/ccache-related, not a distccd bug.\n' "$1"
     fi
 }
 
@@ -672,12 +752,15 @@ _ci_e2e_count_compile_ok() {
 # Why: A daemon warning never reaches the client's exit code.
 # From: Issue #479, PR #544
 _ci_e2e_check_server_warnings() {
-    local log="$1"
-    if grep -Eq 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' "${log}"; then
-        ci_log "[CI-ERROR-E2E-0015]" "distcc-ng distccd logged warning-or-worse lines:"
-        grep -E 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' "${log}" >&2
-        return 1
-    fi
+    local log="$1" hits rc=0
+    hits="$(grep -E 'EMERGENCY! |ALERT! |CRITICAL! |ERROR: |Warning: ' "${log}")" || rc=$?
+    case "${rc}" in
+        0) ci_error "[CI-ERROR-E2E-0015]" "distcc-ng distccd logged warning-or-worse lines" "${hits}"
+           return 1 ;;
+        1) return 0 ;;
+        *) ci_log "[CI-ERROR-E2E-0017]" "cannot scan server log ${log} (grep rc ${rc})"
+           return 1 ;;
+    esac
 }
 
 # What: Build every SOT e2e image (ng, native).
@@ -705,7 +788,7 @@ _ci_e2e_leg() {
     cli_image="$(_ci_sot_scalar "e2e.images.${cli}.tag")" || return 2
     ci_log "[CI-E2E]" "${mode}: leg ${cli} -> ${srv_flavor}, pass ${pass}"
     local nj
-    nj="$(nproc)" || return 1
+    nj="$(_ci_nproc)" || return 2
     _ci_container_run "${srv_image}" -d --name "${srv}" --network-alias distccd-server -- \
         distccd --no-detach --daemon --verbose --log-stderr --port 3632 \
         --allow "${subnet}" --jobs "${nj}" >/dev/null || return 1
@@ -776,25 +859,29 @@ _ci_e2e_mode_run() {
 # Why: Each attempt gets its own stack; last failure is final.
 # From: Issue #479, Issue #81, PR #544
 _ci_e2e_mode() {
-    local mode="$1" workload extra floor attempts attempt=1 net
+    local mode="$1" workload extra floor attempts rc=0
     workload="$(_ci_sot_scalar "e2e.modes.${mode}.workload")" || return 2
     extra="$(_ci_sot_scalar "e2e.modes.${mode}.extra")" || return 2
     floor="$(_ci_sot_scalar "e2e.modes.${mode}.floor")" || return 2
     attempts="$(_ci_sot_scalar "e2e.modes.${mode}.max_attempts")" || return 2
     _ci_e2e_images || return 1
-    while :; do
-        net="$(_ci_run_name "e2e-${mode}-${attempt}")"
-        ci_log "[CI-E2E]" "${mode}: attempt ${attempt}/${attempts}"
-        if _ci_stack_run "${net}" _ci_e2e_mode_run "${mode}" "${workload}" "${extra}" "${floor}"; then
-            ci_log "[CI-E2E]" "${mode}: PASS"
-            return 0
-        fi
-        if [ "${attempt}" -ge "${attempts}" ]; then
-            ci_log "[CI-ERROR-E2E-0006]" "${mode}: failed on all ${attempts} attempt(s)"
-            return 1
-        fi
-        attempt=$((attempt + 1))
-    done
+    _ci_wait_until "${attempts}" 0 _ci_e2e_attempt "${mode}" "${workload}" "${extra}" "${floor}" || rc=$?
+    case "${rc}" in
+        0) ci_log "[CI-E2E]" "${mode}: PASS" ;;
+        1) ci_log "[CI-ERROR-E2E-0006]" "${mode}: failed on all ${attempts} attempt(s)"; return 1 ;;
+        *) return "${rc}" ;;
+    esac
+}
+
+# What: One e2e attempt of a mode on its own fresh stack.
+# Why: A retry must never reuse a stack a failure left behind.
+# From: Issue #479, Issue #81, PR #544
+_ci_e2e_attempt() {
+    local mode="$1" net
+    shift
+    net="$(_ci_run_name "e2e-${mode}-${CI_ATTEMPT}")"
+    ci_log "[CI-E2E]" "${mode}: attempt ${CI_ATTEMPT}/${CI_TRIES}"
+    _ci_stack_run "${net}" _ci_e2e_mode_run "${mode}" "$@"
 }
 
 # What: Run a SOT e2e mode, or the ccache control build.
@@ -809,7 +896,7 @@ ci_cmd_e2e() {
             image="$(_ci_sot_scalar e2e.images.ng.tag)" || return 2
             _ci_container_run "${image}" -- \
                 bash "${CI_CONTAINER_SH}" workload ccache local /work/workload/control "" || st=$?
-            _ci_control_build_step_summary "${st}"
+            _ci_step_summary _ci_control_build_summary "${st}" || return 1
             return "${st}" ;;
         *)
             if ! _ci_sot_optional "e2e.modes.${mode}.workload" | grep -q .; then
@@ -835,7 +922,7 @@ _ci_image_release_build() {
     _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local \
         --enable-Werror --without-system-popt || return 1
     local nj
-    nj="$(nproc)" || return 1
+    nj="$(_ci_nproc)" || return 2
     _ci_make_gated /tmp/make.log -j"${nj}" || return 1
     install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text || return 1
     make install DESTDIR=/out-pump || return 1
@@ -896,9 +983,8 @@ _ci_image_actionlint() {
 # From: Issue #264 #275 #398, PR #273 #332 #544
 _ci_verify_selftest() {
     local d port pid addr
-    d="$(mktemp -d)"
+    d="$(_ci_scratch_c)" || return 1
     cd "${d}" || return 1
-    printf 'int main(void) { return 0; }\n' > ok.c
     gcc ok.c -o ok_gcc || return 1
     ./ok_gcc || return 1
     clang ok.c -o ok_clang || return 1
@@ -982,9 +1068,8 @@ _ci_verify_selftest_ssh() {
 # From: Issue #285, PR #528, PR #544
 _ci_workload_ptrace() {
     local d
-    d="$(mktemp -d)"
+    d="$(_ci_scratch_c)" || return 1
     cd "${d}" || return 1
-    printf 'int main(void) { return 0; }\n' > ok.c
     gcc -g -O0 ok.c -o ok_gcc || return 1
     _ci_expect_output gdb 'Breakpoint 1' \
         gdb -q -batch -ex 'break main' -ex run -ex continue ./ok_gcc || return 1
@@ -1016,10 +1101,7 @@ _ci_workload_checkout() {
         build|check) ;;
         *) ci_log "[CI-ERROR-WORKLOAD-0007]" "checkout pass=${pass} (build|check)"; return 2 ;;
     esac
-    : "${dir:?workdir required}"
-    rm -rf "${dir}"
-    mkdir -p "${dir}"
-    cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
+    _ci_tree_copy "${dir}" || return 1
     bash "${dir}/src/.github/scripts/ci.sh" build default || return 1
     if [ "${pass}" = "check" ]; then
         CI_TEST_UNPRIVILEGED=true bash "${dir}/src/.github/scripts/ci.sh" test default || return 1
@@ -1063,7 +1145,7 @@ _ci_image_e2e() {
         cd "${CI_REPO_ROOT}" || return 1
         _ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local || return 1
         local nj
-        nj="$(nproc)" || return 1
+        nj="$(_ci_nproc)" || return 2
         _ci_make_gated /tmp/make.log -j"${nj}" || return 1
         make install || return 1
         rm -f /tmp/configure.log /tmp/make.log || return 1
@@ -1108,9 +1190,8 @@ _ci_workload_samba_fetch() {
     [ "${#rel[@]}" -eq 3 ] || return 2
     cache="${CI_WORKLOAD_CACHE:-/tmp/ci-workload-cache}/samba"
     if [ ! -f "${cache}/.verified" ]; then
-        rm -rf "${cache}"
-        mkdir -p "${cache}/gnupg"
-        chmod 700 "${cache}/gnupg"
+        _ci_fresh_dir "${cache}" || return 1
+        mkdir -m 700 "${cache}/gnupg" || return 1
         _ci_download "${rel[0]}" "${cache}/src.tar.gz" || return 1
         _ci_download "${rel[1]}" "${cache}/sig" || return 1
         _ci_download "${rel[2]}" "${cache}/key" || return 1
@@ -1120,10 +1201,9 @@ _ci_workload_samba_fetch() {
             ci_log "[CI-ERROR-WORKLOAD-0002]" "$(basename "${rel[0]}"): signature does not verify"
             return 1
         fi
-        touch "${cache}/.verified"
+        touch "${cache}/.verified" || return 1
     fi
-    rm -rf "${dest}"
-    mkdir -p "${dest}"
+    _ci_fresh_dir "${dest}" || return 1
     tar -xf "${cache}/src.tar" -C "${dest}" --strip-components=1
 }
 
@@ -1158,18 +1238,15 @@ _ci_workload_self_compile() {
         pump) runner=(pump) ;;
         *) ci_log "[CI-ERROR-WORKLOAD-0005]" "self-compile pass=${pass} (plain|pump)"; return 2 ;;
     esac
-    : "${dir:?workdir required}"
-    rm -rf "${dir}"
-    mkdir -p "${dir}"
-    cp -a "${CI_REPO_ROOT}/." "${dir}/src" || return 1
+    _ci_tree_copy "${dir}" || return 1
     cd "${dir}/src" || return 1
     _ci_configure_tree "${dir}/configure.log" PYTHON=python3 || return 1
     local nj
-    nj="$(nproc)" || return 1
+    nj="$(_ci_nproc)" || return 2
     "${runner[@]}" make -j"${nj}" "${make_cc[@]}" >&2 || return 1
     test -x ./distcc && test -x ./distccd || return 1
     if [ "${pass}" = "plain" ]; then
-        probe="$(mktemp -d)"
+        probe="$(mktemp -d)" || return 1
         printf 'int distcc_e2e_probe(int x) { return (x * 2) + 1; }\n' > "${probe}/probe.c"
         gcc -O2 -c "${probe}/probe.c" -o "${probe}/local.o" || return 1
         env -u DISTCC_VERBOSE distcc gcc -O2 -c "${probe}/probe.c" -o "${probe}/dist.o" 2> "${probe}/err" || return 1
@@ -1198,8 +1275,7 @@ _ci_workload_ccache() {
         local) ;;
         *) ci_log "[CI-ERROR-WORKLOAD-0004]" "ccache pass=${pass} (plain|local)"; return 2 ;;
     esac
-    : "${dir:?workdir required}"
-    rm -rf "${dir}"
+    _ci_fresh_dir "${dir}" || return 1
     git clone --depth 1 --branch "${tag}" https://github.com/ccache/ccache "${dir}/src" >&2 || return 1
     # What: Two named -Wno-error flags, not -Werror off.
     # Why: GCC 12 false positives; other warnings still fail.
@@ -1208,7 +1284,7 @@ _ci_workload_ccache() {
         -DCMAKE_CXX_FLAGS="-Wno-error=maybe-uninitialized -Wno-error=restrict" \
         -DENABLE_TESTING=OFF >&2 || return 1
     local nj
-    nj="$(nproc)" || return 1
+    nj="$(_ci_nproc)" || return 2
     cmake --build "${dir}/build" -j"${nj}" >&2 || return 1
     "${dir}/build/ccache" --version >&2 || return 1
     find "${dir}/build" -name '*.o' | wc -l
@@ -1238,7 +1314,7 @@ _ci_workload_samba() {
     env -u DISTCC_FALLBACK CC="distcc gcc" ./configure >&2 || return 1
     export PYTHONHASHSEED=1
     local nj
-    nj="$(nproc)" || return 1
+    nj="$(_ci_nproc)" || return 2
     build=(./buildtools/bin/waf build -j"${nj}")
     [ -z "${targets}" ] || build+=(--targets="${targets}")
     if [ "${pass}" = "pump" ]; then
@@ -1272,9 +1348,9 @@ _ci_workload_fuzz_build() {
     # What: Rebuild Makefile.in's DIR_DEFS for direct compiles.
     # Why: They are Makefile-only; config.h never carries them.
     # From: Issue #267
-    prefix="$(sed -n 's/^prefix = //p' Makefile)" || return 1
-    sysconfdir="$(sed -n 's/^sysconfdir = //p' Makefile)" || return 1
-    datarootdir="$(sed -n 's/^datarootdir = //p' Makefile)" || return 1
+    prefix="$(_ci_makefile_var prefix)" || return 1
+    sysconfdir="$(_ci_makefile_var sysconfdir)" || return 1
+    datarootdir="$(_ci_makefile_var datarootdir)" || return 1
     sysconfdir="${sysconfdir//\$\{prefix\}/${prefix}}"
     sysconfdir="${sysconfdir//\$(prefix)/${prefix}}"
     datarootdir="${datarootdir//\$\{prefix\}/${prefix}}"
@@ -1289,7 +1365,8 @@ _ci_workload_fuzz_build() {
             -c "${f}" -o "${OUT}/${base}.o" || return 1
         objs+=("${OUT}/${base}.o")
     done
-    read -ra libs <<< "$(sed -n 's/^LIBS = //p' Makefile)"
+    raw="$(_ci_makefile_var LIBS)" || return 1
+    read -ra libs <<< "${raw}"
     for t in test/fuzz/*.c; do
         # What: -x c compiles the target as C; -x none ends it.
         # Why: CFL links with $CXX; the .o files must not parse as C.
@@ -1307,6 +1384,17 @@ _ci_workload_fuzz_build() {
             esac
         done
     done
+}
+
+# What: Print one variable of the configured ./Makefile.
+# Why: Fuzz compiles bypass make but need its DIR_DEFS/LIBS.
+# From: Issue #267, Issue #479, PR #544
+_ci_makefile_var() {
+    if ! grep -q "^$1 = " Makefile; then
+        ci_log "[CI-ERROR-WORKLOAD-0009]" "configured Makefile has no $1"
+        return 1
+    fi
+    sed -n "s/^$1 = //p" Makefile
 }
 
 # What: Dispatch workload: <name> <pass> <dir> [extra].
@@ -1336,7 +1424,7 @@ ci_cmd_workload() {
 ci_cmd_package() {
     local py tool log="${RUNNER_TEMP:-/tmp}/ci-package.log"
     cd "${CI_REPO_ROOT}" || return 1
-    py="$(command -v python3.13 || command -v python3)" || return 1
+    py="$(_ci_python)" || return 1
     for tool in "${py}" pkg-config eu-strip rpmbuild alien fakeroot; do
         command -v "${tool}" >/dev/null 2>&1 \
             || { ci_log "[CI-ERROR-PACKAGE-0001]" "missing tool: ${tool}"; return 1; }
@@ -1399,10 +1487,10 @@ ci_cmd_container() {
             _ci_registry_push "${image}" || return 1
             _ci_output image "${image}" ;;
         verify-image)
-            short="$(git -C "${CI_REPO_ROOT}" rev-parse --short HEAD)" || return 1
+            short="$(_ci_built_sha --short)" || return 1
             _ci_image_build release.images.distcc-ng-buildtools "${short}" ;;
         buildtools)
-            short="$(git -C "${CI_REPO_ROOT}" rev-parse --short HEAD)" || return 1
+            short="$(_ci_built_sha --short)" || return 1
             base="$(_ci_sot_scalar release.images.distcc-ng-buildtools.ref)" || return 2
             base="${base%:*}"
             _ci_image_build release.images.distcc-ng-buildtools "${short}" \
@@ -1470,35 +1558,59 @@ _ci_release_assets() {
 # Why: It refuses to move a real v* release tag.
 # From: Issue #479
 _ci_publish_nightly() {
-    local tag ref repo notes image
+    local tag ref image notes rc=0
     tag="$(_ci_sot_scalar release.nightly_tag)" || return 2
-    local assets=()
     case "${tag}" in
         v*) ci_log "[CI-ERROR-PUBLISH-0002]" "refusing to force-move a v* tag: ${tag}"; return 1 ;;
     esac
     image="$(_ci_release_image distcc-ng-nightly latest)" || return 2
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    repo="${GITHUB_REPOSITORY}"
     cd "${CI_REPO_ROOT}" || return 1
-    ref="${BUILT_SHA:-$(git rev-parse HEAD)}" || return 1
-    _ci_mapfile assets _ci_release_assets || return 1
-    [ "${#assets[@]}" -gt 0 ] || return 1
+    ref="$(_ci_built_sha)" || return 1
+    _ci_release_assets > /dev/null || return 1
     _ci_git_identity || return 1
     _ci_mutate git tag -f "${tag}" || return 1
     _ci_git_auth_setup || return 1
     _ci_mutate git push -f origin "refs/tags/${tag}" || return 1
-    notes="$(mktemp)" || return 1
-    {
-        printf 'Automated nightly build of current_dev (%s).\n\n' "${ref}"
-        printf 'Unstable nightly channel -- NOT a real release; overwritten each run.\n\n'
-        printf 'Container image: %s\n' "${image}"
-    } > "${notes}"
-    if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
-        _ci_mutate gh release delete "${tag}" --repo "${repo}" --yes || return 1
+    notes="$(printf '%s\n\n%s\n\n%s' "Automated nightly build of current_dev (${ref})." \
+        "Unstable nightly channel -- NOT a real release; overwritten each run." \
+        "Container image: ${image}")"
+    _ci_gh_release_exists "${tag}" || rc=$?
+    case "${rc}" in
+        0) _ci_mutate gh release delete "${tag}" --repo "${GITHUB_REPOSITORY}" --yes || return 1 ;;
+        1) ;;
+        *) return 1 ;;
+    esac
+    _ci_gh_release_create "${tag}" "${ref}" "distcc-ng nightly" "${notes}" --prerelease --latest=false
+}
+
+# What: Succeed if release $1 exists; rc 1 if it does not.
+# Why: An API or auth error must not read as no release.
+# From: Issue #479, PR #544
+_ci_gh_release_exists() {
+    local err rc=0
+    err="$(gh release view "$1" --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
+        --json tagName 2>&1 >/dev/null)" || rc=$?
+    [ "${rc}" -ne 0 ] || return 0
+    if grep -q 'release not found' <<< "${err}"; then
+        return 1
     fi
-    _ci_mutate gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
-        --title "distcc-ng nightly" --notes-file "${notes}" \
-        --prerelease --latest=false --target "${ref}"
+    ci_error "[CI-ERROR-PUBLISH-0010]" "cannot look up release $1" "${err}"
+    return 2
+}
+
+# What: Create GitHub release $1 at $2 with the SOT assets.
+# Why: Nightly and release ship one asset set, one way.
+# From: Issue #362, Issue #479, PR #544
+_ci_gh_release_create() {
+    local tag="$1" target="$2" title="$3" notes_text="$4" notes
+    shift 4
+    local assets=()
+    _ci_mapfile assets _ci_release_assets || return 1
+    notes="$(mktemp)" || return 1
+    printf '%s\n' "${notes_text}" > "${notes}" || return 1
+    _ci_mutate gh release create "${tag}" "${assets[@]}" --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
+        --target "${target}" --title "${title}" --notes-file "${notes}" "$@"
 }
 
 # What: Create the multi-arch manifest from pushed tags.
@@ -1540,18 +1652,10 @@ _ci_publish_manifest() {
 # Why: The version check gates it before any asset upload.
 # From: Issue #479
 _ci_publish_github_release() {
-    local tag="${1:?tag required}" repo notes
-    local assets=()
-    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    repo="${GITHUB_REPOSITORY}"
+    local tag="${1:?tag required}"
     _ci_check_release_version "${tag}" || return 1
-    _ci_mapfile assets _ci_release_assets || return 1
-    [ "${#assets[@]}" -gt 0 ] || return 1
-    notes="$(mktemp)" || return 1
-    printf 'distcc-ng %s\n' "${tag}" > "${notes}" || return 1
-    _ci_mutate gh release create "${tag}" "${assets[@]}" --repo "${repo}" \
-        --target "${GITHUB_SHA:?GITHUB_SHA required}" \
-        --title "distcc-ng ${tag}" --notes-file "${notes}" --latest
+    _ci_gh_release_create "${tag}" "${GITHUB_SHA:?GITHUB_SHA required}" "distcc-ng ${tag}" \
+        "distcc-ng ${tag}" --latest
 }
 
 # What: Insert release notes into CHANGELOG.md on current_dev.
@@ -1571,29 +1675,29 @@ _ci_publish_changelog_update() {
 # Why: A pre-release or a dispatch without notes adds nothing.
 # From: Issue #479, PR #544
 _ci_changelog_from_event() {
-    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
+    local pre tag body ctx=()
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         release)
-            local pre
-            pre="$(jq -r '.release.prerelease' "${GITHUB_EVENT_PATH}")" || return 2
+            pre="$(_ci_event_value .release.prerelease)" || return 2
             case "${pre}" in
                 true) ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"; return 3 ;;
                 false) ;;
                 *) ci_log "[CI-ERROR-PUBLISH-0003]" "release.prerelease is \"${pre}\", not a boolean"; return 2 ;;
             esac
-            jq -e '{tag: .release.tag_name, body: (.release.body // "")} | select(.tag != null)' \
-                "${GITHUB_EVENT_PATH}" || return 2 ;;
+            tag="$(_ci_event_value .release.tag_name)" || return 2
+            body="$(_ci_event_value '.release.body // ""')" || return 2 ;;
         workflow_dispatch)
-            local notes
-            notes="$(jq -r '.inputs.release_notes // ""' "${GITHUB_EVENT_PATH}")" || return 2
-            if [ -z "${notes}" ]; then
+            body="$(_ci_event_value '.inputs.release_notes // ""')" || return 2
+            if [ -z "${body}" ]; then
                 ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: no release_notes on this dispatch"
                 return 3
             fi
-            jq -e '{tag: .inputs.tag, body: .inputs.release_notes} | select(.tag != null)' \
-                "${GITHUB_EVENT_PATH}" || return 2 ;;
+            _ci_mapfile ctx _ci_release_context || return 2
+            [ "${#ctx[@]}" -eq 4 ] || return 2
+            tag="${ctx[0]}" ;;
         *) ci_log "[CI-ERROR-PUBLISH-0009]" "event ${GITHUB_EVENT_NAME} carries no release notes"; return 2 ;;
     esac
+    jq -n --arg tag "${tag}" --arg body "${body}" '{tag: $tag, body: $body}'
 }
 
 # What: Write insert=true unless the event's notes skip.
@@ -1713,18 +1817,20 @@ _ci_publish_draft_release() {
     _ci_draft_release_append body "Added" "${enhancement[@]}"
     _ci_draft_release_append body "Documentation" "${documentation[@]}"
 
-    local notes; notes="$(mktemp)" || return 1
+    local notes rc=0
+    notes="$(mktemp)" || return 1
     printf '%s' "${body}" > "${notes}" || return 1
     # What: Edit the draft if it exists, else create it.
     # Why: A create on an existing draft fails loudly, not twice.
     # From: Issue #479, PR #544
-    if gh release view draft-current_dev --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-        _ci_mutate gh release edit draft-current_dev --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}" || return 1
-    else
-        _ci_mutate gh release create draft-current_dev --repo "${GITHUB_REPOSITORY}" --draft \
-            --title "Next release (draft)" --notes-file "${notes}" \
-            --target current_dev || return 1
-    fi
+    _ci_gh_release_exists draft-current_dev || rc=$?
+    case "${rc}" in
+        0) _ci_mutate gh release edit draft-current_dev --repo "${GITHUB_REPOSITORY}" --notes-file "${notes}" || return 1 ;;
+        1) _ci_mutate gh release create draft-current_dev --repo "${GITHUB_REPOSITORY}" --draft \
+               --title "Next release (draft)" --notes-file "${notes}" \
+               --target current_dev || return 1 ;;
+        *) return 1 ;;
+    esac
 }
 
 # What: Publish a release-family artifact set.
@@ -1765,7 +1871,6 @@ _ci_release_offer_packages() {
     _ci_mapfile ctx _ci_release_context || return 2
     [ "${#ctx[@]}" -eq 4 ] || return 2
     _ci_mapfile rel _ci_release_assets || return 1
-    [ "${#rel[@]}" -gt 0 ] || return 1
     for f in "${rel[@]}"; do
         files+=("${CI_REPO_ROOT}/${f}")
     done
@@ -1779,12 +1884,8 @@ _ci_release_context() {
     local tag publish
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         workflow_dispatch)
-            : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
-            tag="$(jq -er '.inputs.tag' "${GITHUB_EVENT_PATH}")" || {
-                ci_log "[CI-ERROR-RELEASE-0006]" "dispatch without inputs.tag"
-                return 2
-            }
-            publish="$(jq -r '.inputs.publish_container // false' "${GITHUB_EVENT_PATH}")" || return 2
+            tag="$(_ci_event_value .inputs.tag)" || return 2
+            publish="$(_ci_event_value '.inputs.publish_container // false')" || return 2
             printf '%s\n' "${tag}" true "${publish}" false ;;
         push)
             case "${GITHUB_REF:?GITHUB_REF required}" in
@@ -1836,11 +1937,11 @@ _ci_release_pkg() {
 # Why: Workflows take both from the SOT inventory via outputs.
 # From: Issue #479, PR #544
 _ci_release_matrix() {
-    local variants platforms v p runner opt rows="" names=""
-    variants="$(_ci_sot_children release.container.variants)" || return 2
+    local platforms v p runner opt rows=""
+    local variants=()
+    _ci_mapfile variants _ci_sot_children release.container.variants || return 2
     platforms="$(_ci_sot_children release.container.platforms)" || return 2
-    for v in ${variants}; do
-        names="${names:+${names},}\"${v}\""
+    for v in "${variants[@]}"; do
         for p in ${platforms}; do
             runner="$(_ci_sot_scalar "release.container.platforms.${p}.runner")" || return 2
             opt="$(_ci_sot_scalar "release.container.platforms.${p}.optional")" || return 2
@@ -1848,24 +1949,27 @@ _ci_release_matrix() {
                 true|false) ;;
                 *) ci_log "[CI-ERROR-CONTAINER-0005]" "platform ${p} optional=${opt} (true|false)"; return 2 ;;
             esac
-            rows="${rows:+${rows},}{\"variant\":\"${v}\",\"platform\":\"${p}\",\"runs_on\":\"${runner}\",\"optional\":${opt}}"
+            rows+="$(jq -cn --arg v "${v}" --arg p "${p}" --arg r "${runner}" --argjson o "${opt}" \
+                '{variant: $v, platform: $p, runs_on: $r, optional: $o}')"$'\n' || return 2
         done
     done
-    printf '{"include":[%s]}\n[%s]\n' "${rows}" "${names}"
+    jq -cs '{include: .}' <<< "${rows}" || return 2
+    jq -cn '$ARGS.positional' --args "${variants[@]}"
 }
 
 # What: JSON array of digests a live multi-arch index holds.
 # Why: Deleting such a child breaks pulls; errors abort.
 # From: Issue #479, PR #544
 _ci_gc_protected_digests() {
-    local pkg="$1" versions="$2" tags tag raw kids children=""
+    local pkg="$1" versions="$2" tags tag raw kids ref children=""
     if ! tags="$(jq -r '[.[].metadata.container.tags[]?] | unique | .[]' <<< "${versions}")"; then
         ci_log "[CI-ERROR-GC-0003]" "cannot read ${pkg}'s version tags; refusing to prune ${pkg}"
         return 1
     fi
     while IFS= read -r tag; do
         [ -n "${tag}" ] || continue
-        if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}/${pkg}:${tag}")"; then
+        ref="$(_ci_release_image "${pkg}" "${tag}")" || return 2
+        if ! raw="$(docker buildx imagetools inspect --raw "${ref}")"; then
             ci_log "[CI-ERROR-GC-0002]" "cannot inspect ${pkg}:${tag}; refusing to prune ${pkg}"
             return 1
         fi
@@ -1918,7 +2022,7 @@ ci_cmd_gc() {
         ci_log "[CI-ERROR-GC-0001]" "unknown package=\"${sel}\" (release.ghcr_packages or all)"
         return 2
     fi
-    _ci_registry_login
+    _ci_registry_login || return 1
     for pkg in ${pkgs}; do
         echo "::group::${pkg}"
         versions="$(gh api --paginate "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}/versions" | jq -s 'add // []')" || return 1
@@ -2076,17 +2180,37 @@ ci_cmd_sot_update() {
 # SCHEDULED-CI STATUS REPORT
 # =========================================================
 
+# What: Print "name result" per name=result line of $1.
+# Why: Gate and report read one validated job list.
+# From: Issue #479, PR #476, PR #544
+_ci_job_results() {
+    local line n=0
+    while IFS= read -r line; do
+        [ -n "${line//[[:space:]]/}" ] || continue
+        if ! [[ "${line}" =~ ^[[:space:]]*([A-Za-z0-9_.-]+)=(success|failure|cancelled|skipped)[[:space:]]*$ ]]; then
+            ci_log "[CI-ERROR-JOBS-0001]" "not a name=result line: ${line}"
+            return 2
+        fi
+        printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        n=$((n + 1))
+    done <<< "$1"
+    if [ "${n}" -eq 0 ]; then
+        ci_log "[CI-ERROR-JOBS-0002]" "JOBS names no job"
+        return 2
+    fi
+}
+
 # What: Print names of failed or cancelled jobs from pairs.
 # Why: A skip means an upstream job failed, not this one.
 # From: Issue #479, PR #476
 _ci_failed_jobs() {
-    local pairs="$1" jname jresult out=""
-    while IFS='=' read -r jname jresult; do
-        [ -z "${jname}" ] && continue
+    local results jname jresult out=""
+    results="$(_ci_job_results "$1")" || return 2
+    while read -r jname jresult; do
         case "${jresult}" in
             failure|cancelled) out="${out} ${jname}" ;;
         esac
-    done <<< "${pairs}"
+    done <<< "${results}"
     printf '%s\n' "${out# }"
 }
 
@@ -2100,7 +2224,7 @@ _ci_failed_jobs() {
 ci_cmd_gate() {
     : "${JOBS:?JOBS required}"
     local failed
-    failed="$(_ci_failed_jobs "${JOBS}")"
+    failed="$(_ci_failed_jobs "${JOBS}")" || return 2
     if [ -n "${failed}" ]; then
         ci_log "[CI-ERROR-GATE-0001]" "failed: ${failed}"
         return 1
@@ -2123,7 +2247,7 @@ _ci_board_add() {
     local url="$1" token="$2"
     _ci_project_board_load || return 2
     if [ -z "${token}" ]; then
-        echo "::warning::PROJECT_AUTOMATION_PAT not configured; ${url} was not added to the board."
+        echo "::warning::[CI-WARN-BOARD-0001] PROJECT_AUTOMATION_PAT not configured; ${url} was not added to the board."
         return 0
     fi
     GH_TOKEN="${token}" _ci_mutate gh project item-add "${PROJECT_NUMBER}" \
@@ -2168,16 +2292,11 @@ _ci_report_ensure_bug_type() {
 # Why: A skipped job means the run did not do its work.
 # From: Issue #479, PR #544
 _ci_jobs_outcome() {
-    local jname jresult outcome=success n=0
-    while IFS='=' read -r jname jresult; do
-        [ -n "${jname}" ] || continue
-        n=$((n + 1))
+    local results jname jresult outcome=success
+    results="$(_ci_job_results "$1")" || return 2
+    while read -r jname jresult; do
         [ "${jresult}" = "success" ] || outcome=failure
-    done <<< "$1"
-    if [ "${n}" -eq 0 ]; then
-        ci_log "[CI-ERROR-REPORT-0002]" "JOBS names no job"
-        return 2
-    fi
+    done <<< "${results}"
     printf '%s\n' "${outcome}"
 }
 
@@ -2189,64 +2308,72 @@ _ci_run_url() {
         "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
 }
 
+# What: Type issue $1 as Bug and put its url $2 on the board.
+# Why: Every report path keeps the standing issue tracked.
+# From: Issue #479, PR #476, PR #544
+_ci_report_track() {
+    _ci_report_ensure_bug_type "$1" || return 1
+    _ci_board_add "$2" "${PROJECT_PAT:-}"
+}
+
 # What: File, update or close the standing tracking issue.
 # Why: All schedules share it; any success closes it.
 # From: Issue #479, Issue #81, PR #89, PR #476
 ci_cmd_report() {
     : "${GH_TOKEN:?GH_TOKEN required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
+    : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
     : "${SCOPE:?SCOPE required, e.g. 'weekly ccache heartbeat (master)'}"
     : "${JOBS:?JOBS required (name=result lines)}"
-    local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url RUN_URL
+    local LABEL="${LABEL:-nightly-broken}" existing detail new_issue_url RUN_URL url
     local OUTCOME FAILED_JOBS
     RUN_URL="$(_ci_run_url)" || return 2
     OUTCOME="$(_ci_jobs_outcome "${JOBS}")" || return 2
     # What: Name only the failed or cancelled jobs.
     # Why: A skip is the upstream failure, already named.
     # From: Issue #479, PR #476
-    FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")"
+    FAILED_JOBS="$(_ci_failed_jobs "${JOBS}")" || return 2
     existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" --state open \
         --json number --jq 'sort_by(.number) | .[0].number // empty')" || return 1
+    url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${existing}"
     if [ "${OUTCOME}" = "success" ]; then
-        if [ -n "${existing}" ]; then
-            _ci_report_ensure_bug_type "${existing}" || return 1
-            _ci_board_add "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}/${GITHUB_REPOSITORY}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
-            echo "success: closing standing ${LABEL} issue #${existing}"
-            _ci_mutate gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" \
-                --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails."
-            _ci_mutate gh issue close "${existing}" --repo "${GITHUB_REPOSITORY}"
-        else
-            echo "success and no open ${LABEL} issue: nothing to do"
+        if [ -z "${existing}" ]; then
+            ci_log "[CI-REPORT]" "success and no open ${LABEL} issue: nothing to do"
+            return 0
         fi
+        _ci_report_track "${existing}" "${url}" || return 1
+        ci_log "[CI-REPORT]" "success: closing standing ${LABEL} issue #${existing}"
+        _ci_mutate gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Recovered: ${SCOPE} succeeded in ${RUN_URL}. Closing this standing tracking issue automatically; it will re-open if a later scheduled run fails." \
+            || return 1
+        _ci_mutate gh issue close "${existing}" --repo "${GITHUB_REPOSITORY}" || return 1
         return 0
     fi
     _ci_mutate gh label create "${LABEL}" --repo "${GITHUB_REPOSITORY}" --color b60205 --force \
         --description "A scheduled nightly/heartbeat CI run is failing" || return 1
     detail="${SCOPE} failed in ${RUN_URL}"
-    [ -n "${FAILED_JOBS}" ] && detail="${detail} (failed: ${FAILED_JOBS})"
+    [ -z "${FAILED_JOBS}" ] || detail="${detail} (failed: ${FAILED_JOBS})"
     if [ -n "${existing}" ]; then
-        echo "failure: commenting on standing ${LABEL} issue #${existing}"
+        ci_log "[CI-REPORT]" "failure: commenting on standing ${LABEL} issue #${existing}"
         _ci_mutate gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" \
-            --body "Still failing: ${detail}."
-        _ci_report_ensure_bug_type "${existing}" || return 1
-        _ci_board_add "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}/${GITHUB_REPOSITORY}/issues/${existing}" "${PROJECT_PAT:-}" || return 1
-    else
-        echo "failure: opening a new standing ${LABEL} issue"
-        new_issue_url="$(_ci_mutate gh issue create --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" \
-            --title "[${LABEL}] a scheduled CI run is failing" \
-            --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
-
-${detail}.")"
-        # What: A dry run has no new issue url to act on.
-        # Why: Bug type and board both need the created issue.
-        # From: Issue #479, PR #544
-        if [ "${DRY_RUN:-false}" = "true" ]; then
-            printf '%s\n' "${new_issue_url}"
-            return 0
-        fi
-        _ci_report_ensure_bug_type "${new_issue_url##*/}" || return 1
-        _ci_board_add "${new_issue_url}" "${PROJECT_PAT:-}" || return 1
+            --body "Still failing: ${detail}." || return 1
+        _ci_report_track "${existing}" "${url}"
+        return
     fi
+    ci_log "[CI-REPORT]" "failure: opening a new standing ${LABEL} issue"
+    new_issue_url="$(_ci_mutate gh issue create --repo "${GITHUB_REPOSITORY}" --label "${LABEL}" \
+        --title "[${LABEL}] a scheduled CI run is failing" \
+        --body "A scheduled CI run failed. This standing issue is reused across consecutive failures and closed automatically on the next successful run.
+
+${detail}.")" || return 1
+    # What: A dry run has no new issue url to act on.
+    # Why: Bug type and board both need the created issue.
+    # From: Issue #479, PR #544
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        printf '%s\n' "${new_issue_url}"
+        return 0
+    fi
+    _ci_report_track "${new_issue_url##*/}" "${new_issue_url}"
 }
 
 # =========================================================
@@ -2291,7 +2418,7 @@ _ci_schedule_is() {
     local want got
     [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ] || return 1
     want="$(_ci_sot_scalar "schedules.$1.cron")" || return 2
-    got="$(jq -r '.schedule // ""' "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}")" || return 2
+    got="$(_ci_event_value '.schedule // ""')" || return 2
     [ "${got}" = "${want}" ]
 }
 
@@ -2344,7 +2471,7 @@ ci_cmd_route() {
         housekeeping)
             weekly="$(_ci_schedule_flag housekeeping_weekly)" || return 2
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "workflow_dispatch" ]; then
-                task="$(jq -er '.inputs.task' "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}")" || return 2
+                task="$(_ci_event_value .inputs.task)" || return 2
             fi
             gc=false sot=false hb=false
             if [ "${task}" = gc ]; then gc=true; fi
@@ -2378,36 +2505,21 @@ _ci_artifact_offer() {
         artifact_retention_days "${days}" artifact_if_missing error
 }
 
-# What: Write available=true|false from SECRET_VALUE.
-# Why: GitHub forbids the secrets context inside an if:.
-# From: Issue #479, PR #329
-_ci_variables_secret_present() {
-    if [ -n "${SECRET_VALUE:-}" ]; then
-        _ci_output available true
-    else
-        _ci_output available false
-    fi
-}
-
 # What: Add an issue/PR to the org project board via gh CLI.
 # Why: gh project item-add is native; no marketplace action.
 # From: Issue #479
 _ci_variables_add_to_project() {
     local url
-    : "${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH required}"
-    if ! url="$(jq -er '.issue.html_url // .pull_request.html_url' "${GITHUB_EVENT_PATH}")"; then
-        ci_log "[CI-ERROR-EVENT-0002]" "${GITHUB_EVENT_NAME:-event} carries no issue or PR url"
-        return 2
-    fi
-    _ci_board_add "${url}" "${GH_TOKEN:-}"
+    url="$(_ci_event_value '.issue.html_url // .pull_request.html_url')" || return 2
+    _ci_board_add "${url}" "${PROJECT_PAT:-}"
 }
 
 # What: Map a Commit type prefix to a category label.
 # Why: AG-GH-014 already structures titles; no regex needed.
 # From: Issue #479
 _ci_pr_category_label() {
-    local title="$1" type=""
-    [[ "${title}" =~ ^([a-zA-Z]+) ]] && type="${BASH_REMATCH[1]}"
+    local type
+    type="$(_ci_title_type "$1")" || return 0
     case "${type}" in
         security) printf 'security' ;;
         fix)      printf 'bug' ;;
@@ -2422,7 +2534,7 @@ _ci_pr_category_label() {
 _ci_variables_label_pr() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local files hits labels=() category PR_NUMBER
-    PR_NUMBER="$(_ci_event_pr_number)" || return 2
+    PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
     files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)" || return 1
     hits="$(_ci_classify_paths labels <<< "${files}")" || return 2
     _ci_mapfile labels printf '%s' "${hits}" || return 2
@@ -2441,7 +2553,6 @@ _ci_variables_label_pr() {
 ci_cmd_variables() {
     local sub="${1:?variables subcommand required}"
     case "${sub}" in
-        secret-present)  _ci_variables_secret_present ;;
         add-to-project)  _ci_variables_add_to_project ;;
         label-pr)        _ci_variables_label_pr ;;
         *) ci_log "[CI-ERROR-VARIABLES-0001]" "unknown variables subcommand=\"${sub}\""; return 2 ;;
@@ -2452,17 +2563,17 @@ ci_cmd_variables() {
 # SECURITY SCAN (OpenSSF Baseline recheck)
 # =========================================================
 
-# What: Print Met if a pattern is in a file (-i), else NotMet.
-# Why: One owner for the many grep-based baseline checks.
-# From: Issue #479, Issue #312
-_ci_ossf_grep() {
-    local file="$1" pattern="$2" ci="${3:-}"
-    if [ -n "${ci}" ]; then
-        grep -qi -- "${pattern}" "${file}" && { echo "Met"; return; }
-    else
-        grep -q -- "${pattern}" "${file}" && { echo "Met"; return; }
-    fi
-    echo "NotMet"
+# What: Print Met for check rc 0, NotMet for rc 1; else error.
+# Why: A failed tool must never pose as a NotMet finding.
+# From: Issue #479, Issue #312, PR #544
+_ci_ossf_verdict() {
+    local rc=0
+    "$@" || rc=$?
+    case "${rc}" in
+        0) echo "Met" ;;
+        1) echo "NotMet" ;;
+        *) ci_log "[CI-ERROR-OSSF-0004]" "no verdict, check failed (rc ${rc}): $*"; return 2 ;;
+    esac
 }
 
 # What: URL-encode one argument via jq @uri.
@@ -2492,31 +2603,37 @@ _ci_ossf_url() { echo "https://www.bestpractices.dev/en/projects/${PROJECT_ID}/b
 # From: Issue #312
 _ci_ossf_check_ac03() {
     local types id
-    id="$(_ci_sot_scalar security.openssf.ruleset_id)" || return 2
+    id="${1:?ruleset id required}"
     if ! types="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/${id}" --jq '[.rules[].type]')"; then
         ci_log "[CI-ERROR-OSSF-0001]" "cannot read ruleset ${id}; no verdict"
         return 2
     fi
-    if echo "${types}" | jq -e 'contains(["pull_request"]) and contains(["deletion"])' >/dev/null; then
-        echo "Met"; else echo "NotMet"; fi
+    jq -e 'contains(["pull_request"]) and contains(["deletion"])' <<< "${types}" >/dev/null
 }
 
 # What: No pull_request_target fork code, no raw event text.
 # Why: Only a ci.sh checkout given a ref can fetch PR code.
 # From: Issue #312, PR #544
 _ci_ossf_check_br01() {
-    local hits=0 f
+    local f rc lines
     for f in .github/workflows/*.yml; do
-        if grep -q "pull_request_target" "${f}" \
-            && grep -qE 'bash -s -- checkout [0-9]+ [^[:space:]]' "${f}"; then
-            hits=1
-        fi
+        rc=0
+        grep -q "pull_request_target" "${f}" || rc=$?
+        [ "${rc}" -le 1 ] || return 2
+        [ "${rc}" -eq 0 ] || continue
+        rc=0
+        grep -qE 'bash -s -- checkout [0-9]+ [^[:space:]]' "${f}" || rc=$?
+        [ "${rc}" -ne 0 ] || return 1
+        [ "${rc}" -eq 1 ] || return 2
     done
-    if grep -v '^[[:space:]]*#' .github/workflows/*.yml \
-        | grep -qE 'github\.event\.(pull_request|issue|comment)\.(title|body)'; then
-        hits=1
-    fi
-    [ "${hits}" -eq 0 ] && echo "Met" || echo "NotMet"
+    lines="$(grep -hv '^[[:space:]]*#' .github/workflows/*.yml)" || return 2
+    rc=0
+    grep -qE 'github\.event\.(pull_request|issue|comment)\.(title|body)' <<< "${lines}" || rc=$?
+    case "${rc}" in
+        0) return 1 ;;
+        1) return 0 ;;
+        *) return 2 ;;
+    esac
 }
 
 # What: Secret scanning and push protection are enabled.
@@ -2531,52 +2648,49 @@ _ci_ossf_check_br07() {
     # What: An unreadable field is an error, never NotMet.
     # Why: github.token hides it; a NotMet there would be false.
     # From: Issue #312, PR #544
-    if ! echo "${analysis}" | jq -e '.secret_scanning.status' >/dev/null; then
+    if ! jq -e '.secret_scanning.status' <<< "${analysis}" >/dev/null; then
         ci_log "[CI-ERROR-OSSF-0003]" "token cannot read security_and_analysis; no verdict"
         return 2
     fi
-    if echo "${analysis}" | jq -e '.secret_scanning.status == "enabled" and .secret_scanning_push_protection.status == "enabled"' >/dev/null; then
-        echo "Met"; else echo "NotMet"; fi
+    jq -e '.secret_scanning.status == "enabled" and .secret_scanning_push_protection.status == "enabled"' \
+        <<< "${analysis}" >/dev/null
 }
 
 # What: No compiled binary is tracked in the git tree.
 # Why: Build outputs must be produced, never committed.
 # From: Issue #312
 _ci_ossf_check_qa05() {
-    if git ls-tree -r HEAD --name-only | grep -Ei '\.(o|so|a|exe|dll|bin)$' >/dev/null; then
-        echo "NotMet"; else echo "Met"; fi
+    local tree rc=0
+    tree="$(git ls-tree -r HEAD --name-only)" || return 2
+    grep -qEi '\.(o|so|a|exe|dll|bin)$' <<< "${tree}" || rc=$?
+    case "${rc}" in
+        0) return 1 ;;
+        1) return 0 ;;
+        *) return 2 ;;
+    esac
 }
 
 # What: Each workflow has a narrow top-level permissions key.
 # Why: A missing or write-all default is not least-privilege.
 # From: Issue #312
 _ci_ossf_check_ac04() {
-    local f block
+    local f block rc
     for f in .github/workflows/*.yml; do
-        block="$(awk '/^permissions:/{flag=1} /^jobs:/{flag=0} flag' "${f}")"
-        [ -z "${block}" ] && { echo "NotMet"; return; }
-        if echo "${block}" | grep -qE 'permissions:[[:space:]]*write-all|^[[:space:]]*contents:[[:space:]]*write'; then
-            echo "NotMet"; return
-        fi
+        block="$(awk '/^permissions:/{flag=1} /^jobs:/{flag=0} flag' "${f}")" || return 2
+        [ -n "${block}" ] || return 1
+        rc=0
+        grep -qE 'permissions:[[:space:]]*write-all|^[[:space:]]*contents:[[:space:]]*write' <<< "${block}" || rc=$?
+        [ "${rc}" -ne 0 ] || return 1
+        [ "${rc}" -eq 1 ] || return 2
     done
-    echo "Met"
-}
-
-# What: Some workflow attests the release assets via ci.sh.
-# Why: Scanning all workflows survives a workflow rename.
-# From: Issue #312, Issue #479, PR #544
-_ci_ossf_check_br06() {
-    if grep -rq "ci.sh attest release" .github/workflows/; then
-        echo "Met"; else echo "NotMet"; fi
 }
 
 # What: The SOT pin refresh is scheduled; its policy is doc'd.
 # Why: Both must hold for OSPS-BR-05.01/DO-06.01.
 # From: Issue #312, PR #544
 _ci_ossf_check_br05_do06() {
-    if grep -q 'ci.sh sot-update' .github/workflows/housekeeping.yml \
-        && grep -q "## Dependency management policy" doc/compatibility-policy.md; then
-        echo "Met"; else echo "NotMet"; fi
+    grep -q 'ci.sh sot-update' .github/workflows/housekeeping.yml \
+        && grep -q "## Dependency management policy" doc/compatibility-policy.md
 }
 
 # What: Run every baseline check; post the tracking comment.
@@ -2584,24 +2698,25 @@ _ci_ossf_check_br05_do06() {
 # From: Issue #479, Issue #312
 _ci_scan_openssf() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local ISSUE_NUMBER PROJECT_ID RUN_URL
+    local ISSUE_NUMBER PROJECT_ID RULESET_ID RUN_URL
     ISSUE_NUMBER="$(_ci_sot_scalar security.openssf.issue)" || return 2
     PROJECT_ID="$(_ci_sot_scalar security.openssf.project_id)" || return 2
+    RULESET_ID="$(_ci_sot_scalar security.openssf.ruleset_id)" || return 2
     RUN_URL="$(_ci_run_url)" || return 2
     local MARKER="<!-- openssf-baseline-recheck -->"
     local TODAY; TODAY="$(date -u +%Y-%m-%d)"
     local ac03 br01 br07 qa05 vm02 ac04 br06 br05_do06 gv01 vm01_vm03 do04_do05
-    ac03="$(_ci_ossf_check_ac03)" || return 2
-    br01="$(_ci_ossf_check_br01)" || return 2
-    br07="$(_ci_ossf_check_br07)" || return 2
-    qa05="$(_ci_ossf_check_qa05)" || return 2
-    vm02="$([ -f SECURITY.md ] && echo Met || echo NotMet)"
-    ac04="$(_ci_ossf_check_ac04)" || return 2
-    br06="$(_ci_ossf_check_br06)" || return 2
-    br05_do06="$(_ci_ossf_check_br05_do06)" || return 2
-    gv01="$(_ci_ossf_grep AGENTS.md 'grant maintainer-level approval')" || return 2
-    vm01_vm03="$(_ci_ossf_grep SECURITY.md 'Security Advisor' -i)" || return 2
-    do04_do05="$(_ci_ossf_grep SECURITY.md '## Supported Versions')" || return 2
+    ac03="$(_ci_ossf_verdict _ci_ossf_check_ac03 "${RULESET_ID}")" || return 2
+    br01="$(_ci_ossf_verdict _ci_ossf_check_br01)" || return 2
+    br07="$(_ci_ossf_verdict _ci_ossf_check_br07)" || return 2
+    qa05="$(_ci_ossf_verdict _ci_ossf_check_qa05)" || return 2
+    vm02="$(_ci_ossf_verdict test -f SECURITY.md)" || return 2
+    ac04="$(_ci_ossf_verdict _ci_ossf_check_ac04)" || return 2
+    br06="$(_ci_ossf_verdict grep -rq "ci.sh attest release" .github/workflows/)" || return 2
+    br05_do06="$(_ci_ossf_verdict _ci_ossf_check_br05_do06)" || return 2
+    gv01="$(_ci_ossf_verdict grep -q 'grant maintainer-level approval' AGENTS.md)" || return 2
+    vm01_vm03="$(_ci_ossf_verdict grep -qi 'Security Advisor' SECURITY.md)" || return 2
+    do04_do05="$(_ci_ossf_verdict grep -q '## Supported Versions' SECURITY.md)" || return 2
     local new_state
     new_state="$(jq -nc \
         --arg ac03 "${ac03}" --arg br01 "${br01}" --arg br07 "${br07}" \
@@ -2629,7 +2744,7 @@ _ci_scan_openssf() {
     regressed_keys="$(jq -rn --argjson prev "${prev_state}" --argjson new "${new_state}" '
         $new | to_entries[] | select(.value == "NotMet" and ($prev[.key] // "") == "Met") | .key')"
     local qs1="" qs2="" qs3="" l1 l2 l3 url1 url2 url3 regressed_block=""
-    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset $(_ci_sot_scalar security.openssf.ruleset_id) on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
+    [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.01" "Ruleset ${RULESET_ID} on ${GITHUB_REPOSITORY} has a pull_request and a deletion rule, re-verified ${TODAY}."
     [ "${ac03}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-AC-03.02" "Same ruleset re-verified ${TODAY}; deletion rule present."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.01" "No workflow runs fork code under pull_request_target, re-verified ${TODAY}."
     [ "${br01}" = "Met" ] && _ci_ossf_add_met qs1 "OSPS-BR-01.03" "No workflow interpolates untrusted event title/body, re-verified ${TODAY}."
@@ -2723,18 +2838,25 @@ _ci_tool_url() {
     printf '%s\n' "${url//\{bare\}/${ver#v}}"
 }
 
+# What: One curl attempt of a download; log it if it fails.
+# Why: Each failed attempt is named; _ci_wait_until retries.
+# From: Issue #479, PR #544
+_ci_download_attempt() {
+    if curl -fsSL -o "$2" "$1"; then
+        return 0
+    fi
+    ci_log "[CI-FETCH]" "attempt ${CI_ATTEMPT}/${CI_TRIES} failed: $1"
+    return 1
+}
+
 # What: Download one URL to a file in up to three attempts.
-# Why: curl --retry never retries a dropped connection.
+# Why: CFL's curl 7.68 lacks --retry-all-errors.
 # From: Issue #479, PR #544
 _ci_download() {
-    local url="$1" file="$2" try
-    for try in 1 2 3; do
-        if curl -fsSL --retry 3 -o "${file}" "${url}"; then
-            return 0
-        fi
-        ci_log "[CI-FETCH]" "attempt ${try}/3 failed: ${url}"
-        [ "${try}" -eq 3 ] || sleep "${try}"
-    done
+    local url="$1" file="$2"
+    if _ci_wait_until 3 2 _ci_download_attempt "${url}" "${file}"; then
+        return 0
+    fi
     ci_log "[CI-ERROR-FETCH-0003]" "download failed: ${url}"
     return 1
 }
@@ -2964,6 +3086,19 @@ _ci_title_taxonomy() {
     printf '%s\n' "${list% }"
 }
 
+# What: AG-GH-014 title shape: type, (scope), !, subject.
+# Why: The title check and the category labels parse alike.
+# From: Issue #479, PR #544, AG-GH-014
+CI_TITLE_RE='^([a-zA-Z]+)(\(([a-z0-9-]+)\))?(!)?:[[:space:]](.+)$'
+
+# What: Print the type of an AG-GH-014 title; rc 1 if none.
+# Why: A title that is not type(scope)!: subject has no type.
+# From: Issue #479, PR #544, AG-GH-014
+_ci_title_type() {
+    [[ "$1" =~ ${CI_TITLE_RE} ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
 # What: Validate a PR title against the AG-GH-014 taxonomy.
 # Why: A dependency bot titles its own PRs; it is exempt.
 # From: Issue #479, AG-GH-014
@@ -2983,7 +3118,7 @@ _ci_check_pr_title() {
     local types scopes errs=() t sc subj tsub
     types="$(_ci_title_taxonomy types)" || return 2
     scopes="$(_ci_title_taxonomy scopes)" || return 2
-    if [[ "${title}" =~ ^([a-zA-Z]+)(\(([a-z0-9-]+)\))?(!)?:[[:space:]](.+)$ ]]; then
+    if [[ "${title}" =~ ${CI_TITLE_RE} ]]; then
         t="${BASH_REMATCH[1]}"; sc="${BASH_REMATCH[3]}"; subj="${BASH_REMATCH[5]}"
         tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
         case " ${types} " in *" ${t} "*) ;; *) errs+=("type '${t}' not in: ${types}") ;; esac
@@ -3090,11 +3225,7 @@ _ci_check_changelog() {
             return 0 ;;
     esac
     local changed
-    cd "${CI_REPO_ROOT}" || return 1
-    if ! changed="$(git diff --name-only "${BASE:?BASE required}" "${HEAD:-HEAD}")"; then
-        ci_log "[CI-ERROR-META-CHANGELOG-0002]" "cannot diff ${BASE}..${HEAD:-HEAD}"
-        return 1
-    fi
+    changed="$(_ci_changed_paths "${BASE:?BASE required}" "${HEAD:-HEAD}")" || return 1
     if grep -qx 'CHANGELOG.md' <<< "${changed}"; then
         ci_log "[CI-META-CHANGELOG]" "OK: CHANGELOG.md touched"
         return 0
@@ -3125,7 +3256,7 @@ _ci_metadata_fetch_live() {
 # From: Issue #479
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0 range=()
-    PR_NUMBER="$(_ci_event_pr_number)" || return 2
+    PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
     _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
     BASE="${range[0]}" HEAD="${range[1]}"
@@ -3147,18 +3278,26 @@ ci_cmd_metadata() {
 # GOVERNANCE GUARDS
 # =========================================================
 
+# What: Log each non-empty stdin line as one guard hit.
+# Why: Every guard reports alike; any hit fails the guard.
+# From: Issue #479, PR #544
+_ci_guard_hits() {
+    local id="$1" prefix="${2:-}" suffix="${3:-}" hit rc=0
+    while IFS= read -r hit; do
+        [ -n "${hit}" ] || continue
+        rc=1
+        ci_log "${id}" "${prefix}${hit}${suffix}"
+    done
+    return "${rc}"
+}
+
 # What: Fail if any file under root contains a CR byte.
 # Why: The repo is LF-only; CRLF breaks shell/heredoc parsing.
 # From: Issue #479
 ci_guard_line_endings() {
-    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 f hits
+    local root="${1:-${CI_REPO_ROOT}/.github}" hits
     hits="$(grep -rlU "$(printf '\r')" "${root}")" || [ "$?" -eq 1 ] || return 2
-    while IFS= read -r f; do
-        [ -n "${f}" ] || continue
-        rc=1
-        ci_log "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: ${f}"
-    done <<< "${hits}"
-    return "${rc}"
+    _ci_guard_hits "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: " <<< "${hits}"
 }
 
 # What: Print AG-CODE-001 violations of one '#'-comment file.
@@ -3213,7 +3352,7 @@ _ci_comment_violations() {
 # Why: #479's comment guard; AG-CODE-001 defines the form.
 # From: Issue #479, PR #544
 ci_guard_comment_format() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out hit d
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out d
     local files=() found=()
     for d in .github docker test/e2e .clusterfuzzlite; do
         [ -e "${root}/${d}" ] || continue
@@ -3223,11 +3362,7 @@ ci_guard_comment_format() {
     done
     for f in "${files[@]}"; do
         out="$(_ci_comment_violations "${f}")" || return 2
-        while IFS= read -r hit; do
-            [ -n "${hit}" ] || continue
-            rc=1
-            ci_log "[CI-ERROR-GUARD-COMMENT-0001]" "${hit}"
-        done <<< "${out}"
+        _ci_guard_hits "[CI-ERROR-GUARD-COMMENT-0001]" <<< "${out}" || rc=1
     done
     return "${rc}"
 }
@@ -3236,15 +3371,10 @@ ci_guard_comment_format() {
 # Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
 ci_guard_full_sha() {
-    local root="${1:-${CI_REPO_ROOT}/.github}" rc=0 hit hits bad=()
+    local root="${1:-${CI_REPO_ROOT}/.github}" hits bad
     hits="$(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}")" || [ "$?" -eq 1 ] || return 2
-    _ci_mapfile bad awk -F: "length(\$2) != 64 || \$2 ~ /[A-F]/ { print }" <<< "${hits}" || return 2
-    for hit in "${bad[@]}"; do
-        [ -n "${hit}" ] || continue
-        rc=1
-        ci_log "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: ${hit}"
-    done
-    return "${rc}"
+    bad="$(awk -F: "length(\$2) != 64 || \$2 ~ /[A-F]/ { print }" <<< "${hits}")" || return 2
+    _ci_guard_hits "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: " <<< "${bad}"
 }
 
 # What: Print "line kind ref" per pin-shaped Dockerfile line.
@@ -3269,7 +3399,7 @@ _ci_dockerfile_pins() {
 # Why: Crons and choices are YAML literals; the SOT owns them.
 # From: Issue #479, PR #544
 ci_guard_sot_mirrors() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs d
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs
     want=""
     names="$(_ci_sot_children schedules)" || return 2
     for n in ${names}; do
@@ -3284,11 +3414,9 @@ ci_guard_sot_mirrors() {
     done
     want="$(grep -v '^$' <<< "${want}" | sort)" || return 2
     got="$(grep -v '^$' <<< "${got}" | sort)" || [ "$?" -eq 1 ] || return 2
-    if [ "${want}" != "${got}" ]; then
-        rc=1
-        d="$(diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
-        ci_error "[CI-ERROR-GUARD-MIRROR-0001]" "on.schedule crons differ from SOT schedules" "${d}"
-    fi
+    _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0001]" "on.schedule crons differ from SOT schedules" \
+        "${want}" "${got}" || rc=$?
+    [ "${rc}" -ne 2 ] || return 2
     f="${root}/.github/workflows/housekeeping.yml"
     if [ -f "${f}" ]; then
         pkgs="$({ echo all; _ci_sot_list release.ghcr_packages; } | sort)" || return 2
@@ -3298,13 +3426,22 @@ ci_guard_sot_mirrors() {
             inopt && /^          - / { sub(/^          - /, ""); print; next }
             inopt { exit }
         ' "${f}" | sort)" || return 2
-        if [ "${pkgs}" != "${got}" ]; then
-            rc=1
-            d="$(diff <(printf '%s\n' "${pkgs}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
-            ci_error "[CI-ERROR-GUARD-MIRROR-0002]" "housekeeping package options differ from all + release.ghcr_packages" "${d}"
-        fi
+        _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0002]" \
+            "housekeeping package options differ from all + release.ghcr_packages" "${pkgs}" "${got}" \
+            || rc=$?
     fi
     return "${rc}"
+}
+
+# What: Fail with a diff when a YAML literal list drifts.
+# Why: Both mirror checks report want vs got the same way.
+# From: Issue #479, PR #544
+_ci_guard_mirror() {
+    local id="$1" what="$2" want="$3" got="$4" d
+    [ "${want}" != "${got}" ] || return 0
+    d="$(diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
+    ci_error "${id}" "${what}" "${d}"
+    return 1
 }
 
 # What: Print each SOT action as its exact uses: value.
@@ -3324,39 +3461,34 @@ _ci_action_pins() {
 # Why: The SOT is the sole pin owner; uses: lines mirror it.
 # From: Issue #479, PR #544
 ci_guard_pins_in_sot() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out line text kind ref pins pin
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out pins pin unused=""
     local files=() wfs=()
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
         wfs+=("${f}")
         out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^ {4,}(image|container):' "${f}")" \
             || [ "$?" -eq 1 ] || return 2
-        while IFS=: read -r line text; do
-            [ -n "${line}" ] || continue
-            # What: uses: lines belong to the orchestrator guard.
-            # Why: It matches each one against the SOT action pins.
-            # From: Issue #479, PR #544
-            [[ "${text}" =~ ^[[:space:]]*(-[[:space:]]+)?uses: ]] && continue
-            rc=1
-            ci_log "[CI-ERROR-GUARD-PIN-0001]" "${f}:${line}: image or action pin outside the SOT"
-        done <<< "${out}"
+        # What: uses: lines belong to the orchestrator guard.
+        # Why: It matches each one against the SOT action pins.
+        # From: Issue #479, PR #544
+        out="$(awk -F: '{ t = $0; sub(/^[0-9]+:/, "", t) }
+            t !~ /^[[:space:]]*(-[[:space:]]+)?uses:/ { print $1 }' <<< "${out}")" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-PIN-0001]" "${f}:" ": image or action pin outside the SOT" \
+            <<< "${out}" || rc=1
     done
     pins="$(_ci_action_pins)" || return 2
     while IFS= read -r pin; do
         [ -n "${pin}" ] || continue
         if [ "${#wfs[@]}" -eq 0 ] || ! grep -qF -- "uses: ${pin}" "${wfs[@]}"; then
-            rc=1
-            ci_log "[CI-ERROR-GUARD-PIN-0003]" "SOT action ${pin} is used by no workflow"
+            unused+="${pin}"$'\n'
         fi
     done <<< "${pins}"
+    _ci_guard_hits "[CI-ERROR-GUARD-PIN-0003]" "SOT action " " is used by no workflow" <<< "${unused}" || rc=1
     _ci_mapfile files find "${root}" -name Dockerfile -type f -not -path '*/.git/*' || return 2
     for f in "${files[@]}"; do
-        out="$(_ci_dockerfile_pins "${f}")" || return 2
-        while read -r line kind ref; do
-            [ -n "${line}" ] || continue
-            rc=1
-            ci_log "[CI-ERROR-GUARD-PIN-0002]" "${f}:${line}: ${kind} ${ref} bypasses the SOT ARG"
-        done <<< "${out}"
+        out="$(_ci_dockerfile_pins "${f}" | sed 's/ /: /')" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-PIN-0002]" "${f}:" " bypasses the SOT ARG" \
+            <<< "${out}" || rc=1
     done
     return "${rc}"
 }
@@ -3421,16 +3553,12 @@ _ci_scan_run_blocks() {
 # Why: Logic belongs in ci.sh; workflows only orchestrate.
 # From: Issue #479, PR #544
 ci_guard_orchestrator_only() {
-    local rc=0 f hit pins out
+    local rc=0 f pins out
     pins="$(_ci_action_pins)" || return 2
     for f in "$@"; do
         [ -f "${f}" ] || continue
         out="$(_ci_scan_run_blocks "${f}" "${pins}")" || return 2
-        while IFS= read -r hit; do
-            [ -n "${hit}" ] || continue
-            rc=1
-            ci_log "[CI-ERROR-GUARD-ORCH-0001]" "${hit}"
-        done <<< "${out}"
+        _ci_guard_hits "[CI-ERROR-GUARD-ORCH-0001]" <<< "${out}" || rc=1
     done
     return "${rc}"
 }
@@ -3511,7 +3639,7 @@ ci_cmd_lint() {
 # Why: ubuntu-latest's default mirror has hung indefinitely.
 # From: Issue #493, Issue #479
 _ci_apt_install() {
-    local packages="${1:?package list required}" mode="${2:-runner}" max_attempts=2 attempt=1
+    local packages="${1:?package list required}" mode="${2:-runner}" rc=0
     local as_root=(sudo) apt_opts="" upgrade=""
     if [ "$(id -u)" -eq 0 ]; then
         as_root=()
@@ -3529,29 +3657,34 @@ _ci_apt_install() {
             upgrade="apt-get upgrade -y ${apt_opts} &&" ;;
         *) ci_log "[CI-ERROR-INSTALL-0003]" "apt mode=${mode} (runner|image)"; return 2 ;;
     esac
-    while true; do
-        if "${as_root[@]}" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
-            bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}"; then
-            if [ "${mode}" = "image" ]; then
-                rm -rf /var/lib/apt/lists/* || return 1
-            fi
-            return 0
-        fi
-        if [ "${attempt}" -ge "${max_attempts}" ]; then
-            ci_log "[CI-ERROR-INSTALL-0001]" "apt install failed after ${max_attempts} attempts"
-            return 1
-        fi
-        ci_log "[CI-INSTALL-APT]" "attempt ${attempt} failed or timed out, retrying"
-        # What: Finish a dpkg run the timeout cut off mid-install.
-        # Why: Else every retry stops at "dpkg was interrupted".
-        # From: Issue #493, Issue #479, PR #544
-        if ! "${as_root[@]}" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
-            ci_log "[CI-ERROR-INSTALL-0004]" "dpkg --configure -a failed after attempt ${attempt}"
-            return 1
-        fi
-        attempt=$((attempt + 1))
-        sleep 10
-    done
+    _ci_wait_until 2 10 _ci_apt_attempt "${packages}" "${apt_opts}" "${upgrade}" "${as_root[@]}" || rc=$?
+    case "${rc}" in
+        0) ;;
+        1) ci_log "[CI-ERROR-INSTALL-0001]" "apt install failed after 2 attempts"; return 1 ;;
+        *) return 1 ;;
+    esac
+    if [ "${mode}" = "image" ]; then
+        rm -rf /var/lib/apt/lists/* || return 1
+    fi
+}
+
+# What: One bounded apt attempt; repair dpkg before a retry.
+# Why: Else every retry stops at "dpkg was interrupted".
+# From: Issue #493, Issue #479, PR #544
+_ci_apt_attempt() {
+    local packages="$1" apt_opts="$2" upgrade="$3"
+    shift 3
+    if "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
+        bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}"; then
+        return 0
+    fi
+    [ "${CI_ATTEMPT}" -lt "${CI_TRIES}" ] || return 1
+    ci_log "[CI-INSTALL-APT]" "attempt ${CI_ATTEMPT} failed or timed out, retrying"
+    if ! "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+        ci_log "[CI-ERROR-INSTALL-0004]" "dpkg --configure -a failed after attempt ${CI_ATTEMPT}"
+        return 2
+    fi
+    return 1
 }
 
 # What: brew install for a space-separated package list.
@@ -3715,7 +3848,6 @@ ci_cmd_attest() {
             files=(distcc distccd) ;;
         release)
             _ci_mapfile files _ci_release_assets || return 1
-            [ "${#files[@]}" -gt 0 ] || return 1
             files+=("$@") ;;
         image)
             ref="${1:?image ref required}"
@@ -3809,7 +3941,7 @@ _ci_harden_start() {
         otk="$(jq -r '.one_time_key // ""' "${resp}")"
         summary="$(jq -r 'if .monitoring_started then "true" else "false" end' "${resp}")"
     fi
-    private="$(jq -r '.repository.private // false' "${GITHUB_EVENT_PATH}")"
+    private="$(_ci_event_value '.repository.private // false')" || return 2
     bin="$(_ci_tool_bin external_versions.harden_runner_agent)" || return 2
     sudo mkdir -p "${_CI_HARDEN_DIR}"
     sudo chown -R "${USER}" "${_CI_HARDEN_DIR}"
@@ -3832,17 +3964,25 @@ _ci_harden_start() {
     _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null
     sudo systemctl daemon-reload
     timeout 15 sudo service agent start
-    for _ in $(seq 1 30); do
-        if [ -f "${_CI_HARDEN_DIR}/agent.status" ]; then
-            ci_log "[CI-HARDEN]" "agent status: $(cat "${_CI_HARDEN_DIR}/agent.status")"
-            ci_log "[CI-HARDEN]" "insights: ${web}/github/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            return 0
-        fi
-        sleep 0.3
-    done
+    if _ci_wait_until 31 0.3 test -f "${_CI_HARDEN_DIR}/agent.status"; then
+        ci_log "[CI-HARDEN]" "agent status: $(cat "${_CI_HARDEN_DIR}/agent.status")"
+        ci_log "[CI-HARDEN]" "insights: ${web}/github/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        return 0
+    fi
     ci_log "[CI-ERROR-HARDEN-0002]" "agent wrote no agent.status within 9s"
-    cat "${_CI_HARDEN_DIR}/agent.log" 2>/dev/null || ci_log "[CI-ERROR-HARDEN-0002]" "no agent.log either"
+    _ci_harden_agent_log "[CI-ERROR-HARDEN-0002]"
     return 1
+}
+
+# What: Print the agent's own log, or say that it wrote none.
+# Why: A read error then shows raw; a missing log is named.
+# From: Issue #479, PR #544
+_ci_harden_agent_log() {
+    if [ -e "${_CI_HARDEN_DIR}/agent.log" ]; then
+        cat "${_CI_HARDEN_DIR}/agent.log"
+        return
+    fi
+    ci_log "$1" "the agent wrote no agent.log"
 }
 
 # What: Signal job end, await the agent's flush, add summary.
@@ -3858,27 +3998,20 @@ _ci_harden_stop() {
     cid="$(sed -n 's/^correlation_id=//p' "${state}")"
     summary="$(sed -n 's/^add_summary=//p' "${state}")"
     printf '{"event":"post"}' > "${_CI_HARDEN_DIR}/post_event.json"
-    for _ in $(seq 1 10); do
-        if [ -f "${_CI_HARDEN_DIR}/done.json" ]; then
-            break
-        fi
-        sleep 1
-    done
-    if [ ! -f "${_CI_HARDEN_DIR}/done.json" ]; then
+    if ! _ci_wait_until 11 1 test -f "${_CI_HARDEN_DIR}/done.json"; then
         ci_log "[CI-ERROR-HARDEN-0003]" "agent did not confirm job end within 10s"
-        cat "${_CI_HARDEN_DIR}/agent.log" 2>/dev/null || ci_log "[CI-ERROR-HARDEN-0003]" "no agent.log either"
+        _ci_harden_agent_log "[CI-ERROR-HARDEN-0003]"
         return 1
     fi
     if [ "${summary}" != "true" ]; then
         return 0
     fi
-    : "${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY required}"
     api="$(_ci_sot_scalar harden_runner.api_url)" || return 2
     out="${RUNNER_TEMP:-/tmp}/harden-summary.md"
     code="$(curl -sS --max-time 3 -o "${out}" -w '%{http_code}' \
         "${api}/github/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/actions/runs/${GITHUB_RUN_ID:?GITHUB_RUN_ID required}/correlation/${cid}/job-markdown-summary")" || code="000"
     if [ "${code}" = "200" ]; then
-        cat "${out}" >> "${GITHUB_STEP_SUMMARY}"
+        _ci_step_summary cat "${out}" || return 1
     else
         ci_log "[CI-HARDEN]" "job summary endpoint HTTP ${code}; summary not added"
     fi
@@ -3941,37 +4074,46 @@ ci_cmd_codeql_scan() {
         --sarif-category="/language:${lang}" || return 2
 }
 
+# What: One SARIF POST; rc 1 retries a 5xx/429/empty answer.
+# Why: The API once answered an upload with no body at all.
+# From: Issue #479, PR #544
+_ci_sarif_post() {
+    local work="$1" rc=0 id why
+    : > "${work}/jqerr"
+    gh api --method POST "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/code-scanning/sarifs" \
+        --input "${work}/body.json" > "${work}/resp" 2> "${work}/err" || rc=$?
+    if [ "${rc}" -eq 0 ] && id="$(jq -er '.id // empty' "${work}/resp" 2> "${work}/jqerr")"; then
+        ci_log "[CI-SCAN]" "SARIF upload id ${id}"
+        return 0
+    fi
+    why="$(cat "${work}/err" "${work}/jqerr" "${work}/resp")" || return 2
+    printf '%s' "${why}" > "${work}/why" || return 2
+    if [ "${rc}" -ne 0 ] && ! grep -qE 'HTTP (5[0-9][0-9]|429)' <<< "${why}"; then
+        return 2
+    fi
+    ci_log "[CI-SCAN]" "SARIF upload attempt ${CI_ATTEMPT}/${CI_TRIES} failed: ${why:-empty response}"
+    return 1
+}
+
 # What: Upload one SARIF file via the code-scanning API.
 # Why: The body goes in a file; a large SARIF overflows argv.
 # From: Issue #479, PR #544
 ci_cmd_sarif_upload() {
-    local file="${1:?sarif file required}" work try rc id why
+    local file="${1:?sarif file required}" work why
     : "${GH_TOKEN:?GH_TOKEN required}"
     work="$(mktemp -d)" || return 1
     gzip -c "${file}" | base64 -w0 > "${work}/sarif.b64" || return 1
     jq -n --arg c "${GITHUB_SHA:?GITHUB_SHA required}" --arg r "${GITHUB_REF:?GITHUB_REF required}" \
         --rawfile s "${work}/sarif.b64" '{commit_sha: $c, ref: $r, sarif: $s}' > "${work}/body.json" || return 1
-    # What: Retry a 5xx, a 429 or an empty answer, three times.
-    # Why: The API once answered an upload with no body at all.
-    # From: Issue #479, PR #544
-    for try in 1 2 3; do
-        rc=0
-        gh api --method POST "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
-            --input "${work}/body.json" > "${work}/resp" 2> "${work}/err" || rc=$?
-        id="$(jq -r '.id // empty' "${work}/resp" 2>/dev/null)" || id=""
-        if [ "${rc}" -eq 0 ] && [ -n "${id}" ]; then
-            ci_log "[CI-SCAN]" "SARIF upload id ${id}"
-            rm -rf "${work}"
-            return 0
-        fi
-        why="$(cat "${work}/err" "${work}/resp")"
-        if [ "${rc}" -ne 0 ] && ! grep -qE 'HTTP (5[0-9][0-9]|429)' <<< "${why}"; then
-            break
-        fi
-        ci_log "[CI-SCAN]" "SARIF upload attempt ${try}/3 failed: ${why:-empty response}"
-        [ "${try}" -eq 3 ] || sleep $((try * 5))
-    done
-    ci_error "[CI-ERROR-SCAN-0004]" "SARIF upload of ${file} failed (rc ${rc})" "${why:-empty response}"
+    if _ci_wait_until 3 5 _ci_sarif_post "${work}"; then
+        rm -rf "${work}"
+        return 0
+    fi
+    why=""
+    if [ -f "${work}/why" ]; then
+        why="$(cat "${work}/why")" || return 1
+    fi
+    ci_error "[CI-ERROR-SCAN-0004]" "SARIF upload of ${file} failed" "${why:-empty response}"
     rm -rf "${work}"
     return 1
 }
@@ -4180,11 +4322,40 @@ ci_cmd_clusterfuzzlite_run() {
 # BUILD / TEST
 # =========================================================
 
+# What: Print the python the build uses: 3.13 if present.
+# Why: macOS make check broke on newer brew python (da6d609).
+# From: Issue #479, PR #544
+_ci_python() {
+    if command -v python3.13; then
+        return 0
+    fi
+    if command -v python3; then
+        return 0
+    fi
+    ci_log "[CI-ERROR-BUILD-0006]" "neither python3.13 nor python3 is installed"
+    return 1
+}
+
 # What: Print every real gcc/clang warning line of a log.
 # Why: Warnings are errors (AG-INT-003); diag-shape anchor.
 # From: Issue #479
 _ci_compiler_warnings() {
     grep -E '^[^: ]+\.(c|h|cc|cpp):[0-9]+:([0-9]+:)? *[Ww]arning:' "$1"
+}
+
+# What: Fail if a build log holds a compiler warning.
+# Why: Warnings are errors; an unreadable log is no pass.
+# From: Issue #479, PR #544
+_ci_warning_gate() {
+    local log="$1" what="$2" warnings rc=0
+    warnings="$(_ci_compiler_warnings "${log}")" || rc=$?
+    case "${rc}" in
+        0) ci_error "[CI-ERROR-BUILD-WARN-0001]" "${what} emitted compiler warnings (AG-INT-003)" "${warnings}"
+           return 1 ;;
+        1) return 0 ;;
+        *) ci_log "[CI-ERROR-BUILD-WARN-0002]" "cannot scan ${log} for warnings (grep rc ${rc})"
+           return 1 ;;
+    esac
 }
 
 # What: autogen and configure the tree in cwd; log to $1.
@@ -4223,16 +4394,13 @@ _ci_run_configure() {
 # Why: One make owner, so every tree build gets the gate.
 # From: Issue #479, PR #544
 _ci_make_gated() {
-    local log="$1" warnings
+    local log="$1"
     shift
     if ! make "$@" 2>&1 | tee "${log}" >&2; then
         ci_log "[CI-ERROR-BUILD-0004]" "make $* failed"
         return 1
     fi
-    if warnings="$(_ci_compiler_warnings "${log}")"; then
-        ci_error "[CI-ERROR-BUILD-WARN-0001]" "make $* emitted compiler warnings (AG-INT-003)" "${warnings}"
-        return 1
-    fi
+    _ci_warning_gate "${log}" "make $*"
 }
 
 # What: Compile vendored popt/*.c under this repo's flags.
@@ -4320,7 +4488,7 @@ ci_cmd_build() {
     local variant="${1:?variant required}" log py cc="cc"
     local flags=()
     log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
-    py="$(command -v python3)" || return 1
+    py="$(_ci_python)" || return 1
     # What: Use ccache only where the job installed it.
     # Why: CodeQL's build has none; a cache hit would hide code.
     # From: Issue #54, Issue #479, PR #544
@@ -4329,7 +4497,7 @@ ci_cmd_build() {
     fi
     case "${variant}" in
         default)
-            flags=(CC="${cc}" PYTHON="$(command -v python3.13 || command -v python3)") ;;
+            flags=(CC="${cc}" PYTHON="${py}") ;;
         popt-fallback) flags=(PYTHON="${py}") ;;
         popt-vendor) flags=(--without-system-popt PYTHON="${py}") ;;
         coverage) flags=(PYTHON="${py}" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp) ;;
@@ -4429,15 +4597,15 @@ _ci_privileged_single_test() {
 # From: Issue #479, PR #370
 _ci_coverage_python_wrapper() {
     local w="${RUNNER_TEMP:-/tmp}/coverage-python-wrapper" py
-    py="$(command -v python3)"
-    cat > "${w}" <<EOF
+    py="$(_ci_python)" || return 1
+    cat > "${w}" <<EOF || return 1
 #!/bin/sh
 if [ "\$1" = "-c" ]; then
     exec "${py}" "\$@"
 fi
 exec python3-coverage run --append --source="${CI_REPO_ROOT}/include_server" "\$@"
 EOF
-    chmod +x "${w}"
+    chmod +x "${w}" || return 1
     printf '%s\n' "${w}"
 }
 
@@ -4460,28 +4628,24 @@ _ci_coverage_python() {
         --include="${CI_REPO_ROOT}/include_server/*"
 }
 
-# What: Append C+Python coverage to the job summary.
+# What: Print C+Python coverage for the job summary.
 # Why: The run page shows coverage without a download.
 # From: Issue #479, PR #370
-_ci_coverage_step_summary() {
-    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    local fence
-    fence='```'
-    {
-        printf '## Coverage summary\n\n### C (lcov)\n%s\n' "${fence}"
-        lcov --list coverage.info --rc branch_coverage=1
-        printf '%s\n\n### Python (include_server)\n%s\n' "${fence}" "${fence}"
-        _ci_coverage_python report
-        printf '%s\n' "${fence}"
-    } >> "${GITHUB_STEP_SUMMARY}"
+_ci_coverage_summary() {
+    local fence='```'
+    printf '## Coverage summary\n\n### C (lcov)\n%s\n' "${fence}" || return 1
+    lcov --list coverage.info --rc branch_coverage=1 || return 1
+    printf '%s\n\n### Python (include_server)\n%s\n' "${fence}" "${fence}" || return 1
+    _ci_coverage_python report || return 1
+    printf '%s\n' "${fence}"
 }
 
 # What: Run make check for a variant and verify the result.
 # Why: One owner of per-variant test env and result parsing.
 # From: Issue #479
 ci_cmd_test() {
-    local variant="${1:-default}" log wrapper warnings st=0
-    cd "${CI_REPO_ROOT}"
+    local variant="${1:-default}" log wrapper st=0
+    cd "${CI_REPO_ROOT}" || return 1
     log="${RUNNER_TEMP:-/tmp}/ci-check-${variant}.log"
     case "${variant}" in
         popt-vendor)
@@ -4491,7 +4655,7 @@ ci_cmd_test() {
             ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 \
                 make check > "${log}" 2>&1 || st=$? ;;
         coverage)
-            wrapper="$(_ci_coverage_python_wrapper)"
+            wrapper="$(_ci_coverage_python_wrapper)" || return 1
             make check PYTHON="${wrapper}" > "${log}" 2>&1 || st=$? ;;
         default|popt-fallback)
             make check > "${log}" 2>&1 || st=$? ;;
@@ -4499,11 +4663,8 @@ ci_cmd_test() {
             ci_log "[CI-ERROR-TEST-0005]" "unknown variant=\"${variant}\""
             return 2 ;;
     esac
-    cat "${log}"
-    if warnings="$(_ci_compiler_warnings "${log}")"; then
-        ci_error "[CI-ERROR-TEST-WARN-0001]" "variant=${variant} make check warning (AG-INT-003)" "${warnings}"
-        return 1
-    fi
+    cat "${log}" || return 1
+    _ci_warning_gate "${log}" "variant=${variant} make check" || return 1
     _ci_parse_comfychair "${log}" || return 1
     if [ "${st}" -ne 0 ]; then
         ci_log "[CI-ERROR-TEST-0006]" "make check exited ${st} for variant=${variant}"
@@ -4515,7 +4676,7 @@ ci_cmd_test() {
     if [ "${variant}" = "coverage" ]; then
         _ci_coverage_lcov || return 1
         _ci_coverage_python xml -o "${CI_REPO_ROOT}/coverage-python.xml" || return 1
-        _ci_coverage_step_summary || return 1
+        _ci_step_summary _ci_coverage_summary || return 1
         _ci_artifact_offer coverage "" "${CI_REPO_ROOT}/coverage.info" \
             "${CI_REPO_ROOT}/coverage-python.xml" || return 1
     fi
