@@ -1,111 +1,188 @@
 # CI workflow landscape
 
-A map of `.github/workflows/*.yml` (plus the composite actions and labeler
-config they share): what triggers each file, what it writes, and how they
-cross-reference each other. Companion to `doc/docker.md` (which covers the
-container images themselves, not the workflows that build them) -- keep
-both in sync when either changes. Written from a full read-through of every
-file (issue #356), not a summary of comments alone; re-verify against the
-actual YAML before relying on this after a workflow file changes.
+A map of `.github/workflows/*.yml`: what triggers each file, what it does,
+and how they cross-reference each other. Rewritten for the CI Rewrite 1.2
+architecture (Issue #479): a single engine, `.github/scripts/ci.sh`, does
+every real decision and action; the 5 workflow files below are thin
+orchestrators whose `run:` steps each call exactly one `ci.sh` subcommand
+(enforced by `ci.sh lint`'s `ci_guard_orchestrator_only`). The single
+source of truth for versions, build matrix, and content-based impact
+classification is `.github/yaml/build-manifest.yml`. Companion to
+`doc/docker.md` (which covers the container images themselves). Re-verify
+against the actual YAML and `ci.sh` before relying on this after either
+changes.
 
 ## Per-file summary
 
-| File | Trigger(s) | What it does | What it writes |
-|---|---|---|---|
-| `actionlint.yml` | `workflow_dispatch`, `pull_request` (unfiltered), `push` to `current_dev`/`master` | Lints all workflow YAML (`action-lint` job) and `scripts/*.sh` (`shellcheck` job) via the pinned `distcc-ng-buildtools` image | nothing (pass/fail gate) |
-| `add-to-project.yml` | `issues: opened`, `pull_request_target: opened` | Adds new issues/PRs to the project board (needs `PROJECT_AUTOMATION_PAT`) | project-board card |
-| `c-build.yml` | `push` (`current_dev`/`master`), `pull_request` (unfiltered), `workflow_dispatch`, `schedule 03:00 daily` | Core build+test gate: `make_check` (macOS+Linux matrix), `popt_fallback_build`, `popt_vendor_check`, `distributed_e2e` (builds `test/e2e/` fresh), `coverage` (gcov/lcov + Python coverage, published to the job summary and as a build artifact -- no third-party service), `report` (schedule-only, files/updates/closes the standing nightly-broken issue) | build-provenance attestations, coverage job summary + `coverage-reports` artifact, standing nightly-broken issue (schedule runs only) |
-| `changelog-check.yml` | `pull_request` (unfiltered, several types), `workflow_dispatch` | Three PR gates: CHANGELOG touched, tracking-metadata (rule 3), title convention (rule 71, warn-only) | nothing persistent |
-| `changelog-update-on-release.yml` | `release: published` (guarded to non-prerelease), `workflow_dispatch` | Inserts release notes into `CHANGELOG.md`, commits to `current_dev` | commit to `current_dev` |
-| `clusterfuzzlite-pr.yml` | `pull_request`, path-filtered `src/**`, `test/fuzz/**`, `.clusterfuzzlite/**` | Fuzzes `test/fuzz/fuzz_rpc_argv.c` | SARIF |
-| `codeql.yml` | `push`/`pull_request` (unfiltered), `workflow_dispatch`, `schedule 05:00 Sun` | CodeQL Advanced Setup, matrix `[c-cpp, python, actions]`, each leg gated by its own path-based `changes` job | SARIF -> code-scanning |
-| `labeler.yml` | `pull_request_target: [opened, synchronize]` | Applies `.github/labeler.yml`'s path-based labels | PR labels |
-| `master-heartbeat.yml` | `workflow_dispatch`, `schedule 05:00 Mon` | Weekly real ccache build fully distributed against `master`; independent control build to classify failures | job summary, standing nightly-broken issue |
-| `nightly-publish.yml` | `workflow_dispatch`, `schedule 04:00 daily` (weekly Samba e2e schedule commented out) | Builds+tests+publishes a moving `nightly` channel from `current_dev`: packages, `distcc-ng-nightly:latest` image, `nightly` pre-release | GHCR image, moved tag+pre-release, standing issue |
-| `openssf-baseline-recheck.yml` | `workflow_dispatch`, `schedule 06:00 1st/15th` | Re-checks OpenSSF Best Practices Baseline criteria against issue #312 | issue comment |
-| `osv-scanner.yml` | `pull_request`/`push` (unfiltered), `schedule 07:00 Sun`, `workflow_dispatch` | SCA scan of pinned Action refs via OSV.dev (reusable workflows) | SARIF -> code-scanning |
-| `package-release.yml` | `push: tags: v*`, `workflow_dispatch` | Real tagged-release path: build+test, packages+SBOM, multi-arch container build+scan+manifest, GitHub Release | GHCR `distcc-ng`/`distcc-ng-pump`, GitHub Release, SBOMs, attestations |
-| `release-drafter.yml` | `push` to `current_dev`, `pull_request: [opened, reopened, synchronize]`, `workflow_dispatch` | Maintains a draft GitHub Release; separately autolabels PRs | draft release, PR category labels |
-| `scorecard.yml` | `push` (`current_dev`/`master`), `branch_protection_rule`, `schedule 06:00 Sun`, `workflow_dispatch` | OpenSSF Scorecard trial run (`publish_results: false`) | SARIF -> code-scanning, 5-day artifact |
-| `verify-image-build.yml` | `push`/`pull_request` path-filtered `docker/verify/**`, `workflow_dispatch` | Builds+proves `docker/verify/Dockerfile` (ptrace self-test, real build+check, ccache+Redis round-trip, signed Samba configure dry-run) | GHCR `distcc-ng-buildtools:latest`+`:<sha>` |
+| File | Trigger(s) | What it does |
+|---|---|---|
+| `validate.yml` | `pull_request`/`pull_request_target` (`opened`, `synchronize`, `reopened`, `ready_for_review`; no label or milestone events, so a metadata change never cancels or shadows a content run; the metadata check reads labels live and reruns on `ready_for_review`), `push` (`current_dev`/`master`), `issues: opened`, `workflow_dispatch` | PR metadata gates (title/tracking/changelog), static lint (actionlint/shellcheck/guards), `ci.bats` self-test, content-based impact planning, the build/test matrix, distributed e2e, the release image and package builds, the verify image (`ci.sh verify all`: one container runs the ptrace self-test, build-test and the Samba configure dry run, then the ccache/Redis check), publishing `distcc-ng-buildtools:latest`, and PR labeling/project-board automation |
+| `security.yml` | `push`/`pull_request` (`current_dev`/`master`), `workflow_dispatch`, `schedule` (`0 5 * * 0` weekly, `0 6 1,15 * *` on the 1st and 15th), `branch_protection_rule` | A `route` job (`ci.sh route security`) picks the jobs per event and cron. CodeQL (languages and suite from `security.codeql`), OSV-Scanner, OpenSSF Scorecard, ClusterFuzzLite fuzzing (sanitizers, seconds and mode from `security.cfl_run`; path-filtered on `pull_request` via content-based impact classification), and the OpenSSF Best Practices Baseline recheck (its cron, or a dispatch from `current_dev`/`master`) |
+| `release.yml` | `push` (`v*` tags, `current_dev`), `workflow_dispatch` (`tag`, `publish_container`, `release_notes`), `release: published` | A `v*` tag push is the real release (POL-RELEASE-07): version check, build+test, e2e, packages+SBOM, `gh release create`, container build+scan+push, multi-arch manifest incl. `:latest`. `workflow_dispatch` is the pre-tag dry run (POL-RELEASE-05): same path without a GitHub Release, containers pushed only with `publish_container=true`, `:latest` never moved. Every run uploads the built packages as the `distcc-release-packages-<tag>` artifact; the image variants and platforms come from `release.container`. `release: published` inserts the notes into `CHANGELOG.md`; a `current_dev` push refreshes the draft release. |
+| `nightly.yml` | `workflow_dispatch`, `schedule` (`0 4 * * *`) | Builds+tests the `default` and `sanitizer` variants against `current_dev`, runs distributed e2e (plus the full bidirectional e2e on manual dispatch only), publishes `distcc-ng-nightly:latest`, and reports status |
+| `housekeeping.yml` | `workflow_dispatch` (`task` choice), `schedule` (`0 5 * * 1`) | A `route` job (`ci.sh route housekeeping`) maps the cron or task to jobs: GHCR package pruning (`gc`), the weekly SOT pin refresh (`sot-update`: one pull request moving image digests and tool versions, with Validate/Security dispatched on it), and the weekly distributed ccache heartbeat plus its plain-compiler control build (a failure fails that job and the run; it never changes the heartbeat report) |
 
 ## Cross-reference matrix
 
-**Shared composite actions**:
+**GHCR login**: `ci.sh`'s `_ci_registry_login`, called by every command
+that pushes to or reads from GHCR, using the calling step's `REGISTRY_TOKEN`
+(the default `github.token` almost everywhere, `GHCR_PACKAGE_DELETE_PAT` for
+`housekeeping.yml`'s `gc` job).
 
-- `.github/actions/nightly-status` files/updates/closes one standing
-  `nightly-broken`-labeled issue (issue #81 design: any caller's success
-  can close an issue a different caller opened). Callers:
-  `master-heartbeat.yml`, `nightly-publish.yml`, `c-build.yml` (its
-  `report` job, schedule-event only), `e2e-image-build.yml`.
-- `.github/actions/failed-jobs` filters a caller's `name=result` job
-  list down to the ones that actually failed or were cancelled (not
-  merely skipped), for use in the standing issue's `failed_jobs` detail
-  above. Callers: `c-build.yml`, `nightly-publish.yml`,
-  `e2e-image-build.yml`.
+**Harden Runner**: `ci.sh harden start` (right after checkout) and
+`ci.sh harden stop` (last step, `if: always()`) install, run, and flush the
+StepSecurity agent in audit-only egress mode. Agent version and SHA256 live
+in `build-manifest.yml` (`external_versions.harden_runner_agent`), policy and
+endpoints in its `harden_runner` section. On runners the agent does not
+support (arm64, non-Linux) both steps log `NotRun` with the reason. arm64
+is a tier limit, not a missing binary: `step-security/harden-runner` itself
+skips arm64 without TLS inspection ("community tier"), so this matches the
+former `harden-runner` action on the arm64 container leg.
 
-**GHCR image namespace** -- four separate package names, no tag overlap:
+**Transport-only actions, no composite actions**: the only `uses:` steps
+are `actions/cache` and `actions/upload-artifact`. The cache and artifact
+services need the Actions runtime token, which the runner passes to
+JavaScript and container actions but never to a `run:` step, so `ci.sh`
+cannot reach them itself. Both pins live in `build-manifest.yml`
+(`ci_engine.actions`). Because `uses:` takes no expression, each workflow
+repeats the exact `<repo>@<sha> # <version>` literal. `ci_guard_orchestrator_only`
+fails on any `uses:` line that is not such a literal, and on any `with:`
+input that does not forward a `${{ steps.<id>.outputs.<name> }}` value.
+`ci_guard_pins_in_sot` fails on a SOT action that no workflow uses. Every
+decision (cache path, key and restore keys; artifact name, files and
+retention) comes from a `ci.sh` step output. All other shared logic,
+including PR labeling, project-board add, standing-issue reporting,
+apt/brew install, GHCR login, and Harden Runner, lives in `ci.sh`. PR
+path labels are SOT data (`labels`, matched like `impact_classes`, with
+an optional `exclude` list).
+
+**Lint guards** (`ci.sh lint`): LF-only line endings, full-length
+sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`),
+orchestrator-only workflows (`ci_guard_orchestrator_only`), the
+`What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]`, with
+a block directly above every function, nested stub and bats test, over
+every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
+`test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`), no
+`AGENTS.md` `[AG-INT-006]` ShellCheck suppression text in any shell
+source of the repository (`ci_guard_shellcheck_directives`, which reads
+the banned texts from that rule), actionlint, and `shellcheck -x` over
+every shell source of those directories (`*.bats` at the
+`--severity=warning` floor Issue #479 sets, everything else at every
+level).
+
+**PR metadata** (`ci.sh metadata`): the AG-GH-014 title, the AG-GH-002
+labels, milestone and project board, and the AG-REL-002 changelog entry
+are checked for every pull request author alike, bots included.
+
+**Compile cache**: every job that builds the `default` variant (the
+`validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)
+runs `ci.sh cache default` first, and `actions/cache` restores and saves
+ccache's own `cache_dir` plus `autom4te.cache` under one key:
+`build-<os>-<arch>-<autoconf inputs>-<run id>`. Restore takes the newest
+entry with the same `configure.ac`/`m4/` content, else the newest for the
+platform. A stale entry only makes the build slower: ccache is
+content-addressed and autom4te invalidates a stale trace itself.
+`config.cache` is never cached. The CodeQL build installs no ccache and
+gets no cache, since a ccache hit would skip a compile CodeQL must trace.
+No cache step runs in a job reachable from `pull_request_target`
+(`plan` excludes that event), so a pull request cannot seed a cache that
+base-branch runs restore.
+
+**Artifacts**: the `coverage` leg uploads `coverage.info` and
+`coverage-python.xml` (`coverage-reports`, 90 days), ClusterFuzzLite
+uploads any crash reproducers even when the fuzz step fails
+(`cfl-crashes-<sanitizer>`, 90 days), and Scorecard uploads its SARIF
+(`scorecard-results`, 5 days). Names and retention live in
+`ci_engine.artifacts`.
+
+**Action pin updates**: `GITHUB_TOKEN` cannot be granted the `workflows`
+permission that editing `.github/workflows/` requires, so `sot-update`
+cannot move these pins. `.github/dependabot.yml` bumps them weekly
+instead. A Dependabot pull request changes only the YAML literal, so the
+lint guards fail until its reviewer updates `ci_engine.actions` in the
+same pull request (`AGENTS.md` `[AG-VAL-007]` review).
+
+**GHCR image namespace** -- four published package names, no tag overlap:
 
 | Image | Published by | Consumed by |
 |---|---|---|
-| `distcc-ng`, `distcc-ng-pump` | `package-release.yml` | end users only |
-| `distcc-ng-nightly` | `nightly-publish.yml` | end users only |
-| `distcc-ng-buildtools` | `verify-image-build.yml` | `actionlint.yml` (only cross-workflow image consumption in this set) |
+| `distcc-ng`, `distcc-ng-pump` | `release.yml`'s `build_container`/`publish_manifest` | end users only |
+| `distcc-ng-nightly` | `nightly.yml`'s `publish` job | end users only |
+| `distcc-ng-buildtools` | `validate.yml`'s `publish_buildtools` job | CI itself: every lint run, and the toolchain base of the e2e images |
 
-**Path-filter overlap** -- only `clusterfuzzlite-pr.yml` and `verify-image-build.yml`
-carry a real workflow-level `paths:` filter; every other `pull_request`-triggered
-workflow fires on any PR (some then filter internally via their own `changes`
-job, which skips steps, not the check-run). Notably: a PR touching only
-`docker/verify/Dockerfile` triggers `verify-image-build.yml` as intended, but
-also runs `c-build.yml`'s full build+test matrix, since that file's own
-`changes` job only exempts `\.md$`/`^doc/` paths.
+No workflow here publishes `distcc-ng-e2e`; until this CI reaches `master`,
+`master`'s former workflows still push it. It stays in
+`release.ghcr_packages` only so `ci.sh gc` can prune its existing versions.
 
-**Known-dangling outputs** -- not consumed by anything in this set today:
-- Scorecard's `scorecard-results` workflow artifact (5-day retention) -- manual-inspection only.
-- Per-image SBOM artifacts from `package-release.yml`'s `build_container` job --
-  only the separate package-level SBOM (from `build_packages`) reaches
-  `publish_github_release`; the per-image ones do not appear to be downloaded
-  or attached anywhere.
+**Job timeouts**: every job the former workflows bounded keeps that bound
+as a `timeout-minutes` literal: `plan`/`route` 5, `lint` and the OpenSSF
+recheck 15, the PR `build_test` matrix 15 (the backstop `test/testdistcc.py`
+relies on for its daemon tests), the nightly/release `build_test` 20, the
+2-container `e2e` and nightly `sanitizer` 30, `verify_image` and `control` 45,
+`package`/`publish` 60, `heartbeat` 75, `bidirectional_e2e` 340 and CodeQL
+360. A `ci.bats` test fails when one of these jobs loses its bound.
+
+**Path-based gating**: `security.yml`'s `clusterfuzzlite` job and
+`validate.yml`'s `plan` job both gate on the content-based
+`impact_classes` in `build-manifest.yml`; no workflow uses a literal
+`paths:` filter. `plan` selects five phases, each gating one job set:
+`build` (the build/test matrix), `e2e`, `verify` (the verify image),
+`container` (both release images built and Trivy-scanned) and `package`
+(the rpm/deb build). A change to the SOT or to `ci.sh` selects all five;
+a docs-only PR selects none (`NOOP`). Lint, the `ci.bats` self-test,
+metadata and the security scans run on every PR regardless.
+
+## Distributed-compile e2e (`ci.sh e2e <mode>`)
+
+One harness, defined per mode in `build-manifest.yml` (`e2e.modes`):
+
+| Mode | Legs (client:server) | Passes | Workload | Floor | Run by |
+|---|---|---|---|---|---|
+| `distributed` | `ng:ng` | plain, pump | `self-compile` | 5 | `validate.yml` (when planned), `nightly.yml`, `release.yml` |
+| `heartbeat` | `ng:ng` | plain | `ccache` | 20 | `housekeeping.yml` weekly |
+| `full` | `ng:native`, `native:ng` | plain, pump | `samba` (bounded `waf` targets) | `objects` | `nightly.yml` manual dispatch |
+
+- `ng` is this checkout, built into `test/e2e/Dockerfile`'s `ng` stage; `native` is Debian's packaged `distcc`/`distcc-pump` (`native` stage). Both stages build on `distcc-ng-buildtools`, the one owner of the toolchain, and each stage is a single `ci.sh image <target>` call with the checkout bind-mounted for that step only.
+- Every leg and pass starts a fresh `distccd` server, runs the workload in a fresh client container (`ci.sh workload ...`, checkout mounted read-only), and then counts `COMPILE_OK` lines in the server's own log from the client network. The build passes only if that count reaches the floor; `objects` means the number of `.o` files the build itself produced. A distcc-ng server additionally must log no warning-or-worse line.
+- `ci.sh e2e control` builds the same ccache revision with the plain compiler only; a failure there points at the toolchain rather than distribution.
+- `full` is too heavy for every PR. The CI run is bounded by `e2e.modes.full.extra`; an unbounded run is the same command on a larger host with `extra` set to `""` in a local copy of the manifest.
+
+Run locally with Docker: `bash .github/scripts/ci.sh e2e distributed` (or `heartbeat`, `full`, `control`).
 
 ## Schedule collisions
 
 All `cron:` schedules, sorted (UTC):
 
-| Time | Day pattern | Workflow |
-|---|---|---|
-| 03:00 | daily | `c-build.yml` |
-| 04:00 | daily | `nightly-publish.yml` |
-| 05:00 | Sun | `codeql.yml` |
-| 05:00 | Mon | `master-heartbeat.yml` |
-| 06:00 | 1st/15th (any weekday) | `openssf-baseline-recheck.yml` |
-| 06:00 | Sun | `scorecard.yml` |
-| 07:00 | Sun | `osv-scanner.yml` |
+| Time | Day pattern | Workflow | Job |
+|---|---|---|---|
+| 04:00 | daily | `nightly.yml` | `build_test`/`sanitizer`/`e2e`/`publish`/`report` |
+| 05:00 | Sun | `security.yml` | `route`, `codeql`/`osv-scan`/`scorecard`/`clusterfuzzlite` |
+| 05:00 | Mon | `housekeeping.yml` | `route`, `sot_update`/`heartbeat`/`control`/`report` |
+| 06:00 | 1st/15th (any weekday) | `security.yml` | `route`, `openssf` |
 
-**Known collision**: `openssf-baseline-recheck.yml` (`0 6 1,15 * *`, day-of-week
-unrestricted) and `scorecard.yml` (`0 6 * * 0`) both fire 06:00 UTC whenever
-the 1st or 15th of a month falls on a Sunday. Tracked separately (not fixed
-by this doc-only change).
+The crons live in `build-manifest.yml` (`schedules`); each workflow's
+`on.schedule` repeats them literally, and `ci_guard_sot_mirrors` fails
+lint when the two differ. A `route` job (`ci.sh route <workflow>`) reads
+the firing cron from the event and decides which jobs that run starts.
+The security scans run unless `route` wrote `scans=false`, so a failed
+`route` (no output) still runs every required scan instead of skipping it.
+
+**Known collision**: `security.yml`'s two schedules (`0 5 * * 0` and
+`0 6 1,15 * *`) both fire whenever the 1st or 15th of a month falls on a
+Sunday. Each cron starts its own run, and `ci.sh route security` gives
+each run its own job set, so neither is skipped.
 
 ## Branch dormancy
 
-`schedule` (and a plain, unscoped `workflow_dispatch`) is only honored from
-the copy of a workflow file present on the **default branch** (`master`,
-see issue #81's history) -- this repo develops on `current_dev` and only
-promotes to `master` via explicit maintainer-approved release PRs.
-`nightly-publish.yml` and `master-heartbeat.yml` both self-document this: their
-`schedule` trigger has no live effect until the next `current_dev`->`master`
-promotion. `c-build.yml`'s own `schedule` trigger is already live (the
-workflow exists on `master` today), but its new `report` job is not: since
-`report` was added on `current_dev` only, `master`'s copy of `c-build.yml`
-still lacks that job entirely, so the nightly standing-issue reporting this
-table describes for `c-build.yml` has no live effect until the next
-`current_dev`->`master` promotion, same as the two workflows above.
-`codeql.yml`, `scorecard.yml`, `openssf-baseline-recheck.yml`, and
-`osv-scanner.yml` carry no such caveat and are treated as already live.
-
-## Known follow-ups (not fixed by this doc)
-
-- Cron collision between `openssf-baseline-recheck.yml` and `scorecard.yml` (above).
-- `actionlint.yml`'s `action-lint` job excludes a file named `release.yml` from
-  linting -- the real release workflow is `package-release.yml`, so the
-  exclusion currently matches nothing (likely stale from a rename).
+`schedule` (and a plain, unscoped `workflow_dispatch`) is only honored
+from the copy of a workflow file present on the **default branch**
+(`master`) -- this repo develops on `current_dev` and only promotes to
+`master` via explicit maintainer-approved release PRs. A `schedule` or
+unscoped `workflow_dispatch` change therefore takes effect only once the
+changed workflow file has been promoted to `master`. This includes
+`ci.sh sot-update`'s own `gh workflow run` of `validate.yml` and
+`security.yml` on its update branch: until those files exist on `master`,
+that dispatch returns 404 and the `sot_update` job fails instead of
+leaving an untested pull request behind. Dependabot likewise reads
+`.github/dependabot.yml` only from the default branch, so `master`'s copy
+stays the active configuration until the release promotes this one.

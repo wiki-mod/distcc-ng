@@ -1,9 +1,12 @@
+# What: Prose comments here never contain a percent sign.
+# Why: rpm expands comment macros; one ran a second setup.
+# From: PR #544
 %define	RELEASE	1
 %define rel     %{?CUSTOM_RELEASE} %{!?CUSTOM_RELEASE:%RELEASE}
 %define	_prefix	/usr
 %define _bindir %{_prefix}/bin
 %define _datadir %{_prefix}/share
-#%define _docdir %{_datadir}/doc/%{name}-%{version}
+#%%define _docdir %%{_datadir}/doc/%%{name}-%%{version}
 %define _docdir %{_datadir}/doc/%{name}
 %define _libdir %{_prefix}/lib
 %define _mandir %{_datadir}/man
@@ -11,11 +14,9 @@
 
 Name: %NAME
 Summary: Client side program for distributed C/C++ compilations.
-# Version must be RPM-safe (rpm-version(7) forbids '-', the NVR
-# separator); rpm.sh splits this fork's "-NG"-suffixed version and passes
-# the numeric part as VERSION, folding the suffix into Release below.
-# FULLVERSION keeps the original, hyphenated version for the source
-# tarball, which follows this project's own release-tag naming, not RPM's.
+# What: Version is RPM-safe; FULLVERSION keeps the -NG tag.
+# Why: rpm-version(7) forbids '-'; rpm.sh splits the suffix.
+# From: PR #46
 Version: %VERSION
 Release: %{rel}%{?VERSUFFIX:.%{VERSUFFIX}}
 Group: Development/Languages
@@ -26,18 +27,9 @@ Distribution: Redhat 7 and above.
 BuildRoot: %{_tmppath}/%{name}-buildroot
 Prefix: %_prefix
 Provides: distcc
-# Conflicts/Obsoletes against the real, independently-packaged "distcc"
-# (Fedora/RHEL ship it under that exact name): this fork's client binaries,
-# config files, and doc paths are installed at the identical locations, so
-# co-installing both is a guaranteed file collision, not just a version
-# skew. Left unversioned deliberately -- any version of the real distcc
-# collides on the same paths, there is no version boundary to draw (rpm
-# warns "not recommended to have unversioned Obsoletes", a stylistic
-# warning already present for the Obsoletes line below, not a new class of
-# problem this line introduces). Verified live in a throwaway Fedora
-# container, both install orders: `rpm -U` over an installed real "distcc"
-# cleanly obsoletes it; a plain `rpm -i` of real "distcc" over an installed
-# distcc-ng is correctly rejected with "conflicts with"/"is obsoleted by".
+# What: Conflict with and obsolete the real distcc package.
+# Why: Same install paths at any version; no version boundary.
+# From: Issue #412, PR #437
 Conflicts: distcc
 Obsoletes: distcc
 Obsoletes: crosstool-distcc distcc-include-server
@@ -49,44 +41,45 @@ local compile, is simple to install and use, and is often two or more times
 faster than a local compile.
 
 %prep
-# The dist tarball's top-level directory uses the full, hyphenated
-# FULLVERSION (matching this fork's real release-tag naming), not the
-# RPM-sanitized %{version} -- tell %setup the real directory name.
+# What: Unpack into the tarball's real top-level directory.
+# Why: The dist tarball dir uses FULLVERSION, not Version.
+# From: PR #47, PR #544
 %setup -n %{NAME}-%{FULLVERSION}
 
 %build
-# Work around broken sendfile in 32 bit apps on some x86_64 systems
+# What: Configure without sendfile.
+# Why: sendfile is broken for 32-bit apps on some x86_64.
 ac_cv_func_sendfile=no ac_cv_header_sys_sendfile_h=no ./configure \
   --prefix=%{_prefix} \
   --bindir=%{_bindir} \
   --sysconfdir=%{_sysconfdir} \
   --datadir=%{_datadir} \
-  --with-docdir=%{_docdir} \
+  --docdir=%{_docdir} \
   --mandir=%{_mandir} \
   --enable-rfc2553
-# Get the list of files installed by the python install process
-# by asking make to tell setup.py to put it in python_install_record
+# What: Have setup.py record its installed files in a list.
+# Why: The files section is built from python_install_record.
 make RPM_OPT_FLAGS="$RPM_OPT_FLAGS" \
      PYTHON_INSTALL_RECORD=python_install_record
 
 %install
 rm -rf $RPM_BUILD_ROOT
 make DESTDIR=${RPM_BUILD_ROOT} PYTHON_INSTALL_RECORD=python_install_record install
-# The remaining configuration files are installed here rather than by
-# 'make install' because their nature and their locations are too
-# system-specific.
+# What: Install the remaining system-specific config files.
+# Why: Their names and locations are too distro-specific.
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d
 install -m 644 packaging/RedHat/logrotate.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d/distcc
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d
 install -m 644 packaging/RedHat/xinetd.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d/distcc
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/init.d
 install -m 755 packaging/RedHat/init.d/distcc $RPM_BUILD_ROOT%{_sysconfdir}/init.d/distcc
-# TODO(fergus): move the next five lines to 'make install'?
+# What: Relative masquerade symlinks cc, c++, gcc, g++.
+# Why: make install skips them; rpm warns on absolute links.
 mkdir -p $RPM_BUILD_ROOT/%{_libdir}/distcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
-ln -s %{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/cc
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/c++
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/gcc
+ln -sr $RPM_BUILD_ROOT%{_bindir}/distcc $RPM_BUILD_ROOT/%{_libdir}/distcc/g++
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -113,13 +106,9 @@ rm -rf $RPM_BUILD_ROOT
 Summary: Server side program for distributed C/C++ compilations.
 Group: Development/Languages
 Provides: distccd
-# Real Fedora/RHEL name the server package "distcc-server", not "distccd"
-# (confirmed live via `dnf repoquery` against the real Fedora repos) --
-# conflict/obsolete against that real package name. It installs the exact
-# same colliding paths this subpackage does (/usr/bin/distccd, /etc/distcc/
-# clients.allow, /etc/distcc/commands.allow.sh, /usr/lib/distcc, confirmed
-# via `dnf repoquery -l distcc-server`), so the same unversioned-collision
-# rationale as the client package's Conflicts/Obsoletes above applies here.
+# What: Conflict with and obsolete real distcc-server.
+# Why: It installs the same distccd paths at any version.
+# From: Issue #412, PR #437
 Conflicts: distcc-server
 Obsoletes: distcc-server
 Obsoletes: crosstool-distcc-server
@@ -135,9 +124,9 @@ faster than a local compile.
 %{_bindir}/distccd
 %dir %{_sysconfdir}/logrotate.d
 %config %{_sysconfdir}/logrotate.d/distcc
-# Don't list init.d dir because on Red Hat it's a symlink owned by
-# chkconfig, so it causes a conflict on install.
-#%dir %{_sysconfdir}/init.d
+# What: The init.d directory itself is not owned here.
+# Why: On Red Hat it is a chkconfig-owned symlink.
+#%%dir %%{_sysconfdir}/init.d
 %config %{_sysconfdir}/init.d/distcc
 %dir %{_sysconfdir}/xinetd.d/
 %config %{_sysconfdir}/xinetd.d/distcc
@@ -153,20 +142,17 @@ faster than a local compile.
 %post server
 DISTCC_USER=distcc
 if [ -s /etc/redhat-release ]; then
-  # sadly, can't useradd -s /sbin/nologin on rh71, since
-  # then starting the service as user distcc fails,
-  # since it uses su - without overriding the shell :-(
-  # See https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=26894
+  # What: Pick the user shell by how init functions run su.
+  # Why: su - ignores nologin; see Red Hat bug 26894.
   /sbin/service distcc stop &>/dev/null || :
   if fgrep 'nice initlog $INITLOG_ARGS -c "su - $user' /etc/init.d/functions | fgrep -v '.-s ' > /dev/null 2>&1 ; then
-    # Kludge: for Red Hat 6.2, don't use -s /sbin/nologin
-    # No -m/-d /var/run/distcc: a service user has no need for a home
-    # directory (maintainer decision, 2026-07-22) -- matches Debian's own
-    # real, independently-maintained distcc package's --home /nonexistent
-    # convention, confirmed live on a running Debian host.
+    # What: Old su: no nologin shell; home is /nonexistent.
+    # Why: A service user needs no home, like Debian's distcc.
+    # From: PR #284
     /usr/sbin/useradd -d /nonexistent -r $DISTCC_USER &>/dev/null || :
   else
-    # but do for everyone else
+    # What: Everyone else also gets the nologin shell.
+    # Why: A service account must never be a login account.
     /usr/sbin/useradd -d /nonexistent -r -s /sbin/nologin $DISTCC_USER &>/dev/null || :
   fi
 else
@@ -175,10 +161,9 @@ else
     if ! id -g $DISTCC_USER > /dev/null 2>&1 ; then
       addgroup --system --gid 11 $DISTCC_USER
     fi
-    # --home /nonexistent, not upstream's own --home /: a service user has
-    # no need for a home directory (maintainer decision, 2026-07-22) --
-    # matches Debian's own real, independently-maintained distcc package's
-    # convention, confirmed live on a running Debian host.
+    # What: Debian path: system user with home /nonexistent.
+    # Why: Matches Debian's own distcc package, not upstream /.
+    # From: PR #284
     adduser --quiet --system --gid 11 \
       --home /nonexistent --no-create-home --uid 15 $DISTCC_USER
   fi
@@ -199,7 +184,6 @@ if ! grep -q "^distcc:" /etc/hosts.allow; then
   echo -e "distcc:\t127.0.0.1" >> /etc/hosts.allow
 fi
 
-# Update runlevel settings and start daemon.
 if [ -s /etc/redhat-release ]; then
   /sbin/chkconfig --add distcc
   /etc/init.d/distcc start || exit 0
@@ -225,18 +209,17 @@ else
 fi
 
 %preun server
-# Remove hosts.allow entry.
 if grep -q "^distcc:" /etc/hosts.allow; then
   sed -e "/^distcc/d" /etc/hosts.allow > /etc/hosts.allow.new
   mv /etc/hosts.allow.new /etc/hosts.allow
 fi
 
-# Stop daemon and clear runlevel settings.
 if [ -s /etc/redhat-release ]; then
   if [ $1 -eq 0 ]; then
     /sbin/service distcc stop &>/dev/null || :
   fi
-  # chkconfig --del must run before deleting init script.
+  # What: Unregister from chkconfig before the script goes.
+  # Why: chkconfig --del needs the init script to exist.
   /sbin/chkconfig --del distcc
 else
   if [ -x "/etc/init.d/distcc" ]; then
@@ -249,12 +232,9 @@ else
 fi
 
 %postun server
-# Never remove the distcc user/group here, on Red Hat or Debian: Debian's
-# own distcc package deliberately keeps it across a purge (confirmed by
-# reading that package's real postrm on a live host, 2026-07-22 -- it
-# deletes /etc/default/distcc, log files, and the pid file on purge, but
-# has no deluser/delgroup call anywhere), and there is no reason for this
-# fork to be stricter than the package it forked from.
+# What: Never remove the distcc user or group on purge.
+# Why: Debian's own distcc keeps them; be no stricter.
+# From: PR #284
 if [ -s /etc/debian_version ]; then
   case "$1" in
     purge)
@@ -270,7 +250,8 @@ if [ -s /etc/debian_version ]; then
   esac
 
   if [ "$1" = "purge" ] ; then
-    # update-rc.d must run after deleting init script.
+    # What: Drop the runlevel links once the script is gone.
+    # Why: update-rc.d remove refuses while the script exists.
     update-rc.d distcc remove >/dev/null || exit 0
   fi
 fi

@@ -1,0 +1,166 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Consolidated CodeQL/OSV/Scorecard/fuzz scans.
+# Why: One trigger set feeds every parallel scan job.
+# From: Issue #479
+name: Security
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [current_dev, master]
+  pull_request:
+    branches: [current_dev, master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '0 5 * * 0'
+    - cron: '0 6 1,15 * *'
+  branch_protection_rule:
+
+# What: Cancel a run when a newer same-event run starts.
+# Why: schedule/ruleset runs share master with pushes.
+# From: Issue #479, PR #544
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # What: Map this run's event and cron to the jobs it runs.
+  # Why: ci.sh owns that mapping; the crons live in the SOT.
+  # From: Issue #479, PR #544
+  route:
+    name: Route scheduled jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scans: ${{ steps.route.outputs.scans }}
+      openssf: ${{ steps.route.outputs.openssf }}
+      codeql_languages: ${{ steps.route.outputs.codeql_languages }}
+      cfl_sanitizers: ${{ steps.route.outputs.cfl_sanitizers }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: route
+        run: bash .github/scripts/ci.sh route security
+
+  codeql:
+    name: Analyze (${{ matrix.language }})
+    needs: route
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.route.outputs.codeql_languages) }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh scan codeql "${{ matrix.language }}" "codeql-${{ matrix.language }}.sarif"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload "codeql-${{ matrix.language }}.sarif"
+
+  osv-scan:
+    name: OSV scan
+    needs: route
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      security-events: write
+      contents: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh scan osv osv-results.sarif
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload osv-results.sarif
+
+  scorecard:
+    name: Scorecard analysis
+    needs: route
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: scorecard
+        env:
+          GITHUB_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan scorecard results.sarif
+      - if: steps.scorecard.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.scorecard.outputs.artifact_name }}
+          path: ${{ steps.scorecard.outputs.artifact_path }}
+          retention-days: ${{ steps.scorecard.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.scorecard.outputs.artifact_if_missing }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh scan sarif-upload results.sarif
+
+  clusterfuzzlite:
+    name: ClusterFuzzLite fuzzing
+    needs: route
+    # What: Scan unless route decided "no scans" for this run.
+    # Why: A failed route has no output; it never skips a scan.
+    # From: Issue #479, PR #544
+    if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: ${{ fromJSON(needs.route.outputs.cfl_sanitizers) }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: relevant
+        run: bash .github/scripts/ci.sh impact-hit fuzz
+      - if: steps.relevant.outputs.hit == 'true'
+        name: Build fuzzers (${{ matrix.sanitizer }})
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-build "${{ matrix.sanitizer }}"
+      - if: steps.relevant.outputs.hit == 'true'
+        id: fuzz
+        name: Run fuzzers (${{ matrix.sanitizer }})
+        run: bash .github/scripts/ci.sh scan clusterfuzzlite-run "${{ matrix.sanitizer }}"
+      - if: always() && steps.fuzz.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.fuzz.outputs.artifact_name }}
+          path: ${{ steps.fuzz.outputs.artifact_path }}
+          retention-days: ${{ steps.fuzz.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.fuzz.outputs.artifact_if_missing }}
+
+  openssf:
+    name: OpenSSF Baseline recheck
+    needs: route
+    if: needs.route.outputs.openssf == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+        run: bash .github/scripts/ci.sh scan openssf

@@ -19,15 +19,15 @@ Stated 2026-09-10: the filesystem jail explored in Issue #289 has not yet been i
 
 ## Authority and AGENTS.md
 
-`AGENTS.md` Rule 0 applies at all times.
+`AGENTS.md` `[AG-LAW-001]` applies at all times.
 
 Compliance with this checklist MUST NOT be interpreted as compliance with only the rules referenced by an individual check. Every affected file, artifact, generated output, behavior, test environment, workflow, package, and the complete change MUST still satisfy every applicable rule in `AGENTS.md`.
 
 Passing one checklist item, one checklist section, or this checklist as a whole MUST NOT be used to bypass, weaken, replace, or omit any independently applicable `AGENTS.md` requirement.
 
-The authoritative `AGENTS.md` is the complete copy from `current_dev`. It MUST be read as required by `AGENTS.md` Rules 83 and 84 before work governed by it is performed.
+The authoritative `AGENTS.md` is the complete copy from `current_dev`. It MUST be read as required by `AGENTS.md` `[AG-LAW-005]` before work governed by it is performed.
 
-Verification evidence MUST satisfy the current `AGENTS.md` evidence requirements. In particular, evidence cited as actual verification MUST run in `ghcr.io/wiki-mod/distcc-ng-buildtools` or in the repository's actual CI when required by `AGENTS.md` Rule 87. A host-local, WSL2, ad hoc, or substitute environment MAY be used for non-authoritative development iteration where permitted, but MUST NOT be represented as qualifying verification evidence when Rule 87 applies.
+Verification evidence MUST satisfy the current `AGENTS.md` evidence requirements. In particular, evidence cited as actual verification MUST run in `ghcr.io/wiki-mod/distcc-ng-buildtools` or in the repository's actual CI when required by `AGENTS.md` `[AG-VAL-003]`. A host-local, WSL2, ad hoc, or substitute environment MAY be used for non-authoritative development iteration where permitted, but MUST NOT be represented as qualifying verification evidence when `[AG-VAL-003]` applies.
 
 ## Normative language
 
@@ -226,11 +226,11 @@ The cut MUST use the normal throwaway promotion flow. `current_dev` itself MUST 
 
 The release branch MUST NOT become a development branch.
 
-A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix, as required by `AGENTS.md` Rule 70.
+A problem discovered during release verification MUST be fixed through the normal `current_dev` development flow rather than by adding a release-only fix, as required by `AGENTS.md` `[AG-REL-004]`.
 
-Once the fix has reached `current_dev`, the release branch MUST be re-cut fresh from `current_dev`'s updated tip per Rule 70, rather than developed further on the already-cut branch.
+Once the fix has reached `current_dev`, the release branch MUST be re-cut fresh from `current_dev`'s updated tip per `[AG-REL-004]`, rather than developed further on the already-cut branch.
 
-The existing release branch MUST NOT be force-pushed or deleted. How a required re-cut is reconciled with that constraint for a specific release is an explicit maintainer decision under Rule 70 and MUST NOT be pre-canonicalized here as a fixed mechanism.
+The existing release branch MUST NOT be force-pushed or deleted. How a required re-cut is reconciled with that constraint for a specific release is an explicit maintainer decision under `[AG-REL-004]` and MUST NOT be pre-canonicalized here as a fixed mechanism.
 
 **Verification:** See `REL-PRECUT-07`, `REL-PRECUT-08`, and `REL-PRECUT-10`.
 
@@ -334,7 +334,7 @@ Opening the release PR triggers the repository's normal `pull_request` CI.
 
 That CI MUST NOT be treated as evidence that the release-specific RPM, DEB, source archives, SBOM, attestations, or release container artifacts have been built or verified.
 
-The release PR alone does not trigger `.github/workflows/package-release.yml`.
+The release PR alone does not trigger `.github/workflows/release.yml`.
 
 **Verification:** See `REL-GOV-01`, `REL-CI-01`, and the applicable `REL-ART-*` items.
 
@@ -346,9 +346,10 @@ The release PR alone does not trigger `.github/workflows/package-release.yml`.
 
 Canonical invocation:
 
-    gh workflow run package-release.yml \
+    gh workflow run release.yml \
       --repo wiki-mod/distcc-ng \
       --ref release/X.Y.Z-NG \
+      -f tag=vX.Y.Z-NG \
       -f publish_container=false
 
 `publish_container=false` MUST be used when container publication is not required by the applicable verification.
@@ -361,7 +362,7 @@ The resulting workflow run MUST be recorded in the release PR.
 
 ### **POL-RELEASE-06** Run the release-version guardrail
 
-**Requirement:** `scripts/check-release-version.sh` MUST be executed before the release tag is created.
+**Requirement:** `.github/scripts/ci.sh release version-check` MUST be executed before the release tag is created.
 
 The guardrail MUST fail closed when:
 
@@ -376,17 +377,17 @@ A release MUST NOT proceed to tagging while either condition is true.
 
 **Requirement:** After all applicable pre-tag release requirements pass, `vX.Y.Z-NG` MUST be created on the selected release branch HEAD.
 
-The tag push triggers `package-release.yml`.
+The tag push triggers `release.yml`.
 
 The tag-triggered workflow builds and publishes the real release.
 
-When its `publish_github_release` stage publishes the GitHub Release, the resulting GitHub `release` event drives the release-event automation used by `changelog-update-on-release.yml`.
+When its `publish_github_release` stage publishes the GitHub Release, the resulting GitHub `release` event drives the release-event automation used by `release.yml`'s `update_changelog` job.
 
 **Verification:** See `REL-CI-03`, `REL-ART-*`, and `REL-CI-04`.
 
 ### **POL-RELEASE-08** Automated changelog finalization
 
-**Requirement:** `changelog-update-on-release.yml` MUST move the released content from `CHANGELOG.md`'s `[Unreleased]` section into a new dated:
+**Requirement:** `release.yml`'s `update_changelog` job MUST move the released content from `CHANGELOG.md`'s `[Unreleased]` section into a new dated:
 
 `## [X.Y.Z-NG] - YYYY-MM-DD`
 
@@ -434,7 +435,7 @@ Therefore, merging only the frozen release candidate state can omit the later ch
 
 **Requirement:** The actual release promotion MUST explicitly account for the post-tag changelog commit as required by `REL-PROMO-04`.
 
-This MUST NOT be routed around by convention each release. It requires the maintainer's own explicit, justified exception for how that specific release resolves it, applying Rule 70's own "release branch is frozen, patch `current_dev` instead" principle. The resolution MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
+This MUST NOT be routed around by convention each release. It requires the maintainer's own explicit, justified exception for how that specific release resolves it, applying `[AG-REL-004]`'s own "release branch is frozen, patch `current_dev` instead" principle. The resolution MUST be explicitly recorded and MUST satisfy the current `AGENTS.md` release-branch and promotion rules.
 
 PR #461 and PR #463 are real precedents showing one historical resolution path.
 
@@ -444,11 +445,11 @@ They MUST NOT be treated as an automatic template or standing authorization for 
 
 ### **POL-GUARD-01** Existing release tag
 
-**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `vX.Y.Z-NG` already exists) and MUST NOT be maintained as an independent definition here.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `.github/scripts/ci.sh release version-check` check that refuses tagging when `vX.Y.Z-NG` already exists) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-02** Version and tag mismatch
 
-**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `scripts/check-release-version.sh` check that refuses tagging when `configure.ac`'s `AC_INIT` version does not exactly match the intended tag) and MUST NOT be maintained as an independent definition here.
+**Requirement:** This fail-closed guardrail is defined by `POL-RELEASE-06` (the `.github/scripts/ci.sh release version-check` check that refuses tagging when `configure.ac`'s `AC_INIT` version does not exactly match the intended tag) and MUST NOT be maintained as an independent definition here.
 
 ### **POL-GUARD-03** `master` approval
 
@@ -569,7 +570,7 @@ Relevant examples include CodeQL `cpp/world-writable-file-creation` fixes, tempo
 
 **Invalid evidence:** Windows-hosted WSL2 `/mnt/c/...` through 9p or DrvFs, because that environment can ignore the mode and umask behavior being tested.
 
-A native WSL ext4 filesystem can exercise the filesystem semantic itself, but MUST NOT be cited as qualifying verification evidence when `AGENTS.md` Rule 87 requires the buildtools container or actual CI.
+A native WSL ext4 filesystem can exercise the filesystem semantic itself, but MUST NOT be cited as qualifying verification evidence when `AGENTS.md` `[AG-VAL-003]` requires the buildtools container or actual CI.
 
 ### **VER-PERM-02** Real second-user access test
 
@@ -747,7 +748,7 @@ RPM and `alien` shared-library dependency detection can generate dependencies au
 
 **Procedure:**
 
-`gh workflow run package-release.yml --ref <branch> -f publish_container=false`
+`gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z-NG -f publish_container=false`
 
 The resulting artifact can be downloaded through:
 
@@ -779,7 +780,7 @@ Relevant changes include `src/arg.c`'s `dcc_scan_args()`, host selection, fallba
 
 **Pass criteria:** The server's own independent log confirms the expected remote compile behavior.
 
-`test/e2e/run-e2e.sh` demonstrates the relevant pattern by checking server-side `COMPILE_OK` entries associated with the client subnet address.
+`ci.sh e2e` implements this check: it counts server-side `COMPILE_OK` entries from the client network against a floor set per mode in `build-manifest.yml`.
 
 **Invalid evidence:** The client alone claiming that the compile was remote.
 
@@ -1190,7 +1191,7 @@ After PR #406 added `PathQualifiedCompilerNotSubstituted_Case`, the correspondin
 
 `--user` was adopted because it requires no image rebuild and works with the exact unmodified published image.
 
-**References:** Issue #264, Issue #286, PR #405, PR #406, `.github/workflows/verify-image-build.yml`.
+**References:** Issue #264, Issue #286, PR #405, PR #406, `.github/workflows/validate.yml` (`verify_image` job).
 
 ### **VER-CONTAINER-03** Explicit container-internal HOME
 
@@ -1237,7 +1238,7 @@ when no matching entry exists, even when `-f` is supplied.
 
 This surfaced through `SSHMode_Case`.
 
-**References:** `.github/workflows/verify-image-build.yml`, `CONTRIBUTING.md`.
+**References:** `.github/workflows/validate.yml` (`verify_image` job), `CONTRIBUTING.md`.
 
 ### **VER-CONTAINER-05** Rootless Docker status and interpretation
 
@@ -1444,7 +1445,7 @@ A branch name or moving tag MUST NOT be the only provenance identifier.
 
 For `popt/`, the SHA MUST be recorded in `popt/POPT_VERSION`.
 
-The corresponding CI verification, currently `popt_vendor_check` in `c-build.yml`, MUST use the exact same value.
+The corresponding CI verification, currently `ci.sh`'s `popt-vendor` build variant (`_ci_popt_cve_fingerprint_check` against `external_versions.popt_vendor.version` in `.github/yaml/build-manifest.yml`), MUST use the exact same value.
 
 **Failure condition:** Updating the marker without updating the check can break CI. Loosening the check instead of keeping exact equality can silently stop provenance verification and MUST NOT be used as a workaround.
 
@@ -1647,6 +1648,64 @@ For Alpine, an explicit source rename such as `localname::url` can establish the
 
 **References:** Issue #398 Thread A, PR #515.
 
+## CI engine and governance guard changes
+
+This section applies when `.github/scripts/ci.sh`, `.github/scripts/ci.bats`, `.github/yaml/build-manifest.yml`, a workflow under `.github/workflows/`, or a `ci.sh lint` guard changes.
+
+### **VER-CI-01** Real CI on the pushed branch tip
+
+**Applies when:** A change in this section's scope is verified.
+
+**Requirement:** `Validate` and `Security` MUST succeed on the exact commit that is the pushed branch tip.
+
+**Procedure:** Read the run conclusions for the tip SHA, for example `gh run list --repo wiki-mod/distcc-ng --commit <sha>`.
+
+**Pass criteria:** Both runs report `success` for that SHA.
+
+**Invalid evidence:** A run on an earlier commit, a cancelled run, or a local or throwaway-container run.
+
+**References:** Issue #479, PR #544, `AGENTS.md` `[AG-VAL-003]`, `[AG-WF-017]`.
+
+### **VER-CI-02** Red path of every new or changed guard and structural test
+
+**Applies when:** A `ci.sh lint` guard or a `ci.bats` test that checks workflow or engine structure is added or changed.
+
+**Requirement:** A deliberate violation MUST make the guard or test fail, and the failure MUST name the violation.
+
+**Procedure:** In a scratch copy, introduce one violation per guarded property, for example a removed job gate, a rerouted `ci.sh` command, a misrouted dispatch arm, or a banned text, and run the guard or test.
+
+**Pass criteria:** Each violation turns the guard or test red with its own error id or message; the unmodified tree stays green.
+
+**Invalid evidence:** A green run alone; a fixture that itself accepts the construct the guard forbids; a fixture that hides the construct from the guard by splitting or encoding it.
+
+**References:** Issue #479, PR #544.
+
+### **VER-CI-03** Exit status and raw output are reported as they are
+
+**Applies when:** A command result is evaluated by `ci.sh` or by a verification run cited as evidence.
+
+**Requirement:** A non-zero exit status MUST NOT be turned into success, and the raw output of a failed command MUST be shown.
+
+**Procedure:** Report each command's own exit status; keep the complete raw log and cite it; distinguish "no match" from a tool error by the tool's documented exit statuses, not by treating status 1 as success.
+
+**Pass criteria:** Every cited result carries its real exit status and a raw log location.
+
+**Invalid evidence:** `|| [ "$?" -eq 1 ]`, `|| true` or `2>/dev/null` on a required command; a pipeline whose exit status is that of a filter; a log filtered to the passing lines.
+
+**References:** Issue #479, PR #544, `AGENTS.md` `[AG-INT-003]`, `[AG-VAL-001]`.
+
+### **VER-CI-04** Paths a pull request run cannot reach
+
+**Applies when:** A changed path runs only on a schedule, a tag push, a `release` event, or a dispatch from `master`.
+
+**Requirement:** Each such path MUST be recorded as not exercised by the pull request's CI, together with the `ci.bats` tests that cover its decision logic.
+
+**Pass criteria:** The verification record names every such path and its covering tests.
+
+**Invalid evidence:** Counting a green pull request run as coverage of a path it never started.
+
+**References:** Issue #479, PR #544.
+
 # Release readiness
 
 The release checks below are additional release gates. They do not replace any applicable `VER-*` check.
@@ -1671,21 +1730,21 @@ A release MUST execute the applicable development and behavioral checks for ever
 
 ### **REL-GOV-03** Final AGENTS.md self-check
 
-**Requirement:** A final `AGENTS.md` self-check required by Rule 78(c) MUST be performed.
+**Requirement:** A final `AGENTS.md` self-check required by `[AG-WF-017]`'s self-audit gate MUST be performed.
 
 At minimum it MUST include:
 
-* tracking metadata under Rule 3;
-* PR scope under Rule 58;
-* comment style under Rules 38 through 42;
-* real validation evidence under Rules 31 through 37;
-* support-upstream handling under Rule 57.
+* tracking metadata under `[AG-GH-002]`;
+* PR scope under `[AG-WF-014]`;
+* comment style under `[AG-CODE-001]` through `[AG-CODE-003]`;
+* real validation evidence under `[AG-INT-001]`, `[AG-INT-003]`, `[AG-VAL-001]` and `[AG-VAL-003]` through `[AG-VAL-006]`;
+* support-upstream handling under `[AG-UP-001]`.
 
 **Invalid evidence:** Assuming the release complies because its task-specific checks passed.
 
 ### **REL-GOV-04** Independent release PR review
 
-**Requirement:** An independent review of the finished release PR required by Rule 78(a) MUST be performed.
+**Requirement:** An independent review of the finished release PR required by `[AG-WF-017]`'s independent-review gate MUST be performed.
 
 It MUST be distinct from `REL-GOV-03`.
 
@@ -1731,7 +1790,7 @@ The decision MUST identify what is accepted and why.
 
 ### **REL-PRECUT-04** Release-version script
 
-**Requirement:** `scripts/check-release-version.sh` MUST be executed against the intended tag.
+**Requirement:** `.github/scripts/ci.sh release version-check` MUST be executed against the intended tag.
 
 **Invalid evidence:** Reading `configure.ac` and concluding that `AC_INIT` looks correct.
 
@@ -1748,13 +1807,13 @@ The decision MUST identify what is accepted and why.
 
 **Invalid evidence:** CI green alone.
 
-**Reference:** `AGENTS.md` Rule 58.
+**Reference:** `AGENTS.md` `[AG-WF-014]`.
 
 ### **REL-PRECUT-06** Default-branch release-event workflow parity
 
 **Requirement:** `master`'s copy of every workflow whose `release:` event is required for publication or post-publication automation MUST match the required `current_dev` behavior before tagging.
 
-This includes `changelog-update-on-release.yml` and any workflow behavior that `package-release.yml` relies on for release publication identity or related release-event processing.
+This includes `release.yml`'s `update_changelog` job and any other workflow behavior it relies on for release publication identity or related release-event processing.
 
 **Recorded behavior:** GitHub evaluates the relevant `release` event workflow from the repository's default branch, which is `master`, rather than taking that workflow definition from the newly created tag.
 
@@ -1768,7 +1827,7 @@ Issue #460 and PR #467 established that a stale `master` copy can silently preve
 
 Example:
 
-`gh workflow run changelog-update-on-release.yml --repo wiki-mod/distcc-ng --ref current_dev -f tag_name=... -f release_notes=...`
+`bash .github/scripts/ci.sh publish changelog <tag> <notes-file>` (run manually against a checked-out current_dev to retry)
 
 An unqualified `gh workflow run` uses the workflow definition selected from the default branch unless another ref is explicitly supplied.
 
@@ -1900,7 +1959,7 @@ A real CI-built package SHOULD be used because local and CI builds can differ in
 
 The real packaging workflow can be dispatched before a tag with:
 
-`gh workflow run package-release.yml --ref <branch> -f publish_container=false`
+`gh workflow run release.yml --ref <branch> -f tag=vX.Y.Z-NG -f publish_container=false`
 
 **Invalid evidence:** `ldd` against only a local development binary.
 
@@ -1969,7 +2028,7 @@ An `N/A` classification MUST state why its trigger does not apply and SHOULD ide
 
 ### **REL-ART-11** Published-stage identity after build-definition changes
 
-**Applies when:** Any `docker/**/Dockerfile` or `package-release.yml` changed.
+**Applies when:** Any `docker/**/Dockerfile` or `release.yml` changed.
 
 **Requirement:** Published-stage identity MUST be reconfirmed through the registry API for every affected Dockerfile target.
 
@@ -2030,11 +2089,11 @@ If the release PR CI is `Failed` or `Blocked`, the release branch relationship c
 
 ### **REL-CI-03** Real tag-triggered package release run
 
-**Requirement:** The actual tag-triggered `package-release.yml` run for the pushed tag MUST exist and MUST succeed.
+**Requirement:** The actual tag-triggered `release.yml` run for the pushed tag MUST exist and MUST succeed.
 
 ### **REL-CI-04** Published-release changelog event
 
-**Requirement:** The `release: types: [published]` event MUST actually trigger `changelog-update-on-release.yml` for the real tag.
+**Requirement:** The `release: types: [published]` event MUST actually trigger `release.yml`'s `update_changelog` job for the real tag.
 
 This item cannot pass while `REL-PRECUT-06` fails because stale default-branch workflow content can prevent the event processing required by the release.
 
@@ -2066,7 +2125,7 @@ A change belonging to an already shipped release MUST NOT remain stranded under 
 
 Approval from an earlier promotion or another PR MUST NOT be reused.
 
-**References:** `AGENTS.md` Rule 21 and the current replacement status of Rule 52.
+**References:** `AGENTS.md` `[AG-WF-007]`.
 
 ### **REL-PROMO-02** Read actual promotion commit range
 
@@ -2082,7 +2141,7 @@ Approval from an earlier promotion or another PR MUST NOT be reused.
 
 ### **REL-PROMO-04** Account for automated changelog commit
 
-**Requirement:** The automated `changelog-update-on-release.yml` commit defined by `POL-RELEASE-08` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
+**Requirement:** The automated `release.yml`'s `update_changelog` job commit defined by `POL-RELEASE-08` MUST actually land on `current_dev`, and its content MUST be explicitly accounted for in the release's real promotion to `master`.
 
 The frozen release branch cannot receive that post-release commit by design.
 
@@ -2191,7 +2250,7 @@ The checklist MUST NOT claim full recertification while any applicable recertifi
 ### **RECERT-02** Authority and governance
 
 * [ ] Current `AGENTS.md` read in full from the recorded `current_dev` SHA.
-* [ ] Rule 0 relationship remains correct.
+* [ ] `[AG-LAW-001]` relationship remains correct.
 * [ ] Current verification-evidence environment rules remain correctly represented.
 * [ ] Current release governance rules remain correctly represented.
 * [ ] No checklist wording conflicts with a newer `AGENTS.md` rule.
