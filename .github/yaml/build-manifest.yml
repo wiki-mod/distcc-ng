@@ -327,12 +327,11 @@ verify:
     # From: Issue #275, Issue #440
     ssh: "openssh-server openssh-client"
 
-# What: Engine self-test packages and dependency-bump bots.
-# Why: Bots skip PR metadata checks; AG-VAL-007 reviews them.
+# What: Engine self-test packages and the engine's actions.
+# Why: ci.bats needs bats; uses: steps mirror these pins.
 # From: Issue #479, PR #544
 ci_engine:
   selftest_apt: "bats parallel"
-  dependency_bots: ["dependabot[bot]", "github-actions[bot]"]
   # What: The only actions a workflow may use; transport only.
   # Why: Cache/artifact APIs need a token run: steps never get.
   # From: Issue #479, PR #544

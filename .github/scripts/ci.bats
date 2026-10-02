@@ -43,10 +43,6 @@ _forbid() {
     done
 }
 
-# =========================================================
-# DISPATCH
-# =========================================================
-
 @test "unknown subcommand fails closed with a stable id" {
     # What: An unknown command MUST never succeed.
     # Why: Fail-closed dispatch is mandatory.
@@ -64,10 +60,6 @@ _forbid() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0003"* ]]
 }
-
-# =========================================================
-# SOT READERS
-# =========================================================
 
 @test "sot scalar reads a scalar at any nesting depth" {
     # What: The awk reader follows dotted paths of any depth.
@@ -177,10 +169,6 @@ _forbid() {
     [ "$(_ci_sot_children a)" = "$(printf 'b\nc')" ]
 }
 
-# =========================================================
-# PARALLELISM
-# =========================================================
-
 @test "job count never drops below the floor of 16" {
     # What: bats parallelism = max(16, nproc*2).
     # Why: Serial runs are forbidden; the floor is a guard.
@@ -231,10 +219,6 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
 }
 
-# =========================================================
-# PHASES
-# =========================================================
-
 @test "pr-title accepts a valid Conventional-Commit title" {
     # What: A conforming title passes even in block mode.
     # Why: Proves the green path of the AG-GH-014 taxonomy.
@@ -269,7 +253,7 @@ _forbid() {
     printf '**[AG-GH-014]** titles; allowed types MUST remain none; done\n' > "${fx}/AGENTS.md"
     CI_REPO_ROOT="${fx}" run _ci_title_taxonomy types
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0006"* ]]
     CI_REPO_ROOT="${fx}" run _ci_title_taxonomy scopes
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
@@ -284,12 +268,13 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
-@test "pr-title exempts dependabot" {
-    # What: dependabot titles are skipped, not failed.
-    # Why: It cannot conform; the gate must see an explicit pass.
-    # From: Issue #479
+@test "pr-title holds a dependency bot to AG-GH-014 too" {
+    # What: A bot's non-conforming title fails in block mode.
+    # Why: AG-GH-014 has no author exemption.
+    # From: Issue #479, PR #544
     PR_AUTHOR="dependabot[bot]" PR_TITLE="Bump foo from 1 to 2" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
-    [ "${status}" -eq 0 ]
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
 @test "board add passes its token to gh but never prints it" {
@@ -328,15 +313,22 @@ _forbid() {
     [ "${output}" = $'distcc-1.tar.gz\npackaging/a.deb' ]
 }
 
-@test "the SOT refresh bot is exempt from PR tracking metadata" {
-    # What: github-actions[bot] PRs skip labels/milestone/board.
-    # Why: The sot-update PR has no milestone; AG-VAL-007 reviews.
+@test "a bot PR needs tracking metadata and a changelog too" {
+    # What: Bot PRs fail tracking and changelog like any PR.
+    # Why: AG-GH-002 and AG-REL-002 name no author exemption.
     # From: Issue #479, PR #544
-    PR_AUTHOR="github-actions[bot]" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"dependency bot github-actions[bot]"* ]]
-    PR_AUTHOR="someone" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
-    [ "${status}" -eq 1 ]
+    local a
+    for a in "github-actions[bot]" "dependabot[bot]"; do
+        PR_AUTHOR="${a}" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
+        [ "${status}" -eq 1 ]
+        [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
+        # What: Stub the diff owner as a change without CHANGELOG.
+        # Why: The changelog check must fail for the bot as well.
+        _ci_changed_paths() { printf '%s\n' .github/yaml/build-manifest.yml; }
+        PR_AUTHOR="${a}" PR_LABELS="dependencies" BASE=b HEAD=h run _ci_check_changelog
+        [ "${status}" -eq 1 ]
+        [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0001"* ]]
+    done
 }
 
 @test "tracking passes with labels and a milestone" {
@@ -1347,6 +1339,37 @@ _forbid() {
     [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "NotMet" ]
 }
 
+@test "OpenSSF local checks give no verdict on a tool error" {
+    # What: git, awk or grep failing in a check is no verdict.
+    # Why: A failed tool must never read as Met or NotMet.
+    # From: Issue #312, Issue #479, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}"
+    cd "${fx}"
+    # What: Stub git as failing.
+    # Why: QA-05 must not read a git error as no binaries.
+    git() { return 128; }
+    run _ci_ossf_verdict _ci_ossf_check_qa05
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
+    unset -f git
+    run _ci_ossf_verdict _ci_ossf_check_ac04
+    [ "${status}" -eq 2 ]
+    run _ci_ossf_verdict _ci_ossf_check_br01
+    [ "${status}" -eq 2 ]
+    run _ci_ossf_verdict _ci_ossf_check_br05_do06
+    [ "${status}" -eq 2 ]
+    run _ci_ossf_verdict grep -rq "ci.sh attest release" .github/workflows/
+    [ "${status}" -eq 2 ]
+    # What: Stub gh: valid ruleset call, broken JSON body.
+    # Why: A jq parse error must not read as NotMet.
+    gh() { echo 'not json'; }
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_ac03 7
+    [ "${status}" -eq 2 ]
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
+    [ "${status}" -eq 2 ]
+}
+
 @test "ossf verdict: Met, NotMet, and a tool error is no verdict" {
     # What: rc 0 is Met, rc 1 NotMet, any other rc an error.
     # Why: A missing file once read as a NotMet finding.
@@ -1509,11 +1532,10 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e:failure"* ]]
     JOBS="build=" run ci_cmd_gate
     [ "${status}" -eq 2 ]
+    JOBS="$(printf 'build=success\ne2e=unknown\n')" run ci_cmd_gate
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e=unknown"* ]]
 }
-
-# =========================================================
-# IMPACT (DEFAULT=NOOP)
-# =========================================================
 
 @test "impact: a docs-only diff selects nothing (NOOP)" {
     # What: A .md edit MUST NOT trigger any gated job.
@@ -1703,10 +1725,6 @@ _forbid() {
     run _ci_title_type 'fix stuff'
     [ "${status}" -eq 1 ]
 }
-
-# =========================================================
-# GOVERNANCE GUARDS (green + red)
-# =========================================================
 
 @test "line-endings guard passes on an LF-only tree" {
     # What: An LF-only fixture must pass the guard.
@@ -1932,7 +1950,7 @@ _forbid() {
 }
 
 @test "comment guard passes standard blocks, directives and heredocs" {
-    # What: Standard blocks, directives, banners, heredocs pass.
+    # What: Standard blocks, directives and heredocs pass.
     # Why: Heredoc text and tool directives are not prose.
     # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
@@ -1940,11 +1958,15 @@ _forbid() {
     printf '%s\n' '#!/usr/bin/env bash' '# distcc-ng (https://github.com/wiki-mod/distcc-ng)' \
         '# SPDX-License-Identifier: GPL-2.0-or-later' '# shellcheck shell=bash' \
         '# What: Do a thing.' '# Why: A reason.' '# From: Issue #1' 'x=1' \
-        '# ====' '# SECTION' '# ====' "cat ${hd}'EOF'" '# a markdown heading' 'EOF' \
+        "cat ${hd}'EOF'" '# a markdown heading' 'EOF' \
         "grep -q x ${hd}${hd:0:1} \"\${y}\"" '    # What: Indented.' '    # Why: Also fine.' 'y=2' \
         > "${fx}/.github/a.sh"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 0 ]
+    printf '%s\n' '#!/usr/bin/env bash' '# ====' '# SECTION' '# ====' 'x=1' > "${fx}/.github/a.sh"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"a.sh:3: not a What/Why/From line"* ]]
 }
 
 @test "directive guard fails on each AG-INT-006 text" {
@@ -2106,10 +2128,6 @@ _forbid() {
     [[ "${output}" == *"wf.yml:7: uses: input is not a ci.sh step output"* ]]
 }
 
-# =========================================================
-# EXECUTION OWNERS (argv capture, no real docker)
-# =========================================================
-
 # What: docker stub that records its argv, one arg per line.
 # Why: Owner tests assert the exact flags, not a real daemon.
 # From: Issue #479, PR #544
@@ -2254,10 +2272,6 @@ _capture_docker() {
     run _ci_expect_output t '!needle' echo hay
     [ "${status}" -eq 0 ]
 }
-
-# =========================================================
-# TOOL FETCH + HARDEN RUNNER
-# =========================================================
 
 # What: curl stub that copies fixture file $1 to every -o.
 # Why: Fetch tests need a deterministic, offline download.
@@ -2425,9 +2439,14 @@ _fake_osv() {
     # What: Stub the PR range as abc..def.
     # Why: The gate reads the base SOT at the base.
     _ci_event_range() { printf '%s\n' abc def; }
-    # What: Stub git show to print the base SOT.
+    # What: Stub git: the base has a SOT; show prints it.
     # Why: The base side must use OSV_BASE_SOT.
-    git() { case "$*" in *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;; esac; }
+    git() {
+        case "$*" in
+            *" ls-tree "*) [ -n "${OSV_GIT_FAIL:-}" ] && return 128; printf '%s\n' .github/yaml/build-manifest.yml ;;
+            *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;;
+        esac
+    }
     # What: Stub ids: head SOT and base SOT sets.
     # Why: The gate must fail only on head-added ids.
     _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
@@ -2505,6 +2524,25 @@ _fake_osv() {
     OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"OSV PR gate NotRun"* ]]
+    OSV_GIT_FAIL=1 OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 1 ]
+    [[ "${output}" != *"NotRun"* ]]
+}
+
+@test "OSV run keeps findings 1-126 and fails on a scanner error" {
+    # What: rc 1-126 means findings; rc 127 and above is an error.
+    # Why: osv-scanner v2.6.0 docs/output.md:796-798 say so.
+    # From: Issue #267, Issue #479, PR #544
+    local bin="${BATS_TEST_TMPDIR}/osv"
+    printf '%s\n' '#!/bin/sh' 'exit "${OSV_RC}"' > "${bin}"
+    chmod +x "${bin}"
+    OSV_RC=1 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    [ "${status}" -eq 0 ]
+    OSV_RC=127 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SCAN-0002"*"exit=127"* ]]
+    OSV_RC=128 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    [ "${status}" -eq 2 ]
 }
 
 @test "attest predicate has the actions/attest SLSA v1 shape" {

@@ -6,10 +6,6 @@
 # From: Issue #479
 set -euo pipefail
 
-# =========================================================
-# CONSTANTS
-# =========================================================
-
 # What: Absolute directory of this script, if it has one.
 # Why: curl|bash bootstrap has no BASH_SOURCE; must not crash.
 # From: Issue #479
@@ -56,10 +52,6 @@ CI_OWNED_DIRS=".github docker test/e2e .clusterfuzzlite"
 # From: Issue #479
 CI_COMMANDS="checkout plan route impact impact-hit build cache test e2e scan lint selftest metadata package container publish release gc report gate verify variables install harden workload image sot-update attest"
 
-# =========================================================
-# LOGGING / EXIT HANDLING
-# =========================================================
-
 # What: Emit one log line with a stable, greppable id.
 # Why: Every message MUST carry a unique id for triage.
 # From: Issue #479
@@ -97,10 +89,6 @@ ci_require_manifest() {
     ci_log "[CI-ERROR-CORE-0003]" "manifest=\"${CI_MANIFEST}\" reason=\"manifest not found\""
     return 2
 }
-
-# =========================================================
-# SOT READERS (awk only; no yq/jq/python)
-# =========================================================
 
 # What: Walk the SOT to a dotted path; exit 3 if absent.
 # Why: One path walker for value, children and set modes.
@@ -223,10 +211,6 @@ _ci_sot_set() {
     rm -f "${tmp}"
 }
 
-# =========================================================
-# PATH CLASSIFICATION (impact)
-# =========================================================
-
 # What: Match one SOT path glob to a path.
 # Why: The SOT owns the patterns; this owns matching.
 # From: Issue #479
@@ -306,10 +290,6 @@ _ci_all_phases() {
     _ci_class_phases "${classes[@]}"
 }
 
-# =========================================================
-# PARALLELISM
-# =========================================================
-
 # What: Print this host's CPU count; fail closed if unknown.
 # Why: One count for bats jobs, make -j, waf -j and distccd.
 # From: Issue #479, PR #544
@@ -346,10 +326,6 @@ _ci_mapfile() {
     [ "${_cm_rc}" -eq 0 ] || return "${_cm_rc}"
     [ -z "${_cm_out}" ] || mapfile -t _cm_ref <<< "${_cm_out}"
 }
-
-# =========================================================
-# EXECUTION (one owner each: wait, name, build, run, stack)
-# =========================================================
 
 # What: Retry a probe until it succeeds; fail after N tries.
 # Why: One bounded retry owner; probe rc >= 2 aborts at once.
@@ -414,7 +390,10 @@ _ci_run_name() {
 # From: Issue #479, PR #544
 _ci_container_logged() {
     local ctr="$1" re="$2" logs
-    logs="$(docker logs "${ctr}" 2>&1)" || return 1
+    if ! logs="$(docker logs "${ctr}" 2>&1)"; then
+        ci_error "[CI-ERROR-CONTAINER-0006]" "docker logs ${ctr} failed" "${logs}"
+        return 2
+    fi
     grep -qE -- "${re}" <<< "${logs}"
 }
 
@@ -570,10 +549,6 @@ _ci_registry_push() {
         docker push "${tag}" || return 1
     done
 }
-
-# =========================================================
-# PHASES
-# =========================================================
 
 # What: Print the paths that differ between two commits.
 # Why: One diff source for impact, impact-hit and changelog.
@@ -911,10 +886,6 @@ ci_cmd_e2e() {
             _ci_e2e_mode "${mode}" ;;
     esac
 }
-
-# =========================================================
-# IMAGES AND WORKLOADS (run inside the test containers)
-# =========================================================
 
 # What: Build into /out (binaries) and /out-pump (all).
 # Why: Vendored popt has the CVE fixes; install wires pump.
@@ -1422,10 +1393,6 @@ ci_cmd_workload() {
         *) ci_log "[CI-ERROR-WORKLOAD-0006]" "unknown workload=\"${name}\" (self-compile|ccache|samba|checkout|ptrace|fuzz-build)"; return 2 ;;
     esac
 }
-
-# =========================================================
-# PACKAGING / RELEASE
-# =========================================================
 
 # What: Build the source tarball and packages (make deb).
 # Why: A missing packaging tool fails before any build.
@@ -2046,10 +2013,6 @@ ci_cmd_gc() {
     done
 }
 
-# =========================================================
-# SOT PIN REFRESH (ci.sh owns every pin update)
-# =========================================================
-
 # What: Print the current index digest of an image tag.
 # Why: One multi-arch index digest pins every platform.
 # From: Issue #479, PR #544
@@ -2185,10 +2148,6 @@ ci_cmd_sot_update() {
     done
 }
 
-# =========================================================
-# SCHEDULED-CI STATUS REPORT
-# =========================================================
-
 # What: Print "name result" per name=result line of $1.
 # Why: Gate and report read one validated job list.
 # From: Issue #479, PR #476, PR #544
@@ -2222,10 +2181,6 @@ _ci_failed_jobs() {
     done <<< "${results}"
     printf '%s\n' "${out# }"
 }
-
-# =========================================================
-# REQUIRED-CHECK GATE (one stable name over a skippable matrix)
-# =========================================================
 
 # What: Fail if JOBS has any real failure/cancelled entry.
 # Why: Skipped jobs have no name a ruleset can require.
@@ -2384,10 +2339,6 @@ ${detail}.")" || return 1
     fi
     _ci_report_track "${new_issue_url##*/}" "${new_issue_url}"
 }
-
-# =========================================================
-# VARIABLES (workflow output helpers)
-# =========================================================
 
 # What: Append name/value pairs to GITHUB_OUTPUT.
 # Why: A multi-line value needs the delimiter form.
@@ -2567,10 +2518,6 @@ ci_cmd_variables() {
         *) ci_log "[CI-ERROR-VARIABLES-0001]" "unknown variables subcommand=\"${sub}\""; return 2 ;;
     esac
 }
-
-# =========================================================
-# SECURITY SCAN (OpenSSF Baseline recheck)
-# =========================================================
 
 # What: Print Met for check rc 0, NotMet for rc 1; else error.
 # Why: A failed tool must never pose as a NotMet finding.
@@ -2954,10 +2901,6 @@ ci_cmd_scan() {
     esac
 }
 
-# =========================================================
-# VERIFY IMAGE (buildtools/verify container)
-# =========================================================
-
 # What: Run one verify check in the local buildtools image.
 # Why: Each check is a workload; ptrace ones get the profile.
 # From: Issue #285, Issue #286, PR #528, PR #544
@@ -3057,19 +3000,6 @@ _ci_verify_ccache_redis() {
     ci_log "[CI-VERIFY]" "ccache hit in a fresh container, served by the SOT-pinned Redis"
 }
 
-# =========================================================
-# METADATA CHECKS (PR context)
-# =========================================================
-
-# What: True if PR_AUTHOR is a SOT dependency-bump bot.
-# Why: Bots cannot set milestones; AG-VAL-007 reviews them.
-# From: Issue #479, PR #544
-_ci_is_dependency_bot() {
-    local bots
-    bots="$(_ci_sot_list ci_engine.dependency_bots)" || return 2
-    grep -qxF -- "${PR_AUTHOR:-}" <<< "${bots}"
-}
-
 # What: Print AG-GH-014's allowed types or scopes.
 # Why: The rule is the one taxonomy owner; no checker copy.
 # From: Issue #479, PR #544, AG-GH-014
@@ -3090,7 +3020,7 @@ _ci_title_taxonomy() {
         return 2
     fi
     list="$(grep -o -E "\`[a-z-]+\`" <<< "${list%%;*}" | tr -d "\`" | tr '\n' ' ')" || {
-        ci_log "[CI-ERROR-META-TITLE-0005]" "[AG-GH-014] ${kind} list is empty"
+        ci_log "[CI-ERROR-META-TITLE-0006]" "[AG-GH-014] ${kind} list is empty"
         return 2
     }
     printf '%s\n' "${list% }"
@@ -3110,14 +3040,10 @@ _ci_title_type() {
 }
 
 # What: Validate a PR title against the AG-GH-014 taxonomy.
-# Why: A dependency bot titles its own PRs; it is exempt.
+# Why: Warn mode and drafts only warn; block mode fails.
 # From: Issue #479, AG-GH-014
 _ci_check_pr_title() {
     local title="${PR_TITLE:-}"
-    if _ci_is_dependency_bot; then
-        ci_log "[CI-META-TITLE]" "skipped: dependency bot ${PR_AUTHOR} sets its own title"
-        return 0
-    fi
     local mode="${PR_TITLE_LINT_MODE:-warn}" draft="${PR_DRAFT:-false}"
     if [ -z "${title}" ]; then
         ci_log "[CI-ERROR-META-TITLE-0001]" "no PR title provided"
@@ -3198,17 +3124,13 @@ _ci_check_pr_board() {
 # Why: Board fails once the PAT is configured.
 # From: Issue #479, PR #544
 _ci_check_pr_tracking() {
-    if _ci_is_dependency_bot; then
-        ci_log "[CI-META-TRACKING]" "skipped: dependency bot ${PR_AUTHOR}"
-        return 0
-    fi
     local errs=()
     local pr_labels="${PR_LABELS:-}"
     [ -n "${pr_labels//[[:space:]]/}" ] || errs+=("no labels set")
     [ -n "${PR_MILESTONE_TITLE:-}" ] || errs+=("no milestone set")
     _ci_check_pr_board || errs+=("not on project board")
     if [ "${#errs[@]}" -eq 0 ]; then
-        ci_log "[CI-META-TRACKING]" "OK: labels + milestone + board set"
+        ci_log "[CI-META-TRACKING]" "OK: labels and milestone set; board as logged above"
         return 0
     fi
     local msg="PR tracking metadata failed (AG-GH-002)" e
@@ -3225,10 +3147,6 @@ _ci_check_pr_tracking() {
 # Why: Every user-facing change needs a changelog entry.
 # From: Issue #479
 _ci_check_changelog() {
-    if _ci_is_dependency_bot; then
-        ci_log "[CI-META-CHANGELOG]" "skipped: dependency bot ${PR_AUTHOR}"
-        return 0
-    fi
     case " ${PR_LABELS:-} " in
         *" no-changelog-needed "*)
             ci_log "[CI-META-CHANGELOG]" "skipped: no-changelog-needed label"
@@ -3252,13 +3170,13 @@ _ci_metadata_fetch_live() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local json
     json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
-        --json title,labels,milestone,isDraft,author,isCrossRepository)" || return 2
-    PR_TITLE="$(printf '%s' "${json}" | jq -r '.title')"
-    PR_LABELS="$(printf '%s' "${json}" | jq -r '[.labels[].name] | join(" ")')"
-    PR_MILESTONE_TITLE="$(printf '%s' "${json}" | jq -r '.milestone.title // ""')"
-    PR_DRAFT="$(printf '%s' "${json}" | jq -r '.isDraft')"
-    PR_AUTHOR="$(printf '%s' "${json}" | jq -r '.author.login')"
-    PR_IS_FORK="$(printf '%s' "${json}" | jq -r '.isCrossRepository')"
+        --json title,labels,milestone,isDraft,isCrossRepository)" || return 2
+    PR_TITLE="$(jq -er '.title' <<< "${json}")" || return 2
+    PR_LABELS="$(jq -er '[.labels[].name] | join(" ")' <<< "${json}")" || return 2
+    PR_MILESTONE_TITLE="$(jq -er '.milestone.title // ""' <<< "${json}")" || return 2
+    PR_DRAFT="$(jq -r '.isDraft | if type == "boolean" then . else error("isDraft") end' <<< "${json}")" || return 2
+    PR_IS_FORK="$(jq -r '.isCrossRepository | if type == "boolean" then . else error("fork") end' <<< "${json}")" \
+        || return 2
 }
 
 # What: Runs metadata check(s); fetches live PR data first.
@@ -3283,10 +3201,6 @@ ci_cmd_metadata() {
     esac
     return "${rc}"
 }
-
-# =========================================================
-# GOVERNANCE GUARDS
-# =========================================================
 
 # What: Log each non-empty stdin line as one guard hit.
 # Why: Every guard reports alike; any hit fails the guard.
@@ -3326,7 +3240,7 @@ _ci_comment_violations() {
             }
             if (np > 0 && (nwhat != 1 || nwhy != 1 || nfrom > 1))
                 print F ":" pno[1] ": block needs one What, one Why, at most one From"
-            np = 0; banner = 0
+            np = 0
         }
         term != "" { if ($0 ~ ("^[ \t]*" term "$")) term = ""; next }
         {
@@ -3342,8 +3256,7 @@ _ci_comment_violations() {
                 next
             }
             if (s ~ /^#!/ || s ~ /^#[ ]*(shellcheck |syntax=|SPDX-License-Identifier:)/) next
-            if (s ~ /^#[ ]*=+[ ]*$/) { banner = !banner; next }
-            if (banner || index(s, "# distcc-ng (https://") == 1) next
+            if (index(s, "# distcc-ng (https://") == 1) next
             np++; pno[np] = NR; kind[np] = ""
             if (s ~ /^#[ ]?(What|Why|From):[ ]/) {
                 body = s; sub(/^#[ ]?/, "", body)
@@ -3405,7 +3318,7 @@ _ci_banned_shell_texts() {
         print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' <<< "${list}")" \
         || return 2
     if [ -z "${texts}" ] || [ "${list}" = "${line}" ]; then
-        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0002]" "[AG-INT-006] names no banned text"
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0003]" "[AG-INT-006] names no banned text"
         return 2
     fi
     printf '%s\n' "${texts}"
@@ -3717,10 +3630,6 @@ ci_cmd_lint() {
     return "${rc}"
 }
 
-# =========================================================
-# INSTALL (apt/brew dependency installers)
-# =========================================================
-
 # What: apt-get update+install, bounded 2x3-minute retry.
 # Why: ubuntu-latest's default mirror has hung indefinitely.
 # From: Issue #493, Issue #479
@@ -3799,10 +3708,6 @@ ci_cmd_install() {
     esac
 }
 
-# =========================================================
-# CHECKOUT (bootstrap; must not depend on the repo or SOT)
-# =========================================================
-
 # What: Fetch+checkout the triggering commit via plain git.
 # Why: No action, no SHA; ci.sh isn't on disk pre-checkout.
 # From: Issue #479
@@ -3820,10 +3725,6 @@ ci_cmd_checkout() {
     fi
     git checkout -q FETCH_HEAD
 }
-
-# =========================================================
-# BUILD-PROVENANCE ATTESTATION (cosign, GitHub attestations)
-# =========================================================
 
 # What: Print the claims of this job's GitHub OIDC token.
 # Why: The provenance predicate is built from these claims.
@@ -3946,10 +3847,6 @@ ci_cmd_attest() {
     _ci_attest_subjects "${subjects}" "${files[0]}"
 }
 
-# =========================================================
-# HARDEN RUNNER (StepSecurity agent, audit-only egress)
-# =========================================================
-
 # What: Agent home; fixed by the agent's own systemd unit.
 # Why: The unit's ExecStart/WorkingDirectory hardcode it.
 # From: Issue #479, PR #544
@@ -4056,7 +3953,7 @@ _ci_harden_start() {
         return 0
     fi
     ci_log "[CI-ERROR-HARDEN-0002]" "agent wrote no agent.status within 9s"
-    _ci_harden_agent_log "[CI-ERROR-HARDEN-0002]"
+    _ci_harden_agent_log
     return 1
 }
 
@@ -4068,7 +3965,7 @@ _ci_harden_agent_log() {
         cat "${_CI_HARDEN_DIR}/agent.log"
         return
     fi
-    ci_log "$1" "the agent wrote no agent.log"
+    ci_log "[CI-ERROR-HARDEN-0004]" "the agent wrote no agent.log"
 }
 
 # What: Signal job end, await the agent's flush, add summary.
@@ -4086,7 +3983,7 @@ _ci_harden_stop() {
     printf '{"event":"post"}' > "${_CI_HARDEN_DIR}/post_event.json"
     if ! _ci_wait_until 11 1 test -f "${_CI_HARDEN_DIR}/done.json"; then
         ci_log "[CI-ERROR-HARDEN-0003]" "agent did not confirm job end within 10s"
-        _ci_harden_agent_log "[CI-ERROR-HARDEN-0003]"
+        _ci_harden_agent_log
         return 1
     fi
     if [ "${summary}" != "true" ]; then
@@ -4113,10 +4010,6 @@ ci_cmd_harden() {
         *) ci_log "[CI-ERROR-HARDEN-0001]" "unknown harden subcommand=\"${1:-}\" (start|stop)"; return 2 ;;
     esac
 }
-
-# =========================================================
-# SECURITY TOOLS (own CLI invocations; no marketplace actions)
-# =========================================================
 
 # What: Map language+suite to a CodeQL query-pack reference.
 # Why: One mapping; callers pass only a plain suite name.
@@ -4258,7 +4151,7 @@ ci_cmd_scorecard_scan() {
 # Why: CLI-native; no osv-scanner reusable workflow.
 # From: Issue #479
 ci_cmd_osv_scan() {
-    local out="${1:-osv-results.sarif}" bin base base_sot old new added pins=0
+    local out="${1:-osv-results.sarif}" bin base base_sot base_tree old new added pins=0
     local dirs=() range=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
     _ci_mapfile dirs _ci_osv_tool_dirs || return 2
@@ -4275,7 +4168,9 @@ ci_cmd_osv_scan() {
     # From: Issue #267, Issue #479, PR #544
     base_sot="$(mktemp)" || return 1
     git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${base}" || return 1
-    if ! git -C "${CI_REPO_ROOT}" cat-file -e "${base}:.github/yaml/build-manifest.yml"; then
+    base_tree="$(git -C "${CI_REPO_ROOT}" ls-tree --name-only "${base}" -- .github/yaml/build-manifest.yml)" \
+        || return 1
+    if [ -z "${base_tree}" ]; then
         ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${base} has no SOT yet"
         return 0
     fi
@@ -4407,10 +4302,6 @@ ci_cmd_clusterfuzzlite_run() {
     fi
     return "${rc}"
 }
-
-# =========================================================
-# BUILD / TEST
-# =========================================================
 
 # What: Print the python the build uses: 3.13 if present.
 # Why: macOS make check broke on newer brew python (da6d609).
@@ -4623,10 +4514,13 @@ ci_cmd_build() {
 # From: Issue #479
 _ci_popt_fallback_smoke_test() {
     local help opt
-    help="$(./distccd --help 2>&1)"
+    if ! help="$(./distccd --help 2>&1)"; then
+        ci_error "[CI-ERROR-BUILD-POPT-0003]" "distccd --help failed" "${help}"
+        return 1
+    fi
     for opt in --jobs --nice --listen --daemon --log-file --allow --user --port; do
-        printf '%s' "${help}" | grep -qF -- "${opt}" || {
-            ci_log "[CI-ERROR-BUILD-POPT-0002]" "distccd --help missing ${opt}"
+        grep -qF -- "${opt}" <<< "${help}" || {
+            ci_error "[CI-ERROR-BUILD-POPT-0002]" "distccd --help missing ${opt}" "${help}"
             return 1
         }
     done
@@ -4774,10 +4668,6 @@ ci_cmd_test() {
     fi
     return 0
 }
-
-# =========================================================
-# DISPATCH
-# =========================================================
 
 # What: Route a subcommand to its phase function.
 # Why: One-list membership avoids a duplicated command list.
