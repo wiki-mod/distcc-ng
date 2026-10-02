@@ -161,6 +161,27 @@ _fixture_harden_state() {
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
 }
 
+# What: Sets a value with mv broken, then one on a 640 SOT.
+# Why: A half-written SOT would corrupt every later read.
+# From: Issue #479, PR #544
+@test "sot set keeps the old SOT and its mode around the rename" {
+    _fixture_manifest 'a:' '  b: "x"'
+    chmod 640 "${CI_MANIFEST}"
+    cp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
+    _fail mv 1 "mv broke"
+    run _ci_sot_set a.b "new"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"mv broke"* ]]
+    cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
+    unset -f mv
+    run _ci_sot_set a.nope "v"
+    [ "${status}" -eq 2 ]
+    _ci_sot_set a.b "new"
+    [ "$(_ci_sot_scalar a.b)" = "new" ]
+    [ "$(stat -c %a "${CI_MANIFEST}")" = "640" ]
+    [ -z "$(find "${BATS_TEST_TMPDIR}" -name 'build-manifest.yml.*')" ]
+}
+
 # What: Reads a key the real SOT does not have.
 # Why: An empty string would pass on as a valid pin.
 # From: Issue #479, PR #544

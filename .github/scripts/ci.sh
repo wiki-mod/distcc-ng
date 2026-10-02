@@ -191,15 +191,19 @@ _ci_sot_list() {
         | awk 'NF'
 }
 
-# What: Set the scalar at a dotted SOT path in place.
-# Why: The one SOT writer; an absent path fails closed.
+# What: Set one SOT scalar; swap in the new file by rename.
+# Why: A failed write must leave the previous SOT intact.
 # From: Issue #479, PR #544
 _ci_sot_set() {
     local path="$1" value="$2" tmp rc=0
-    tmp="$(mktemp)" || return 2
+    tmp="$(mktemp "${CI_MANIFEST}.XXXXXX")" || return 2
+    if ! cp -p "${CI_MANIFEST}" "${tmp}"; then
+        rm -f "${tmp}"
+        return 2
+    fi
     _ci_sot_lookup set "${path}" "${value}" > "${tmp}" || rc=$?
     if [ "${rc}" -ne 0 ]; then
-        rm -f "${tmp}"
+        rm -f "${tmp}" || return 2
         if [ "${rc}" -eq 3 ]; then
             _ci_sot_absent "${path}"
         else
@@ -207,8 +211,10 @@ _ci_sot_set() {
         fi
         return 2
     fi
-    cat "${tmp}" > "${CI_MANIFEST}" || return 2
-    rm -f "${tmp}"
+    if ! mv -f "${tmp}" "${CI_MANIFEST}"; then
+        rm -f "${tmp}"
+        return 2
+    fi
 }
 
 # What: Match one SOT path glob to a path; 2 if sed fails.
