@@ -3856,6 +3856,37 @@ _ci_attest_file_subjects() {
     done
 }
 
+# What: 0 if this run is a PR from another repo, else 1.
+# Why: GitHub gives a fork PR's run no id-token at all.
+# From: Issue #38, Issue #479, PR #544
+_ci_event_is_fork_pr() {
+    local head
+    [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "pull_request" ] || return 1
+    head="$(_ci_event_value .pull_request.head.repo.full_name)" || return 2
+    [ "${head}" != "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" ]
+}
+
+# What: Log NotRun for a local or fork-PR run; else fail.
+# Why: Every other Actions job gets the id-token it asks for.
+# From: Issue #38, Issue #479, PR #544
+_ci_attest_without_token() {
+    local rc=0
+    if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+        ci_log "[CI-ATTEST]" "build attestation NotRun: no id-token outside GitHub Actions"
+        return 0
+    fi
+    _ci_event_is_fork_pr || rc=$?
+    case "${rc}" in
+        0)
+            ci_log "[CI-ATTEST]" "build attestation NotRun: no id-token for a fork PR"
+            return 0 ;;
+        1)
+            ci_log "[CI-ERROR-ATTEST-0002]" "no id-token on ${GITHUB_EVENT_NAME} of ${GITHUB_REPOSITORY}; job lacks id-token: write"
+            return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
 # What: Attest build binaries, release assets, or an image.
 # Why: Only a fork-PR build may lack OIDC; a release must not.
 # From: Issue #38, Issue #479, PR #544
@@ -3874,7 +3905,7 @@ ci_cmd_attest() {
                 return 0
             fi
             if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-                ci_log "[CI-ATTEST]" "build attestation NotRun: no id-token (fork PR or local run)"
+                _ci_attest_without_token || return
                 return 0
             fi
             files=(distcc distccd) ;;

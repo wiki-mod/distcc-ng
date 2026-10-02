@@ -2826,11 +2826,29 @@ _fake_osv() {
 # Why: Fork PRs never get an id-token; releases always do.
 # From: Issue #38, Issue #479, PR #544
 @test "attest: build without OIDC is NotRun, a bad target fails" {
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
     _forbid curl gh
     unset ACTIONS_ID_TOKEN_REQUEST_URL
-    RUNNER_OS=Linux run ci_cmd_attest build default
+    GITHUB_ACTIONS="" RUNNER_OS=Linux run ci_cmd_attest build default
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"build attestation NotRun: no id-token"* ]]
+    [[ "${output}" == *"build attestation NotRun: no id-token outside GitHub Actions"* ]]
+    export GITHUB_ACTIONS=true GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" RUNNER_OS=Linux
+    printf '{"pull_request":{"head":{"repo":{"full_name":"fork/r"}}}}' > "${ev}"
+    GITHUB_EVENT_NAME=pull_request run ci_cmd_attest build default
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"build attestation NotRun: no id-token for a fork PR"* ]]
+    printf '{"pull_request":{"head":{"repo":{"full_name":"o/r"}}}}' > "${ev}"
+    GITHUB_EVENT_NAME=pull_request run ci_cmd_attest build default
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-ATTEST-0002"* ]]
+    GITHUB_EVENT_NAME=push run ci_cmd_attest build default
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-ATTEST-0002"* ]]
+    printf '{"pull_request":{}}' > "${ev}"
+    GITHUB_EVENT_NAME=pull_request run ci_cmd_attest build default
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
+    unset GITHUB_ACTIONS
     ACTIONS_ID_TOKEN_REQUEST_URL=x RUNNER_OS=macOS run ci_cmd_attest build default
     [[ "${output}" == *"not the default Linux build"* ]]
     ACTIONS_ID_TOKEN_REQUEST_URL=x RUNNER_OS=Linux run ci_cmd_attest build coverage
