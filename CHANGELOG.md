@@ -183,6 +183,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (title/tracking/changelog)`, `OSV scan` and the unchanged `Analyze (...)`
   names. See `doc/ci-workflows.md`.
 
+- **`AGENTS.md` `[AG-INT-006]`, `.github/scripts/ci.sh`** (issue #479,
+  PR #544): the texts `shellcheck disable=` and
+  `shellcheck source=/dev/null` are banned from every shell source of
+  the repository; `ci.sh lint` fails on their mere presence and reads
+  the list from the rule. The two Alpine OpenRC units lose their
+  suppression comment; their code is unchanged.
+
+- **PR metadata checks** (issue #479, PR #544): pull requests opened by
+  Dependabot or `github-actions[bot]` (the SOT pin update) no longer
+  skip the AG-GH-002 tracking, AG-GH-014 title and AG-REL-002 changelog
+  checks; like any pull request they need labels, a milestone and a
+  changelog entry or the `no-changelog-needed` label before merge.
+
 - **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
   now shipped as `distcc-pump` in the `.deb` package and the
   `distcc-ng-pump` Docker image, matching Debian's own real

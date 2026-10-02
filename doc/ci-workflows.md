@@ -61,8 +61,17 @@ sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`),
 orchestrator-only workflows (`ci_guard_orchestrator_only`), the
 `What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]` over
 every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
-`test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`),
-actionlint and shellcheck.
+`test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`), no
+`AGENTS.md` `[AG-INT-006]` ShellCheck suppression text in any shell
+source of the repository (`ci_guard_shellcheck_directives`, which reads
+the banned texts from that rule), actionlint, and `shellcheck -x` over
+every shell source of those directories (`*.bats` at the
+`--severity=warning` floor Issue #479 sets, everything else at every
+level).
+
+**PR metadata** (`ci.sh metadata`): the AG-GH-014 title, the AG-GH-002
+labels, milestone and project board, and the AG-REL-002 changelog entry
+are checked for every pull request author alike, bots included.
 
 **Compile cache**: every job that builds the `default` variant (the
 `validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)
