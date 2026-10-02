@@ -1015,6 +1015,27 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+# What: Logs the apt line of an image and a runner install.
+# Why: An image ships the packages current on its build day.
+# From: Issue #479, PR #544
+@test "image installs full-upgrade first; runner installs do not" {
+    local log="${BATS_TEST_TMPDIR}/calls"
+    _print id 0
+    # What: Stub timeout to log the command it would run.
+    # Why: The test reads the apt line without a real apt.
+    timeout() { shift 3; echo "$*" >> "${log}"; }
+    _pass rm
+    run _ci_apt_install "p q" image
+    [ "${status}" -eq 0 ]
+    grep -qF 'apt-get update && apt-get full-upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends p q' "${log}"
+    : > "${log}"
+    run _ci_apt_install "p q"
+    [ "${status}" -eq 0 ]
+    grep -qF 'apt-get install -y' "${log}"
+    run grep -c 'upgrade' "${log}"
+    [ "${output}" = "0" ]
+}
+
 # What: Installs with apt cut off once, then dpkg failing.
 # Why: A killed install leaves dpkg interrupted for the retry.
 # From: Issue #493, Issue #479, PR #544

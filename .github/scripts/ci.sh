@@ -3688,10 +3688,10 @@ _ci_apt_install() {
         runner) ;;
         image)
             apt_opts="--no-install-recommends"
-            # What: Image builds apply pending security updates first.
-            # Why: A fixable HIGH CVE in a base package blocks a release.
+            # What: Image builds full-upgrade the base before installing.
+            # Why: Every image gets the packages current at build time.
             # From: Issue #479, PR #544
-            upgrade="apt-get upgrade -y ${apt_opts} &&" ;;
+            upgrade="apt-get full-upgrade -y ${apt_opts} &&" ;;
         *) ci_log "[CI-ERROR-INSTALL-0003]" "apt mode=${mode} (runner|image)"; return 2 ;;
     esac
     _ci_wait_until 2 10 _ci_apt_attempt "${packages}" "${apt_opts}" "${upgrade}" "${as_root[@]}" || rc=$?

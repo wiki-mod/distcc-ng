@@ -190,6 +190,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the list from the rule. The two Alpine OpenRC units lose their
   suppression comment; their code is unchanged.
 
+- **Container images** (issue #479, PR #544): every image `ci.sh image`
+  builds (release, nightly, buildtools, e2e, ClusterFuzzLite toolchain)
+  now runs `apt-get full-upgrade` before installing its packages, instead
+  of `apt-get upgrade`, so each image carries the packages current at its
+  build time.
+
 - **`.github/scripts/ci.sh` comment guard** (issue #479, PR #544):
   `ci.sh lint` also fails on a function, nested stub or bats test
   without a What/Why/From block directly above it, as `AGENTS.md`
