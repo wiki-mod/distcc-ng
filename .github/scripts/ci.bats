@@ -1567,16 +1567,28 @@ _forbid() {
 }
 
 @test "every SOT impact phase gates a validate.yml job" {
-    # What: Each phase name has a contains(... phases, ...) user.
-    # Why: A phase nobody reads is policy that changes nothing.
+    # What: The job gated on phase ph is the one running ci.sh ph.
+    # Why: A phase nobody runs is policy that changes nothing.
     # From: Issue #479, PR #544
-    local c ph
-    for c in $(_ci_sot_children impact_classes); do
-        for ph in $(_ci_sot_list "impact_classes.${c}.phases"); do
-            [ "${ph}" = "build" ] && continue
-            grep -qF "contains(needs.plan.outputs.phases, '${ph}')" \
-                "${CI_REPO_ROOT}/.github/workflows/validate.yml" || { echo "${c}: ${ph}"; false; }
-        done
+    local ph wiring
+    local phases=()
+    _ci_mapfile phases _ci_all_phases
+    [ "${#phases[@]}" -gt 0 ]
+    wiring="$(awk '
+        /^  [A-Za-z0-9_-]+:$/ { job = substr($1, 1, length($1) - 1) }
+        /^    if:/ { gate[job] = $0 }
+        match($0, /run: bash \.github\/scripts\/ci\.sh [a-z0-9-]+/) {
+            c = substr($0, RSTART, RLENGTH); sub(/.* /, "", c); cmds[job] = cmds[job] " " c " " }
+        END { for (j in gate) print j "|" gate[j] "|" cmds[j] }
+    ' "${CI_REPO_ROOT}/.github/workflows/validate.yml")"
+    for ph in "${phases[@]}"; do
+        if [ "${ph}" = build ]; then
+            awk -F'|' -v ph="${ph}" 'index($2, "needs.plan.outputs.build == '\''true'\''") && index($3, " " ph " ") { f = 1 }
+                END { exit !f }' <<< "${wiring}" || { echo "no job runs ${ph}"; false; }
+        else
+            awk -F'|' -v ph="${ph}" 'index($2, "contains(needs.plan.outputs.phases, '\''" ph "'\'')") && index($3, " " ph " ") { f = 1 }
+                END { exit !f }' <<< "${wiring}" || { echo "no job runs ${ph}"; false; }
+        fi
     done
 }
 
@@ -1603,10 +1615,25 @@ _forbid() {
     # What: The registry and the case dispatch name the same set.
     # Why: A listed command without an arm was a silent stub.
     # From: Issue #479, PR #544
-    local c
+    local c fn arm
+    local arms=()
     for c in ${CI_COMMANDS}; do
-        [ "${c}" = "checkout" ] && continue
-        grep -qE "^ {16}${c}\) ci_cmd_" "${CI_SH}" || { echo "${c}"; false; }
+        fn="ci_cmd_${c//-/_}"
+        # What: Stub the command's phase function to report itself.
+        # Why: Proves ci_main really routes each name to its owner.
+        eval "${fn}() { echo \"reached ${fn} \$*\"; }"
+        run ci_main "${c}" a1
+        [ "${status}" -eq 0 ] || { echo "${c}: ${output}"; false; }
+        [ "${output}" = "reached ${fn} a1" ] || { echo "${c}: ${output}"; false; }
+    done
+    # What: Every dispatch arm must be a registered command.
+    # Why: An arm missing from CI_COMMANDS can never be reached.
+    _ci_mapfile arms awk '/^ci_main\(\)/ { m = 1 } m && /^}/ { exit }
+        m && match($0, /^ +[a-z-]+\) ci_cmd_/) {
+            a = substr($0, RSTART, RLENGTH); sub(/^ +/, "", a); sub(/\).*/, "", a); print a }' "${CI_SH}"
+    [ "${#arms[@]}" -gt 0 ]
+    for arm in "${arms[@]}"; do
+        [[ " ${CI_COMMANDS} " == *" ${arm} "* ]] || { echo "unregistered arm: ${arm}"; false; }
     done
 }
 
