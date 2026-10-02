@@ -43,6 +43,34 @@ _forbid() {
     done
 }
 
+# What: Stub sleep as a no-op for the calling test.
+# Why: Retry backoff and agent polls must not slow the suite.
+# From: Issue #479, PR #544
+_no_sleep() {
+    sleep() { :; }
+}
+
+# What: Make a git repo at v9.9.9-NG with that tag; print it.
+# Why: Both require_new branches check one tagged release.
+# From: Issue #479, PR #544
+_fixture_tag_repo() {
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}" || return 1
+    ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t \
+      && printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac \
+      && git add configure.ac && git commit -q -m x && git tag v9.9.9-NG ) || return 1
+    printf '%s\n' "${fx}"
+}
+
+# What: Point the harden agent home at a temp dir with state.
+# Why: harden stop reads the state file a start would write.
+# From: Issue #479, PR #544
+_fixture_harden_state() {
+    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
+    mkdir -p "${_CI_HARDEN_DIR}" || return 1
+    printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
+}
+
 @test "unknown subcommand fails closed with a stable id" {
     # What: An unknown command MUST never succeed.
     # Why: Fail-closed dispatch is mandatory.
@@ -389,10 +417,7 @@ _forbid() {
     # What: The post-push check accepts its own existing tag.
     # Why: POL-RELEASE-07 runs after the tag was pushed.
     # From: Issue #479, PR #544
-    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
-    ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
-      printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
-      git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
+    fx="$(_fixture_tag_repo)"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG false
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"CI-RELEASE"*"OK"* ]]
@@ -402,10 +427,7 @@ _forbid() {
     # What: The pre-tag dispatch path keeps refusing a collision.
     # Why: require_new defaults to true for the pre-tag path.
     # From: Issue #479, PR #544
-    fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
-    ( cd "${fx}" && git init -q && git config user.email t@t && git config user.name t
-      printf 'AC_INIT([distcc-ng],[9.9.9-NG])\n' > configure.ac
-      git add configure.ac && git commit -q -m x && git tag v9.9.9-NG )
+    fx="$(_fixture_tag_repo)"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
@@ -957,9 +979,7 @@ _forbid() {
     # What: Stub sudo to run its command directly.
     # Why: The test runs as a plain user without sudo.
     sudo() { "$@"; }
-    # What: Stub sleep as a no-op.
-    # Why: Retry backoff must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     # What: Stub timeout: log calls, fail the first apt run.
     # Why: Replays an apt run the timeout cut off mid-dpkg.
     timeout() {
@@ -2289,9 +2309,7 @@ _capture_docker() {
     # Why: One bounded poll owner for every readiness wait.
     # From: Issue #479, PR #544
 
-    # What: Stub sleep as a no-op.
-    # Why: Probe retries must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     # What: Probe that succeeds on its third call.
     # Why: Proves wait-until retries, then stops.
     _probe() { echo x >> "${BATS_TEST_TMPDIR}/tries"; [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -ge 3 ]; }
@@ -2307,9 +2325,7 @@ _capture_docker() {
     # Why: A hard error must never be retried as transient.
     # From: Issue #479, PR #544
 
-    # What: Stub sleep as a no-op.
-    # Why: Probe retries must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     # What: Probe that logs its attempt, then fails hard.
     # Why: Proves a single call and the attempt counters.
     _probe() { echo "${CI_ATTEMPT}/${CI_TRIES}" >> "${BATS_TEST_TMPDIR}/tries"; return 5; }
@@ -2350,9 +2366,7 @@ _fake_curl() {
     # What: Stub curl as an HTTP failure (rc 22).
     # Why: A failed fetch must name its URL and fail.
     curl() { return 22; }
-    # What: Stub sleep as a no-op.
-    # Why: Retry backoff must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"attempt 3/3 failed"* ]]
@@ -2368,9 +2382,7 @@ _fake_curl() {
     # What: Stub curl: the first call fails, later ones pass.
     # Why: Proves a later attempt recovers the fetch.
     curl() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"; [ "${c}" -ge 1 ]; }
-    # What: Stub sleep as a no-op.
-    # Why: Retry backoff must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 0 ]
     [ "$(cat "${n}")" -eq 2 ]
@@ -2552,9 +2564,7 @@ _fake_osv() {
     # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
     echo '{}' > "${f}"
-    # What: Stub sleep as a no-op.
-    # Why: Retry backoff must not slow the suite.
-    sleep() { :; }
+    _no_sleep
     echo 0 > "${n}"
     # What: Stub gh: a 502, then empty, then an id.
     # Why: Both transient answers must be retried.
@@ -2717,11 +2727,8 @@ _fake_osv() {
     # What: Missing done.json after the post event is a failure.
     # Why: Unflushed telemetry must not pass silently.
     # From: Issue #479, PR #544
-    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"; mkdir -p "${_CI_HARDEN_DIR}"
-    printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
-    # What: Stub sleep as a no-op.
-    # Why: Waiting for the agent must not slow the suite.
-    sleep() { :; }
+    _fixture_harden_state
+    _no_sleep
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-HARDEN-0003"* ]]
@@ -2732,8 +2739,7 @@ _fake_osv() {
     # What: done.json after post_event.json ends the job cleanly.
     # Why: Green path of the post-step replacement.
     # From: Issue #479, PR #544
-    _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"; mkdir -p "${_CI_HARDEN_DIR}"
-    printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
+    _fixture_harden_state
     printf '{}' > "${_CI_HARDEN_DIR}/done.json"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
