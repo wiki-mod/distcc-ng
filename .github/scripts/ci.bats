@@ -764,7 +764,7 @@ _dup_error_ids() {
 }
 
 # What: Scans a log holding one ERROR line.
-# Why: A daemon warning never reaches the client's exit code.
+# Why: ERROR: is one of the severity prefixes distccd logs.
 # From: Issue #479, PR #544
 @test "e2e server warning scan fails on a warning-level line" {
     local log="${BATS_TEST_TMPDIR}/server.log"
@@ -1250,7 +1250,7 @@ _dup_error_ids() {
 }
 
 # What: Plans keys over a README edit, then an m4 edit.
-# Why: A key is never overwritten; restore takes the newest.
+# Why: Only configure.ac and m4/ change the autoconf output.
 # From: Issue #54, Issue #479, PR #544
 @test "cache plan keys default on OS, arch, autoconf inputs, run" {
     local out="${BATS_TEST_TMPDIR}/out" sum1 sum2
@@ -1873,7 +1873,7 @@ _unregistered_arms() {
 }
 
 # What: Maps a feat, fix, docs and security title.
-# Why: Release notes group PRs by these four labels.
+# Why: Each of these four types gets its own notes section.
 # From: Issue #479
 @test "pr category: maps AG-GH-014 types to release-drafter labels" {
     [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
@@ -2127,7 +2127,7 @@ _unregistered_arms() {
 }
 
 # What: Runs three checks with the checkout check failing.
-# Why: #479: the verify container starts once for all phases.
+# Why: The failed check must be named, not only counted.
 # From: Issue #479, PR #544
 @test "verify starts one container and runs every in-image check" {
     local log="${BATS_TEST_TMPDIR}/docker"
