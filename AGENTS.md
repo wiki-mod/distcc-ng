@@ -1,7 +1,7 @@
 ```markdown
 # distcc-ng - Repository Governance
 **Repository**: https://github.com/wiki-mod/distcc-ng
-**Authority**: This file is the repository-wide rulebook for all paths in `wiki-mod/distcc-ng`.
+**Authority**: This file is the repository-wide rulebook for all paths in `wiki-mod/distcc-ng`. Only the version from the `current_dev` branch is authoritative. Any other copy MUST be treated as stale unless its contents have been verified against the current `current_dev` version. Any rule MUST be read in full. Shortening or summarizing it in any way removes it from its original context.
 
 ## AG-LAW
 **[AG-LAW-001]** `AGENTS.md` MUST be treated as one unified rulebook; all applicable rules MUST apply simultaneously to every affected file, artifact, generated output, behavior, and change as a whole; compliance with one rule MUST NOT establish overall compliance; a task MUST NOT be declared complete until the complete affected scope has been checked against every applicable rule.
@@ -94,4 +94,6 @@
 **[AG-REL-005]** `doc/combined-test-and-release_checklist.md` MUST remain the canonical definition of development verification, release checks, release versioning, branch and tag mechanics, release readiness, publication verification, and promotion requirements; every real release MUST use the dedicated release-pull-request process, and from creation after the release-branch cut that pull request MUST remain the release-specific execution and evidence record through pre-tag verification, artifact verification, and promotion; a checklist item MAY be marked `N/A` only with an explicit rationale establishing why it does not apply.
 **[AG-REL-006]** A release-pull-request item MUST NOT be marked complete until its required evidence exists and satisfies `[AG-INT-001]` and `[AG-VAL-003]`; every evidence entry MUST identify the Candidate SHA or concrete release artifact to which it applies, and when the Candidate SHA changes all repository-content-dependent evidence from the previous SHA MUST become stale and MUST be reset and reverified before the item is marked complete again.
 **[AG-REL-007]** When release verification discovers a missing test class, failure case, artifact check, or other gap in canonical release coverage, `doc/combined-test-and-release_checklist.md` MUST be updated so that the verified gap becomes part of future release verification; the existence of the gap and supporting evidence MUST satisfy `[AG-INT-001]` and `[AG-VAL-003]`.
+
+If you reach this section, you MUST explicitly confirm in the chat that you have read and understood the entire `AGENTS.md`, including every rule, without omissions, abridgment, or summarization. You MUST explain, in your own words, your understanding of `AG-LAW-001`, its applicability to `AGENTS.md` itself, and how its requirements MUST be applied in practice. A generic acknowledgment or unsupported claim of compliance MUST NOT be considered sufficient.
 ```
