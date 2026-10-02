@@ -1648,6 +1648,64 @@ For Alpine, an explicit source rename such as `localname::url` can establish the
 
 **References:** Issue #398 Thread A, PR #515.
 
+## CI engine and governance guard changes
+
+This section applies when `.github/scripts/ci.sh`, `.github/scripts/ci.bats`, `.github/yaml/build-manifest.yml`, a workflow under `.github/workflows/`, or a `ci.sh lint` guard changes.
+
+### **VER-CI-01** Real CI on the pushed branch tip
+
+**Applies when:** A change in this section's scope is verified.
+
+**Requirement:** `Validate` and `Security` MUST succeed on the exact commit that is the pushed branch tip.
+
+**Procedure:** Read the run conclusions for the tip SHA, for example `gh run list --repo wiki-mod/distcc-ng --commit <sha>`.
+
+**Pass criteria:** Both runs report `success` for that SHA.
+
+**Invalid evidence:** A run on an earlier commit, a cancelled run, or a local or throwaway-container run.
+
+**References:** Issue #479, PR #544, `AGENTS.md` `[AG-VAL-003]`, `[AG-WF-017]`.
+
+### **VER-CI-02** Red path of every new or changed guard and structural test
+
+**Applies when:** A `ci.sh lint` guard or a `ci.bats` test that checks workflow or engine structure is added or changed.
+
+**Requirement:** A deliberate violation MUST make the guard or test fail, and the failure MUST name the violation.
+
+**Procedure:** In a scratch copy, introduce one violation per guarded property, for example a removed job gate, a rerouted `ci.sh` command, a misrouted dispatch arm, or a banned text, and run the guard or test.
+
+**Pass criteria:** Each violation turns the guard or test red with its own error id or message; the unmodified tree stays green.
+
+**Invalid evidence:** A green run alone; a fixture that itself accepts the construct the guard forbids; a fixture that hides the construct from the guard by splitting or encoding it.
+
+**References:** Issue #479, PR #544.
+
+### **VER-CI-03** Exit status and raw output are reported as they are
+
+**Applies when:** A command result is evaluated by `ci.sh` or by a verification run cited as evidence.
+
+**Requirement:** A non-zero exit status MUST NOT be turned into success, and the raw output of a failed command MUST be shown.
+
+**Procedure:** Report each command's own exit status; keep the complete raw log and cite it; distinguish "no match" from a tool error by the tool's documented exit statuses, not by treating status 1 as success.
+
+**Pass criteria:** Every cited result carries its real exit status and a raw log location.
+
+**Invalid evidence:** `|| [ "$?" -eq 1 ]`, `|| true` or `2>/dev/null` on a required command; a pipeline whose exit status is that of a filter; a log filtered to the passing lines.
+
+**References:** Issue #479, PR #544, `AGENTS.md` `[AG-INT-003]`, `[AG-VAL-001]`.
+
+### **VER-CI-04** Paths a pull request run cannot reach
+
+**Applies when:** A changed path runs only on a schedule, a tag push, a `release` event, or a dispatch from `master`.
+
+**Requirement:** Each such path MUST be recorded as not exercised by the pull request's CI, together with the `ci.bats` tests that cover its decision logic.
+
+**Pass criteria:** The verification record names every such path and its covering tests.
+
+**Invalid evidence:** Counting a green pull request run as coverage of a path it never started.
+
+**References:** Issue #479, PR #544.
+
 # Release readiness
 
 The release checks below are additional release gates. They do not replace any applicable `VER-*` check.
