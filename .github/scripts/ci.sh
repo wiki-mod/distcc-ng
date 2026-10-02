@@ -575,7 +575,7 @@ _ci_changed_paths() {
 }
 
 # What: Print the phases selected by the base..head diff.
-# Why: A docs-only diff selects doc-lint, never a compile.
+# Why: A docs-only diff selects NOOP, never a compile.
 # From: Issue #479
 ci_cmd_impact() {
     local paths
@@ -706,7 +706,7 @@ _ci_step_summary() {
 }
 
 # What: Print the control-build's toolchain/dist verdict.
-# Why: The raw trace log alone was hard to untangle.
+# Why: It tells a broken toolchain from a broken distcc path.
 # From: Issue #263, Issue #479
 _ci_control_build_summary() {
     if [ "$1" -eq 0 ]; then
@@ -1112,7 +1112,7 @@ _ci_image_verify() {
         pkgs="${pkgs} $(_ci_sot_scalar "verify.apt.${group}")" || return 2
     done
     # What: Add the engine's bats self-test packages.
-    # Why: ci.bats evidence must come from the buildtools image.
+    # Why: Local verification runs ci.bats in this image only.
     # From: Issue #479, PR #544
     pkgs="${pkgs} $(_ci_sot_scalar ci_engine.selftest_apt)" || return 2
     _ci_apt_install "${pkgs}" image || return 1
@@ -1548,7 +1548,7 @@ _ci_release_assets() {
 }
 
 # What: Force-move the nightly tag; republish its prerelease.
-# Why: It refuses to move a real v* release tag.
+# Why: Nightly has one rolling tag; a v* tag is refused.
 # From: Issue #479
 _ci_publish_nightly() {
     local tag ref image notes rc=0
@@ -1779,7 +1779,7 @@ $(printf '%s\n' "$@")
 }
 
 # What: Rebuild the draft release from PR title types.
-# Why: Category comes from the title's type prefix, not regex.
+# Why: AG-GH-014's title type is the one category source.
 # From: Issue #479
 _ci_publish_draft_release() {
     : "${GH_TOKEN:?GH_TOKEN required}"
@@ -2482,8 +2482,8 @@ _ci_artifact_offer() {
         artifact_retention_days "${days}" artifact_if_missing error
 }
 
-# What: Add an issue/PR to the org project board via gh CLI.
-# Why: gh project item-add is native; no marketplace action.
+# What: Add this event's issue or PR url to the board.
+# Why: The url comes from the payload, never from YAML.
 # From: Issue #479
 _ci_variables_add_to_project() {
     local url
@@ -2492,7 +2492,7 @@ _ci_variables_add_to_project() {
 }
 
 # What: Map a Commit type prefix to a category label.
-# Why: AG-GH-014 already structures titles; no regex needed.
+# Why: Release notes group PRs by exactly these four labels.
 # From: Issue #479
 _ci_pr_category_label() {
     local type
@@ -2881,7 +2881,7 @@ _ci_tool_bin() {
 }
 
 # What: Scan a local image ref for HIGH/CRITICAL vulns.
-# Why: Folds trivy-action; scans before any registry push.
+# Why: A HIGH or CRITICAL finding must stop the push.
 # From: Issue #479
 ci_cmd_trivy_scan() {
     local image_ref="${1:?image ref required}" bin
@@ -2892,7 +2892,7 @@ ci_cmd_trivy_scan() {
 }
 
 # What: Generate an SPDX-JSON SBOM for an image/path.
-# Why: Folds anchore/sbom-action; OSPS-QA-02.02 baseline.
+# Why: OSPS-QA-02.02: every release asset ships an SBOM.
 # From: Issue #479
 ci_cmd_sbom() {
     local target="${1:?image ref or path required}" out="${2:?output file required}" bin
@@ -3118,7 +3118,7 @@ _ci_pr_on_project_board() {
 }
 
 # What: Board sub-check; fails once a PAT is set.
-# Why: AG-GH-002 requires hard-fail, not best-effort.
+# Why: AG-GH-002 lets it warn only while no PAT exists.
 # From: Issue #479, PR #544
 _ci_check_pr_board() {
     if [ -z "${PROJECT_PAT:-}" ]; then
@@ -3141,7 +3141,7 @@ _ci_check_pr_board() {
 }
 
 # What: Labels/milestone/board checks per AG-GH-002.
-# Why: Board fails once the PAT is configured.
+# Why: AG-GH-002 makes labels and a milestone blocking.
 # From: Issue #479, PR #544
 _ci_check_pr_tracking() {
     local errs=()
@@ -3643,8 +3643,8 @@ ci_cmd_lint() {
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
     ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
-    # What: Every workflow must be a pure orchestrator.
-    # Why: No legacy exemption remains after the rewrite.
+    # What: Run the orchestrator guard, actionlint, shellcheck.
+    # Why: #479 allows no workflow-local logic, none exempt.
     # From: Issue #479, PR #544
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
     _ci_lint_actionlint || rc=1
@@ -3653,7 +3653,7 @@ ci_cmd_lint() {
 }
 
 # What: apt-get update+install, bounded 2x3-minute retry.
-# Why: ubuntu-latest's default mirror has hung indefinitely.
+# Why: The default ubuntu mirror can hang with no timeout.
 # From: Issue #493, Issue #479
 _ci_apt_install() {
     local packages="${1:?package list required}" mode="${2:-runner}" rc=0
@@ -4083,7 +4083,7 @@ ci_cmd_codeql_scan() {
 }
 
 # What: One SARIF POST; rc 1 retries a 5xx/429/empty answer.
-# Why: The API once answered an upload with no body at all.
+# Why: The API can answer an upload with an empty body.
 # From: Issue #479, PR #544
 _ci_sarif_post() {
     local work="$1" rc=0 id why
@@ -4159,7 +4159,7 @@ _ci_scorecard_json_to_sarif() {
 }
 
 # What: Run Scorecard, convert its JSON to SARIF.
-# Why: No CLI sarif format; ci.sh owns the conversion.
+# Why: Code scanning accepts only SARIF uploads.
 # From: Issue #479
 ci_cmd_scorecard_scan() {
     local out="${1:-results.sarif}" bin json
@@ -4176,8 +4176,8 @@ ci_cmd_scorecard_scan() {
     _ci_artifact_offer scorecard "" "${out}"
 }
 
-# What: Scan the repo with OSV-Scanner, writing a SARIF file.
-# Why: CLI-native; no osv-scanner reusable workflow.
+# What: Scan the SOT tools with OSV-Scanner into SARIF.
+# Why: A PR may not add a known-vulnerable tool version.
 # From: Issue #479
 ci_cmd_osv_scan() {
     local out="${1:-osv-results.sarif}" bin base base_sot base_tree old new added pins=0
@@ -4333,7 +4333,7 @@ ci_cmd_clusterfuzzlite_run() {
 }
 
 # What: Print the python the build uses: 3.13 if present.
-# Why: macOS make check broke on newer brew python (da6d609).
+# Why: make check fails on brew's newer python (da6d609).
 # From: Issue #479, PR #544
 _ci_python() {
     if command -v python3.13; then
