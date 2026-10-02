@@ -1938,13 +1938,81 @@ _forbid() {
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
     mkdir -p "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' '# distcc-ng (https://github.com/wiki-mod/distcc-ng)' \
-        '# SPDX-License-Identifier: GPL-2.0-or-later' '# shellcheck disable=SC2034' \
+        '# SPDX-License-Identifier: GPL-2.0-or-later' '# shellcheck shell=bash' \
         '# What: Do a thing.' '# Why: A reason.' '# From: Issue #1' 'x=1' \
         '# ====' '# SECTION' '# ====' "cat ${hd}'EOF'" '# a markdown heading' 'EOF' \
         "grep -q x ${hd}${hd:0:1} \"\${y}\"" '    # What: Indented.' '    # Why: Also fine.' 'y=2' \
         > "${fx}/.github/a.sh"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 0 ]
+}
+
+@test "directive guard fails on each AG-INT-006 text" {
+    # What: A shell file holding a banned text fails the guard.
+    # Why: AG-INT-006: the mere presence is the violation.
+    # From: Issue #479, PR #544, AG-INT-006
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    local texts=()
+    _ci_mapfile texts _ci_banned_shell_texts
+    [ "${#texts[@]}" -eq 2 ]
+    mkdir -p "${fx}/packaging"
+    printf '%s\n' '#!/sbin/openrc-run' "# ${texts[0]}fickdiehenne" "echo '${texts[1]}'" \
+        > "${fx}/packaging/svc.initd"
+    run ci_guard_shellcheck_directives "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"svc.initd:2: AG-INT-006 text ${texts[0]}"* ]]
+    [[ "${output}" == *"svc.initd:3: AG-INT-006 text ${texts[1]}"* ]]
+}
+
+@test "directive guard passes a shell tree without banned text" {
+    # What: A source= naming a real file is no banned text.
+    # Why: Only the AG-INT-006 texts fail; source= stays usable.
+    # From: Issue #479, PR #544, AG-INT-006
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/lib" "${fx}/.github"
+    printf '%s\n' '#!/usr/bin/env bash' 'y=1' > "${fx}/lib/real.sh"
+    printf '%s\n' '#!/usr/bin/env bash' '# shellcheck source=lib/real.sh' '. lib/real.sh' \
+        > "${fx}/.github/a.sh"
+    run ci_guard_shellcheck_directives "${fx}"
+    [ "${status}" -eq 0 ]
+}
+
+@test "the real lint entry fails on an AG-INT-006 text" {
+    # What: ci_cmd_lint fails when one shell file has the text.
+    # Why: The guard is only proof if the lint entry runs it.
+    # From: Issue #479, PR #544, AG-INT-006
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    local texts=()
+    _ci_mapfile texts _ci_banned_shell_texts
+    mkdir -p "${fx}/contrib"
+    cp "${CI_REPO_ROOT}/AGENTS.md" "${fx}/AGENTS.md"
+    printf '%s\n' '#!/bin/sh' 'x=1' > "${fx}/contrib/tool"
+    # What: Stub every other lint step as passing.
+    # Why: Only the directive guard may fail the lint entry.
+    _ok() { return 0; }
+    ci_guard_line_endings() { _ok; }; ci_guard_full_sha() { _ok; }; ci_guard_pins_in_sot() { _ok; }
+    ci_guard_sot_mirrors() { _ok; }; ci_guard_orchestrator_only() { _ok; }; ci_guard_comment_format() { _ok; }
+    _ci_lint_actionlint() { _ok; }; _ci_lint_shellcheck() { _ok; }
+    CI_REPO_ROOT="${fx}" run ci_cmd_lint
+    [ "${status}" -eq 0 ]
+    printf '%s\n' '#!/bin/sh' "# ${texts[0]}SC2086" 'x=1' > "${fx}/contrib/tool"
+    CI_REPO_ROOT="${fx}" run ci_cmd_lint
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"contrib/tool:2: AG-INT-006 text"* ]]
+}
+
+@test "banned texts fail closed without a readable AG-INT-006" {
+    # What: A missing rule is an error, never an empty ban list.
+    # Why: An empty list would pass every shell file silently.
+    # From: Issue #479, PR #544, AG-INT-006
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}"
+    printf '%s\n' '# rules' > "${fx}/AGENTS.md"
+    CI_REPO_ROOT="${fx}" run _ci_banned_shell_texts
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0002"* ]]
+    CI_REPO_ROOT="${fx}" run ci_guard_shellcheck_directives "${fx}"
+    [ "${status}" -eq 2 ]
 }
 
 @test "comment guard fails closed on a heredoc that never ends" {

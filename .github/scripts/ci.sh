@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Single authoritative CI engine (skeleton).
+# What: Single authoritative CI engine.
 # Why: All CI decisions live here; YAML only orchestrates.
 # From: Issue #479
 set -euo pipefail
@@ -45,6 +45,11 @@ CI_STACK_LABEL="ci-stack"
 # Why: The selftest and the Redis check share one proof.
 # From: Issue #285, Issue #479, PR #544
 CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
+
+# What: The directories whose files CI itself owns.
+# Why: Lint, comment and LF guards check one tree, not three.
+# From: Issue #479, PR #544
+CI_OWNED_DIRS=".github docker test/e2e .clusterfuzzlite"
 
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
@@ -195,7 +200,7 @@ _ci_sot_list() {
     printf '%s' "${raw}" \
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
-        | grep -v '^[[:space:]]*$' || [ "$?" -eq 1 ]
+        | awk 'NF'
 }
 
 # What: Set the scalar at a dotted SOT path in place.
@@ -289,7 +294,7 @@ _ci_class_phases() {
     for cls in "$@"; do
         phases="${phases}$(_ci_sot_list "impact_classes.${cls}.phases")"$'\n' || return 2
     done
-    grep -v '^$' <<< "${phases}" | sort -u || [ "$?" -eq 1 ]
+    awk 'NF' <<< "${phases}" | sort -u
 }
 
 # What: Print every phase any SOT impact class can select.
@@ -959,7 +964,11 @@ _ci_expect_output() {
         regex="${regex#!}"
     fi
     out="$("$@" 2>&1)" || rc=$?
-    grep -qE -- "${regex}" <<< "${out}" || hit=1
+    grep -qE -- "${regex}" <<< "${out}" || hit=$?
+    if [ "${hit}" -gt 1 ]; then
+        ci_log "[CI-ERROR-SELFTEST-0002]" "${name}: grep failed (rc ${hit}) on /${regex}/"
+        return 2
+    fi
     if [ "${hit}" -ne "${want}" ]; then
         ci_log "[CI-ERROR-SELFTEST-0001]" "${name}: output vs /${regex}/ wrong (negated=${want}, exit ${rc})"
         printf '%s\n' "${out}" >&2
@@ -2734,7 +2743,8 @@ _ci_scan_openssf() {
     else
         local prev_body state_line
         prev_body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" --jq '.body')" || return 1
-        state_line="$(echo "${prev_body}" | grep -o '<!-- openssf-baseline-recheck-state: .*-->')" || [ "$?" -eq 1 ] || return 2
+        state_line="$(awk 'match($0, /<!-- openssf-baseline-recheck-state: .*-->/) {
+            print substr($0, RSTART, RLENGTH) }' <<< "${prev_body}")" || return 2
         if [ -z "${state_line}" ]; then
             prev_state="{}"
         else
@@ -3296,7 +3306,7 @@ _ci_guard_hits() {
 # From: Issue #479
 ci_guard_line_endings() {
     local root="${1:-${CI_REPO_ROOT}/.github}" hits
-    hits="$(grep -rlU "$(printf '\r')" "${root}")" || [ "$?" -eq 1 ] || return 2
+    hits="$(find "${root}" -type f -exec awk '/\r/ { print FILENAME; nextfile }' {} +)" || return 2
     _ci_guard_hits "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: " <<< "${hits}"
 }
 
@@ -3354,7 +3364,7 @@ _ci_comment_violations() {
 ci_guard_comment_format() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out d
     local files=() found=()
-    for d in .github docker test/e2e .clusterfuzzlite; do
+    for d in ${CI_OWNED_DIRS}; do
         [ -e "${root}/${d}" ] || continue
         _ci_mapfile found find "${root}/${d}" -type f \( -name '*.sh' \
             -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \) || return 2
@@ -3367,12 +3377,64 @@ ci_guard_comment_format() {
     return "${rc}"
 }
 
+# What: Print every shell source under root, by name or #!.
+# Why: The ShellCheck directive ban covers all shell code.
+# From: Issue #479, PR #544
+_ci_shell_sources() {
+    find "$1" -path "$1/.git" -prune -o -type f -exec awk '
+        FNR == 1 {
+            if (FILENAME ~ /\.(sh|bats)$/ \
+                || $0 ~ /^#![^ \t]*\/(env[ \t]+)?(ba|da|k|z|a)?sh([ \t]|$)/ \
+                || $0 ~ /^#![^ \t]*\/openrc-run([ \t]|$)/) print FILENAME
+            nextfile
+        }' {} +
+}
+
+# What: Print the shell texts AG-INT-006 bans, one per line.
+# Why: The rule is the one owner of the list; no checker copy.
+# From: Issue #479, PR #544, AG-INT-006
+_ci_banned_shell_texts() {
+    local line list texts
+    if ! line="$(grep -F -- '**[AG-INT-006]**' "${CI_REPO_ROOT}/AGENTS.md")"; then
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0002]" "AGENTS.md has no [AG-INT-006] rule"
+        return 2
+    fi
+    list="${line#*"The texts "}"
+    list="${list%%" MUST NOT appear"*}"
+    texts="$(awk '{ while (match($0, /`[^`]+`/)) {
+        print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' <<< "${list}")" \
+        || return 2
+    if [ -z "${texts}" ] || [ "${list}" = "${line}" ]; then
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0002]" "[AG-INT-006] names no banned text"
+        return 2
+    fi
+    printf '%s\n' "${texts}"
+}
+
+# What: Fail on any AG-INT-006 banned text in a shell source.
+# Why: Its mere presence is the violation; nothing is exempt.
+# From: Issue #479, PR #544, AG-INT-006
+ci_guard_shellcheck_directives() {
+    local root="${1:-${CI_REPO_ROOT}}" texts out
+    local files=()
+    texts="$(_ci_banned_shell_texts)" || return 2
+    _ci_mapfile files _ci_shell_sources "${root}" || return 2
+    [ "${#files[@]}" -gt 0 ] || return 0
+    out="$(CI_BANNED="${texts}" awk 'BEGIN { n = split(ENVIRON["CI_BANNED"], b, "\n") }
+        { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": AG-INT-006 text " b[i] }
+        ' "${files[@]}")" || return 2
+    _ci_guard_hits "[CI-ERROR-GUARD-SHELLCHECK-0001]" <<< "${out}"
+}
+
 # What: Fail on any sha256 digest not 64 lowercase hex.
 # Why: Full-length SHAs only; no abbreviated forms.
 # From: Issue #479
 ci_guard_full_sha() {
     local root="${1:-${CI_REPO_ROOT}/.github}" hits bad
-    hits="$(grep -rhoE 'sha256:[0-9a-fA-F]+' "${root}")" || [ "$?" -eq 1 ] || return 2
+    hits="$(find "${root}" -type f -exec awk '{
+        while (match($0, /sha256:[0-9a-fA-F]+/)) {
+            print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
+        } }' {} +)" || return 2
     bad="$(awk -F: "length(\$2) != 64 || \$2 ~ /[A-F]/ { print }" <<< "${hits}")" || return 2
     _ci_guard_hits "[CI-ERROR-GUARD-SHA-0001]" "not a full 64-hex sha256: " <<< "${bad}"
 }
@@ -3412,8 +3474,8 @@ ci_guard_sot_mirrors() {
         wf="$(basename "${f}" .yml)"
         got+="$(sed -n "s/^ *- cron: '\(.*\)'\$/${wf} \1/p" "${f}")"$'\n' || return 2
     done
-    want="$(grep -v '^$' <<< "${want}" | sort)" || return 2
-    got="$(grep -v '^$' <<< "${got}" | sort)" || [ "$?" -eq 1 ] || return 2
+    want="$(awk 'NF' <<< "${want}" | sort)" || return 2
+    got="$(awk 'NF' <<< "${got}" | sort)" || return 2
     _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0001]" "on.schedule crons differ from SOT schedules" \
         "${want}" "${got}" || rc=$?
     [ "${rc}" -ne 2 ] || return 2
@@ -3439,7 +3501,12 @@ ci_guard_sot_mirrors() {
 _ci_guard_mirror() {
     local id="$1" what="$2" want="$3" got="$4" d
     [ "${want}" != "${got}" ] || return 0
-    d="$(diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}"))" || [ "$?" -eq 1 ] || return 2
+    d="$(CI_WANT="${want}" CI_GOT="${got}" awk 'BEGIN {
+        n = split(ENVIRON["CI_WANT"], w, "\n"); for (i = 1; i <= n; i++) inw[w[i]] = 1
+        m = split(ENVIRON["CI_GOT"], g, "\n"); for (i = 1; i <= m; i++) ing[g[i]] = 1
+        for (i = 1; i <= n; i++) if (!(w[i] in ing)) print "< " w[i]
+        for (i = 1; i <= m; i++) if (!(g[i] in inw)) print "> " g[i]
+    }')" || return 2
     ci_error "${id}" "${what}" "${d}"
     return 1
 }
@@ -3466,13 +3533,16 @@ ci_guard_pins_in_sot() {
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
         wfs+=("${f}")
-        out="$(grep -nE '@([0-9a-f]{40}|sha256:)|^ {4,}(image|container):' "${f}")" \
-            || [ "$?" -eq 1 ] || return 2
         # What: uses: lines belong to the orchestrator guard.
         # Why: It matches each one against the SOT action pins.
         # From: Issue #479, PR #544
-        out="$(awk -F: '{ t = $0; sub(/^[0-9]+:/, "", t) }
-            t !~ /^[[:space:]]*(-[[:space:]]+)?uses:/ { print $1 }' <<< "${out}")" || return 2
+        out="$(awk '
+            /^[[:space:]]*(-[[:space:]]+)?uses:/ { next }
+            /@sha256:/ || /^    +(image|container):/ { print FNR; next }
+            { l = $0
+              while (match(l, /@[0-9a-f]+/)) {
+                  if (RLENGTH >= 41) { print FNR; next }
+                  l = substr(l, RSTART + RLENGTH) } }' "${f}")" || return 2
         _ci_guard_hits "[CI-ERROR-GUARD-PIN-0001]" "${f}:" ": image or action pin outside the SOT" \
             <<< "${out}" || rc=1
     done
@@ -3594,13 +3664,28 @@ _ci_lint_actionlint() {
     _ci_lint_run actionlint -color "${files[@]}"
 }
 
-# What: Shellcheck CI's own shell: engine, suite, CFL entry.
-# Why: #479: warning-clean; ci.sh passes every level.
+# What: Shellcheck every shell source in the CI-owned tree.
+# Why: #479 floor is warning; only *.bats stays at that floor.
 # From: Issue #479, PR #544
 _ci_lint_shellcheck() {
-    local rc=0
-    _ci_lint_run shellcheck .github/scripts/ci.sh || rc=1
-    _ci_lint_run shellcheck --severity=warning .github/scripts/ci.bats .clusterfuzzlite/build.sh || rc=1
+    local rc=0 d f
+    local found=() sh=() bats=()
+    for d in ${CI_OWNED_DIRS}; do
+        [ -e "${CI_REPO_ROOT}/${d}" ] || continue
+        _ci_mapfile found _ci_shell_sources "${CI_REPO_ROOT}/${d}" || return 2
+        for f in "${found[@]}"; do
+            case "${f}" in
+                *.bats) bats+=("${f#"${CI_REPO_ROOT}"/}") ;;
+                *) sh+=("${f#"${CI_REPO_ROOT}"/}") ;;
+            esac
+        done
+    done
+    if [ "${#sh[@]}" -eq 0 ] || [ "${#bats[@]}" -eq 0 ]; then
+        ci_log "[CI-ERROR-LINT-0003]" "found ${#sh[@]} shell and ${#bats[@]} bats files to shellcheck"
+        return 2
+    fi
+    _ci_lint_run shellcheck -x "${sh[@]}" || rc=1
+    _ci_lint_run shellcheck -x --severity=warning "${bats[@]}" || rc=1
     return "${rc}"
 }
 
@@ -3609,7 +3694,7 @@ _ci_lint_shellcheck() {
 # From: Issue #479
 ci_cmd_lint() {
     local rc=0 d
-    for d in .github docker test/e2e .clusterfuzzlite; do
+    for d in ${CI_OWNED_DIRS}; do
         ci_guard_line_endings "${CI_REPO_ROOT}/${d}" || rc=1
     done
     # What: Full-SHA scan of the dirs that may carry a pin.
@@ -3621,6 +3706,7 @@ ci_cmd_lint() {
     done
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
+    ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
     # What: Every workflow must be a pure orchestrator.
     # Why: No legacy exemption remains after the rewrite.
@@ -4172,7 +4258,7 @@ ci_cmd_scorecard_scan() {
 # Why: CLI-native; no osv-scanner reusable workflow.
 # From: Issue #479
 ci_cmd_osv_scan() {
-    local out="${1:-osv-results.sarif}" bin base base_sot old new added
+    local out="${1:-osv-results.sarif}" bin base base_sot old new added pins=0
     local dirs=() range=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
     _ci_mapfile dirs _ci_osv_tool_dirs || return 2
@@ -4194,10 +4280,14 @@ ci_cmd_osv_scan() {
         return 0
     fi
     git -C "${CI_REPO_ROOT}" show "${base}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
-    if ! grep -q '^    bin:' "${base_sot}"; then
-        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base SOT has no tool pins to compare"
-        return 0
-    fi
+    grep -q '^    bin:' "${base_sot}" || pins=$?
+    case "${pins}" in
+        0) ;;
+        1) ci_log "[CI-SCAN]" "OSV PR gate NotRun: base SOT has no tool pins to compare"
+           return 0 ;;
+        *) ci_log "[CI-ERROR-SCAN-0005]" "cannot read the base SOT ${base_sot} (grep rc ${pins})"
+           return 2 ;;
+    esac
     old="$(_ci_osv_vulns "${bin}" "${base_sot}")" || return 2
     new="$(_ci_osv_vulns "${bin}" "${CI_MANIFEST}")" || return 2
     added="$(comm -13 <(printf '%s\n' "${old}") <(printf '%s\n' "${new}"))" || return 2
@@ -4546,25 +4636,27 @@ _ci_popt_fallback_smoke_test() {
 # Why: 0/0/0 parsed is a hard fail (AG-INT-003), not a pass.
 # From: Issue #479
 _ci_parse_comfychair() {
-    local log="$1" ok notrun failed
+    local log="$1" counts ok notrun failed
     if [ ! -r "${log}" ]; then
         ci_log "[CI-ERROR-TEST-0007]" "make check log ${log} is not readable"
         return 1
     fi
-    ok="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$' "${log}")" || [ "$?" -eq 1 ] || return 1
-    notrun="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+NOTRUN,' "${log}")" || [ "$?" -eq 1 ] || return 1
-    failed="$(grep -cE '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}")" || [ "$?" -eq 1 ] || return 1
+    counts="$(awk '
+        /^[A-Za-z0-9_]+[[:space:]]+OK[[:space:]]*$/ { ok++ }
+        /^[A-Za-z0-9_]+[[:space:]]+NOTRUN,/ { notrun++ }
+        /^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$/ { failed++; print > "/dev/stderr" }
+        END { print ok + 0, notrun + 0, failed + 0 }
+    ' "${log}")" || return 1
+    read -r ok notrun failed <<< "${counts}"
     ci_log "[CI-TEST-SUMMARY]" "OK=${ok} NOTRUN=${notrun} FAILED=${failed}"
     if [ "$(( ok + notrun + failed ))" -eq 0 ]; then
         ci_log "[CI-ERROR-TEST-0001]" "parsed zero comfychair result lines"
         return 1
     fi
     if [ "${failed}" -gt 0 ]; then
-        grep -E '^[A-Za-z0-9_]+[[:space:]]+FAIL[[:space:]]*$' "${log}" >&2
         ci_log "[CI-ERROR-TEST-0002]" "${failed} comfychair case(s) FAILED"
         return 1
     fi
-    return 0
 }
 
 # What: Rerun the root-only case, fail on NOTRUN or non-OK.
