@@ -1,7 +1,7 @@
 ```markdown
 # distcc-ng - Repository Governance
 **Repository**: https://github.com/wiki-mod/distcc-ng
-**Authority**: This file is the repository-wide rulebook for all paths in `wiki-mod/distcc-ng`.
+**Authority**: This file is the repository-wide rulebook for all paths in `wiki-mod/distcc-ng`. Only the version from the `current_dev` branch is authoritative. Any other copy MUST be treated as stale unless its contents have been verified against the current `current_dev` version. Any rule MUST be read in full. Shortening or summarizing it in any way removes it from its original context.
 
 ## AG-LAW
 **[AG-LAW-001]** `AGENTS.md` MUST be treated as one unified rulebook; all applicable rules MUST apply simultaneously to every affected file, artifact, generated output, behavior, and change as a whole; compliance with one rule MUST NOT establish overall compliance; a task MUST NOT be declared complete until the complete affected scope has been checked against every applicable rule.
