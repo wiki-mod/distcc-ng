@@ -1067,6 +1067,38 @@ _forbid() {
     [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
+@test "test coverage: both reports, the summary, one artifact offer" {
+    # What: The coverage variant end to end, tools stubbed.
+    # Why: Each step passed alone; the chain was never proven.
+    # From: Issue #479, PR #370, PR #544
+    local fx="${BATS_TEST_TMPDIR}/fx" out="${BATS_TEST_TMPDIR}/out" sum="${BATS_TEST_TMPDIR}/sum"
+    mkdir -p "${fx}"
+    # What: Stub make check as one passing comfychair case.
+    # Why: The chain after make check is under test.
+    make() { printf '%s\n' 'Foo_Case        OK'; }
+    # What: Stub lcov: write coverage.info, fail on LCOV_FAIL.
+    # Why: Its result must reach the artifact or fail the step.
+    lcov() { [ -z "${LCOV_FAIL:-}" ] || return 3
+        case "$*" in *"--output-file coverage.info"*) echo cov > coverage.info ;; esac; echo "lcov $1"; }
+    # What: Stub python3-coverage: xml writes its -o file.
+    # Why: The Python report must exist before the offer.
+    python3-coverage() { [ "$1" != xml ] || echo xml > "$3"; echo "pycov $1"; }
+    : > "${out}"; : > "${sum}"
+    CI_REPO_ROOT="${fx}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" CI_TEST_UNPRIVILEGED=true \
+        GITHUB_OUTPUT="${out}" GITHUB_STEP_SUMMARY="${sum}" run ci_cmd_test coverage
+    [ "${status}" -eq 0 ]
+    [ -s "${fx}/coverage.info" ] && [ -s "${fx}/coverage-python.xml" ]
+    grep -q '^## Coverage summary' "${sum}"
+    grep -qx 'artifact_name=coverage-reports' "${out}"
+    grep -qx "${fx}/coverage.info" "${out}"
+    grep -qx "${fx}/coverage-python.xml" "${out}"
+    : > "${out}"
+    CI_REPO_ROOT="${fx}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" CI_TEST_UNPRIVILEGED=true LCOV_FAIL=1 \
+        GITHUB_OUTPUT="${out}" GITHUB_STEP_SUMMARY="${sum}" run ci_cmd_test coverage
+    [ "${status}" -eq 1 ]
+    [ ! -s "${out}" ]
+}
+
 @test "report fails closed when GH_TOKEN is unset" {
     # What: report fails without credentials, never skips.
     # Why: A silent no-op would hide broken status reporting.

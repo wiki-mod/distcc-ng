@@ -868,7 +868,7 @@ _ci_e2e_attempt() {
 # Why: Unknown modes fail closed instead of running a default.
 # From: Issue #479, PR #544
 ci_cmd_e2e() {
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     local mode="${1:-distributed}" st=0 image
     case "${mode}" in
         control)
@@ -1016,7 +1016,7 @@ _ci_verify_selftest() {
     _ci_expect_output jq '^true$' jq -e .ok doc.json || return 1
     printf '#!/bin/sh\nx="a b"\necho %sx\n' "\$" > sc.sh
     _ci_expect_output shellcheck 'SC2086' shellcheck sc.sh || return 1
-    mkdir -p al/.github/workflows
+    mkdir -p al/.github/workflows || return 1
     printf 'on: push\njobs:\n  test:\n    steps:\n      - run: echo hi\n' > al/.github/workflows/broken.yml
     _ci_expect_output actionlint 'runs-on' actionlint al/.github/workflows/broken.yml || return 1
     cd / || return 1
@@ -1416,7 +1416,7 @@ ci_cmd_package() {
 # From: Issue #479
 _ci_package_sbom() {
     local out="${1:?output file required}" tarball
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)"
     [ -n "${tarball}" ] || {
         ci_log "[CI-ERROR-PACKAGE-0002]" "no distcc-*.tar.gz found"
@@ -1431,7 +1431,7 @@ _ci_package_sbom() {
 _ci_check_release_version() {
     local tag="${1:?tag required}" require_new="${2:-true}" version configured
     version="${tag#v}"
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     [ -f configure.ac ] || { ci_log "[CI-ERROR-RELEASE-0001]" "no configure.ac"; return 1; }
     configured="$(sed -n 's/^AC_INIT(\[distcc-ng\],\[\([^]]*\)\].*/\1/p' configure.ac)"
     [ -n "${configured}" ] || { ci_log "[CI-ERROR-RELEASE-0002]" "cannot parse AC_INIT version"; return 1; }
@@ -1716,7 +1716,7 @@ _ci_changelog_insert() {
     fi
     version="${tag#v}"
     date="$(date -u +%Y-%m-%d)"
-    cd "${CI_REPO_ROOT}"
+    cd "${CI_REPO_ROOT}" || return 1
     grep -qF '<!-- insertion marker -->' CHANGELOG.md || {
         ci_log "[CI-ERROR-PUBLISH-0005]" "CHANGELOG.md insertion marker not found"
         return 1
@@ -1740,7 +1740,7 @@ _ci_changelog_insert() {
         { print }
     ' CHANGELOG.md > CHANGELOG.md.new || return 1
     mv CHANGELOG.md.new CHANGELOG.md || return 1
-    rm -f "${tmp}"
+    rm -f "${tmp}" || return 1
     _ci_git_identity || return 1
     git add CHANGELOG.md || return 1
     git commit -m "CHANGELOG.md: add ${tag}" || return 1
@@ -2007,7 +2007,7 @@ ci_cmd_gc() {
         while IFS=$'\t' read -r id why; do
             [ -n "${id}" ] || continue
             ci_log "[CI-GC]" "${pkg}#${id}: delete (${why})"
-            _ci_mutate gh api --method DELETE "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}/versions/${id}" --silent
+            _ci_mutate gh api --method DELETE "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${pkg}/versions/${id}" --silent || return 1
         done <<< "${candidates}"
         echo "::endgroup::"
     done
@@ -2128,7 +2128,7 @@ ci_cmd_sot_update() {
         printf '%s\n%s\n%s\n\n' '| Pin | Channel | Old | New |' '|---|---|---|---|' "${rows}"
         printf '%s\n' "AG-VAL-007: review each crossed release range before merging."
     } > "${body}" || return 1
-    cat "${body}"
+    cat "${body}" || return 1
     _ci_git_identity || return 1
     _ci_mutate git checkout -q -B "${branch}" || return 1
     _ci_mutate git commit -q -m "${title}" -- "${CI_MANIFEST}" || return 1
@@ -2502,7 +2502,7 @@ _ci_variables_label_pr() {
     category="$(_ci_pr_category_label "${PR_TITLE:-}")"
     [ -z "${category}" ] || labels+=("${category}")
     if [ "${#labels[@]}" -gt 0 ]; then
-        gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+        _ci_mutate gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
             --add-label "$(IFS=,; printf '%s' "${labels[*]}")"
     fi
 }
@@ -3716,12 +3716,12 @@ ci_cmd_checkout() {
     : "${GITHUB_SERVER_URL:?GITHUB_SERVER_URL required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     : "${ref:?ref required (pass one, or set GITHUB_SHA)}"
-    git init -q .
-    git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+    git init -q . || return 1
+    git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" || return 1
     if [ "${depth}" = "0" ]; then
-        git fetch -q origin "${ref}"
+        git fetch -q origin "${ref}" || return 1
     else
-        git fetch -q --depth="${depth}" origin "${ref}"
+        git fetch -q --depth="${depth}" origin "${ref}" || return 1
     fi
     git checkout -q FETCH_HEAD
 }
@@ -3926,10 +3926,10 @@ _ci_harden_start() {
     fi
     private="$(_ci_event_value '.repository.private // false')" || return 2
     bin="$(_ci_tool_bin external_versions.harden_runner_agent)" || return 2
-    sudo mkdir -p "${_CI_HARDEN_DIR}"
-    sudo chown -R "${USER}" "${_CI_HARDEN_DIR}"
-    cp "${bin}" "${_CI_HARDEN_DIR}/agent"
-    chmod +x "${_CI_HARDEN_DIR}/agent"
+    sudo mkdir -p "${_CI_HARDEN_DIR}" || return 1
+    sudo chown -R "${USER}" "${_CI_HARDEN_DIR}" || return 1
+    cp "${bin}" "${_CI_HARDEN_DIR}/agent" || return 1
+    chmod +x "${_CI_HARDEN_DIR}/agent" || return 1
     jq -n --arg repo "${GITHUB_REPOSITORY}" --arg run_id "${GITHUB_RUN_ID}" \
         --arg cid "${cid}" --arg wd "${GITHUB_WORKSPACE}" --arg api "${api}" \
         --arg tel "${tel}" --arg egress "${egress}" --arg otk "${otk}" \
@@ -3941,12 +3941,12 @@ _ci_harden_start() {
           disable_sudo_and_containers: false, disable_file_monitoring: false,
           private: $private, is_github_hosted: true, is_debug: false,
           one_time_key: $otk, deploy_on_self_hosted_vm: false}' \
-        > "${_CI_HARDEN_DIR}/agent.json"
+        > "${_CI_HARDEN_DIR}/agent.json" || return 1
     printf 'correlation_id=%s\nadd_summary=%s\n' "${cid}" "${summary}" \
         > "${RUNNER_TEMP}/ci-harden.state"
-    _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null
-    sudo systemctl daemon-reload
-    timeout 15 sudo service agent start
+    _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null || return 1
+    sudo systemctl daemon-reload || return 1
+    timeout 15 sudo service agent start || return 1
     if _ci_wait_until 31 0.3 test -f "${_CI_HARDEN_DIR}/agent.status"; then
         ci_log "[CI-HARDEN]" "agent status: $(cat "${_CI_HARDEN_DIR}/agent.status")"
         ci_log "[CI-HARDEN]" "insights: ${web}/github/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -4032,7 +4032,7 @@ ci_cmd_codeql_scan() {
     bin="$(_ci_tool_bin external_versions.codeql_cli)" || return 2
     db="${RUNNER_TEMP:-/tmp}/codeql-db-${lang}"
     pack="$(_ci_codeql_query_pack "${lang}" "${suite}")" || return 2
-    rm -rf "${db}"
+    rm -rf "${db}" || return 1
     case "${lang}" in
         c-cpp)
             # What: Install the c-cpp build deps before tracing.
@@ -4085,7 +4085,7 @@ ci_cmd_sarif_upload() {
     jq -n --arg c "${GITHUB_SHA:?GITHUB_SHA required}" --arg r "${GITHUB_REF:?GITHUB_REF required}" \
         --rawfile s "${work}/sarif.b64" '{commit_sha: $c, ref: $r, sarif: $s}' > "${work}/body.json" || return 1
     if _ci_wait_until 3 5 _ci_sarif_post "${work}"; then
-        rm -rf "${work}"
+        rm -rf "${work}" || return 1
         return 0
     fi
     why=""
@@ -4389,7 +4389,7 @@ _ci_make_gated() {
 # From: Issue #479, Issue #63
 _ci_popt_strict_compile() {
     local out="${RUNNER_TEMP:-/tmp}/popt-strict-check" f
-    mkdir -p "${out}"
+    mkdir -p "${out}" || return 1
     local cflags=(-DHAVE_CONFIG_H -D_GNU_SOURCE \
         "-DPOPT_SYSCONFDIR=\"/usr/local/etc\"" "-DPACKAGE=\"distcc\"" \
         -Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter)
@@ -4569,7 +4569,10 @@ _ci_privileged_single_test() {
         return 0
     fi
     local log="${RUNNER_TEMP:-/tmp}/ci-autogroup.log"
-    sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee "${log}"
+    if ! sudo make TESTNAME=AutogroupNicenessPrivilegeDrop_Case single-test 2>&1 | tee "${log}"; then
+        ci_log "[CI-ERROR-TEST-0008]" "make single-test AutogroupNicenessPrivilegeDrop_Case failed"
+        return 1
+    fi
     if grep -q "AutogroupNicenessPrivilegeDrop_Case NOTRUN" "${log}"; then
         ci_log "[CI-ERROR-TEST-0003]" "AutogroupNicenessPrivilegeDrop_Case NOTRUN"
         return 1
@@ -4600,9 +4603,9 @@ EOF
 # From: Issue #479, PR #370
 _ci_coverage_lcov() {
     lcov --capture --directory . --output-file coverage_raw.info \
-        --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1
+        --rc branch_coverage=1 --rc geninfo_unexecuted_blocks=1 || return 1
     lcov --remove coverage_raw.info '*/lzo/*' '*/src/h_*.c' \
-        --output-file coverage.info --rc branch_coverage=1
+        --output-file coverage.info --rc branch_coverage=1 || return 1
     lcov --list coverage.info --rc branch_coverage=1
 }
 
