@@ -43,11 +43,14 @@ _forbid() {
     done
 }
 
-# What: Stub sleep as a no-op for the calling test.
-# Why: Retry backoff and agent polls must not slow the suite.
+# What: Make each named command a no-op that passes.
+# Why: Isolates one step by passing every step around it.
 # From: Issue #479, PR #544
-_no_sleep() {
-    sleep() { :; }
+_pass() {
+    local c
+    for c in "$@"; do
+        eval "${c}() { return 0; }"
+    done
 }
 
 # What: Make a git repo at v9.9.9-NG with that tag; print it.
@@ -979,7 +982,7 @@ _fixture_harden_state() {
     # What: Stub sudo to run its command directly.
     # Why: The test runs as a plain user without sudo.
     sudo() { "$@"; }
-    _no_sleep
+    _pass sleep
     # What: Stub timeout: log calls, fail the first apt run.
     # Why: Replays an apt run the timeout cut off mid-dpkg.
     timeout() {
@@ -2088,12 +2091,8 @@ _fixture_harden_state() {
     mkdir -p "${fx}/contrib"
     cp "${CI_REPO_ROOT}/AGENTS.md" "${fx}/AGENTS.md"
     printf '%s\n' '#!/bin/sh' 'x=1' > "${fx}/contrib/tool"
-    # What: Stub every other lint step as passing.
-    # Why: Only the directive guard may fail the lint entry.
-    _ok() { return 0; }
-    ci_guard_line_endings() { _ok; }; ci_guard_full_sha() { _ok; }; ci_guard_pins_in_sot() { _ok; }
-    ci_guard_sot_mirrors() { _ok; }; ci_guard_orchestrator_only() { _ok; }; ci_guard_comment_format() { _ok; }
-    _ci_lint_actionlint() { _ok; }; _ci_lint_shellcheck() { _ok; }
+    _pass ci_guard_line_endings ci_guard_full_sha ci_guard_pins_in_sot ci_guard_sot_mirrors \
+        ci_guard_orchestrator_only ci_guard_comment_format _ci_lint_actionlint _ci_lint_shellcheck
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 0 ]
     printf '%s\n' '#!/bin/sh' "# ${texts[0]}SC2086" 'x=1' > "${fx}/contrib/tool"
@@ -2309,7 +2308,7 @@ _capture_docker() {
     # Why: One bounded poll owner for every readiness wait.
     # From: Issue #479, PR #544
 
-    _no_sleep
+    _pass sleep
     # What: Probe that succeeds on its third call.
     # Why: Proves wait-until retries, then stops.
     _probe() { echo x >> "${BATS_TEST_TMPDIR}/tries"; [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -ge 3 ]; }
@@ -2325,7 +2324,7 @@ _capture_docker() {
     # Why: A hard error must never be retried as transient.
     # From: Issue #479, PR #544
 
-    _no_sleep
+    _pass sleep
     # What: Probe that logs its attempt, then fails hard.
     # Why: Proves a single call and the attempt counters.
     _probe() { echo "${CI_ATTEMPT}/${CI_TRIES}" >> "${BATS_TEST_TMPDIR}/tries"; return 5; }
@@ -2366,7 +2365,7 @@ _fake_curl() {
     # What: Stub curl as an HTTP failure (rc 22).
     # Why: A failed fetch must name its URL and fail.
     curl() { return 22; }
-    _no_sleep
+    _pass sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"attempt 3/3 failed"* ]]
@@ -2382,7 +2381,7 @@ _fake_curl() {
     # What: Stub curl: the first call fails, later ones pass.
     # Why: Proves a later attempt recovers the fetch.
     curl() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"; [ "${c}" -ge 1 ]; }
-    _no_sleep
+    _pass sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 0 ]
     [ "$(cat "${n}")" -eq 2 ]
@@ -2564,7 +2563,7 @@ _fake_osv() {
     # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
     echo '{}' > "${f}"
-    _no_sleep
+    _pass sleep
     echo 0 > "${n}"
     # What: Stub gh: a 502, then empty, then an id.
     # Why: Both transient answers must be retried.
@@ -2728,7 +2727,7 @@ _fake_osv() {
     # Why: Unflushed telemetry must not pass silently.
     # From: Issue #479, PR #544
     _fixture_harden_state
-    _no_sleep
+    _pass sleep
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-HARDEN-0003"* ]]
