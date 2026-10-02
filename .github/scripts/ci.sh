@@ -3311,6 +3311,10 @@ ci_guard_comment_format() {
             -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \) || return 2
         files+=("${found[@]}")
     done
+    if [ "${#files[@]}" -eq 0 ]; then
+        ci_log "[CI-ERROR-GUARD-COMMENT-0002]" "no file to check under ${root} (${CI_OWNED_DIRS})"
+        return 2
+    fi
     for f in "${files[@]}"; do
         out="$(_ci_comment_violations "${f}")" || return 2
         _ci_guard_hits "[CI-ERROR-GUARD-COMMENT-0001]" <<< "${out}" || rc=1
@@ -3360,7 +3364,10 @@ ci_guard_shellcheck_directives() {
     local files=()
     texts="$(_ci_banned_shell_texts)" || return 2
     _ci_mapfile files _ci_shell_sources "${root}" || return 2
-    [ "${#files[@]}" -gt 0 ] || return 0
+    if [ "${#files[@]}" -eq 0 ]; then
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0004]" "no shell source under ${root}"
+        return 2
+    fi
     out="$(CI_BANNED="${texts}" awk 'BEGIN { n = split(ENVIRON["CI_BANNED"], b, "\n") }
         { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": AG-INT-006 text " b[i] }
         ' "${files[@]}")" || return 2
@@ -3566,8 +3573,15 @@ _ci_scan_run_blocks() {
 ci_guard_orchestrator_only() {
     local rc=0 f pins out
     pins="$(_ci_action_pins)" || return 2
+    if [ "$#" -eq 0 ]; then
+        ci_log "[CI-ERROR-GUARD-ORCH-0002]" "no workflow file given"
+        return 2
+    fi
     for f in "$@"; do
-        [ -f "${f}" ] || continue
+        if [ ! -f "${f}" ]; then
+            ci_log "[CI-ERROR-GUARD-ORCH-0003]" "workflow file ${f} does not exist"
+            return 2
+        fi
         out="$(_ci_scan_run_blocks "${f}" "${pins}")" || return 2
         _ci_guard_hits "[CI-ERROR-GUARD-ORCH-0001]" <<< "${out}" || rc=1
     done

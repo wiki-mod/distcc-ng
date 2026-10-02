@@ -1882,6 +1882,27 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Runs three guards on an empty tree and a missing file.
+# Why: A guard that checked nothing must not report a pass.
+# From: Issue #479, PR #544
+@test "guards fail closed when they find nothing to check" {
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}"
+    cp "${CI_REPO_ROOT}/AGENTS.md" "${fx}/AGENTS.md"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-COMMENT-0002"* ]]
+    CI_REPO_ROOT="${fx}" run ci_guard_shellcheck_directives "${fx}"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0004"* ]]
+    run ci_guard_orchestrator_only
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0002"* ]]
+    run ci_guard_orchestrator_only "${fx}/none.yml"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0003"* ]]
+}
+
 # What: Diffs from the zero SHA; parses a missing log.
 # Why: Neither may read as no change or as a parse result.
 # From: Issue #479, PR #544
