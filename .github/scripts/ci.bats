@@ -450,13 +450,22 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-META-BOARD"* ]]
 }
 
-# What: Runs the board check as a fork PR with a PAT set.
-# Why: GitHub withholds the PAT from fork PR runs anyway.
+# What: Board check with a PAT: on, off, lookup error.
+# Why: With a PAT, AG-GH-002 makes the board check blocking.
 # From: Issue #479, PR #544
-@test "board check skips for a fork PR even with a PAT configured" {
-    PROJECT_PAT="dummy" PR_IS_FORK="true" run _ci_check_pr_board
+@test "board check with a PAT passes only a PR on the board" {
+    _print _ci_pr_on_project_board
+    PROJECT_PAT="dummy" run _ci_check_pr_board
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"fork PR"* ]]
+    [[ "${output}" == *"OK: on project board"* ]]
+    _fail _ci_pr_on_project_board 1
+    PROJECT_PAT="dummy" run _ci_check_pr_board
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-BOARD-0002"* ]]
+    _fail _ci_pr_on_project_board 2
+    PROJECT_PAT="dummy" run _ci_check_pr_board
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-BOARD-0001"* ]]
 }
 
 # What: Runs version-check for v99.99.99-NG on the repo.
@@ -2609,6 +2618,30 @@ _fake_curl() {
     [ "${status}" -eq 0 ]
     [ "$(cat "${output}")" = "bin" ]
     [ -x "${output}" ]
+}
+
+# What: Installs a pinned binary, a bad sha, a bad target.
+# Why: An image must never carry an unchecked tool.
+# From: Issue #479, PR #544
+@test "tool install puts the checked binary at its target only" {
+    local sum to="${BATS_TEST_TMPDIR}/bin/osv"
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf 'exe' > "${BATS_TEST_TMPDIR}/raw"
+    sum="$(sha256sum "${BATS_TEST_TMPDIR}/raw" | cut -d' ' -f1)"
+    _fixture_manifest 'x:' '  osv:' '    version: "v2"' '    url: "https://h/osv"' \
+        "    sha256: \"${sum}\"" '    archive: "binary"' '    bin: "osv-scanner"' \
+        '  bad:' '    version: "v2"' '    url: "https://h/osv"' \
+        "    sha256: \"$(printf '0%.0s' {1..64})\"" '    archive: "binary"' '    bin: "osv-scanner"'
+    _fake_curl "${BATS_TEST_TMPDIR}/raw"
+    run _ci_install_tool x.osv "${to}"
+    [ "${status}" -eq 0 ]
+    [ "$(cat "${to}")" = "exe" ]
+    [ "$(stat -c %a "${to}")" = "755" ]
+    run _ci_install_tool x.bad "${BATS_TEST_TMPDIR}/bin/bad"
+    [ "${status}" -eq 2 ]
+    [ ! -e "${BATS_TEST_TMPDIR}/bin/bad" ]
+    run _ci_install_tool x.osv "${BATS_TEST_TMPDIR}/nope/osv"
+    [ "${status}" -eq 1 ]
 }
 
 # What: Fetches an unarchived binary with archive: binary.

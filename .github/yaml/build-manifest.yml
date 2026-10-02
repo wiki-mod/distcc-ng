@@ -13,10 +13,6 @@ base_images:
   # Why: Full, not slim: buildtools carries a large toolchain.
   # From: Issue #264, Issue #479, PR #544
   debian: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
-  # What: Go base that builds the pinned actionlint binary.
-  # Why: verify's actionlint-builder stage consumes it.
-  # From: Issue #479
-  golang_actionlint: "golang:1-trixie@sha256:3b77fc618ec235a1ab412de7737f120dd507c57e8d87de4cbb7994fb94275ed5"
   # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
   # Why: :v1 lineage; its old glibc matches the host check.
   # From: Issue #267, Issue #479, PR #544
@@ -41,13 +37,15 @@ external_versions:
   # From: Issue #264, Issue #479
   samba:
     version: "4.25.0"
-  # What: actionlint built from source into the verify image.
-  # Why: go install verifies the module via sum.golang.org.
-  # From: Issue #267, Issue #479
+  # What: actionlint release the verify image installs.
+  # Why: ci.sh lint runs it inside the buildtools image.
+  # From: Issue #267, Issue #479, PR #544
   actionlint:
-    version: "1.7.12"
+    version: "v1.7.12"
     source: "rhysd/actionlint"
-    tag_prefix: "v"
+    url: "https://github.com/rhysd/actionlint/releases/download/{version}/actionlint_{bare}_linux_amd64.tar.gz"
+    sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    bin: "actionlint"
   # What: ccache release built by the weekly heartbeat.
   # Why: heartbeat/control build the same revision.
   # From: Issue #479, Issue #81
@@ -203,7 +201,7 @@ release:
     distcc-ng-buildtools:
       dockerfile: "docker/verify/Dockerfile"
       target: "verify"
-      args: ["DEBIAN_IMAGE=base_images.debian", "GOLANG_IMAGE=base_images.golang_actionlint"]
+      args: ["DEBIAN_IMAGE=base_images.debian"]
       description: "distcc-ng build, debug and verification image."
       tag: "distcc-ng-buildtools:local"
       ref: "ghcr.io/wiki-mod/distcc-ng-buildtools:latest"

@@ -969,16 +969,6 @@ _ci_expect_output() {
     ci_log "[CI-SELFTEST]" "${name}: OK (exit ${rc})"
 }
 
-# What: Source-build the SOT actionlint version into /out.
-# Why: A release binary embeds a possibly stale Go stdlib.
-# From: Issue #267, Issue #479, PR #544
-_ci_image_actionlint() {
-    local ver
-    ver="$(_ci_sot_scalar external_versions.actionlint.version)" || return 2
-    GOBIN=/out go install "github.com/rhysd/actionlint/cmd/actionlint@v${ver}" || return 1
-    /out/actionlint --version
-}
-
 # What: Prove each verify-image tool works, not just exists.
 # Why: A broken tool fails the build, not its first user.
 # From: Issue #264 #275 #398, PR #273 #332 #544
@@ -1125,6 +1115,7 @@ _ci_image_verify() {
     # From: Issue #479, PR #544
     pkgs="${pkgs} $(_ci_sot_scalar ci_engine.selftest_apt)" || return 2
     _ci_apt_install "${pkgs}" image || return 1
+    _ci_install_tool external_versions.actionlint /usr/local/bin/actionlint || return 1
     _ci_verify_selftest || return 1
     useradd --create-home --shell /bin/bash verify
 }
@@ -1162,11 +1153,10 @@ ci_cmd_image() {
         release-build) _ci_image_release_build ;;
         release-runtime) _ci_image_release_runtime ;;
         cfl-toolchain) _ci_image_cfl_toolchain ;;
-        actionlint) _ci_image_actionlint ;;
         verify) _ci_image_verify ;;
         e2e-ng) _ci_image_e2e ng ;;
         e2e-native) _ci_image_e2e native ;;
-        *) ci_log "[CI-ERROR-IMAGE-0001]" "unknown image target=\"${1:-}\" (release-build|release-runtime|cfl-toolchain|actionlint|verify|e2e-ng|e2e-native)"; return 2 ;;
+        *) ci_log "[CI-ERROR-IMAGE-0001]" "unknown image target=\"${1:-}\" (release-build|release-runtime|cfl-toolchain|verify|e2e-ng|e2e-native)"; return 2 ;;
     esac
 }
 
@@ -2891,6 +2881,20 @@ _ci_tool_bin() {
     printf '%s/%s' "${dest}" "${bin}"
 }
 
+# What: Fetch SOT tool $1 and install its binary as file $2.
+# Why: Images and the harden agent take a tool in one way.
+# From: Issue #479, PR #544
+_ci_install_tool() {
+    local rt bin rc=0
+    rt="$(mktemp -d)" || return 1
+    bin="$(RUNNER_TEMP="${rt}" _ci_tool_bin "$1")" || rc=2
+    if [ "${rc}" -eq 0 ]; then
+        install -m 755 "${bin}" "$2" || rc=1
+    fi
+    rm -rf "${rt}" || return 1
+    return "${rc}"
+}
+
 # What: Scan a local image ref for HIGH/CRITICAL vulns.
 # Why: A HIGH or CRITICAL finding must stop the push.
 # From: Issue #479
@@ -3137,10 +3141,6 @@ _ci_check_pr_board() {
         return 0
     fi
     _ci_project_board_load || return 2
-    if [ "${PR_IS_FORK:-false}" = "true" ]; then
-        ci_log "[CI-META-BOARD]" "skipped: fork PR, PAT withheld by GitHub"
-        return 0
-    fi
     local board_status=0
     _ci_pr_on_project_board || board_status=$?
     case "${board_status}" in
@@ -3201,13 +3201,11 @@ _ci_metadata_fetch_live() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local json
     json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
-        --json title,labels,milestone,isDraft,isCrossRepository)" || return 2
+        --json title,labels,milestone,isDraft)" || return 2
     PR_TITLE="$(jq -er '.title' <<< "${json}")" || return 2
     PR_LABELS="$(jq -er '[.labels[].name] | join(" ")' <<< "${json}")" || return 2
     PR_MILESTONE_TITLE="$(jq -er '.milestone.title // ""' <<< "${json}")" || return 2
     PR_DRAFT="$(jq -r '.isDraft | if type == "boolean" then . else error("isDraft") end' <<< "${json}")" || return 2
-    PR_IS_FORK="$(jq -r '.isCrossRepository | if type == "boolean" then . else error("fork") end' <<< "${json}")" \
-        || return 2
 }
 
 # What: Runs metadata check(s); fetches live PR data first.
@@ -3974,7 +3972,7 @@ EOF
 # From: Issue #479, PR #544, Issue #58
 _ci_harden_start() {
     local why api tel web egress cid resp code otk="" summary="false"
-    local private bin
+    local private
     why="$(_ci_harden_unsupported)"
     if [ -n "${why}" ]; then
         ci_log "[CI-HARDEN]" "NotRun: agent unsupported on ${why}"
@@ -4010,11 +4008,9 @@ _ci_harden_start() {
         fi
     fi
     private="$(_ci_event_value '.repository.private // false')" || return 2
-    bin="$(_ci_tool_bin external_versions.harden_runner_agent)" || return 2
     sudo mkdir -p "${_CI_HARDEN_DIR}" || return 1
     sudo chown -R "${USER}" "${_CI_HARDEN_DIR}" || return 1
-    cp "${bin}" "${_CI_HARDEN_DIR}/agent" || return 1
-    chmod +x "${_CI_HARDEN_DIR}/agent" || return 1
+    _ci_install_tool external_versions.harden_runner_agent "${_CI_HARDEN_DIR}/agent" || return
     jq -n --arg repo "${GITHUB_REPOSITORY}" --arg run_id "${GITHUB_RUN_ID}" \
         --arg cid "${cid}" --arg wd "${GITHUB_WORKSPACE}" --arg api "${api}" \
         --arg tel "${tel}" --arg egress "${egress}" --arg otk "${otk}" \

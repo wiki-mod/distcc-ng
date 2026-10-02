@@ -190,6 +190,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the list from the rule. The two Alpine OpenRC units lose their
   suppression comment; their code is unchanged.
 
+- **`docker/verify/Dockerfile`** (issue #479, PR #544): `actionlint` is
+  no longer compiled with Go in a separate `golang` builder stage; the
+  buildtools image installs the SOT-pinned release binary (version and
+  sha256 in `.github/yaml/build-manifest.yml`, like trivy and syft), so
+  every image is built from the one Debian base.
+
 - **Container images** (issue #479, PR #544): every image `ci.sh image`
   builds (release, nightly, buildtools, e2e, ClusterFuzzLite toolchain)
   now runs `apt-get full-upgrade` before installing its packages, instead
