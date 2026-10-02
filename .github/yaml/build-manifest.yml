@@ -9,14 +9,10 @@ schema: build-manifest/v1
 # Why: ci.sh sot-update moves each digest along its tag.
 # From: Issue #479, PR #544
 base_images:
-  # What: Debian base of the verify/build-tools image.
-  # Why: Full, not slim: the image carries a large toolchain.
-  # From: Issue #264, Issue #479
-  debian_verify: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
-  # What: Debian base of the release runtime images.
-  # Why: docker/release consumes this; distinct from verify.
-  # From: Issue #479
-  debian_release: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
+  # What: Debian base of the buildtools and release images.
+  # Why: Full, not slim: buildtools carries a large toolchain.
+  # From: Issue #264, Issue #479, PR #544
+  debian: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
   # What: Go base that builds the pinned actionlint binary.
   # Why: verify's actionlint-builder stage consumes it.
   # From: Issue #479
@@ -189,17 +185,17 @@ release:
     distcc-ng:
       dockerfile: "docker/release/Dockerfile"
       target: "runtime"
-      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      args: ["DEBIAN_IMAGE=base_images.debian"]
       description: "distcc-ng runtime image."
     distcc-ng-pump:
       dockerfile: "docker/release/Dockerfile"
       target: "runtime-pump"
-      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      args: ["DEBIAN_IMAGE=base_images.debian"]
       description: "distcc-ng runtime image with pump mode enabled."
     distcc-ng-nightly:
       dockerfile: "docker/release/Dockerfile"
       target: "runtime"
-      args: ["DEBIAN_IMAGE=base_images.debian_release"]
+      args: ["DEBIAN_IMAGE=base_images.debian"]
       description: "distcc-ng nightly runtime image from current_dev."
     # What: ref is the published tag lint and e2e run on.
     # Why: tag is this job's local build of the same image.
@@ -207,7 +203,7 @@ release:
     distcc-ng-buildtools:
       dockerfile: "docker/verify/Dockerfile"
       target: "verify"
-      args: ["DEBIAN_IMAGE=base_images.debian_verify", "GOLANG_IMAGE=base_images.golang_actionlint"]
+      args: ["DEBIAN_IMAGE=base_images.debian", "GOLANG_IMAGE=base_images.golang_actionlint"]
       description: "distcc-ng build, debug and verification image."
       tag: "distcc-ng-buildtools:local"
       ref: "ghcr.io/wiki-mod/distcc-ng-buildtools:latest"
