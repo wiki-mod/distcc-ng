@@ -3266,6 +3266,8 @@ _ci_comment_violations() {
         {
             s = $0; sub(/^[ \t]+/, "", s)
             if (substr(s, 1, 1) != "#") {
+                if (np == 0 && s ~ /^([A-Za-z_][A-Za-z0-9_]*\(\)[ \t]*\{|@test "[^"]*"[ \t]*\{)/)
+                    print F ":" NR ": function without a comment block above"
                 flush()
                 l = $0; gsub(/<<</, "", l)
                 if (match(l, hd)) {
@@ -3291,7 +3293,7 @@ _ci_comment_violations() {
     ' "$1"
 }
 
-# What: Fail on prose comments not in What/Why/From form.
+# What: Fail on malformed or missing What/Why/From blocks.
 # Why: #479's comment guard; AG-CODE-001 defines the form.
 # From: Issue #479, PR #544
 ci_guard_comment_format() {

@@ -190,6 +190,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   the list from the rule. The two Alpine OpenRC units lose their
   suppression comment; their code is unchanged.
 
+- **`.github/scripts/ci.sh` comment guard** (issue #479, PR #544):
+  `ci.sh lint` also fails on a function, nested stub or bats test
+  without a What/Why/From block directly above it, as `AGENTS.md`
+  `[AG-CODE-001]` requires a comment on every function. `ci.bats`
+  places each test's block above its `@test` line.
+
 - **PR metadata checks** (issue #479, PR #544): pull requests opened by
   Dependabot or `github-actions[bot]` (the SOT pin update) no longer
   skip the AG-GH-002 tracking, AG-GH-014 title and AG-REL-002 changelog

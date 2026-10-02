@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 # distcc-ng (https://github.com/wiki-mod/distcc-ng)
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What: Single authoritative CI regression suite.
-# Why: One place proves every CI invariant and regression.
+# What: Bats suite for ci.sh, its SOT and workflow wiring.
+# Why: Issue #479 allows ci.bats as the only CI test file.
 # From: Issue #479
 
 # What: Source ci.sh functions without running dispatch.
-# Why: Test engine functions directly against the real SOT.
+# Why: ci.sh runs ci_main only when executed, not sourced.
 # From: Issue #479
 setup() {
     CI_SH="${BATS_TEST_DIRNAME}/ci.sh"
@@ -53,6 +53,24 @@ _pass() {
     done
 }
 
+# What: Make command $1 print the other args, one per line.
+# Why: One commented owner for every fixed-output stub.
+# From: Issue #479, PR #544
+_print() {
+    local c="$1"
+    shift
+    eval "${c}() { printf '%s\n' $(printf '%q ' "$@"); }"
+}
+
+# What: Make command $1 print $3 to stderr and return $2.
+# Why: One commented owner for every failing-tool stub.
+# From: Issue #479, PR #544
+_fail() {
+    local c="$1" rc="$2" msg
+    msg="$(printf '%q' "${3:-}")"
+    eval "${c}() { [ -z ${msg} ] || printf '%s\n' ${msg} >&2; return ${rc}; }"
+}
+
 # What: Make a git repo at v9.9.9-NG with that tag; print it.
 # Why: Both require_new branches check one tagged release.
 # From: Issue #479, PR #544
@@ -74,37 +92,37 @@ _fixture_harden_state() {
     printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
 }
 
+# What: Runs ci.sh with a command no dispatch arm knows.
+# Why: A mistyped workflow command must fail, not skip.
+# From: Issue #479
 @test "unknown subcommand fails closed with a stable id" {
-    # What: An unknown command MUST never succeed.
-    # Why: Fail-closed dispatch is mandatory.
-    # From: Issue #479
     run bash "${BATS_TEST_DIRNAME}/ci.sh" bogus-command
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0002"* ]]
 }
 
+# What: Points CI_MANIFEST at a path that does not exist.
+# Why: Without the SOT every pin and spec would read empty.
+# From: Issue #479
 @test "a missing manifest fails closed" {
-    # What: Every command requires the SOT manifest.
-    # Why: No operation may derive state without it.
-    # From: Issue #479
     CI_MANIFEST="/nonexistent/build-manifest.yml" run ci_require_manifest
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0003"* ]]
 }
 
+# What: Reads a 2- and a 3-level path from a fixture SOT.
+# Why: Every pin and spec is read through this one reader.
+# From: Issue #479, PR #544
 @test "sot scalar reads a scalar at any nesting depth" {
-    # What: The awk reader follows dotted paths of any depth.
-    # Why: Every pin and spec is read through this one reader.
-    # From: Issue #479, PR #544
     _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"'
     [ "$(_ci_sot_scalar a.b)" = "x" ]
     [ "$(_ci_sot_scalar a.c.d)" = "y:z@sha256:0" ]
 }
 
+# What: Matches every base_images and external_services pin.
+# Why: No tag, no refresh; no digest, a floating build.
+# From: Issue #479, PR #544
 @test "every SOT image pin is name:tag at a full sha256 digest" {
-    # What: Each image pin names its channel tag and a digest.
-    # Why: No tag, no refresh; no digest, a floating build.
-    # From: Issue #479, PR #544
     local s k v
     for s in base_images external_services; do
         for k in $(_ci_sot_children "${s}"); do
@@ -114,10 +132,10 @@ _fixture_harden_state() {
     done
 }
 
+# What: Checks the sha256 of each SOT tool that has a url.
+# Why: A url without sha256 would run an unverified binary.
+# From: Issue #479, PR #544
 @test "every SOT tool with a url carries a full sha256" {
-    # What: A downloaded tool is always checked against a pin.
-    # Why: A url without sha256 would run an unverified binary.
-    # From: Issue #479, PR #544
     local k
     for k in $(_ci_sot_children external_versions); do
         [ -n "$(_ci_sot_optional "external_versions.${k}.url")" ] || continue
@@ -125,10 +143,10 @@ _fixture_harden_state() {
     done
 }
 
+# What: Sets a.c.b beside same-named keys, then a bad path.
+# Why: sot-update must never touch a neighbouring pin.
+# From: Issue #479, PR #544
 @test "sot set rewrites one path and fails closed on a missing one" {
-    # What: The writer changes exactly the addressed scalar.
-    # Why: sot-update must never touch a neighbouring pin.
-    # From: Issue #479, PR #544
     _fixture_manifest 'a:' '  # note' '  b: "x"' '  c:' '    b: "y"' 'b: "z"'
     run _ci_sot_set a.c.b "new"
     [ "${status}" -eq 0 ]
@@ -143,37 +161,37 @@ _fixture_harden_state() {
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
 }
 
+# What: Reads a key the real SOT does not have.
+# Why: An empty string would pass on as a valid pin.
+# From: Issue #479, PR #544
 @test "sot scalar fails closed on a missing key" {
-    # What: An absent key MUST NOT read as an empty value.
-    # Why: An empty pin once silently skipped a checksum.
-    # From: Issue #479, PR #544
     run _ci_sot_scalar external_versions.nope.version
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
 }
 
+# What: Reads the default variant's absent opt_in key.
+# Why: Only _ci_sot_optional may turn absence into empty.
+# From: Issue #479, PR #544
 @test "sot optional reads absent keys as empty" {
-    # What: Per-entry keys like brew/opt_in may be absent.
-    # Why: Optional is explicit, never the default reader.
-    # From: Issue #479, PR #544
     run _ci_sot_optional build_matrix.variants.default.opt_in
     [ "${status}" -eq 0 ]
     [ -z "${output}" ]
 }
 
+# What: Lists children of a build_matrix key that is absent.
+# Why: It would silently empty the build matrix.
+# From: Issue #479, PR #544
 @test "sot children fails closed on a missing section" {
-    # What: An absent section MUST NOT read as zero children.
-    # Why: It would silently empty the build matrix.
-    # From: Issue #479, PR #544
     run _ci_sot_children build_matrix.nope
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
 }
 
+# What: Lists v in a fixture with nested keys and a sibling.
+# Why: Drift here silently drops or adds a variant or image.
+# From: Issue #479, PR #544
 @test "sot children lists only the direct child keys" {
-    # What: Children of a path are its next level, nothing deeper.
-    # Why: Drift here silently drops or adds a variant or image.
-    # From: Issue #479, PR #544
     _fixture_manifest 'v:' '  one:' '    k: 1' '  two:' '    k: 2' 'other: 1'
     run _ci_sot_children v
     [ "${status}" -eq 0 ]
@@ -182,10 +200,10 @@ _fixture_harden_state() {
     [ "${lines[1]}" = "two" ]
 }
 
+# What: Drives value, children and set modes on one fixture.
+# Why: Readers and the writer must never disagree on a path.
+# From: Issue #479, PR #544
 @test "sot walker: one path rule for value, children and set" {
-    # What: The one walker serves every mode, or fails closed.
-    # Why: Readers and the writer must never disagree on a path.
-    # From: Issue #479, PR #544
     _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: 1' 'e: "y"'
     run _ci_sot_lookup bogus a.b
     [ "${status}" -eq 2 ]
@@ -200,22 +218,22 @@ _fixture_harden_state() {
     [ "$(_ci_sot_children a)" = "$(printf 'b\nc')" ]
 }
 
+# What: Reads _ci_jobs on the machine running the suite.
+# Why: Serial runs are forbidden; the floor is a guard.
+# From: Issue #479
 @test "job count never drops below the floor of 16" {
-    # What: bats parallelism = max(16, nproc*2).
-    # Why: Serial runs are forbidden; the floor is a guard.
-    # From: Issue #479
     run _ci_jobs
     [ "${status}" -eq 0 ]
     [ "${output}" -ge 16 ]
 }
 
+# What: Maps a half-failed, a clean and an empty command.
+# Why: mapfile < <(cmd) drops the exit status of cmd.
+# From: Issue #479, PR #544
 @test "_ci_mapfile keeps the command's exit status" {
-    # What: Lines land in the array; a failure is returned.
-    # Why: mapfile < <(cmd) hid partial and total failures.
-    # From: Issue #479, PR #544
     local arr=(stale)
-    # What: Stub: two lines of output, then exit 4.
-    # Why: A half-failed command must still return its rc.
+    # What: Stub: print two lines, then exit 4.
+    # Why: Real tools often print part of a result, then fail.
     _half() { printf 'a\nb c\n'; return 4; }
     run _ci_mapfile arr _half
     [ "${status}" -eq 4 ]
@@ -229,39 +247,34 @@ _fixture_harden_state() {
     [ "${#arr[@]}" -eq 0 ]
 }
 
+# What: Breaks nproc, then makes it report zero CPUs.
+# Why: AG-VAL-001: a failed tool is never worked around.
+# From: Issue #479, PR #544
 @test "job count fails closed when nproc fails" {
-    # What: No CPU count is an error, not a silent guess of 4.
-    # Why: AG-VAL-001: a failed tool is never worked around.
-    # From: Issue #479, PR #544
-
-    # What: Stub nproc as a failing tool.
-    # Why: The job count must fail, never guess a CPU count.
-    nproc() { return 1; }
+    _fail nproc 1
     run _ci_jobs
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
     run ci_cmd_selftest
     [ "${status}" -eq 2 ]
-    # What: Stub nproc printing zero CPUs.
-    # Why: A count that is not a positive integer is no count.
-    nproc() { echo 0; }
+    _print nproc 0
     run _ci_nproc
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
 }
 
+# What: Checks a feat(scope) title with enforcement on.
+# Why: Block mode must not reject what AG-GH-014 allows.
+# From: Issue #479
 @test "pr-title accepts a valid Conventional-Commit title" {
-    # What: A conforming title passes even in block mode.
-    # Why: Proves the green path of the AG-GH-014 taxonomy.
-    # From: Issue #479
     PR_TITLE="feat(pump): add IPv6 support" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 0 ]
 }
 
+# What: Reads types and scopes from the repo's AGENTS.md.
+# Why: AGENTS.md owns the taxonomy; the checker has no copy.
+# From: Issue #479, PR #544, AG-GH-014
 @test "pr-title taxonomy is read from AGENTS.md AG-GH-014" {
-    # What: The real rule yields its 12 types and 15 scopes.
-    # Why: AGENTS.md owns the taxonomy; the checker has no copy.
-    # From: Issue #479, PR #544, AG-GH-014
     run _ci_title_taxonomy types
     [ "${status}" -eq 0 ]
     [ "${output}" = "feat fix security docs refactor perf test build ci chore style revert" ]
@@ -271,10 +284,10 @@ _fixture_harden_state() {
     [[ " ${output} " == *" support-upstream "* ]]
 }
 
+# What: Feeds AGENTS.md without the rule, then empty lists.
+# Why: An empty taxonomy must not accept or reject at random.
+# From: Issue #479, PR #544, AG-GH-014
 @test "pr-title fails closed when AG-GH-014 is missing or unparsable" {
-    # What: No rule or no list fails the check, never passes.
-    # Why: An empty taxonomy must not accept or reject at random.
-    # From: Issue #479, PR #544, AG-GH-014
     local fx="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${fx}"
     printf '**[AG-GH-001]** nothing here\n' > "${fx}/AGENTS.md"
@@ -290,31 +303,30 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
 }
 
+# What: Checks a title without a type with enforcement on.
+# Why: Only block mode turns a title finding into a failure.
+# From: Issue #479
 @test "pr-title fails closed on a bad title in block mode" {
-    # What: A non-conforming title fails when enforcement is on.
-    # Why: Proves the fail-closed path.
-    # From: Issue #479
     PR_TITLE="add some stuff" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
+# What: Checks a Dependabot bump title in block mode.
+# Why: AG-GH-014 has no author exemption.
+# From: Issue #479, PR #544
 @test "pr-title holds a dependency bot to AG-GH-014 too" {
-    # What: A bot's non-conforming title fails in block mode.
-    # Why: AG-GH-014 has no author exemption.
-    # From: Issue #479, PR #544
     PR_AUTHOR="dependabot[bot]" PR_TITLE="Bump foo from 1 to 2" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
+# What: Adds a url with a token, as a dry run, and without.
+# Why: A PAT must never land in a log line.
+# From: Issue #236, Issue #479, PR #544
 @test "board add passes its token to gh but never prints it" {
-    # What: The token reaches gh; a dry run prints only the args.
-    # Why: One board owner; a PAT must not land in a log line.
-    # From: Issue #236, Issue #479, PR #544
-
-    # What: Stub gh to echo the token it was handed.
-    # Why: Shows the token reaches gh but not the log.
+    # What: Stub gh to echo the token and args it was handed.
+    # Why: The real gh needs a project and the network.
     gh() { echo "token=${GH_TOKEN:-none} args=$*"; }
     run _ci_board_add https://x/1 s3cret
     [ "${status}" -eq 0 ]
@@ -328,10 +340,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"not added to the board"* ]]
 }
 
+# What: Lists assets in an empty tree, then in a filled one.
+# Why: A release or nightly without packages must not ship.
+# From: Issue #362, Issue #479, PR #544
 @test "release assets come from the SOT globs and none fails" {
-    # What: Matching files are listed; an empty set is an error.
-    # Why: A release or nightly without packages must not ship.
-    # From: Issue #362, Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/packaging"
     _fixture_manifest 'release:' '  assets: ["distcc-*.tar.gz", "packaging/*.deb"]'
@@ -344,104 +356,102 @@ _fixture_harden_state() {
     [ "${output}" = $'distcc-1.tar.gz\npackaging/a.deb' ]
 }
 
+# What: Runs both checks for two bot authors, no metadata.
+# Why: AG-GH-002 and AG-REL-002 name no author exemption.
+# From: Issue #479, PR #544
 @test "a bot PR needs tracking metadata and a changelog too" {
-    # What: Bot PRs fail tracking and changelog like any PR.
-    # Why: AG-GH-002 and AG-REL-002 name no author exemption.
-    # From: Issue #479, PR #544
     local a
     for a in "github-actions[bot]" "dependabot[bot]"; do
         PR_AUTHOR="${a}" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
-        # What: Stub the diff owner as a change without CHANGELOG.
-        # Why: The changelog check must fail for the bot as well.
-        _ci_changed_paths() { printf '%s\n' .github/yaml/build-manifest.yml; }
+        _print _ci_changed_paths .github/yaml/build-manifest.yml
         PR_AUTHOR="${a}" PR_LABELS="dependencies" BASE=b HEAD=h run _ci_check_changelog
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0001"* ]]
     done
 }
 
+# What: Checks a PR with the ci label and a milestone.
+# Why: AG-GH-002 asks for a label and a milestone, no more.
+# From: Issue #479
 @test "tracking passes with labels and a milestone" {
-    # What: A PR with a label and a milestone passes AG-GH-002.
-    # Why: Proves the green tracking path.
-    # From: Issue #479
     PR_LABELS="ci" PR_MILESTONE_TITLE="current_dev backlog" run _ci_check_pr_tracking
     [ "${status}" -eq 0 ]
 }
 
+# What: Checks a labelled PR that has no milestone.
+# Why: AG-GH-002 requires a milestone on every PR.
+# From: Issue #479
 @test "tracking fails closed without a milestone" {
-    # What: A missing milestone fails AG-GH-002.
-    # Why: Proves the fail-closed tracking path.
-    # From: Issue #479
     PR_LABELS="ci" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
 }
 
+# What: Checks a draft PR with no label and no milestone.
+# Why: AG-WF-009; ready_for_review re-checks it for real.
+# From: Issue #479, PR #544
 @test "tracking is non-blocking on a draft PR" {
-    # What: A draft PR with missing metadata still passes.
-    # Why: AG-WF-009; ready_for_review re-checks it for real.
-    # From: Issue #479, PR #544
     PR_LABELS="" PR_MILESTONE_TITLE="" PR_DRAFT="true" run _ci_check_pr_tracking
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"draft, non-blocking"* ]]
 }
 
+# What: Runs the board check with PROJECT_PAT unset.
+# Why: AG-GH-002 lets only this board sub-check warn.
+# From: Issue #479, PR #544
 @test "board check skips when PROJECT_AUTOMATION_PAT is unset" {
-    # What: No PAT degrades to a skip, not a failure.
-    # Why: AG-GH-002's own documented exception.
-    # From: Issue #479, PR #544
     unset PROJECT_PAT
     run _ci_check_pr_board
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"CI-META-BOARD"* ]]
 }
 
+# What: Runs the board check as a fork PR with a PAT set.
+# Why: GitHub withholds the PAT from fork PR runs anyway.
+# From: Issue #479, PR #544
 @test "board check skips for a fork PR even with a PAT configured" {
-    # What: A fork PR skips the board lookup entirely.
-    # Why: GitHub withholds the PAT from fork PR runs anyway.
-    # From: Issue #479, PR #544
     PROJECT_PAT="dummy" PR_IS_FORK="true" run _ci_check_pr_board
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"fork PR"* ]]
 }
 
+# What: Runs version-check for v99.99.99-NG on the repo.
+# Why: A tag must name the version configure.ac builds.
+# From: Issue #479
 @test "release version-check fails on a tag that mismatches configure.ac" {
-    # What: A tag whose version != configure.ac is rejected.
-    # Why: Fail-closed release guardrail (no accidental retag).
-    # From: Issue #479
     run bash "${BATS_TEST_DIRNAME}/ci.sh" release version-check v99.99.99-NG
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0003"* ]]
 }
 
+# What: Checks the fixture's own tag with require_new=false.
+# Why: POL-RELEASE-07 runs after the tag was pushed.
+# From: Issue #479, PR #544
 @test "release version-check require_new=false accepts an already-pushed tag" {
-    # What: The post-push check accepts its own existing tag.
-    # Why: POL-RELEASE-07 runs after the tag was pushed.
-    # From: Issue #479, PR #544
     fx="$(_fixture_tag_repo)"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG false
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"CI-RELEASE"*"OK"* ]]
 }
 
+# What: Checks the fixture's existing tag with the default.
+# Why: Re-tagging would move an already published ref.
+# From: Issue #479, PR #544
 @test "release version-check require_new=true still rejects an existing tag" {
-    # What: The pre-tag dispatch path keeps refusing a collision.
-    # Why: require_new defaults to true for the pre-tag path.
-    # From: Issue #479, PR #544
     fx="$(_fixture_tag_repo)"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
 }
 
+# What: Breaks git inside the require_new tag lookup.
+# Why: POL-RELEASE-05 needs proof the tag is new.
+# From: Issue #479, PR #544
 @test "release version-check fails when git cannot list tags" {
-    # What: Breaks git inside the require_new tag lookup.
-    # Why: POL-RELEASE-05 needs proof the tag is new.
-    # From: Issue #479, PR #544
     fx="$(_fixture_tag_repo)"
-    git() { echo "git broke" >&2; return 128; }
+    _fail git 128 "git broke"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"git broke"* ]]
@@ -449,19 +459,19 @@ _fixture_harden_state() {
     [[ "${output}" != *"OK"* ]]
 }
 
+# What: Reads the context of a v1.2.3-NG tag push.
+# Why: POL-RELEASE-07; release jobs read only these outputs.
+# From: Issue #479, PR #544
 @test "release context: a tag push publishes and moves latest" {
-    # What: A v* tag push is the tag, publishes, sets tag_push.
-    # Why: POL-RELEASE-07; release jobs read only these outputs.
-    # From: Issue #479, PR #544
     GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG run _ci_release_context
     [ "${status}" -eq 0 ]
     [ "${output}" = "$(printf '%s\n' v1.2.3-NG false true true)" ]
 }
 
+# What: Reads three dispatches: opt-in, no opt-in, no tag.
+# Why: POL-RELEASE-05: a dry run never moves latest.
+# From: Issue #479, PR #544
 @test "release context: a dispatch reads tag and opt-in from inputs" {
-    # What: Dispatch tag and publish_container come from inputs.
-    # Why: POL-RELEASE-05: a dry run never moves latest.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"inputs":{"tag":"v1.2.3-NG","publish_container":"true"}}' > "${ev}"
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
@@ -476,10 +486,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-EVENT-0001"*".inputs.tag"* ]]
 }
 
+# What: Reads the context of a branch push and a schedule.
+# Why: Guessing a tag there would publish the wrong ref.
+# From: Issue #479, PR #544
 @test "release context fails closed off a release trigger" {
-    # What: A branch push or another event has no release tag.
-    # Why: Guessing a tag there would publish the wrong ref.
-    # From: Issue #479, PR #544
     GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/current_dev GITHUB_REF_NAME=current_dev run _ci_release_context
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0007"* ]]
@@ -488,17 +498,15 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-RELEASE-0008"* ]]
 }
 
+# What: Runs the tag-push check with check and matrix stubbed.
+# Why: Downstream jobs gate on these, not on the event.
+# From: Issue #479, PR #544
 @test "release version-check in CI writes tag, publish, tag_push" {
-    # What: The event path checks the tag, then writes outputs.
-    # Why: Downstream jobs gate on these, not on the event.
-    # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
-    # What: Stub: accept only v1.2.3-NG, require_new=false.
+    # What: Stub: pass only v1.2.3-NG with require_new=false.
     # Why: Pins the arguments the CI path must pass.
     _ci_check_release_version() { [ "$1 $2" = "v1.2.3-NG false" ]; }
-    # What: Stub an empty container matrix and one variant.
-    # Why: Keeps the test off the real SOT inventory.
-    _ci_release_matrix() { printf '%s\n' '{"include":[]}' '["a"]'; }
+    _print _ci_release_matrix '{"include":[]}' '["a"]'
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG \
         run _ci_release_version_check
     [ "${status}" -eq 0 ]
@@ -506,10 +514,10 @@ _fixture_harden_state() {
         'container_matrix={"include":[]}' 'variants=["a"]')" ]
 }
 
+# What: Expands two variants on two platforms, then bad data.
+# Why: The workflows hold no variant or platform list.
+# From: Issue #479, PR #544
 @test "release matrix is every SOT variant on every SOT platform" {
-    # What: Rows carry runner and optional; variants list follows.
-    # Why: The workflows hold no variant or platform list.
-    # From: Issue #479, PR #544
     _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' '      pump: "q"' \
         '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"' \
         '      arm64:' '        runner: "r2"' '        optional: "true"'
@@ -524,18 +532,16 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-CONTAINER-0005"* ]]
 }
 
+# What: Publishes with arm64 missing, then amd64 missing too.
+# Why: arm64 may fail its build; amd64 never ships without.
+# From: Issue #479, PR #544
 @test "publish manifest takes every platform; only optional may lack" {
-    # What: A missing optional platform skips; a required fails.
-    # Why: arm64 may fail its build; amd64 never ships without.
-    # From: Issue #479, PR #544
     _fixture_manifest 'release:' '  container:' '    variants:' '      plain: "p"' \
         '    platforms:' '      amd64:' '        runner: "r1"' '        optional: "false"' \
         '      arm64:' '        runner: "r2"' '        optional: "true"'
-    # What: Stub the registry login as a no-op.
-    # Why: The manifest test needs no registry or token.
-    _ci_registry_login() { :; }
-    # What: Stub inspect per platform tag; echo create.
-    # Why: arm64 is missing; AMD_GONE drops amd64 too.
+    _pass _ci_registry_login
+    # What: Stub docker: no arm64 tag; AMD_GONE hides amd64.
+    # Why: inspect is how publish learns a platform is missing.
     docker() {
         case "$*" in
             *"inspect "*"-arm64"*) echo "not found"; return 1 ;;
@@ -554,10 +560,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-PUBLISH-0006"*"v1-amd64"* ]]
 }
 
+# What: Offers a tarball and a .deb for tag v1-NG.
+# Why: The checklist verifies a CI-built package pre-tag.
+# From: Issue #479, PR #544
 @test "release packages are offered as one artifact per tag" {
-    # What: The SOT release assets become the artifact's files.
-    # Why: The checklist verifies a CI-built package pre-tag.
-    # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out" fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/packaging"
     : > "${fx}/distcc-1.tar.gz"; : > "${fx}/packaging/d.deb"
@@ -571,10 +577,10 @@ _fixture_harden_state() {
     grep -qx "${fx}/packaging/d.deb" "${out}"
 }
 
+# What: Maps a variant, a bad variant and two image refs.
+# Why: Release and nightly images share one naming rule.
+# From: Issue #359, Issue #479, PR #544
 @test "release image names map variants to their GHCR packages" {
-    # What: A SOT variant maps to its package; names get the tag.
-    # Why: One owner; the workflows no longer build these names.
-    # From: Issue #359, Issue #479, PR #544
     _fixture_manifest 'release:' '  container:' '    variants:' '      pump: "distcc-ng-pump"'
     run _ci_release_pkg pump
     [ "${output}" = "distcc-ng-pump" ]
@@ -586,10 +592,10 @@ _fixture_harden_state() {
     [ "${output}" = "ghcr.io/o/distcc-ng-nightly:latest" ]
 }
 
+# What: Feeds a pre-release and a note-less dispatch event.
+# Why: Only a published release or explicit notes add one.
+# From: Issue #479, PR #544
 @test "changelog skips a pre-release and a dispatch without notes" {
-    # What: Neither event inserts a section or touches git.
-    # Why: Only a published release or explicit notes add one.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     _forbid _ci_changelog_insert
     printf '{"release":{"prerelease":true,"tag_name":"v1","body":"x"}}' > "${ev}"
@@ -602,10 +608,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"skipped: no release_notes"* ]]
 }
 
+# What: Plans a release, a note-less dispatch and a push.
+# Why: The write token step must not run without a section.
+# From: Issue #479, PR #544
 @test "changelog plan says insert only when the event has notes" {
-    # What: Pre-release and note-less dispatch plan insert=false.
-    # Why: The write token step must not run without a section.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     printf '{"release":{"prerelease":false,"tag_name":"v1","body":"n"}}' > "${ev}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_plan
@@ -618,12 +624,12 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Feeds a release event and a dispatch with notes.
+# Why: The workflow passes neither; ci.sh reads the event.
+# From: Issue #479, PR #544
 @test "changelog takes a published release's tag and body" {
-    # What: The release payload's tag_name and body are inserted.
-    # Why: The workflow passes neither; ci.sh reads the event.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
-    # What: Stub the insert to print its tag and notes file.
+    # What: Stub the insert to print its tag and notes.
     # Why: The test checks the event parse, not git.
     _ci_changelog_insert() { printf 'insert %s|%s\n' "$1" "$2"; }
     printf '{"release":{"prerelease":false,"tag_name":"v1.2","body":"notes"}}' > "${ev}"
@@ -636,18 +642,16 @@ _fixture_harden_state() {
     [ "${output}" = "insert v2-NG|rn" ]
 }
 
+# What: Inserts a notes file into a fixture repo, dry run.
+# Why: The release checklist's recovery path runs it locally.
+# From: Issue #479, PR #544
 @test "changelog manual retry inserts a notes file, dry run pushes nothing" {
-    # What: A notes file is inserted and committed; push dry-runs.
-    # Why: The release checklist's recovery path runs it locally.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     ( cd "${fx}" && git init -q && printf '# Changelog\n<!-- insertion marker -->\n' > CHANGELOG.md \
       && git add CHANGELOG.md && git -c user.name=t -c user.email=t@t commit -q -m x )
     printf 'line one\n' > "${BATS_TEST_TMPDIR}/notes"
-    # What: Stub git auth setup as a no-op.
-    # Why: A dry run must not need a token or a remote.
-    _ci_git_auth_setup() { :; }
+    _pass _ci_git_auth_setup
     CI_REPO_ROOT="${fx}" DRY_RUN=true run _ci_publish_changelog_update v1.2.3-NG "${BATS_TEST_TMPDIR}/notes"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"DRY_RUN would run: git push origin HEAD:current_dev"* ]]
@@ -656,19 +660,19 @@ _fixture_harden_state() {
     [ "$(git -C "${fx}" log -1 --format=%s)" = "CHANGELOG.md: add v1.2.3-NG" ]
 }
 
+# What: Runs ci.sh container with an unknown variant.
+# Why: A variant typo must not build a default image.
+# From: Issue #479
 @test "container rejects an unimplemented variant" {
-    # What: An unknown container variant fails closed.
-    # Why: Consistent fail-closed dispatch for outward phases.
-    # From: Issue #479
     run bash "${BATS_TEST_DIRNAME}/ci.sh" container bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
 }
 
+# What: Logs in with REGISTRY_TOKEN unset, docker forbidden.
+# Why: A missing secret is a hard failure (AG-VAL-001).
+# From: Issue #479, PR #544
 @test "registry login fails closed without REGISTRY_TOKEN" {
-    # What: No token MUST NOT fall through to an anonymous push.
-    # Why: A missing secret is a hard failure (AG-VAL-001).
-    # From: Issue #479, PR #544
     _forbid docker
     unset REGISTRY_TOKEN
     GITHUB_ACTOR=octo run _ci_registry_login
@@ -677,13 +681,12 @@ _fixture_harden_state() {
     [[ "${output}" != *"docker must not run"* ]]
 }
 
+# What: Logs in with a docker stub recording stdin and argv.
+# Why: argv leaks into process listings and logs.
+# From: Issue #479, PR #544
 @test "registry login pipes the token on stdin as GITHUB_ACTOR" {
-    # What: Token goes via stdin, never argv; user is the actor.
-    # Why: argv leaks into process listings and logs.
-    # From: Issue #479, PR #544
-
     # What: Stub docker to record its stdin and argv.
-    # Why: Proves the token goes on stdin, not in argv.
+    # Why: The real login needs a registry and a token.
     docker() { cat > "${BATS_TEST_TMPDIR}/stdin"; echo "$*" > "${BATS_TEST_TMPDIR}/argv"; }
     REGISTRY_TOKEN=s3cret GITHUB_ACTOR=octo run _ci_registry_login
     [ "${status}" -eq 0 ]
@@ -691,10 +694,10 @@ _fixture_harden_state() {
     [ "$(cat "${BATS_TEST_TMPDIR}/argv")" = "login ghcr.io -u octo --password-stdin" ]
 }
 
+# What: Counts a five-line log for two hosts and a subnet.
+# Why: Only real remote COMPILE_OK from the client may count.
+# From: Issue #479, Issue #264, PR #544
 @test "e2e compile-ok counter counts only clients inside the CIDR" {
-    # What: One counter serves subnet and single-client legs.
-    # Why: Only real remote COMPILE_OK from the client may count.
-    # From: Issue #479, Issue #264, PR #544
     local log="${BATS_TEST_TMPDIR}/server.log"
     {
         printf 'distccd[1] (dcc_job_summary) client: 172.18.0.10:48058 COMPILE_OK exit:0\n'
@@ -708,20 +711,20 @@ _fixture_harden_state() {
     [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.0/16)" = "3" ]
 }
 
+# What: Scans a log of a listen line and one COMPILE_OK.
+# Why: Verbose info/debug lines carry no severity prefix.
+# From: Issue #479, PR #544
 @test "e2e server warning scan passes a clean verbose log" {
-    # What: Verbose info/debug lines carry no severity prefix.
-    # Why: Green path: a normal distccd session must pass.
-    # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/server.log"
     printf 'distccd[7] listening on 0.0.0.0:3632\ndistccd[9] (dcc_job_summary) client: 172.18.0.3:4 COMPILE_OK\n' > "${log}"
     run _ci_e2e_check_server_warnings "${log}"
     [ "${status}" -eq 0 ]
 }
 
+# What: Scans a log holding one ERROR line.
+# Why: A daemon warning never reaches the client's exit code.
+# From: Issue #479, PR #544
 @test "e2e server warning scan fails on a warning-level line" {
-    # What: Any rs_severities prefix above notice fails the leg.
-    # Why: A daemon warning never reaches the client's exit code.
-    # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/server.log"
     printf 'distccd[8] (dcc_check_client) ERROR: connection from client denied\n' > "${log}"
     run _ci_e2e_check_server_warnings "${log}"
@@ -729,19 +732,19 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-E2E-0015"* ]]
 }
 
+# What: Counts COMPILE_OK in a log file that does not exist.
+# Why: A missing log must not read as zero compiles.
+# From: Issue #479, PR #544
 @test "e2e compile-ok counter fails closed on an unreadable log" {
-    # What: A missing server log is an error, not zero compiles.
-    # Why: grep -c || true used to mask exactly this case.
-    # From: Issue #479, PR #544
     run _ci_e2e_count_compile_ok "${BATS_TEST_TMPDIR}/nope.log" 172.18.0.0/16
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-E2E-0002"* ]]
 }
 
+# What: Calls e2e, workload and image with bad modes.
+# Why: A typo must never run a default harness.
+# From: Issue #479, PR #544
 @test "e2e and workload reject unknown modes before touching docker" {
-    # What: No default mode runs when the caller typoed one.
-    # Why: The old catch-all silently ran the distributed harness.
-    # From: Issue #479, PR #544
     _forbid docker
     run ci_cmd_e2e bogus
     [ "${status}" -eq 2 ]
@@ -761,37 +764,37 @@ _fixture_harden_state() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Sets the SOT nightly tag to v3.6.6-NG and publishes.
+# Why: git push -f on a v* tag would clobber a real release.
+# From: Issue #479
 @test "publish nightly refuses to force-move a v* tag" {
-    # What: The nightly publisher never moves a release tag.
-    # Why: git push -f on a v* tag would clobber a real release.
-    # From: Issue #479
     _fixture_manifest 'release:' '  nightly_tag: "v3.6.6-NG"'
     run _ci_publish_nightly
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0002"* ]]
 }
 
+# What: Runs ci.sh release with an unknown subcommand.
+# Why: A typo must not fall through to a publish step.
+# From: Issue #479
 @test "release rejects an unknown subcommand" {
-    # What: An unknown release subcommand fails closed.
-    # Why: Consistent fail-closed dispatch.
-    # From: Issue #479
     run bash "${BATS_TEST_DIRNAME}/ci.sh" release bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-RELEASE-0005"* ]]
 }
 
+# What: Checks a PR labelled no-changelog-needed.
+# Why: AG-REL-002 accepts that label in place of an entry.
+# From: Issue #479
 @test "changelog is skipped by the no-changelog-needed label" {
-    # What: The opt-out label satisfies the changelog gate.
-    # Why: Proves the documented opt-out path.
-    # From: Issue #479
     PR_LABELS="ci no-changelog-needed" run _ci_check_changelog
     [ "${status}" -eq 0 ]
 }
 
+# What: Reads a PR, a push and a dispatch payload.
+# Why: The plan diff must never mix PR and push fields.
+# From: Issue #479, PR #544
 @test "event range: a PR diffs base..head, a push before..sha" {
-    # What: Each event type yields its own base and head commit.
-    # Why: The plan diff must never mix PR and push fields.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"base":{"sha":"b1"},"head":{"sha":"h1"}},"before":"x"}' > "${ev}"
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=m run _ci_event_range
@@ -805,16 +808,16 @@ _fixture_harden_state() {
     [ "${#lines[@]}" -eq 1 ]
 }
 
+# What: Reads a PR, an issue and an empty payload.
+# Why: The workflows forward neither; a missing one fails.
+# From: Issue #479, PR #544
 @test "event PR number and board url come from the payload" {
-    # What: PR number and issue/PR url are read from the event.
-    # Why: The workflows forward neither; a missing one fails.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"number":7,"html_url":"https://h/pr/7"}}' > "${ev}"
     GITHUB_EVENT_PATH="${ev}" run _ci_event_value .pull_request.number
     [ "${output}" = "7" ]
-    # What: Stub the board add to print the URL it gets.
-    # Why: The test checks the URL from the payload.
+    # What: Stub the board add to print the url it gets.
+    # Why: The test checks the url, not the board API.
     _ci_board_add() { printf 'add %s\n' "$1"; }
     GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
     [ "${output}" = "add https://h/pr/7" ]
@@ -830,50 +833,39 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
 }
 
+# What: Runs fuzz impact on a push, a docs PR and a fuzz PR.
+# Why: Only a reviewed PR diff may skip a class.
+# From: Issue #479, PR #544
 @test "impact-hit runs every class off a PR, diffs on a PR" {
-    # What: Non-PR events hit; a PR hits only on a matching path.
-    # Why: Only a reviewed PR diff may skip a class.
-    # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
-    # What: Stub the PR range as base b, head h.
-    # Why: The test needs a range without a real event.
-    _ci_event_range() { printf '%s\n' b h; }
-    # What: Stub the diff owner as a docs-only change.
-    # Why: A docs diff must miss the fuzz class.
-    _ci_changed_paths() { printf '%s\n' doc/x.md; }
+    _print _ci_event_range b h
+    _print _ci_changed_paths doc/x.md
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=false" ]
-    # What: Stub the diff owner as a fuzz test change.
-    # Why: A test/fuzz diff must hit the fuzz class.
-    _ci_changed_paths() { printf '%s\n' test/fuzz/a.c; }
+    _print _ci_changed_paths test/fuzz/a.c
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
 }
 
+# What: Runs fuzz impact on a PR whose git diff fails.
+# Why: A false miss would skip fuzzing on a broken diff.
+# From: Issue #479, PR #544
 @test "impact-hit fails closed when the PR diff fails" {
-    # What: A failing git diff is an error, never a miss.
-    # Why: A false miss would skip fuzzing on a broken diff.
-    # From: Issue #479, PR #544
-
-    # What: Stub the PR range as base b, head h.
-    # Why: The diff below must fail, not the range read.
-    _ci_event_range() { printf '%s\n' b h; }
-    # What: Stub git as a failing diff (rc 128).
-    # Why: A failed diff must fail closed, not miss.
-    git() { return 128; }
+    _print _ci_event_range b h
+    _fail git 128
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
 }
 
+# What: Rates all-success, one skip and an empty list.
+# Why: A skipped publish means the nightly did not ship.
+# From: Issue #479, PR #544
 @test "report outcome is success only if every job succeeded" {
-    # What: A failure, cancel or skip makes the outcome failure.
-    # Why: A skipped publish means the nightly did not ship.
-    # From: Issue #479, PR #544
     run _ci_jobs_outcome "$(printf '%s\n' a=success b=success)"
     [ "${output}" = "success" ]
     run _ci_jobs_outcome "$(printf '%s\n' a=success b=skipped)"
@@ -884,15 +876,13 @@ _fixture_harden_state() {
     [ "${output}" = "https://s/o/r/actions/runs/9" ]
 }
 
+# What: Plans a workflow_dispatch that has no before commit.
+# Why: NOOP there would skip every check a dispatch asked for.
+# From: Issue #479, PR #544
 @test "plan on a dispatch selects every phase" {
-    # What: No before commit means no diff, so all five phases.
-    # Why: NOOP there would skip every check a dispatch asked for.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     printf '{"inputs":{}}' > "${ev}"
-    # What: Stub the build matrix as empty.
-    # Why: The test checks phases, not the matrix SOT.
-    ci_cmd_matrix() { echo '{"include":[]}'; }
+    _print ci_cmd_matrix '{"include":[]}'
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
         GITHUB_REF_NAME=current_dev run ci_cmd_plan
     [ "${status}" -eq 0 ]
@@ -901,10 +891,10 @@ _fixture_harden_state() {
     grep -qx 'publish_buildtools=true' "${out}"
 }
 
+# What: Plans a push that adds a packaging file.
+# Why: impact is the one diff-to-phases owner for plan.
+# From: Issue #479, PR #544
 @test "plan classifies the push diff through ci.sh impact" {
-    # What: A push's before..sha diff yields impact's phases.
-    # Why: impact is the one diff-to-phases owner for plan.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/repo" ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" b h
     _fixture_manifest 'impact_classes:' '  pk:' '    paths: ["packaging/**"]' '    phases: ["package"]' \
         '  docs:' '    paths: ["**/*.md"]' '    phases: []' 'release:' '  container:' '    variants:' \
@@ -917,9 +907,7 @@ _fixture_harden_state() {
     [ "${status}" -eq 0 ]
     [ "${output}" = "package" ]
     printf '{"before":"%s","after":"%s"}' "${b}" "${h}" > "${ev}"
-    # What: Stub the build matrix as empty.
-    # Why: The test checks phases, not the matrix SOT.
-    ci_cmd_matrix() { echo '{"include":[]}'; }
+    _print ci_cmd_matrix '{"include":[]}'
     CI_REPO_ROOT="${fx}" GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="${ev}" \
         GITHUB_SHA="${h}" GITHUB_REF_NAME=current_dev run ci_cmd_plan
     [ "${status}" -eq 0 ]
@@ -927,15 +915,13 @@ _fixture_harden_state() {
     grep -qx 'publish_buildtools=false' "${out}"
 }
 
+# What: Plans dispatches on bot/x, 544/merge and no ref.
+# Why: Only current_dev and master may push buildtools:latest.
+# From: Issue #479, PR #544
 @test "plan publishes buildtools only from a protected ref" {
-    # What: A bot-branch dispatch plans verify but no publish.
-    # Why: Only current_dev and master may push buildtools:latest.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" ref
     printf '{"inputs":{}}' > "${ev}"
-    # What: Stub the build matrix as empty.
-    # Why: The test checks the publish flag, not the matrix.
-    ci_cmd_matrix() { echo '{"include":[]}'; }
+    _print ci_cmd_matrix '{"include":[]}'
     for ref in bot/x 544/merge; do
         : > "${out}"
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
@@ -950,10 +936,10 @@ _fixture_harden_state() {
     [ "${status}" -ne 0 ]
 }
 
+# What: Expands a two-OS variant and an opt-in variant.
+# Why: An opt-in variant is never a PR gate.
+# From: Issue #479, PR #544
 @test "matrix expands variant x os and excludes opt-in variants" {
-    # What: The PR matrix is the SOT variants minus opt-in ones.
-    # Why: An opt-in variant is never a PR gate.
-    # From: Issue #479, PR #544
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p"' '      brew: "q"' \
         '      os: [ubuntu-latest, macos-latest]' '    b:' '      apt: "r"' '      opt_in: true' \
         '      os: [ubuntu-latest]'
@@ -962,10 +948,10 @@ _fixture_harden_state() {
     [ "${output}" = '{"include":[{"variant":"a","os":"ubuntu-latest","apt":"p"},{"variant":"a","os":"macos-latest","brew":"q"}]}' ]
 }
 
+# What: Expands both matrices with backslashes in the SOT.
+# Why: jq builds the JSON, so any value stays a string.
+# From: Issue #479, PR #544
 @test "both matrices stay valid JSON for any SOT value" {
-    # What: A backslash in a SOT value is escaped, not raw.
-    # Why: Hand-built JSON once let a value break the matrix.
-    # From: Issue #479, PR #544
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p\q"' '      os: [ubuntu-latest]' \
         'release:' '  container:' '    variants:' '      plain: "p"' '    platforms:' '      amd64:' \
         '        runner: "r\1"' '        optional: "false"'
@@ -978,19 +964,19 @@ _fixture_harden_state() {
     [ "$(jq -c . <<< "${lines[1]}")" = '["plain"]' ]
 }
 
+# What: Runs ci.sh build bogus with /tmp as the repo root.
+# Why: No configure or make may run for a mistyped variant.
+# From: Issue #479
 @test "build fails closed on an unknown variant before touching the tree" {
-    # What: An unknown build variant MUST reject, not autogen.
-    # Why: Fail-closed before running any build step.
-    # From: Issue #479
     CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" build bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+# What: Installs with apt cut off once, then dpkg failing.
+# Why: A killed install leaves dpkg interrupted for the retry.
+# From: Issue #493, Issue #479, PR #544
 @test "apt retry first finishes a dpkg run the timeout cut off" {
-    # What: After a failed attempt, dpkg --configure -a runs.
-    # Why: A killed install leaves dpkg interrupted for the retry.
-    # From: Issue #493, Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/calls"
     # What: Stub sudo to run its command directly.
     # Why: The test runs as a plain user without sudo.
@@ -1016,19 +1002,14 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-INSTALL-0004"* ]]
 }
 
+# What: Gates a clean make, a warning make and a missing log.
+# Why: Warnings are errors (AG-INT-003) on every tree build.
+# From: Issue #479, PR #544
 @test "make gate passes a clean build and fails on a warning" {
-    # What: A compiler warning in make output fails the build.
-    # Why: Warnings are errors (AG-INT-003) on every tree build.
-    # From: Issue #479, PR #544
-
-    # What: Stub make as a clean compile line.
-    # Why: A clean build must pass the warning gate.
-    make() { echo "gcc -c src/x.c"; }
+    _print make "gcc -c src/x.c"
     run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
     [ "${status}" -eq 0 ]
-    # What: Stub make as a compile with one warning.
-    # Why: Any compiler warning must fail the gate.
-    make() { echo "src/x.c:12:5: warning: unused variable 'y'"; }
+    _print make "src/x.c:12:5: warning: unused variable 'y'"
     run _ci_make_gated "${BATS_TEST_TMPDIR}/warn.log" all
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
@@ -1038,14 +1019,11 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-BUILD-WARN-0002"* ]]
 }
 
+# What: Fails make, then configure, then autogen in turn.
+# Why: set -e is off under ||, so each rc needs a check.
+# From: Issue #479, PR #544
 @test "make gate and configure fail closed when the tool fails" {
-    # What: A failing make or configure is an error, not a pass.
-    # Why: Build steps once relied on set -e, lost inside ||.
-    # From: Issue #479, PR #544
-
-    # What: Stub make as a failing tool (rc 2).
-    # Why: A failed make must fail, not read as clean.
-    make() { echo "boom"; return 2; }
+    _fail make 2 boom
     run _ci_make_gated "${BATS_TEST_TMPDIR}/m.log"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0004"* ]]
@@ -1062,20 +1040,20 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-BUILD-0003"* ]]
 }
 
+# What: Parses one OK and one NOTRUN line.
+# Why: NOTRUN is a declared skip, not a failure.
+# From: Issue #479
 @test "comfychair parse passes on all-OK/NOTRUN output" {
-    # What: A run with only OK/NOTRUN lines passes.
-    # Why: Proves the green parse path.
-    # From: Issue #479
     log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "FooCase           OK" "BarCase           NOTRUN, needs root" > "${log}"
     run _ci_parse_comfychair "${log}"
     [ "${status}" -eq 0 ]
 }
 
+# What: Parses one OK and one FAIL line.
+# Why: A failed test must never report green.
+# From: Issue #479
 @test "comfychair parse fails closed on a FAIL line" {
-    # What: Any FAIL case fails the parse.
-    # Why: A failed test must never report green.
-    # From: Issue #479
     log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "FooCase           OK" "BarCase           FAIL" > "${log}"
     run _ci_parse_comfychair "${log}"
@@ -1083,10 +1061,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-TEST-0002"* ]]
 }
 
+# What: Parses build noise without any result line.
+# Why: An empty parse must not look like a clean pass.
+# From: Issue #479
 @test "comfychair parse fails closed on zero parsed result lines" {
-    # What: 0/0/0 parsed is a hard failure (AG-INT-003).
-    # Why: An empty parse must not look like a clean pass.
-    # From: Issue #479
     log="${BATS_TEST_TMPDIR}/log"
     printf '%s\n' "build noise, no result lines" > "${log}"
     run _ci_parse_comfychair "${log}"
@@ -1094,25 +1072,23 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-TEST-0001"* ]]
 }
 
+# What: Runs ci.sh test bogus with /tmp as the repo root.
+# Why: No make check may run for a mistyped variant.
+# From: Issue #479
 @test "test fails closed on an unknown variant" {
-    # What: An unknown test variant MUST reject.
-    # Why: Fail-closed dispatch across every phase.
-    # From: Issue #479
     CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" test bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
+# What: Runs ci.sh test coverage with make and lcov stubbed.
+# Why: Each step passing alone does not prove the chain.
+# From: Issue #479, PR #370, PR #544
 @test "test coverage: both reports, the summary, one artifact offer" {
-    # What: The coverage variant end to end, tools stubbed.
-    # Why: Each step passed alone; the chain was never proven.
-    # From: Issue #479, PR #370, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" out="${BATS_TEST_TMPDIR}/out" sum="${BATS_TEST_TMPDIR}/sum"
     mkdir -p "${fx}"
-    # What: Stub make check as one passing comfychair case.
-    # Why: The chain after make check is under test.
-    make() { printf '%s\n' 'Foo_Case        OK'; }
-    # What: Stub lcov: write coverage.info, fail on LCOV_FAIL.
+    _print make 'Foo_Case        OK'
+    # What: Stub lcov: write coverage.info; LCOV_FAIL fails it.
     # Why: Its result must reach the artifact or fail the step.
     lcov() { [ -z "${LCOV_FAIL:-}" ] || return 3
         case "$*" in *"--output-file coverage.info"*) echo cov > coverage.info ;; esac; echo "lcov $1"; }
@@ -1135,18 +1111,18 @@ _fixture_harden_state() {
     [ ! -s "${out}" ]
 }
 
+# What: Runs report with an empty GH_TOKEN.
+# Why: A silent no-op would hide broken status reporting.
+# From: Issue #479, Issue #81
 @test "report fails closed when GH_TOKEN is unset" {
-    # What: report fails without credentials, never skips.
-    # Why: A silent no-op would hide broken status reporting.
-    # From: Issue #479, Issue #81
     GH_TOKEN="" run ci_cmd_report
     [ "${status}" -ne 0 ]
 }
 
+# What: Adds an issue url with PROJECT_PAT set, then empty.
+# Why: _ci_board_add is the one owner of the PAT decision.
+# From: Issue #479, PR #329, PR #544
 @test "add-to-project leaves the PAT decision to the board owner" {
-    # What: PROJECT_PAT, set or empty, goes to _ci_board_add.
-    # Why: A YAML secret gate once made the same call twice.
-    # From: Issue #479, PR #329, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"issue":{"html_url":"https://h/i/3"}}' > "${ev}"
     # What: Stub the board add to print the token it gets.
@@ -1160,10 +1136,10 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Writes a one-line and a two-line output pair.
+# Why: A newline in k=v would end the value early.
+# From: Issue #479, PR #544
 @test "output writer uses the delimiter form for multi-line values" {
-    # What: One-line pairs stay k=v; multi-line ones get k<<EOF.
-    # Why: A newline in k=v would end the value early.
-    # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     GITHUB_OUTPUT="${out}" _ci_output a 1 b $'x\ny'
     run cat "${out}"
@@ -1174,10 +1150,10 @@ _fixture_harden_state() {
     [ "${lines[4]}" = "${lines[1]#b<<}" ]
 }
 
+# What: Writes a summary set, unset, then from a failing tool.
+# Why: Local runs have no summary file; CI runs always do.
+# From: Issue #479, PR #544
 @test "step summary appends a command's output, else NotRun" {
-    # What: One writer: append when set, NotRun when unset.
-    # Why: Three writers once had two different unset rules.
-    # From: Issue #479, PR #544
     local s="${BATS_TEST_TMPDIR}/summary"
     GITHUB_STEP_SUMMARY="${s}" _ci_step_summary _ci_control_build_summary 0
     grep -q '^## Control build: OK' "${s}"
@@ -1192,19 +1168,19 @@ _fixture_harden_state() {
     [ "${status}" -eq 1 ]
 }
 
+# What: Calls the output writer with a name and no value.
+# Why: Writing half a pair would shift every later output.
+# From: Issue #479, PR #544
 @test "output writer fails closed on an odd argument count" {
-    # What: A name without a value is a caller bug.
-    # Why: Writing half a pair would shift every later output.
-    # From: Issue #479, PR #544
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_output a 1 b
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0004"* ]]
 }
 
+# What: Offers two files under the SOT artifact kind k.
+# Why: The workflow step only forwards these outputs.
+# From: Issue #479, PR #544
 @test "artifact offer writes SOT name, files and retention" {
-    # What: The offer emits every upload-artifact input.
-    # Why: The workflow step only forwards these outputs.
-    # From: Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out" f1="${BATS_TEST_TMPDIR}/f1" f2="${BATS_TEST_TMPDIR}/f2"
     _fixture_actions
     : > "${f1}"; : > "${f2}"
@@ -1217,10 +1193,10 @@ _fixture_harden_state() {
     [ "${lines[6]}" = "artifact_if_missing=error" ]
 }
 
+# What: Offers no files, then a file that does not exist.
+# Why: An upload of nothing would hide a lost report.
+# From: Issue #479, PR #544
 @test "artifact offer fails closed on a missing or empty file set" {
-    # What: No files or a missing file is an error, not a skip.
-    # Why: An upload of nothing would hide a lost report.
-    # From: Issue #479, PR #544
     _fixture_actions
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_artifact_offer k ""
     [ "${status}" -eq 2 ]
@@ -1231,10 +1207,10 @@ _fixture_harden_state() {
     [ ! -s "${BATS_TEST_TMPDIR}/out" ]
 }
 
+# What: Plans keys over a README edit, then an m4 edit.
+# Why: A key is never overwritten; restore takes the newest.
+# From: Issue #54, Issue #479, PR #544
 @test "cache plan keys default on OS, arch, autoconf inputs, run" {
-    # What: Only configure.ac or m4/ changes move the input hash.
-    # Why: A key is never overwritten; restore takes the newest.
-    # From: Issue #54, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out" sum1 sum2
     CI_REPO_ROOT="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${CI_REPO_ROOT}/m4"
@@ -1265,17 +1241,15 @@ _fixture_harden_state() {
     [ "${lines[7]}" = "build-Linux-X64-" ]
 }
 
+# What: Runs CFL as a crash with one reproducer on disk.
+# Why: The upload step runs after the failure via always().
+# From: Issue #267, Issue #479, PR #544
 @test "CFL run offers crash reproducers and keeps its exit code" {
-    # What: A failed run with crashes offers them, still failing.
-    # Why: The upload step runs after the failure via always().
-    # From: Issue #267, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
     _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"' \
         'security:' '  cfl_run:' '    seconds: "1"' '    mode: "batch"'
-    # What: Stub the fuzz run as a crash (rc 1).
-    # Why: A crash must offer reproducers, keep its rc.
-    _ci_cfl_run() { return 1; }
+    _fail _ci_cfl_run 1
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x"
     : > "${RUNNER_TEMP}/cfl-workspace/out/artifacts/fuzz_x/crash-1"
     GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
@@ -1284,25 +1258,23 @@ _fixture_harden_state() {
     grep -qx "artifact_path=${RUNNER_TEMP}/cfl-workspace/out/artifacts" "${out}"
 }
 
+# What: Runs CFL with rc 3 and an empty artifacts dir.
+# Why: No reproducer means no artifact; rc is never masked.
+# From: Issue #267, Issue #479, PR #544
 @test "CFL run without crashes offers nothing and passes rc" {
-    # What: An empty artifacts dir yields no upload outputs.
-    # Why: No reproducer means no artifact; rc is never masked.
-    # From: Issue #267, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
-    # What: Stub the fuzz run with rc 3 and no crash.
-    # Why: No reproducer is offered; the rc passes on.
-    _ci_cfl_run() { return 3; }
+    _fail _ci_cfl_run 3
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
     GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
     [ "${status}" -eq 3 ]
     [ ! -e "${out}" ]
 }
 
+# What: Plans the cache for the coverage variant.
+# Why: Build and cache must agree on the ccache variants.
+# From: Issue #54, Issue #479, PR #544
 @test "cache plan writes nothing for a variant without ccache" {
-    # What: Non-ccache variants get no key, so no cache step runs.
-    # Why: Build and cache must agree on the ccache variants.
-    # From: Issue #54, Issue #479, PR #544
     local out="${BATS_TEST_TMPDIR}/out"
     _forbid ccache
     GITHUB_OUTPUT="${out}" run ci_cmd_cache coverage
@@ -1310,13 +1282,13 @@ _fixture_harden_state() {
     [ ! -e "${out}" ]
 }
 
+# What: Drafts with a failing list, no draft, an auth error.
+# Why: Empty lookups would publish a wrong, empty draft.
+# From: Issue #479, PR #544
 @test "draft release stops on an API error before it writes" {
-    # What: A failed release or PR lookup fails; nothing writes.
-    # Why: Empty lookups would publish a wrong, empty draft.
-    # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/gh"
     # What: Stub gh: log calls; release list fails.
-    # Why: An API error must stop before any write.
+    # Why: The log shows whether any edit or create ran.
     gh() { echo "$*" >> "${log}"; case "$1 $2" in "release list") return 1 ;; esac; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
     [ "${status}" -eq 1 ]
@@ -1349,24 +1321,21 @@ _fixture_harden_state() {
     [[ "${output}" != *"would run: gh release"* ]]
 }
 
+# What: Appends one fix PR to an empty body under Fixed.
+# Why: The heading is a value; only the body is a nameref.
+# From: Issue #479, PR #544
 @test "draft release body groups PRs under their category heading" {
-    # What: A fix PR lands under ### Fixed with number and title.
-    # Why: The heading is a value; only the body is a nameref.
-    # From: Issue #479, PR #544
     local body=""
     _ci_draft_release_append body "Fixed" "* #5 | fix(ci): a"
     [ "${body}" = "$(printf '%s\n%s\n' '### Fixed' '* #5 | fix(ci): a')
 " ]
 }
 
+# What: Runs AC-03 and BR-07 on failing, null and real data.
+# Why: A tool failure must never pose as a compliance finding.
+# From: Issue #312, Issue #479, PR #544
 @test "OpenSSF API checks fail closed instead of reading NotMet" {
-    # What: An API error or unreadable field errors, never NotMet.
-    # Why: A tool failure must never pose as a compliance finding.
-    # From: Issue #312, Issue #479, PR #544
-
-    # What: Stub every gh call as failing.
-    # Why: API errors must fail, not read as NotMet.
-    gh() { return 1; }
+    _fail gh 1
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03 7
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0001"*"ruleset 7"* ]]
@@ -1377,9 +1346,7 @@ _fixture_harden_state() {
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0002"* ]]
-    # What: Stub gh to answer null for the field.
-    # Why: A hidden field must fail, not read as NotMet.
-    gh() { echo null; }
+    _print gh null
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0003"* ]]
@@ -1392,10 +1359,10 @@ _fixture_harden_state() {
     [ "${output}" = "NotMet" ]
 }
 
+# What: Checks a base-SHA bootstrap, then a ref-taking one.
+# Why: Base-SHA checkouts run no PR code; a head ref does.
+# From: Issue #312, PR #544
 @test "BR-01 flags only a ref-taking checkout in a target workflow" {
-    # What: pull_request_target plus checkout of a ref is NotMet.
-    # Why: Base-SHA checkouts run no PR code; a head ref does.
-    # From: Issue #312, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" boot
     boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
     mkdir -p "${fx}/.github/workflows"
@@ -1407,16 +1374,14 @@ _fixture_harden_state() {
     [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "NotMet" ]
 }
 
+# What: Runs each local check in an empty dir, git broken.
+# Why: A failed tool must never read as Met or NotMet.
+# From: Issue #312, Issue #479, PR #544
 @test "OpenSSF local checks give no verdict on a tool error" {
-    # What: git, awk or grep failing in a check is no verdict.
-    # Why: A failed tool must never read as Met or NotMet.
-    # From: Issue #312, Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     cd "${fx}"
-    # What: Stub git as failing.
-    # Why: QA-05 must not read a git error as no binaries.
-    git() { return 128; }
+    _fail git 128
     run _ci_ossf_verdict _ci_ossf_check_qa05
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
@@ -1429,35 +1394,33 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
     run _ci_ossf_verdict grep -rq "ci.sh attest release" .github/workflows/
     [ "${status}" -eq 2 ]
-    # What: Stub gh: valid ruleset call, broken JSON body.
-    # Why: A jq parse error must not read as NotMet.
-    gh() { echo 'not json'; }
+    _print gh 'not json'
     GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_ac03 7
     [ "${status}" -eq 2 ]
     GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
 }
 
+# What: Builds one proposal query over three calls.
+# Why: The link may carry only criteria re-verified as Met.
+# From: Issue #312, PR #544
 @test "ossf add_met: only Met adds a pair; an encode error fails" {
-    # What: Builds one proposal query over three calls.
-    # Why: The link may carry only criteria re-verified as Met.
-    # From: Issue #312, PR #544
     local qs=""
     _ci_ossf_add_met qs NotMet "OSPS-AC-03.01" "x y"
     [ -z "${qs}" ]
     _ci_ossf_add_met qs Met "OSPS-AC-03.01" "x y"
     _ci_ossf_add_met qs Met "OSPS-BR-01.01" "z"
     [ "${qs}" = "osps_ac_03.01_status=Met&osps_ac_03.01_justification=x%20y&osps_br_01.01_status=Met&osps_br_01.01_justification=z" ]
-    _ci_ossf_urlencode() { echo "jq broke" >&2; return 1; }
+    _fail _ci_ossf_urlencode 1 "jq broke"
     run _ci_ossf_add_met qs Met "OSPS-VM-02.01" "w"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"jq broke"* ]]
 }
 
+# What: Maps grep hits, a miss and a missing file to verdicts.
+# Why: Only rc 0 and 1 are answers; others are tool errors.
+# From: Issue #479, Issue #312, PR #544
 @test "ossf verdict: Met, NotMet, and a tool error is no verdict" {
-    # What: rc 0 is Met, rc 1 NotMet, any other rc an error.
-    # Why: A missing file once read as a NotMet finding.
-    # From: Issue #479, Issue #312, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     printf 'has Security Advisory here\n' > "${fx}"
     [ "$(_ci_ossf_verdict grep -q 'Security Advisor' "${fx}")" = "Met" ]
@@ -1469,10 +1432,10 @@ _fixture_harden_state() {
     [[ "${output}" != *"NotMet"* ]]
 }
 
+# What: Picks prune candidates from ten fixture versions.
+# Why: A real tag or live index child must never be deleted.
+# From: Issue #479, PR #544
 @test "gc candidates keep protected, rollback set, and real tags" {
-    # What: Only unprotected old untagged and whole old series go.
-    # Why: A real tag or live index child must never be deleted.
-    # From: Issue #479, PR #544
     local v out
     v='[
       {"id":1,"name":"sha256:u1","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":[]}}},
@@ -1490,10 +1453,10 @@ _fixture_harden_state() {
     [ "${out}" = "1 11 " ]
 }
 
+# What: Runs gc for a package the SOT does not list.
+# Why: A typo MUST NOT reach a delete-capable token.
+# From: Issue #479, PR #544
 @test "gc rejects a package outside the SOT before any API call" {
-    # What: Only release.ghcr_packages (or all) may be pruned.
-    # Why: A typo MUST NOT reach a delete-capable token.
-    # From: Issue #479, PR #544
     _forbid gh docker
     GH_TOKEN=x GITHUB_REPOSITORY_OWNER=wiki-mod run ci_cmd_gc not-a-package
     [ "${status}" -eq 2 ]
@@ -1501,45 +1464,37 @@ _fixture_harden_state() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Collects protected digests with docker inspect broken.
+# Why: Unknown children would otherwise lose their protection.
+# From: Issue #479, PR #544
 @test "gc protection fails closed when a tag cannot be inspected" {
-    # What: An uninspectable tag aborts pruning of that package.
-    # Why: Unknown children would otherwise lose their protection.
-    # From: Issue #479, PR #544
-
-    # What: Stub docker as failing to inspect.
-    # Why: An uninspectable tag must stop the prune.
-    docker() { return 1; }
+    _fail docker 1
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
 }
 
+# What: Collects digests from bad JSON, then a 2-child index.
+# Why: A jq error must not drop a child from the keep-set.
+# From: Issue #479, PR #544
 @test "gc protection fails closed on unreadable tags or manifests" {
-    # What: Bad versions JSON or a bad manifest aborts pruning.
-    # Why: A jq error must not drop a child from the keep-set.
-    # From: Issue #479, PR #544
-
-    # What: Stub docker to print a non-JSON manifest.
-    # Why: A bad manifest must stop the prune.
-    docker() { printf 'not json\n'; }
+    _print docker 'not json'
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng 'not json'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0003"* ]]
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GC-0004"* ]]
-    # What: Stub docker with a two-child index manifest.
-    # Why: Both children must land in the keep-set.
-    docker() { printf '{"manifests":[{"digest":"sha256:a"},{"digest":"sha256:b"}]}\n'; }
+    _print docker '{"manifests":[{"digest":"sha256:a"},{"digest":"sha256:b"}]}'
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 0 ]
     [ "${output}" = '["sha256:a","sha256:b"]' ]
 }
 
+# What: Reads six release payloads, good and malformed.
+# Why: A jq error must not read as "pre-release, skip".
+# From: Issue #479, PR #544
 @test "changelog event: pre-release skips, a bad event fails" {
-    # What: true skips (rc 3); non-boolean or unreadable fails.
-    # Why: A jq error must not read as "pre-release, skip".
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     echo '{"release":{"prerelease":true,"tag_name":"v1-NG"}}' > "${ev}"
     GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_changelog_from_event
@@ -1567,10 +1522,10 @@ _fixture_harden_state() {
     [[ "${output}" == *'"tag": "v1-NG"'* ]]
 }
 
+# What: Loads the board with PROJECT_OWNER/NUMBER preset.
+# Why: One owner; a second source is a parallel owner.
+# From: Issue #236, Issue #479, PR #544
 @test "project board identity comes only from the SOT" {
-    # What: An env value MUST NOT shadow the SOT's board identity.
-    # Why: One owner; a second source is a parallel owner.
-    # From: Issue #236, Issue #479, PR #544
     _fixture_manifest 'project_board:' '  owner: "sot-owner"' '  number: "7"'
     PROJECT_OWNER="shadow" PROJECT_NUMBER="999"
     _ci_project_board_load
@@ -1578,36 +1533,36 @@ _fixture_harden_state() {
     [ "${PROJECT_NUMBER}" = "7" ]
 }
 
+# What: Filters four results: success, failure, skip, cancel.
+# Why: A skipped dependent would mask the root cause.
+# From: Issue #479, PR #476
 @test "failed-jobs filter keeps only failure and cancelled" {
-    # What: Only real failures are reported, never skips.
-    # Why: A skipped dependent would mask the root cause.
-    # From: Issue #479, PR #476
     run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
     [ "${status}" -eq 0 ]
     [ "${output}" = "e2e x" ]
 }
 
+# What: Gates one successful and one skipped job.
+# Why: Content-based impact selection skips whole jobs.
+# From: Issue #479, PR #544
 @test "gate passes when every job succeeded or was skipped" {
-    # What: A NOOP/skipped matrix leg must not fail the gate.
-    # Why: Content-based impact selection skips whole jobs.
-    # From: Issue #479, PR #544
     JOBS="$(printf 'build=success\ne2e=skipped\n')" run ci_cmd_gate
     [ "${status}" -eq 0 ]
 }
 
+# What: Gates one successful and one failed job.
+# Why: It is the one stable required-check name.
+# From: Issue #479, PR #544
 @test "gate fails closed when a real job failed" {
-    # What: A real failure/cancelled entry fails the gate.
-    # Why: It is the one stable required-check name.
-    # From: Issue #479, PR #544
     JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
 }
 
+# What: Gates a blank list, a colon pair, no value, a typo.
+# Why: An empty job list must not pass the required gate.
+# From: Issue #479, PR #544
 @test "gate fails closed on a JOBS list with no or bad pairs" {
-    # What: No parsable pair, or a bad one, is an error.
-    # Why: An empty job list once passed the required gate.
-    # From: Issue #479, PR #544
     JOBS=" " run ci_cmd_gate
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-JOBS-0002"* ]]
@@ -1621,28 +1576,28 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e=unknown"* ]]
 }
 
+# What: Classifies README.md and doc/threat-model.md.
+# Why: A documentation PR must not run the full CI.
+# From: Issue #479, PR #544
 @test "impact: a docs-only diff selects nothing (NOOP)" {
-    # What: A .md edit MUST NOT trigger any gated job.
-    # Why: Kills the sledgehammer full-CI on documentation.
-    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
 }
 
+# What: Classifies src/dopt.c into phases.
+# Why: Real code changes must build, distribute and package.
+# From: Issue #479, PR #544
 @test "impact: a c-source diff selects build, e2e and package" {
-    # What: A src/*.c edit selects compile, e2e and packaging.
-    # Why: Real code changes must build, distribute and package.
-    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e package " ]
 }
 
+# What: Classifies the SOT and ci.sh one at a time.
+# Why: A pin bump or engine edit can break any of them.
+# From: Issue #479, PR #544
 @test "impact: a SOT or engine change selects every gated job" {
-    # What: build-manifest.yml or ci.sh select all five phases.
-    # Why: A pin bump or engine edit can break any of them.
-    # From: Issue #479, PR #544
     local p
     for p in .github/yaml/build-manifest.yml .github/scripts/ci.sh; do
         run _ci_phases_for_paths < <(printf '%s\n' "${p}")
@@ -1650,10 +1605,10 @@ _fixture_harden_state() {
     done
 }
 
+# What: Parses validate.yml's job gates and ci.sh commands.
+# Why: A phase nobody runs is policy that changes nothing.
+# From: Issue #479, PR #544
 @test "every SOT impact phase gates a validate.yml job" {
-    # What: The job gated on phase ph is the one running ci.sh ph.
-    # Why: A phase nobody runs is policy that changes nothing.
-    # From: Issue #479, PR #544
     local ph wiring
     local phases=()
     _ci_mapfile phases _ci_all_phases
@@ -1676,10 +1631,10 @@ _fixture_harden_state() {
     done
 }
 
+# What: Reads timeout-minutes of each listed workflow job.
+# Why: Unbounded, a hung test runs to the 6-hour default.
+# From: Issue #479, PR #544
 @test "every job legacy CI bounded keeps a timeout-minutes" {
-    # What: Build, test, e2e, package and scan jobs stay bounded.
-    # Why: Unbounded, a hung test runs to the 6-hour default.
-    # From: Issue #479, PR #544
     local spec wf job
     for spec in validate:plan validate:lint validate:build_test validate:e2e validate:package \
         validate:verify_image security:route security:codeql security:openssf nightly:build_test \
@@ -1695,22 +1650,22 @@ _fixture_harden_state() {
     done
 }
 
+# What: Routes every registered command; lists every arm.
+# Why: A listed command without an arm would be a dead stub.
+# From: Issue #479, PR #544
 @test "every CI_COMMANDS entry has its own dispatch arm" {
-    # What: The registry and the case dispatch name the same set.
-    # Why: A listed command without an arm was a silent stub.
-    # From: Issue #479, PR #544
     local c fn arm
     local arms=()
     for c in ${CI_COMMANDS}; do
         fn="ci_cmd_${c//-/_}"
         # What: Stub the command's phase function to report itself.
-        # Why: Proves ci_main really routes each name to its owner.
+        # Why: The real phases would run builds and API calls.
         eval "${fn}() { echo \"reached ${fn} \$*\"; }"
         run ci_main "${c}" a1
         [ "${status}" -eq 0 ] || { echo "${c}: ${output}"; false; }
         [ "${output}" = "reached ${fn} a1" ] || { echo "${c}: ${output}"; false; }
     done
-    # What: Every dispatch arm must be a registered command.
+    # What: List ci_main's case arms from the ci.sh source.
     # Why: An arm missing from CI_COMMANDS can never be reached.
     _ci_mapfile arms awk '/^ci_main\(\)/ { m = 1 } m && /^}/ { exit }
         m && match($0, /^ +[a-z-]+\) ci_cmd_/) {
@@ -1721,53 +1676,53 @@ _fixture_harden_state() {
     done
 }
 
+# What: Classifies include_server/basics.py into phases.
+# Why: A pump-mode Python change is not a packaging change.
+# From: Issue #479, PR #544
 @test "impact: an include-server .py diff selects build but not package" {
-    # What: include_server/*.py selects build and e2e only.
-    # Why: A pump-mode Python change is not a packaging change.
-    # From: Issue #479, PR #544
     run _ci_phases_for_paths < <(printf '%s\n' include_server/basics.py)
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e " ]
 }
 
+# What: Classifies LICENSE into phases.
+# Why: DEFAULT=NOOP; nothing runs on an irrelevant change.
+# From: Issue #479
 @test "impact: an unmatched path yields NOOP" {
-    # What: A path in no class selects no work at all.
-    # Why: DEFAULT=NOOP; nothing runs on an irrelevant change.
-    # From: Issue #479
     run _ci_phases_for_paths < <(printf '%s\n' LICENSE)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
 }
 
+# What: Classifies src/dopt.c against the real SOT classes.
+# Why: A misrouted path would run the wrong jobs.
+# From: Issue #479
 @test "classify: a src/*.c path maps to the c-source class" {
-    # What: One path resolves to exactly its owning class.
-    # Why: Guards the glob matcher against silent misrouting.
-    # From: Issue #479
     run _ci_classify_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"c-source"* ]]
 }
 
+# What: Matches src/config-parser.* against its .c file.
+# Why: '*' must match any text, not a literal star.
+# From: Issue #479
 @test "glob match: a prefix.* pattern matches its real extension" {
-    # What: Regression test for the fallback-match bug.
-    # Why: case needs pat unquoted or '*' becomes literal.
-    # From: Issue #479
     run _ci_glob_match "src/config-parser.*" "src/config-parser.c"
     [ "${status}" -eq 0 ]
 }
 
+# What: Matches src/config-parser.* against src/unrelated.c.
+# Why: A false positive would mislabel unrelated PRs.
+# From: Issue #479
 @test "glob match: a prefix.* pattern rejects an unrelated file" {
-    # What: The fix must not make the matcher always-true.
-    # Why: A false positive would mislabel unrelated PRs.
-    # From: Issue #479
     run _ci_glob_match "src/config-parser.*" "src/unrelated.c"
     [ "${status}" -ne 0 ]
 }
 
+# What: Matches **/*.md on a root, a deep and a .mdx file.
+# Why: Globstar semantics; a root file is zero dirs deep.
+# From: Issue #479, PR #544
 @test "glob: '**/' also matches files at the top level" {
-    # What: '**/*.md' matches README.md and doc/a/b.md alike.
-    # Why: Globstar semantics; a root file is zero dirs deep.
-    # From: Issue #479, PR #544
     run _ci_glob_match "**/*.md" "README.md"
     [ "${status}" -eq 0 ]
     run _ci_glob_match "**/*.md" "doc/a/b.md"
@@ -1776,10 +1731,10 @@ _fixture_harden_state() {
     [ "${status}" -ne 0 ]
 }
 
+# What: Classifies CHANGELOG.md alone, then with two others.
+# Why: The documentation label must skip CHANGELOG.md alone.
+# From: Issue #479, PR #544
 @test "classifier: a path map's exclude list removes a hit" {
-    # What: A path matching paths but also exclude gets no name.
-    # Why: The documentation label must skip CHANGELOG.md alone.
-    # From: Issue #479, PR #544
     _fixture_manifest 'labels:' '  documentation:' '    paths: ["doc/**", "**/*.md"]' \
         '    exclude: ["CHANGELOG.md"]' '  ci:' '    paths: [".github/workflows/**"]'
     run _ci_classify_paths labels <<< "CHANGELOG.md"
@@ -1789,28 +1744,30 @@ _fixture_harden_state() {
     [ "${output}" = "$(printf '%s\n' ci documentation)" ]
 }
 
+# What: Breaks sed, then the matcher, at each chain level.
+# Why: A lost class skips the jobs that guard its paths.
+# From: Issue #479, PR #544
 @test "classifier: a glob matcher error is rc 2, never no match" {
-    # What: Breaks sed, then the matcher, at each chain level.
-    # Why: A lost class skips the jobs that guard its paths.
-    # From: Issue #479, PR #544
-    sed() { echo "sed broke" >&2; return 1; }
+    _fail sed 1 "sed broke"
     run _ci_glob_match "src/*.c" "src/dopt.c"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"sed broke"* ]]
     unset -f sed
     _fixture_manifest 'labels:' '  documentation:' '    paths: ["**/*.md"]' '    exclude: ["CHANGELOG.md"]'
+    # What: Stub the matcher: error only on the CHANGELOG.md glob.
+    # Why: Only the exclude list holds that glob in the fixture.
     _ci_glob_match() { [ "$1" != "CHANGELOG.md" ] || return 2; }
     run _ci_classify_paths labels <<< "CHANGELOG.md"
     [ "${status}" -eq 2 ]
-    _ci_glob_match() { return 2; }
+    _fail _ci_glob_match 2
     run _ci_classify_paths labels <<< "README.md"
     [ "${status}" -eq 2 ]
 }
 
+# What: Labels PR 5, whose diff touches one workflow file.
+# Why: The board and release notes read these labels.
+# From: Issue #479, PR #544
 @test "label-pr applies path labels and the title category" {
-    # What: SOT path labels plus the title's category are added.
-    # Why: The board and release notes read these labels.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"number":5}}' > "${ev}"
     _fixture_manifest 'labels:' '  ci:' '    paths: [".github/workflows/**"]'
@@ -1825,27 +1782,27 @@ _fixture_harden_state() {
     [[ "${output}" == *"--add-label ci,bug"* ]]
 }
 
+# What: Maps a feat, fix, docs and security title.
+# Why: Release notes group PRs by these four labels.
+# From: Issue #479
 @test "pr category: maps AG-GH-014 types to release-drafter labels" {
-    # What: feat/fix/docs/security map to a changelog category.
-    # Why: Replaces release-drafter's autolabeler regex entirely.
-    # From: Issue #479
     [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
     [ "$(_ci_pr_category_label 'fix(protocol): correct frame bug')" = "bug" ]
     [ "$(_ci_pr_category_label 'docs(governance): add rule')" = "documentation" ]
     [ "$(_ci_pr_category_label 'security(config): patch leak')" = "security" ]
 }
 
+# What: Maps a chore(ci) title.
+# Why: The release notes have exactly these 4 categories.
+# From: Issue #479
 @test "pr category: an uncategorized type prints nothing" {
-    # What: chore/refactor/etc. get no changelog category label.
-    # Why: The release notes have exactly these 4 categories.
-    # From: Issue #479
     [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
 }
 
+# What: Maps a typeless title; parses a breaking-change type.
+# Why: Labels and the title check share one title parser.
+# From: Issue #479, PR #544
 @test "pr category: a title not in AG-GH-014 shape gets no label" {
-    # What: "fix stuff" has no type, so it gets no category.
-    # Why: Labels and the title check share one title parser.
-    # From: Issue #479, PR #544
     run _ci_pr_category_label 'fix stuff'
     [ "${status}" -eq 0 ]
     [ -z "${output}" ]
@@ -1855,59 +1812,59 @@ _fixture_harden_state() {
     [ "${status}" -eq 1 ]
 }
 
+# What: Scans a tree holding one LF-only file.
+# Why: CR is the only byte the guard may reject.
+# From: Issue #479
 @test "line-endings guard passes on an LF-only tree" {
-    # What: An LF-only fixture must pass the guard.
-    # Why: Proves the green path, not only the failing one.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'clean line\n' > "${fx}/ok.sh"
     run ci_guard_line_endings "${fx}"
     [ "${status}" -eq 0 ]
 }
 
+# What: Scans a tree holding one CRLF file.
+# Why: A CR breaks a shell script run on Linux.
+# From: Issue #479
 @test "line-endings guard fails closed on a CRLF file" {
-    # What: A CR byte anywhere must fail the guard.
-    # Why: Proves the fail-closed path is reachable.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'bad line\r\n' > "${fx}/crlf.sh"
     run ci_guard_line_endings "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-EOL-0001"* ]]
 }
 
+# What: Scans a yml with a 64-hex sha256 digest.
+# Why: A full digest is the only accepted pin form.
+# From: Issue #479
 @test "full-sha guard passes on a 64-hex digest" {
-    # What: A full 64-hex sha256 is compliant.
-    # Why: Proves the green path for the SHA rule.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'image: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
     [ "${status}" -eq 0 ]
 }
 
+# What: Scans a yml with an 8-hex sha256 digest.
+# Why: A short digest can match more than one image.
+# From: Issue #479
 @test "full-sha guard fails closed on an abbreviated digest" {
-    # What: A short sha256 must be rejected.
-    # Why: No abbreviations or special SHA forms allowed.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'image: "debian@sha256:fac46bff"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHA-0001"* ]]
 }
 
+# What: Runs both guards on a root that does not exist.
+# Why: A read error must never look like a clean tree.
+# From: Issue #479, PR #544
 @test "guards fail closed on an unreadable tree, not pass" {
-    # What: A grep error in a guard is a failure, not clean.
-    # Why: 2>/dev/null || true once turned read errors green.
-    # From: Issue #479, PR #544
     run ci_guard_line_endings "${BATS_TEST_TMPDIR}/nope"
     [ "${status}" -eq 2 ]
     run ci_guard_full_sha "${BATS_TEST_TMPDIR}/nope"
     [ "${status}" -eq 2 ]
 }
 
+# What: Diffs from the zero SHA; parses a missing log.
+# Why: Neither may read as no change or as a parse result.
+# From: Issue #479, PR #544
 @test "changelog and comfychair fail closed on bad input" {
-    # What: A bad diff range or a missing log is an error.
-    # Why: Both used to read as "no change" or a parse result.
-    # From: Issue #479, PR #544
     BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
@@ -1916,18 +1873,18 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
 }
 
+# What: Runs the pin guard on this repository.
+# Why: build-manifest.yml is the sole pin owner (Thesis 1).
+# From: Issue #479, PR #544
 @test "pin guard passes the repo's own Dockerfiles and workflows" {
-    # What: The real tree holds pins only in the SOT.
-    # Why: Thesis 1: build-manifest.yml is the sole pin owner.
-    # From: Issue #479, PR #544
     run ci_guard_pins_in_sot "${CI_REPO_ROOT}"
     [ "${status}" -eq 0 ]
 }
 
+# What: Scans ARG, stage and :local FROMs and an SOT action.
+# Why: None of them can pull an image the SOT did not pin.
+# From: Issue #479, PR #544
 @test "pin guard passes ARG FROMs, stage aliases and :local images" {
-    # What: FROM ${ARG}, FROM <stage> and FROM <name>:local pass.
-    # Why: None of them can pull an image the SOT did not pin.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     _fixture_actions
     mkdir -p "${fx}/d" "${fx}/.github/workflows"
@@ -1938,10 +1895,10 @@ _fixture_harden_state() {
     [ "${status}" -eq 0 ]
 }
 
+# What: Scans a Dockerfile and workflow with six pin forms.
+# Why: Each one is a second pin owner beside the SOT.
+# From: Issue #479, PR #544
 @test "pin guard fails closed on every pin form outside the SOT" {
-    # What: Digest, ARG default, pulled FROM, workflow pins fail.
-    # Why: Each one is a second pin owner beside the SOT.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" d
     d="$(printf 'a%.0s' {1..64})"
     _fixture_actions
@@ -1960,10 +1917,10 @@ _fixture_harden_state() {
     [[ "${output}" != *"w.yml:3:"* ]]
 }
 
+# What: Scans a workflow that uses no SOT action.
+# Why: Dependabot bumps only YAML; an unused pin goes stale.
+# From: Issue #479, PR #544
 @test "pin guard fails closed on a SOT action no workflow uses" {
-    # What: A SOT action pin absent from every workflow fails.
-    # Why: Dependabot bumps only YAML; an unused pin goes stale.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     _fixture_actions
     mkdir -p "${fx}/.github/workflows"
@@ -1973,19 +1930,19 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-GUARD-PIN-0003"*"${FX_PIN}"* ]]
 }
 
+# What: Greps the CFL Dockerfile for the SOT builder tag.
+# Why: CFL builds without build-args, so FROM is a literal.
+# From: Issue #267, Issue #479, PR #544
 @test "the CFL Dockerfile FROM is the SOT base-builder tag" {
-    # What: CFL builds its Dockerfile without build-args.
-    # Why: So its FROM literal must equal the tag ci.sh sets.
-    # From: Issue #267, Issue #479, PR #544
     local tag
     tag="$(_ci_sot_scalar security.cfl_base.tag)"
     grep -qx "FROM ${tag}" "${CI_REPO_ROOT}/.clusterfuzzlite/Dockerfile"
 }
 
+# What: Aliases s.a and records the docker calls.
+# Why: A builder without build-args may only see that tag.
+# From: Issue #267, Issue #479, PR #544
 @test "image alias pulls the SOT pin and tags it locally" {
-    # What: The alias resolves a SOT path to its pinned image.
-    # Why: A builder without build-args may only see that tag.
-    # From: Issue #267, Issue #479, PR #544
     _fixture_manifest 'base:' '  img: "b@sha256:0"' 's:' '  a:' '    from: "base.img"' '    tag: "a:local"'
     _capture_docker
     run _ci_image_alias s.a
@@ -1993,16 +1950,16 @@ _fixture_harden_state() {
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "pull b@sha256:0 tag b@sha256:0 a:local " ]
 }
 
+# What: Routes a PR, two dispatches and both security crons.
+# Why: The workflow holds no cron and no event decision.
+# From: Issue #479, PR #544
 @test "route security: crons, PRs and dispatch refs pick the jobs" {
-    # What: Each event and SOT cron yields its scans/openssf pair.
-    # Why: The workflow holds no cron and no event decision.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     _fixture_manifest 'schedules:' '  security_scans:' '    workflow: "security"' '    cron: "0 5 * * 0"' \
         '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"' 'security:' '  cfl_run:' \
         '    sanitizers: ["address"]' '  codeql:' '    languages: ["c-cpp", "python"]'
     # What: Run route security for one event and ref.
-    # Why: Each case reads the scans/openssf pair.
+    # Why: Each case needs a fresh output file.
     _route() {
         : > "${out}"
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME="$1" GITHUB_REF_NAME="$2" \
@@ -2021,10 +1978,10 @@ _fixture_harden_state() {
     grep -qx 'cfl_sanitizers=\["address"\]' "${out}"
 }
 
+# What: Routes the weekly cron, a gc dispatch, a bad workflow.
+# Why: gc only ever runs on an explicit dispatch.
+# From: Issue #479, PR #544
 @test "route housekeeping: the weekly cron or a dispatch task" {
-    # What: Weekly runs sot-update+heartbeat; a task runs itself.
-    # Why: gc only ever runs on an explicit dispatch.
-    # From: Issue #479, PR #544
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     _fixture_manifest 'schedules:' '  housekeeping_weekly:' '    workflow: "housekeeping"' '    cron: "0 5 * * 1"'
     echo '{"schedule":"0 5 * * 1"}' > "${ev}"
@@ -2039,10 +1996,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
 }
 
+# What: Checks the real tree, then a drifted cron and option.
+# Why: Both must be literal YAML; the SOT owns their values.
+# From: Issue #479, PR #544
 @test "mirror guard passes the real tree and fails closed on drift" {
-    # What: A cron or package choice off the SOT fails lint.
-    # Why: Both must be literal YAML; the SOT owns their values.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     run ci_guard_sot_mirrors "${CI_REPO_ROOT}"
     [ "${status}" -eq 0 ]
@@ -2058,13 +2015,13 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
 }
 
+# What: Runs three checks with the checkout check failing.
+# Why: #479: the verify container starts once for all phases.
+# From: Issue #479, PR #544
 @test "verify starts one container and runs every in-image check" {
-    # What: One docker run, one exec per check; failures add up.
-    # Why: #479: the verify container starts once for all phases.
-    # From: Issue #479, PR #544
     local log="${BATS_TEST_TMPDIR}/docker"
     # What: Stub docker: log calls; in-image checkout fails.
-    # Why: Proves one container and the failed check name.
+    # Why: The log counts run and exec calls separately.
     docker() {
         echo "$1 $*" >> "${log}"
         [ "$1" = exec ] && [ "$4" = "${CI_CONTAINER_SH}" ] && [ "$6" = checkout ] && return 1
@@ -2078,10 +2035,10 @@ _fixture_harden_state() {
     grep -q '^run run .*--name net1-verify .*--cap-add=SYS_PTRACE.* img sleep infinity' "${log}"
 }
 
+# What: Scans blocks, directives and heredocs, then a banner.
+# Why: Heredoc text and tool directives are not prose.
+# From: Issue #479, PR #544
 @test "comment guard passes standard blocks, directives and heredocs" {
-    # What: Standard blocks, directives and heredocs pass.
-    # Why: Heredoc text and tool directives are not prose.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
     mkdir -p "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' '# distcc-ng (https://github.com/wiki-mod/distcc-ng)' \
@@ -2098,10 +2055,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"a.sh:3: not a What/Why/From line"* ]]
 }
 
+# What: Scans an initd file holding both banned texts.
+# Why: AG-INT-006: the mere presence is the violation.
+# From: Issue #479, PR #544, AG-INT-006
 @test "directive guard fails on each AG-INT-006 text" {
-    # What: A shell file holding a banned text fails the guard.
-    # Why: AG-INT-006: the mere presence is the violation.
-    # From: Issue #479, PR #544, AG-INT-006
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
     _ci_mapfile texts _ci_banned_shell_texts
@@ -2115,10 +2072,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"svc.initd:3: AG-INT-006 text ${texts[1]}"* ]]
 }
 
+# What: Scans a tree whose source= names a real file.
+# Why: Only the AG-INT-006 texts fail; source= stays usable.
+# From: Issue #479, PR #544, AG-INT-006
 @test "directive guard passes a shell tree without banned text" {
-    # What: A source= naming a real file is no banned text.
-    # Why: Only the AG-INT-006 texts fail; source= stays usable.
-    # From: Issue #479, PR #544, AG-INT-006
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/lib" "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' 'y=1' > "${fx}/lib/real.sh"
@@ -2128,10 +2085,10 @@ _fixture_harden_state() {
     [ "${status}" -eq 0 ]
 }
 
+# What: Runs ci_cmd_lint on a clean tree, then a banned text.
+# Why: The guard is only proof if the lint entry runs it.
+# From: Issue #479, PR #544, AG-INT-006
 @test "the real lint entry fails on an AG-INT-006 text" {
-    # What: ci_cmd_lint fails when one shell file has the text.
-    # Why: The guard is only proof if the lint entry runs it.
-    # From: Issue #479, PR #544, AG-INT-006
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
     _ci_mapfile texts _ci_banned_shell_texts
@@ -2148,10 +2105,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"contrib/tool:2: AG-INT-006 text"* ]]
 }
 
+# What: Reads the ban list from AGENTS.md without the rule.
+# Why: An empty list would pass every shell file silently.
+# From: Issue #479, PR #544, AG-INT-006
 @test "banned texts fail closed without a readable AG-INT-006" {
-    # What: A missing rule is an error, never an empty ban list.
-    # Why: An empty list would pass every shell file silently.
-    # From: Issue #479, PR #544, AG-INT-006
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     printf '%s\n' '# rules' > "${fx}/AGENTS.md"
@@ -2162,10 +2119,10 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Scans a file whose heredoc has no terminator.
+# Why: Skipping to EOF would hide every later comment.
+# From: Issue #479, PR #544
 @test "comment guard fails closed on a heredoc that never ends" {
-    # What: An unterminated heredoc is reported, not skipped.
-    # Why: Skipping to EOF would hide every later comment.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
     mkdir -p "${fx}/.github"
     printf '%s\n' "cat ${hd}EOF" 'text' '# free prose after' > "${fx}/.github/b.sh"
@@ -2174,10 +2131,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"b.sh:1: heredoc EOF never ends"* ]]
 }
 
+# What: Scans prose, a What-only block and a 61-char line.
+# Why: AG-CODE-001 allows only the What/Why/From form.
+# From: Issue #479, PR #544
 @test "comment guard fails closed on prose, a missing Why, a long line" {
-    # What: Free prose, What without Why and >60 chars all fail.
-    # Why: AG-CODE-001 allows only the What/Why/From form.
-    # From: Issue #479, PR #544
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/.github/workflows"
     printf '%s\n' '# Some free prose.' 'a: 1' '# What: Only a what.' 'b: 2' \
@@ -2189,20 +2146,38 @@ _fixture_harden_state() {
     [[ "${output}" == *"w.yml:5: longer than 60 characters"* ]]
 }
 
+# What: Scans an uncommented function, nested stub and test.
+# Why: AG-CODE-001: every function MUST have a comment.
+# From: Issue #479, PR #544
+@test "comment guard fails closed on a function without a block" {
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/.github"
+    printf '%s\n' '# What: Do a thing.' '# Why: A reason.' 'ok() { :; }' '' 'bad() { :; }' \
+        '# What: A test.' '# Why: A reason.' '@test "x" {' '    inner() { :; }' '}' '' \
+        '@test "y" {' '}' > "${fx}/.github/t.bats"
+    run ci_guard_comment_format "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"t.bats:5: function without a comment block above"* ]]
+    [[ "${output}" == *"t.bats:9: function without a comment block above"* ]]
+    [[ "${output}" == *"t.bats:12: function without a comment block above"* ]]
+    [[ "${output}" != *"t.bats:3:"* ]]
+    [[ "${output}" != *"t.bats:8:"* ]]
+}
+
+# What: Checks a step whose run: is one ci.sh command.
+# Why: #479 lets a run: step call ci.sh and nothing else.
+# From: Issue #479
 @test "orchestrator guard passes on a single-command run: step" {
-    # What: `run: bash ci.sh <phase>` is a compliant step.
-    # Why: Proves the green path; one command is allowed.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
     [ "${status}" -eq 0 ]
 }
 
+# What: Checks a run: block holding an if statement.
+# Why: #479 bans inline logic; it belongs in ci.sh.
+# From: Issue #479
 @test "orchestrator guard fails closed on inline logic in a run: block" {
-    # What: A run: block with shell control flow must be rejected.
-    # Why: #479 bans inline logic; it belongs in ci.sh.
-    # From: Issue #479
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: |\n          if [ -x foo ]; then bar; fi\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
@@ -2210,10 +2185,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
 }
 
+# What: Checks an SOT action whose inputs are step outputs.
+# Why: Transport-only actions are the one allowed uses: form.
+# From: Issue #479, PR #544
 @test "orchestrator guard passes a SOT action fed by step outputs" {
-    # What: An exact SOT pin whose inputs forward outputs passes.
-    # Why: Transport-only actions are the one allowed uses: form.
-    # From: Issue #479, PR #544
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' '      - run: |' '          bash .github/scripts/ci.sh cache default' \
@@ -2224,10 +2199,10 @@ _fixture_harden_state() {
     [ "${status}" -eq 0 ]
 }
 
+# What: Checks a local, a tag-ref and a wrong-SHA uses: line.
+# Why: Only the exact SOT literal may run an action.
+# From: Issue #479, PR #544
 @test "orchestrator guard fails closed on a uses: outside the SOT" {
-    # What: Local, tag-ref and wrong-SHA uses: lines all fail.
-    # Why: Only the exact SOT literal may run an action.
-    # From: Issue #479, PR #544
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' '      - uses: ./.github/actions/foo' '      - uses: o/a@v1' \
@@ -2239,10 +2214,10 @@ _fixture_harden_state() {
     [[ "${output}" == *"wf.yml:6: uses: o/a@bbbb"* ]]
 }
 
+# What: Checks an SOT action given a literal and a run_id key.
+# Why: Keys, paths and names are ci.sh decisions, not YAML.
+# From: Issue #479, PR #544
 @test "orchestrator guard fails closed on a decided uses: input" {
-    # What: A literal or computed with: input is rejected.
-    # Why: Keys, paths and names are ci.sh decisions, not YAML.
-    # From: Issue #479, PR #544
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' "      - uses: ${FX_PIN}" '        with:' '          path: ~/.ccache' \
@@ -2253,19 +2228,19 @@ _fixture_harden_state() {
     [[ "${output}" == *"wf.yml:7: uses: input is not a ci.sh step output"* ]]
 }
 
-# What: docker stub that records its argv, one arg per line.
-# Why: Owner tests assert the exact flags, not a real daemon.
+# What: Install the argv-recording docker stub for one test.
+# Why: Owner tests assert exact flags without a daemon.
 # From: Issue #479, PR #544
 _capture_docker() {
-    # What: Record each docker argument on its own line.
-    # Why: Owner tests assert flags, not a real daemon.
+    # What: Stub docker: append each argument as one argv line.
+    # Why: One arg per line keeps arguments with spaces apart.
     docker() { printf '%s\n' "$@" >> "${BATS_TEST_TMPDIR}/argv"; }
 }
 
+# What: Builds s.x with --pull and records the docker argv.
+# Why: The only path a base-image pin may take into a build.
+# From: Issue #359, Issue #479, PR #544
 @test "image build passes SOT ARGs, explicit target and local tag" {
-    # What: A local spec builds its file and target, SOT ARGs.
-    # Why: The only path a base-image pin may take into a build.
-    # From: Issue #359, Issue #479, PR #544
     local d; d="$(printf 'a%.0s' {1..64})"
     _fixture_manifest 'base:' "  img: \"b@sha256:${d}\"" 's:' '  x:' '    dockerfile: "d/Dockerfile"' \
         '    target: "t"' '    args: ["A=base.img"]' '    tag: "x:local"'
@@ -2275,10 +2250,10 @@ _capture_docker() {
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "build --pull --file ${CI_REPO_ROOT}/d/Dockerfile --target t --build-arg A=b@sha256:${d} --tag x:local ${CI_REPO_ROOT} " ]
 }
 
+# What: Builds a described spec without, then with a version.
+# Why: One OCI metadata owner; Dockerfiles carry no LABEL.
+# From: Issue #359, Issue #479, PR #544
 @test "image build labels a published spec and needs its version" {
-    # What: A spec with a description gets 7 OCI labels.
-    # Why: One OCI metadata owner; Dockerfiles carry no LABEL.
-    # From: Issue #359, Issue #479, PR #544
     _fixture_manifest 'base:' '  img: "b"' 'release:' '  licenses: "L"' '  images:' '    pkg:' \
         '      dockerfile: "f"' '      target: "t"' '      args: ["A=base.img"]' '      description: "D"'
     _capture_docker
@@ -2293,10 +2268,10 @@ _capture_docker() {
     grep -qx 'org.opencontainers.image.revision=abc' "${BATS_TEST_TMPDIR}/argv"
 }
 
+# What: Builds a spec with a bad ARG, then a missing spec.
+# Why: An unpinned ARG would build FROM an empty base.
+# From: Issue #479, PR #544
 @test "image build fails closed on a bad spec before docker runs" {
-    # What: A missing spec or a non ARG=path entry stops it.
-    # Why: An unpinned ARG would build FROM an empty base.
-    # From: Issue #479, PR #544
     _fixture_manifest 's:' '  x:' '    dockerfile: "f"' '    target: "t"' '    args: ["NOEQUALS"]'
     _forbid docker
     run _ci_image_build s.x ""
@@ -2308,20 +2283,22 @@ _capture_docker() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Runs one container outside a stack, docker recorded.
+# Why: --init reaps zombies; without it containers can hang.
+# From: Issue #479, PR #544
 @test "container run: --init and a read-only checkout, --rm alone" {
-    # What: Every run gets --init and the checkout at /ci:ro.
-    # Why: --init reaps zombies; a missing one hung earlier runs.
-    # From: Issue #479, PR #544
     _capture_docker
     run _ci_container_run img -e K=V -- bash x
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --rm -e K=V img bash x " ]
 }
 
+# What: Tears down ci-x-1 and ci-x, then with ls broken.
+# Why: Teardown must delete its own net and no other.
+# From: Issue #479, PR #544
 @test "stack teardown removes only a listed net; a list error fails" {
-    # What: Fakes docker with one net, ci-x-1, and ci-x beside it.
-    # Why: Teardown must delete its own net and no other.
-    # From: Issue #479, PR #544
+    # What: Stub docker: list ci-x-1; FX_LS_FAIL breaks the list.
+    # Why: rm calls land in a file the test reads back.
     docker() {
         case "$1 $2" in
             "network ls")
@@ -2343,20 +2320,20 @@ _capture_docker() {
     [ "$(cat "${BATS_TEST_TMPDIR}/rm")" = "ci-x-1" ]
 }
 
+# What: Runs one detached container inside stack n1.
+# Why: --rm would drop a crashed server's log too early.
+# From: Issue #479, PR #544
 @test "container run: inside a stack it joins net and label, no --rm" {
-    # What: A stack member is labelled; teardown removes it.
-    # Why: --rm would drop a crashed server's log too early.
-    # From: Issue #479, PR #544
     _capture_docker
     CI_STACK=n1 run _ci_container_run img -d --
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --network n1 --label ci-stack=n1 -d img " ]
 }
 
+# What: Runs a container with options but no -- separator.
+# Why: A guessed split could run an option as the image.
+# From: Issue #479, PR #544
 @test "container run fails closed without -- before the command" {
-    # What: Options and command must be split by an explicit --.
-    # Why: A guessed split could run an option as the image.
-    # From: Issue #479, PR #544
     _forbid docker
     run _ci_container_run img -e K=V
     [ "${status}" -eq 2 ]
@@ -2364,10 +2341,10 @@ _capture_docker() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Pushes with REGISTRY_TOKEN unset, docker forbidden.
+# Why: An anonymous or stale-credential push must not happen.
+# From: Issue #479, PR #544
 @test "registry push never pushes after a failed login" {
-    # What: No token means no login and no push at all.
-    # Why: An anonymous or stale-credential push must not happen.
-    # From: Issue #479, PR #544
     _forbid docker
     unset REGISTRY_TOKEN
     GITHUB_ACTOR=octo run _ci_registry_push some/image:tag
@@ -2375,14 +2352,13 @@ _capture_docker() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Polls a probe passing on try 3, then a false one.
+# Why: One bounded poll owner for every readiness wait.
+# From: Issue #479, PR #544
 @test "wait-until retries a probe and fails after N tries" {
-    # What: Success on a later try passes; N failures fail.
-    # Why: One bounded poll owner for every readiness wait.
-    # From: Issue #479, PR #544
-
     _pass sleep
     # What: Probe that succeeds on its third call.
-    # Why: Proves wait-until retries, then stops.
+    # Why: Two failures before a pass exercise the retry.
     _probe() { echo x >> "${BATS_TEST_TMPDIR}/tries"; [ "$(wc -l < "${BATS_TEST_TMPDIR}/tries")" -ge 3 ]; }
     run _ci_wait_until 5 1 _probe
     [ "${status}" -eq 0 ]
@@ -2391,24 +2367,23 @@ _capture_docker() {
     [ "${status}" -eq 1 ]
 }
 
+# What: Polls a probe that returns 5 on its first call.
+# Why: A hard error must never be retried as transient.
+# From: Issue #479, PR #544
 @test "wait-until stops at once on a probe error and names tries" {
-    # What: rc >= 2 aborts; the probe sees CI_ATTEMPT/CI_TRIES.
-    # Why: A hard error must never be retried as transient.
-    # From: Issue #479, PR #544
-
     _pass sleep
-    # What: Probe that logs its attempt, then fails hard.
-    # Why: Proves a single call and the attempt counters.
+    # What: Probe that logs its attempt, then returns 5.
+    # Why: rc >= 2 is the hard-error class that must stop it.
     _probe() { echo "${CI_ATTEMPT}/${CI_TRIES}" >> "${BATS_TEST_TMPDIR}/tries"; return 5; }
     run _ci_wait_until 4 1 _probe
     [ "${status}" -eq 5 ]
     [ "$(cat "${BATS_TEST_TMPDIR}/tries")" = "1/4" ]
 }
 
+# What: Expects a needle from a failing and a passing command.
+# Why: Fixtures exit non-zero; a negated check can fail too.
+# From: Issue #264, Issue #479, PR #544
 @test "expect-output checks presence, and absence with !re" {
-    # What: A fixture's output is the proof, not its exit code.
-    # Why: Fixtures exit non-zero; a negated check can fail too.
-    # From: Issue #264, Issue #479, PR #544
     run _ci_expect_output t 'needle' bash -c 'echo needle; exit 3'
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"t: OK (exit 3)"* ]]
@@ -2419,24 +2394,21 @@ _capture_docker() {
     [ "${status}" -eq 0 ]
 }
 
-# What: curl stub that copies fixture file $1 to every -o.
+# What: Install a curl stub that copies file $1 to any -o.
 # Why: Fetch tests need a deterministic, offline download.
 # From: Issue #479, PR #544
 _fake_curl() {
     FAKE_DOWNLOAD="$1"
-    # What: Stub curl to copy FAKE_DOWNLOAD to its -o file.
-    # Why: Downloads stay offline and deterministic.
+    # What: Stub curl: copy FAKE_DOWNLOAD to each -o argument.
+    # Why: _ci_download names its target only through -o.
     curl() { while [ "$#" -gt 0 ]; do if [ "$1" = "-o" ]; then cp "${FAKE_DOWNLOAD}" "$2"; fi; shift; done; }
 }
 
+# What: Downloads with curl failing every attempt (rc 22).
+# Why: A failed fetch must never fail without an error line.
+# From: Issue #479, PR #544
 @test "a failed download names its URL and fails" {
-    # What: curl's failure surfaces as FETCH-0003 with the URL.
-    # Why: A failed fetch must never fail without an error line.
-    # From: Issue #479, PR #544
-
-    # What: Stub curl as an HTTP failure (rc 22).
-    # Why: A failed fetch must name its URL and fail.
-    curl() { return 22; }
+    _fail curl 22
     _pass sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
@@ -2444,14 +2416,14 @@ _fake_curl() {
     [[ "${output}" == *"CI-ERROR-FETCH-0003"*"https://h/x.tar.gz"* ]]
 }
 
+# What: Downloads with curl failing only the first call.
+# Why: curl --retry does not retry a dropped connection.
+# From: Issue #479, PR #544
 @test "a dropped connection is retried by a later attempt" {
-    # What: A first failing curl, then a good one, succeeds.
-    # Why: curl --retry does not retry a dropped connection.
-    # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n"
     echo 0 > "${n}"
     # What: Stub curl: the first call fails, later ones pass.
-    # Why: Proves a later attempt recovers the fetch.
+    # Why: A count file outlives each call's subshell.
     curl() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"; [ "${c}" -ge 1 ]; }
     _pass sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
@@ -2460,10 +2432,10 @@ _fake_curl() {
     [[ "${output}" == *"attempt 1/3 failed"* ]]
 }
 
+# What: Fetches a fixture tarball whose sha256 the SOT pins.
+# Why: Release URLs use the tag with and without its v.
+# From: Issue #479, PR #544
 @test "tool fetch expands the url and extracts on a matching sha256" {
-    # What: A matching checksum extracts; bin names the binary.
-    # Why: Green path of the one SOT-driven tool downloader.
-    # From: Issue #479, PR #544
     local src="${BATS_TEST_TMPDIR}/src" sum
     mkdir -p "${src}/d"; printf 'bin' > "${src}/d/tool"
     tar -czf "${BATS_TEST_TMPDIR}/t.tar.gz" -C "${src}" d
@@ -2478,10 +2450,10 @@ _fake_curl() {
     [ -x "${output}" ]
 }
 
+# What: Fetches an unarchived binary with archive: binary.
+# Why: Some upstreams ship no archive, only the executable.
+# From: Issue #479, PR #544
 @test "tool fetch keeps a bare binary under its bin name" {
-    # What: archive binary stores the download as the bin file.
-    # Why: Some upstreams ship no archive, only the executable.
-    # From: Issue #479, PR #544
     local sum
     printf 'exe' > "${BATS_TEST_TMPDIR}/raw"
     sum="$(sha256sum "${BATS_TEST_TMPDIR}/raw" | cut -d' ' -f1)"
@@ -2493,10 +2465,10 @@ _fake_curl() {
     [ "$(cat "${output}")" = "exe" ]
 }
 
+# What: Fetches a file with a wrong sha256, then with none.
+# Why: A tampered or unpinned binary must never run.
+# From: Issue #479, PR #544
 @test "tool fetch fails closed on a sha256 mismatch or no pin" {
-    # What: A wrong or missing checksum never yields a binary.
-    # Why: A tampered or unpinned binary must never run.
-    # From: Issue #479, PR #544
     printf 'evil' > "${BATS_TEST_TMPDIR}/evil"
     _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
         "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"' '  bare:' '    version: "v1"' \
@@ -2513,12 +2485,12 @@ _fake_curl() {
     [[ "${output}" != *"must not run"* ]]
 }
 
-# What: gh and docker stubs for the SOT refresh tests.
+# What: Install offline gh and docker stubs for SOT refresh.
 # Why: Release lists and registry digests must be offline.
 # From: Issue #479, PR #544
 _fake_registry() {
-    # What: Stub docker to return a fixed 64-hex digest.
-    # Why: Registry digests must stay offline.
+    # What: Stub docker: answer every inspect with one digest.
+    # Why: Every image pin then has one known newer digest.
     docker() { printf '{"digest":"sha256:%s"}\n' "$(printf 'b%.0s' {1..64})"; }
     # What: Stub gh release lists and one asset digest.
     # Why: Any other gh call is a test failure.
@@ -2531,10 +2503,10 @@ _fake_registry() {
     }
 }
 
+# What: Refreshes two image pins, a tool and a manual pin.
+# Why: ci.sh is the sole pin owner; sort -V beats backports.
+# From: Issue #479, PR #544
 @test "sot refresh moves digests and tool versions, one row each" {
-    # What: New digest and newest stable version land in the SOT.
-    # Why: ci.sh is the sole pin owner; sort -V beats backports.
-    # From: Issue #479, PR #544
     local a b c
     a="$(printf 'a%.0s' {1..64})"; b="$(printf 'b%.0s' {1..64})"; c="$(printf 'c%.0s' {1..64})"
     _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${a}\"" 'external_services:' \
@@ -2552,10 +2524,10 @@ _fake_registry() {
     [ "$(_ci_sot_scalar external_versions.manual.version)" = "1" ]
 }
 
+# What: Refreshes a SOT image pinned as name@sha256 only.
+# Why: Refreshing it would silently track latest.
+# From: Issue #479, PR #544
 @test "sot refresh fails closed on an image pin without a tag" {
-    # What: name@sha256 with no tag has no channel to follow.
-    # Why: Refreshing it would silently track latest.
-    # From: Issue #479, PR #544
     _fixture_manifest 'base_images:' "  deb: \"debian@sha256:$(printf 'a%.0s' {1..64})\"" 'external_services:' \
         '  none: "x:1@sha256:0"' 'external_versions:' '  m:' '    version: "1"'
     _fake_registry
@@ -2564,40 +2536,32 @@ _fake_registry() {
     [[ "${output}" == *"CI-ERROR-SOT-0004"* ]]
 }
 
-# What: Stubs for the OSV gate: scanner, fetch, base SOT, ids.
+# What: Install the OSV gate stubs; $1 is the base SOT text.
 # Why: The gate logic must be provable without network.
 # From: Issue #267, Issue #479, PR #544
 _fake_osv() {
     OSV_BASE_SOT="$1"
-    # What: Stub the scanner binary as /bin/true.
-    # Why: The gate test needs no real OSV scanner.
-    _ci_tool_bin() { echo /bin/true; }
-    # What: Stub the scanned tool dirs as the temp dir.
-    # Why: No tool is fetched in the gate test.
-    _ci_osv_tool_dirs() { echo "${BATS_TEST_TMPDIR}"; }
-    # What: Stub the OSV run as a no-op.
-    # Why: Vulnerability ids come from the stub below.
-    _ci_osv_run() { :; }
-    # What: Stub the PR range as abc..def.
-    # Why: The gate reads the base SOT at the base.
-    _ci_event_range() { printf '%s\n' abc def; }
-    # What: Stub git: the base has a SOT; show prints it.
-    # Why: The base side must use OSV_BASE_SOT.
+    _print _ci_tool_bin /bin/true
+    _print _ci_osv_tool_dirs "${BATS_TEST_TMPDIR}"
+    _pass _ci_osv_run
+    _print _ci_event_range abc def
+    # What: Stub git: ls-tree lists the SOT, show prints it.
+    # Why: The base side must read OSV_BASE_SOT, not the tree.
     git() {
         case "$*" in
             *" ls-tree "*) [ -n "${OSV_GIT_FAIL:-}" ] && return 128; printf '%s\n' .github/yaml/build-manifest.yml ;;
             *" show "*) printf '%s\n' "${OSV_BASE_SOT}" ;;
         esac
     }
-    # What: Stub ids: head SOT and base SOT sets.
+    # What: Stub ids: OSV_HEAD_IDS for the head SOT, else base.
     # Why: The gate must fail only on head-added ids.
     _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
 }
 
+# What: Scans a head adding GO-3, then one removing GO-2.
+# Why: Only a vulnerability the PR adds may block it.
+# From: Issue #267, Issue #479, PR #544
 @test "OSV PR gate fails only on ids the head's tools add" {
-    # What: A new vuln id in the head fails; a removed one not.
-    # Why: Legacy's PR scan blocked newly vulnerable dependencies.
-    # From: Issue #267, Issue #479, PR #544
     _fake_osv '    bin: "x"'
     OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 1 ]
@@ -2609,14 +2573,14 @@ _fake_osv() {
     [[ "${output}" == *"no new vulnerability"* ]]
 }
 
+# What: Uploads a 4 MB SARIF through a decoding gh stub.
+# Why: A large SARIF in argv fails with E2BIG.
+# From: Issue #479, PR #544
 @test "SARIF upload sends the gzip+base64 file in the request body" {
-    # What: The SARIF travels in --input, decodable to the file.
-    # Why: A 350-result SARIF in argv failed with E2BIG.
-    # From: Issue #479, PR #544
     local big="${BATS_TEST_TMPDIR}/big.sarif"
     head -c 3000000 /dev/urandom | base64 > "${big}"
     # What: Stub gh: decode the --input body, echo an id.
-    # Why: Proves the SARIF travels in the body file.
+    # Why: The decoded copy is compared byte for byte below.
     gh() {
         local in=""
         while [ "$#" -gt 0 ]; do [ "$1" = "--input" ] && in="$2"; shift; done
@@ -2629,10 +2593,10 @@ _fake_osv() {
     cmp "${big}" "${BATS_TEST_TMPDIR}/back"
 }
 
+# What: Uploads against a 502, an empty reply, then a 404.
+# Why: A transient API error must not fail a scan job.
+# From: Issue #479, PR #544
 @test "SARIF upload retries a 5xx or empty answer, never a 4xx" {
-    # What: 5xx/empty retry up to three times; 4xx fails at once.
-    # Why: A transient API error must not fail a scan job.
-    # From: Issue #479, PR #544
     local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
     echo '{}' > "${f}"
     _pass sleep
@@ -2656,10 +2620,10 @@ _fake_osv() {
     [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP 404"* ]]
 }
 
+# What: Scans against a base without bin pins, then git fails.
+# Why: Its tools cannot be fetched; reading 0 would fail all.
+# From: Issue #267, Issue #479, PR #544
 @test "OSV PR gate is NotRun against a base SOT without tool pins" {
-    # What: A base predating tool pins has nothing to compare.
-    # Why: Its tools cannot be fetched; reading 0 would fail all.
-    # From: Issue #267, Issue #479, PR #544
     _fake_osv '    version: "v1"'
     OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
@@ -2669,10 +2633,10 @@ _fake_osv() {
     [[ "${output}" != *"NotRun"* ]]
 }
 
+# What: Runs a fake scanner exiting 1, 127 and 128.
+# Why: v2.6.0 docs/output.md:796-798: 127 and 128 are errors.
+# From: Issue #267, Issue #479, PR #544
 @test "OSV run keeps findings 1-126 and fails on a scanner error" {
-    # What: rc 1-126 means findings; rc 127 and above is an error.
-    # Why: osv-scanner v2.6.0 docs/output.md:796-798 say so.
-    # From: Issue #267, Issue #479, PR #544
     local bin="${BATS_TEST_TMPDIR}/osv"
     printf '%s\n' '#!/bin/sh' 'exit "${OSV_RC}"' > "${bin}"
     chmod +x "${bin}"
@@ -2685,11 +2649,10 @@ _fake_osv() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Builds the predicate from stubbed push-run claims.
+# Why: gh attestation verify expects that exact provenance.
+# From: Issue #38, Issue #479, PR #544
 @test "attest predicate has the actions/attest SLSA v1 shape" {
-    # What: Claims map to buildType, workflow path, builder, run.
-    # Why: gh attestation verify expects that exact provenance.
-    # From: Issue #38, Issue #479, PR #544
-
     # What: Stub the OIDC claims of a push run.
     # Why: The predicate shape is checked offline.
     _ci_attest_claims() {
@@ -2707,12 +2670,14 @@ _fake_osv() {
     [ "$(jq -r '.buildDefinition.resolvedDependencies[0].digest.gitCommit' <<< "${output}")" = "abc" ]
 }
 
+# What: Encodes 7, 8 and 9 byte claims as a JWT does.
+# Why: Each length restores a different '=' count.
+# From: Issue #38, PR #544
 @test "attest claims decode an unpadded base64url token payload" {
-    # What: Encodes 7, 8 and 9 byte claims as a JWT does.
-    # Why: Each length restores a different '=' count.
-    # From: Issue #38, PR #544
     local j p
     export ACTIONS_ID_TOKEN_REQUEST_TOKEN=t ACTIONS_ID_TOKEN_REQUEST_URL=u
+    # What: Stub curl: answer the token request with FX_TOKEN.
+    # Why: Each loop pass swaps FX_TOKEN, not the stub.
     curl() { printf '{"value":"%s"}' "${FX_TOKEN}"; }
     for j in '{"a":1}' '{"ab":1}' '{"abc":1}'; do
         p="$(printf '%s' "${j}" | base64 -w0 | tr '/+' '_-' | tr -d '=')"
@@ -2721,23 +2686,19 @@ _fake_osv() {
         [ "${status}" -eq 0 ]
         [ "${output}" = "${j}" ]
     done
-    tr() { echo "tr broke" >&2; return 1; }
+    _fail tr 1 "tr broke"
     run _ci_attest_claims
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"tr broke"* ]]
 }
 
+# What: Attests two files with cosign and predicate stubbed.
+# Why: One signature covers the whole shipped asset set.
+# From: Issue #38, Issue #479, PR #544
 @test "attest builds one in-toto statement over all subjects" {
-    # What: Every file is a sha256 subject of one SLSA statement.
-    # Why: One signature covers the whole shipped asset set.
-    # From: Issue #38, Issue #479, PR #544
     printf 'a' > "${BATS_TEST_TMPDIR}/f1"; printf 'b' > "${BATS_TEST_TMPDIR}/f2"
-    # What: Stub cosign as /bin/true.
-    # Why: The statement test needs no real signer.
-    _ci_tool_bin() { echo /bin/true; }
-    # What: Stub the SLSA predicate as a fixed object.
-    # Why: The test checks subjects, not the predicate.
-    _ci_attest_predicate() { echo '{"p":1}'; }
+    _print _ci_tool_bin /bin/true
+    _print _ci_attest_predicate '{"p":1}'
     # What: Stub publish to keep the statement it gets.
     # Why: The test reads back the built statement.
     _ci_attest_publish() { cat "$2/statement.json" > "${BATS_TEST_TMPDIR}/stmt"; }
@@ -2750,10 +2711,10 @@ _fake_osv() {
     [ "$(jq -c .predicate "${BATS_TEST_TMPDIR}/stmt")" = '{"p":1}' ]
 }
 
+# What: Attests without OIDC, on macOS, coverage and bogus.
+# Why: Fork PRs never get an id-token; releases always do.
+# From: Issue #38, Issue #479, PR #544
 @test "attest: build without OIDC is NotRun, a bad target fails" {
-    # What: A fork-PR build logs NotRun; unknown targets fail.
-    # Why: Fork PRs never get an id-token; releases always do.
-    # From: Issue #38, Issue #479, PR #544
     _forbid curl gh
     unset ACTIONS_ID_TOKEN_REQUEST_URL
     RUNNER_OS=Linux run ci_cmd_attest build default
@@ -2769,10 +2730,10 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Runs sot-update on a SOT whose pins are all current.
+# Why: A weekly no-op must not create noise on the repo.
+# From: Issue #479, PR #544
 @test "sot-update with current pins touches neither git nor PRs" {
-    # What: Nothing changed means no branch, PR or dispatch.
-    # Why: A weekly no-op must not create noise on the repo.
-    # From: Issue #479, PR #544
     local b; b="$(printf 'b%.0s' {1..64})"
     _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${b}\"" 'external_services:' \
         "  red: \"redis:8@sha256:${b}\"" 'external_versions:' '  m:' '    version: "1"'
@@ -2784,19 +2745,19 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Runs ci_cmd_harden with an unknown subcommand.
+# Why: start and stop are the agent's only lifecycle steps.
+# From: Issue #479, PR #544
 @test "harden rejects an unknown subcommand" {
-    # What: harden only knows start|stop.
-    # Why: Fail-closed dispatch for every phase.
-    # From: Issue #479, PR #544
     run ci_cmd_harden bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-HARDEN-0001"* ]]
 }
 
+# What: Starts harden on ARM64 with curl and sudo forbidden.
+# Why: The non-TLS agent ships for x64 only.
+# From: Issue #479, PR #544
 @test "harden start is NotRun on an ARM64 runner" {
-    # What: arm64 logs NotRun and touches neither net nor sudo.
-    # Why: The non-TLS agent ships for x64 only.
-    # From: Issue #479, PR #544
     _forbid curl sudo
     RUNNER_OS=Linux RUNNER_ARCH=ARM64 RUNNER_ENVIRONMENT=github-hosted run _ci_harden_start
     [ "${status}" -eq 0 ]
@@ -2804,10 +2765,10 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Answers the monitor call once in JSON, once in text.
+# Why: Agent is audit-only (Issue #58); bad reply drops key.
+# From: Issue #479, PR #544, Issue #58
 @test "harden start: a 200 body that is not JSON runs keyless" {
-    # What: Answers the monitor call once in JSON, once in text.
-    # Why: Agent is audit-only (Issue #58); bad reply drops key.
-    # From: Issue #479, PR #544, Issue #58
     export RUNNER_OS=Linux RUNNER_ARCH=X64 RUNNER_ENVIRONMENT=github-hosted USER=u
     export GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 GITHUB_WORKSPACE=/w RUNNER_TEMP="${BATS_TEST_TMPDIR}"
     export GITHUB_EVENT_PATH="${BATS_TEST_TMPDIR}/event.json"
@@ -2815,9 +2776,13 @@ _fake_osv() {
     _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
     mkdir -p "${_CI_HARDEN_DIR}"
     printf 'ok' > "${_CI_HARDEN_DIR}/agent.status"
-    _ci_tool_bin() { echo /bin/true; }
+    _print _ci_tool_bin /bin/true
+    # What: Stub sudo: swallow tee input, pass everything else.
+    # Why: No root step may touch the machine running the test.
     sudo() { [ "$1" != tee ] || cat > /dev/null; }
     _pass timeout
+    # What: Stub curl: write FX_BODY to -o, report HTTP 200.
+    # Why: Each run picks its monitor reply through FX_BODY.
     curl() {
         while [ "$#" -gt 0 ]; do [ "$1" != -o ] || FX_RESP="$2"; shift; done
         printf '%s' "${FX_BODY}" > "${FX_RESP}"
@@ -2834,20 +2799,20 @@ _fake_osv() {
     grep -qx 'add_summary=false' "${RUNNER_TEMP}/ci-harden.state"
 }
 
+# What: Stops harden with no state file present.
+# Why: Stop runs under if: always(), also after skips.
+# From: Issue #479, PR #544
 @test "harden stop is NotRun when no agent was started" {
-    # What: No state file means nothing to stop.
-    # Why: Stop runs under if: always(), also after skips.
-    # From: Issue #479, PR #544
     _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"NotRun: no agent was started"* ]]
 }
 
+# What: Stops harden; the agent never writes done.json.
+# Why: Unflushed telemetry must not pass silently.
+# From: Issue #479, PR #544
 @test "harden stop fails closed when the agent never confirms" {
-    # What: Missing done.json after the post event is a failure.
-    # Why: Unflushed telemetry must not pass silently.
-    # From: Issue #479, PR #544
     _fixture_harden_state
     _pass sleep
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
@@ -2856,22 +2821,22 @@ _fake_osv() {
     [ -f "${_CI_HARDEN_DIR}/post_event.json" ]
 }
 
+# What: Breaks sed while the start-written state is read.
+# Why: The correlation id selects which summary is fetched.
+# From: Issue #479, PR #544
 @test "harden stop fails closed when its state file cannot be read" {
-    # What: Breaks sed while the start-written state is read.
-    # Why: The correlation id selects which summary is fetched.
-    # From: Issue #479, PR #544
     _fixture_harden_state
-    sed() { echo "sed broke" >&2; return 1; }
+    _fail sed 1 "sed broke"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"sed broke"* ]]
     [ ! -e "${_CI_HARDEN_DIR}/post_event.json" ]
 }
 
+# What: Stops harden after the agent wrote done.json.
+# Why: The agent flushes only after it reads post_event.json.
+# From: Issue #479, PR #544
 @test "harden stop passes once the agent wrote done.json" {
-    # What: done.json after post_event.json ends the job cleanly.
-    # Why: Green path of the post-step replacement.
-    # From: Issue #479, PR #544
     _fixture_harden_state
     printf '{}' > "${_CI_HARDEN_DIR}/done.json"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop

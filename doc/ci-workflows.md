@@ -59,7 +59,8 @@ an optional `exclude` list).
 **Lint guards** (`ci.sh lint`): LF-only line endings, full-length
 sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`),
 orchestrator-only workflows (`ci_guard_orchestrator_only`), the
-`What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]` over
+`What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]`, with
+a block directly above every function, nested stub and bats test, over
 every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
 `test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`), no
 `AGENTS.md` `[AG-INT-006]` ShellCheck suppression text in any shell
