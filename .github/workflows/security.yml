@@ -77,6 +77,7 @@ jobs:
     # From: Issue #479, PR #544
     if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: read
       security-events: write
@@ -96,6 +97,7 @@ jobs:
     # From: Issue #479, PR #544
     if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
@@ -125,6 +127,7 @@ jobs:
     # From: Issue #479, PR #544
     if: ${{ !cancelled() && needs.route.outputs.scans != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

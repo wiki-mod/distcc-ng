@@ -8,5 +8,4 @@ FROM distcc-ng-cfl-base:local
 # From: Issue #479, PR #544
 RUN --mount=type=bind,target=/ci bash /ci/.github/scripts/ci.sh image cfl-toolchain
 COPY . $SRC/distcc-ng
-COPY ./.clusterfuzzlite/build.sh $SRC/
 WORKDIR $SRC/distcc-ng

@@ -45,6 +45,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       tag: ${{ steps.check.outputs.tag }}
       publish: ${{ steps.check.outputs.publish }}
@@ -60,6 +61,7 @@ jobs:
     name: Insert release notes into CHANGELOG.md
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -80,6 +82,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/current_dev') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: read
@@ -168,6 +171,7 @@ jobs:
     name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
     needs: [version_check, build_test, e2e]
     runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 60
     continue-on-error: ${{ matrix.optional }}
     permissions:
       contents: read
@@ -205,6 +209,7 @@ jobs:
     needs: [version_check, build_container]
     if: needs.version_check.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write

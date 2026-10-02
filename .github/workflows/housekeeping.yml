@@ -48,6 +48,7 @@ jobs:
   route:
     name: Route housekeeping tasks
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       gc: ${{ steps.route.outputs.gc }}
       sot_update: ${{ steps.route.outputs.sot_update }}
@@ -62,6 +63,7 @@ jobs:
     needs: route
     if: needs.route.outputs.gc == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
       - env:
@@ -76,6 +78,7 @@ jobs:
     needs: route
     if: needs.route.outputs.sot_update == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # What: Push the update branch, open its PR, dispatch CI.
     # Why: GITHUB_TOKEN PR events start no runs; dispatch does.
     # From: Issue #479, PR #544
@@ -124,6 +127,7 @@ jobs:
     # From: Issue #479, PR #544
     if: always() && (needs.route.result != 'success' || needs.heartbeat.result != 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write

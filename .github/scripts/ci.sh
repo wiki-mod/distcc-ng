@@ -933,13 +933,16 @@ _ci_image_release_runtime() {
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin distcc
 }
 
-# What: CFL toolchain: the SOT apt packages, nothing compiled.
-# Why: configure comes pre-generated; no autoconf needed.
+# What: CFL toolchain: SOT apt packages and $SRC/build.sh.
+# Why: CFL's compile step runs $SRC/build.sh; ci.sh owns it.
 # From: Issue #267, Issue #479, PR #544
 _ci_image_cfl_toolchain() {
-    local pkgs
+    local pkgs entry="${SRC:?SRC required}/build.sh"
     pkgs="$(_ci_sot_scalar security.cfl_image_apt)" || return 2
-    _ci_apt_install "${pkgs}" image
+    _ci_apt_install "${pkgs}" image || return 1
+    printf '%s\n' '#!/bin/bash -eu' \
+        "exec bash \"\${SRC}/distcc-ng/.github/scripts/ci.sh\" workload fuzz-build" > "${entry}" || return 1
+    chmod 755 "${entry}"
 }
 
 # What: Run a check; its output must match /re/ (or not, !re).
@@ -2848,14 +2851,14 @@ _ci_download() {
 # Why: One tool fetcher; a missing sha256 pin fails closed.
 # From: Issue #479, PR #544
 _ci_fetch_tool() {
-    local spec="$1" ver sha url kind dest file
+    local spec="$1" ver sha url kind dest file bin
     ver="$(_ci_sot_scalar "${spec}.version")" || return 2
     sha="$(_ci_sot_scalar "${spec}.sha256")" || return 2
     url="$(_ci_tool_url "${spec}" "${ver}")" || return 2
     kind="$(_ci_sot_optional "${spec}.archive")" || return 2
     dest="${RUNNER_TEMP:-/tmp}/${spec##*.}-${ver}"
     if [ ! -f "${dest}/.complete" ]; then
-        rm -rf "${dest}"
+        rm -rf "${dest}" || return 2
         mkdir -p "${dest}" || return 2
         file="${dest}.download"
         _ci_download "${url}" "${file}" || return 2
@@ -2865,8 +2868,10 @@ _ci_fetch_tool() {
             return 2
         fi
         case "${kind:-tar.gz}" in
-            tar.gz) tar -xzf "${file}" -C "${dest}" || return 2; rm -f "${file}" ;;
-            binary) mv "${file}" "${dest}/$(_ci_sot_scalar "${spec}.bin")" || return 2 ;;
+            tar.gz) tar -xzf "${file}" -C "${dest}" || return 2; rm -f "${file}" || return 2 ;;
+            binary)
+                bin="$(_ci_sot_scalar "${spec}.bin")" || return 2
+                mv "${file}" "${dest}/${bin}" || return 2 ;;
             *) ci_log "[CI-ERROR-FETCH-0002]" "${spec}.archive=${kind} (tar.gz|binary)"; return 2 ;;
         esac
         chmod -R u+rwX "${dest}" || return 2

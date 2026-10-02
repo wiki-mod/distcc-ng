@@ -1020,16 +1020,17 @@ _dup_error_ids() {
 # From: Issue #479, PR #544
 @test "image installs full-upgrade first; runner installs do not" {
     local log="${BATS_TEST_TMPDIR}/calls"
-    _print id 0
     # What: Stub timeout to log the command it would run.
     # Why: The test reads the apt line without a real apt.
     timeout() { shift 3; echo "$*" >> "${log}"; }
-    _pass rm
-    run _ci_apt_install "p q" image
+    # What: Install as uid 0 with rm stubbed, in run's subshell.
+    # Why: A test-wide rm stub would break bats' own cleanup.
+    _install_as_root() { _print id 0; _pass rm; _ci_apt_install "$@"; }
+    run _install_as_root "p q" image
     [ "${status}" -eq 0 ]
     grep -qF 'apt-get update && apt-get full-upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends p q' "${log}"
     : > "${log}"
-    run _ci_apt_install "p q"
+    run _install_as_root "p q"
     [ "${status}" -eq 0 ]
     grep -qF 'apt-get install -y' "${log}"
     run grep -c 'upgrade' "${log}"
@@ -1714,23 +1715,32 @@ _unwired_phases() {
     [ "${output}" = "e2e" ]
 }
 
-# What: Reads timeout-minutes of each listed workflow job.
-# Why: Unbounded, a hung test runs to the 6-hour default.
+# What: Print "file job" for each job of $@ with no timeout.
+# Why: Unbounded, a hung job runs to the 6-hour default.
 # From: Issue #479, PR #544
-@test "every job legacy CI bounded keeps a timeout-minutes" {
-    local spec wf job
-    for spec in validate:plan validate:lint validate:build_test validate:e2e validate:package \
-        validate:verify_image security:route security:codeql security:openssf nightly:build_test \
-        nightly:sanitizer nightly:e2e nightly:bidirectional_e2e nightly:publish release:build_test \
-        release:e2e release:package housekeeping:heartbeat housekeeping:control; do
-        wf="${spec%%:*}" job="${spec#*:}"
-        awk -v job="${job}" '
-            /^jobs:/ { j = 1 }
-            j && /^  [A-Za-z0-9_-]+:$/ { cur = substr($1, 1, length($1) - 1) }
-            cur == job && /^    timeout-minutes: [0-9]+$/ { found = 1 }
-            END { exit !found }
-        ' "${CI_REPO_ROOT}/.github/workflows/${wf}.yml" || { echo "${spec}"; false; }
-    done
+_jobs_without_timeout() {
+    awk '
+        FNR == 1 { if (cur != "" && !t) print F " " cur; F = FILENAME; j = 0; cur = ""; t = 0 }
+        /^jobs:/ { j = 1; next }
+        j && /^  [A-Za-z0-9_-]+:$/ { if (cur != "" && !t) print F " " cur; cur = substr($1, 1, length($1) - 1); t = 0 }
+        j && cur != "" && /^    timeout-minutes: [0-9]+$/ { t = 1 }
+        END { if (cur != "" && !t) print F " " cur }
+    ' "$@"
+}
+
+# What: Checks all five workflows, then a copy missing one.
+# Why: The copy proves the timeout check can fail at all.
+# From: Issue #479, PR #544
+@test "every workflow job has a timeout-minutes" {
+    local wfs=("${CI_REPO_ROOT}"/.github/workflows/*.yml) fx="${BATS_TEST_TMPDIR}/validate.yml"
+    [ "${#wfs[@]}" -eq 5 ]
+    run _jobs_without_timeout "${wfs[@]}"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    awk '/^  plan:$/ { p = 1 } p && /^    timeout-minutes:/ { p = 0; next } { print }' \
+        "${CI_REPO_ROOT}/.github/workflows/validate.yml" > "${fx}"
+    run _jobs_without_timeout "${fx}"
+    [ "${output}" = "${fx} plan" ]
 }
 
 # What: Print each registered command ci_main of $1 misroutes.
@@ -2060,6 +2070,25 @@ _unregistered_arms() {
     run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-PIN-0003"*"${FX_PIN}"* ]]
+}
+
+# What: Writes the CFL entry and runs it on a stub ci.sh.
+# Why: oss-fuzz compile runs bash -eux $SRC/build.sh first.
+# From: Issue #267, Issue #479, PR #544
+@test "cfl toolchain writes the build.sh entry CFL runs" {
+    local src="${BATS_TEST_TMPDIR}/src"
+    mkdir -p "${src}/distcc-ng/.github/scripts"
+    printf '%s\n' 'echo "stub ci.sh $*"' > "${src}/distcc-ng/.github/scripts/ci.sh"
+    _pass _ci_apt_install
+    SRC="${src}" run _ci_image_cfl_toolchain
+    [ "${status}" -eq 0 ]
+    [ "$(stat -c %a "${src}/build.sh")" = "755" ]
+    SRC="${src}" run bash -eux "${src}/build.sh"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"stub ci.sh workload fuzz-build"* ]]
+    run _ci_image_cfl_toolchain
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"SRC required"* ]]
 }
 
 # What: Greps the CFL Dockerfile for the SOT builder tag.
@@ -2597,6 +2626,24 @@ _fake_curl() {
     [ "$(cat "${output}")" = "exe" ]
 }
 
+# What: Fetches over a stale partial dir rm cannot remove.
+# Why: Extracting over leftovers would mix old and new files.
+# From: Issue #479, PR #544
+@test "tool fetch stops when a partial tool dir cannot be removed" {
+    _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
+        "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"'
+    mkdir -p "${BATS_TEST_TMPDIR}/tool-v1"
+    : > "${BATS_TEST_TMPDIR}/tool-v1/stale"
+    _forbid curl
+    # What: Fetch with rm failing, inside run's own subshell.
+    # Why: A test-wide rm stub would break bats' own cleanup.
+    _fetch_rm_broken() { _fail rm 1 "rm broke"; _ci_fetch_tool x.tool; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _fetch_rm_broken
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"rm broke"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
 # What: Fetches a file with a wrong sha256, then with none.
 # Why: A tampered or unpinned binary must never run.
 # From: Issue #479, PR #544
@@ -2976,8 +3023,10 @@ _fake_osv() {
 # From: Issue #479, PR #544
 @test "harden stop fails closed when its state file cannot be read" {
     _fixture_harden_state
-    _fail sed 1 "sed broke"
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
+    # What: Stop harden with sed failing, inside run's subshell.
+    # Why: A test-wide sed stub would reach bats' own helpers.
+    _stop_sed_broken() { _fail sed 1 "sed broke"; _ci_harden_stop; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stop_sed_broken
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"sed broke"* ]]
     [ ! -e "${_CI_HARDEN_DIR}/post_event.json" ]
