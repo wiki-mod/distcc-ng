@@ -18,17 +18,45 @@ permissions:
   contents: read
 
 jobs:
-  build_test:
-    name: Build + test (default)
+  plan:
+    name: Plan (full matrix)
+    # What: No diff base on a schedule; plan picks every phase.
+    # Why: current_dev is checked daily on every variant and OS.
+    # From: Issue #479, PR #544
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - id: plan
+        run: bash .github/scripts/ci.sh plan
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  build_test:
+    name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
       - run: bash .github/scripts/ci.sh harden start
-      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
+      - if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: ${{ matrix.apt }}
+        run: bash .github/scripts/ci.sh install apt "${APT_PACKAGES}"
+      - if: runner.os == 'macOS' && matrix.brew != ''
+        env:
+          BREW_PACKAGES: ${{ matrix.brew }}
+        run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
       - id: cache
         env:
-          VARIANT: default
+          VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh cache "$VARIANT"
       - if: steps.cache.outputs.key != ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -37,11 +65,19 @@ jobs:
           key: ${{ steps.cache.outputs.key }}
           restore-keys: ${{ steps.cache.outputs.restore_keys }}
       - env:
-          VARIANT: default
+          VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh build "$VARIANT"
-      - env:
-          VARIANT: default
+      - id: test
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: steps.test.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.test.outputs.artifact_name }}
+          path: ${{ steps.test.outputs.artifact_path }}
+          retention-days: ${{ steps.test.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.test.outputs.artifact_if_missing }}
       - if: always()
         run: bash .github/scripts/ci.sh harden stop
 
@@ -122,7 +158,7 @@ jobs:
 
   report:
     name: Report nightly status
-    needs: [build_test, e2e, publish]
+    needs: [build_test, sanitizer, e2e, publish]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -138,6 +174,7 @@ jobs:
           SCOPE: nightly build+publish (current_dev)
           JOBS: |
             build_test=${{ needs.build_test.result }}
+            sanitizer=${{ needs.sanitizer.result }}
             e2e=${{ needs.e2e.result }}
             publish=${{ needs.publish.result }}
         run: bash .github/scripts/ci.sh report

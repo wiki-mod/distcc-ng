@@ -1059,19 +1059,22 @@ _dup_error_ids() {
     [ "${output}" = "https://s/o/r/actions/runs/9" ]
 }
 
-# What: Plans a workflow_dispatch that has no before commit.
-# Why: NOOP there would skip every check a dispatch asked for.
+# What: Plans a dispatch and a schedule; neither has a before.
+# Why: NOOP would skip the checks a dispatch or nightly needs.
 # From: Issue #479, PR #544
-@test "plan on a dispatch selects every phase" {
-    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
-    printf '{"inputs":{}}' > "${ev}"
+@test "plan on a dispatch or schedule selects every phase" {
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" e
     _print ci_cmd_matrix '{"include":[]}'
-    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
-        GITHUB_REF_NAME=current_dev run ci_cmd_plan
-    [ "${status}" -eq 0 ]
-    grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
-    grep -qx 'build=true' "${out}"
-    grep -qx 'publish_buildtools=true' "${out}"
+    for e in workflow_dispatch:'{"inputs":{}}' schedule:'{"schedule":"0 4 * * *"}'; do
+        printf '%s' "${e#*:}" > "${ev}"
+        : > "${out}"
+        GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME="${e%%:*}" GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
+            GITHUB_REF_NAME=current_dev run ci_cmd_plan
+        [ "${status}" -eq 0 ]
+        grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
+        grep -qx 'build=true' "${out}"
+        grep -qx 'publish_buildtools=true' "${out}"
+    done
 }
 
 # What: Plans a push that adds a packaging file.
