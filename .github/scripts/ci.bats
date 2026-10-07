@@ -2888,6 +2888,7 @@ _fake_osv() {
         local in=""
         while [ "$#" -gt 0 ]; do [ "$1" = "--input" ] && in="$2"; shift; done
         jq -r .sarif "${in}" | base64 -d | gunzip > "${BATS_TEST_TMPDIR}/back"
+        printf 'HTTP/2.0 202 Accepted\nContent-Type: application/json\r\n\r\n'
         jq '{id: (.commit_sha + " " + .ref)}' "${in}"
     }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=abc GITHUB_REF=refs/heads/x run ci_cmd_sarif_upload "${big}"
@@ -2896,7 +2897,7 @@ _fake_osv() {
     cmp "${big}" "${BATS_TEST_TMPDIR}/back"
 }
 
-# What: Uploads against a 502, an empty reply, then a 404.
+# What: Uploads against empty 500 and 200, a 404, no answer.
 # Why: A transient API error must not fail a scan job.
 # From: Issue #479, PR #544
 @test "SARIF upload retries a 5xx or empty answer, never a 4xx" {
@@ -2904,23 +2905,34 @@ _fake_osv() {
     echo '{}' > "${f}"
     _pass sleep
     echo 0 > "${n}"
-    # What: Stub gh: a 502, then empty, then an id.
-    # Why: Both transient answers must be retried.
+    # What: Stub gh --include: an empty 500, empty 200, an id.
+    # Why: gh names no status for an empty 5xx, as in CI.
     gh() { local c; c="$(cat "${n}")"; echo $((c + 1)) > "${n}"
-        case "${c}" in 0) echo "gh: Server Error (HTTP 502)" >&2; return 1 ;; 1) return 0 ;; *) echo '{"id":"ok"}' ;; esac; }
+        case "${c}" in
+            0) printf 'HTTP/2.0 500 Internal Server Error\nContent-Length: 0\r\n\r\n'
+               echo "unexpected end of JSON input" >&2; return 1 ;;
+            1) printf 'HTTP/2.0 200 OK\n\r\n' ;;
+            *) printf 'HTTP/2.0 202 Accepted\n\r\n{"id":"ok"}\n' ;;
+        esac; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
     [ "${status}" -eq 0 ]
     [ "$(cat "${n}")" -eq 3 ]
-    [[ "${output}" == *"attempt 1/3 failed: gh: Server Error (HTTP 502)"* ]]
-    [[ "${output}" == *"attempt 2/3 failed: empty response"* ]]
+    [[ "${output}" == *"attempt 1/3 failed: HTTP 500: unexpected end of JSON input"* ]]
+    [[ "${output}" == *"attempt 2/3 failed: HTTP 200"* ]]
+    [[ "${output}" == *"SARIF upload id ok"* ]]
     echo 0 > "${n}"
-    # What: Stub gh as HTTP 404, counting calls.
+    # What: Stub gh --include as HTTP 404, counting calls.
     # Why: A 4xx must fail at once, never retry.
-    gh() { echo $(( $(cat "${n}") + 1 )) > "${n}"; echo "gh: Not Found (HTTP 404)" >&2; return 1; }
+    gh() { echo $(( $(cat "${n}") + 1 )) > "${n}"; printf 'HTTP/2.0 404 Not Found\n\r\n{"message":"Not Found"}\n'
+        echo "gh: Not Found (HTTP 404)" >&2; return 1; }
     GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
     [ "${status}" -eq 1 ]
     [ "$(cat "${n}")" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP 404"* ]]
+    [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP 404"*"Not Found"* ]]
+    _fail gh 1 "dial tcp: connection refused"
+    GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SHA=a GITHUB_REF=r run ci_cmd_sarif_upload "${f}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP none: dial tcp: connection refused"* ]]
 }
 
 # What: Scans against a base without bin pins, then git fails.

@@ -4165,24 +4165,28 @@ ci_cmd_codeql_scan() {
         --sarif-category="/language:${lang}" || return 2
 }
 
-# What: One SARIF POST; rc 1 retries a 5xx/429/empty answer.
-# Why: The API can answer an upload with an empty body.
+# What: One SARIF POST; rc 1 retries a 5xx, 429 or empty 2xx.
+# Why: gh names no status for a 5xx with an empty body.
 # From: Issue #479, PR #544
 _ci_sarif_post() {
-    local work="$1" rc=0 id why
+    local work="$1" rc=0 code id why
     : > "${work}/jqerr" || return 2
-    gh api --method POST "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/code-scanning/sarifs" \
+    gh api --include --method POST "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/code-scanning/sarifs" \
         --input "${work}/body.json" > "${work}/resp" 2> "${work}/err" || rc=$?
-    if [ "${rc}" -eq 0 ] && id="$(jq -er '.id // empty' "${work}/resp" 2> "${work}/jqerr")"; then
+    code="$(sed -nE '1s#^HTTP/[0-9.]+ ([0-9]{3}).*#\1#p' "${work}/resp")" || return 2
+    sed -E '1,/^\r?$/d' "${work}/resp" > "${work}/body" || return 2
+    if [ "${rc}" -eq 0 ] && id="$(jq -er '.id // empty' "${work}/body" 2> "${work}/jqerr")"; then
         ci_log "[CI-SCAN]" "SARIF upload id ${id}"
         return 0
     fi
-    why="$(cat "${work}/err" "${work}/jqerr" "${work}/resp")" || return 2
+    why="$(cat "${work}/err" "${work}/jqerr" "${work}/body")" || return 2
+    why="HTTP ${code:-none}${why:+: ${why}}"
     printf '%s' "${why}" > "${work}/why" || return 2
-    if [ "${rc}" -ne 0 ] && ! grep -qE 'HTTP (5[0-9][0-9]|429)' <<< "${why}"; then
-        return 2
-    fi
-    ci_log "[CI-SCAN]" "SARIF upload attempt ${CI_ATTEMPT}/${CI_TRIES} failed: ${why:-empty response}"
+    case "${code}" in
+        2[0-9][0-9]|429|5[0-9][0-9]) ;;
+        *) return 2 ;;
+    esac
+    ci_log "[CI-SCAN]" "SARIF upload attempt ${CI_ATTEMPT}/${CI_TRIES} failed: ${why}"
     return 1
 }
 
