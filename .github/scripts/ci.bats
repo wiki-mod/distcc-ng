@@ -487,42 +487,24 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
 }
 
-# What: PR run, dispatch with fork PRs, bad heads, fork only.
-# Why: A dispatched PR branch is checked too; AG-GH-002 holds.
+# What: A PR run sets the PR; dispatch and push fail closed.
+# Why: Dispatch checks never satisfy required PR checks.
 # From: Issue #479, PR #544
-@test "metadata finds the pull request of a PR run and a dispatch" {
+@test "metadata reads the PR of a PR run and rejects any other event" {
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '%s\n' '{"pull_request":{"number":7,"base":{"sha":"b1"},"head":{"sha":"h1"}}}' > "${ev}"
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" _ci_metadata_pr
     [ "${PR_NUMBER} ${BASE} ${HEAD}" = "7 b1 h1" ]
-    _print gh '[{"number":8,"baseRefOid":"f","headRefOid":"f","isCrossRepository":true},{"number":9,"baseRefOid":"b2","headRefOid":"h2","isCrossRepository":false}]'
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update GITHUB_SHA=h2 \
-        run _stubbed '_pass git' eval '_ci_metadata_pr && echo "${PR_NUMBER} ${BASE} ${HEAD}"'
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "9 b2 h2" ]
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update GITHUB_SHA=h3 \
-        run _stubbed '_forbid git' _ci_metadata_pr
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-META-0003"*"head h2 is not this run's h3"* ]]
-    _print gh '[{"number":9,"isCrossRepository":false},{"number":10,"isCrossRepository":false}]'
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run _ci_metadata_pr
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-PR-0001"*"2 open pull requests have head x"* ]]
-    _print gh '[{"number":8,"baseRefOid":"f","headRefOid":"f","isCrossRepository":true}]'
-    _forbid _ci_metadata_fetch_live
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"NotRun: no open pull request has head x"* ]]
-    [[ "${output}" != *"must not run"* ]]
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata bogus
+    _forbid gh _ci_metadata_fetch_live
+    for e in workflow_dispatch push; do
+        GITHUB_EVENT_NAME="${e}" run ci_cmd_metadata
+        [ "${status}" -eq 2 ]
+        [[ "${output}" == *"CI-ERROR-META-0002"*"in a ${e} run"* ]]
+        [[ "${output}" != *"must not run"* ]]
+    done
+    GITHUB_EVENT_NAME=pull_request run ci_cmd_metadata bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-META-0001"* ]]
-    _fail gh 1
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
-    [ "${status}" -eq 2 ]
-    GITHUB_EVENT_NAME=push run ci_cmd_metadata
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-META-0002"* ]]
 }
 
 # What: Checks a draft PR with no label and no milestone.
@@ -3808,7 +3790,7 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
-# What: Dry-runs sot-update with no open PR, then with one.
+# What: Dry-runs sot-update: no, one, fork-only, two PRs.
 # Why: The PR is created once; later runs refresh its body.
 # From: Issue #479, PR #544
 @test "sot-update creates its PR once, then edits the open one" {
@@ -3829,6 +3811,11 @@ _fake_osv() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr create"* ]]
     [[ "${output}" != *"gh pr edit"* ]]
+    _print gh '[{"number":9,"isCrossRepository":false},{"number":10,"isCrossRepository":false}]'
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PR-0001"*"2 open pull requests have head"* ]]
+    [[ "${output}" != *"would run: gh pr"* ]]
     # What: Stub gh: no open PR; create logs args, prints a URL.
     # Why: The SOT milestone and that URL's board add must follow.
     gh() { case "$1 $2" in "pr list") echo '[]' ;; "pr create") echo "create $*" >&2; echo "https://x/pull/7" ;;

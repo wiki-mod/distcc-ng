@@ -73,11 +73,9 @@ level).
 
 **PR metadata** (`ci.sh metadata`): the AG-GH-014 title, the AG-GH-002
 labels, milestone and project board, and the AG-REL-002 changelog entry
-are checked for every pull request author alike, bots included. A
-`workflow_dispatch` run on a branch with an open pull request checks that
-pull request too, so the `sot-update` pull request, which starts CI only
-by dispatch, is held to the same gate; a dispatch on a branch without one
-logs NotRun. Bot pull requests carry the SOT milestone `bot_milestone`:
+are checked for every pull request author alike, bots included, on
+`pull_request` runs only; any other event fails with
+`CI-ERROR-META-0002`. Bot pull requests carry the SOT milestone `bot_milestone`:
 `sot-update` sets its title and adds its new pull request to the project
 board with `PROJECT_AUTOMATION_PAT`, and both `dependabot.yml` entries set
 its number, which `ci_guard_sot_mirrors` binds to the SOT.
@@ -206,7 +204,10 @@ unscoped `workflow_dispatch` change therefore takes effect only once the
 changed workflow file has been promoted to `master`. This includes
 `ci.sh sot-update`'s own `gh workflow run` of `validate.yml` and
 `security.yml` on its update branch: until those files exist on `master`,
-that dispatch returns 404 and the `sot_update` job fails instead of
-leaving an untested pull request behind. Dependabot likewise reads
+that dispatch returns 404 and the `sot_update` job fails. Once it
+succeeds, the dispatched runs test the update branch, but checks from a
+`workflow_dispatch` run do not satisfy the pull request's required status
+checks, so the `sot-update` pull request cannot merge on them alone.
+Dependabot likewise reads
 `.github/dependabot.yml` only from the default branch, so `master`'s copy
 stays the active configuration until the release promotes this one.
