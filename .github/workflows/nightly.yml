@@ -158,7 +158,7 @@ jobs:
 
   report:
     name: Report nightly status
-    needs: [build_test, sanitizer, e2e, publish]
+    needs: [plan, build_test, sanitizer, e2e, publish]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -173,6 +173,7 @@ jobs:
           PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
           SCOPE: nightly build+publish (current_dev)
           JOBS: |
+            plan=${{ needs.plan.result }}
             build_test=${{ needs.build_test.result }}
             sanitizer=${{ needs.sanitizer.result }}
             e2e=${{ needs.e2e.result }}

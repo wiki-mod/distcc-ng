@@ -80,6 +80,34 @@ _fail() {
     eval "${c}() { [ -z ${msg} ] || printf '%s\n' ${msg} >&2; return ${rc}; }"
 }
 
+# What: Make fake executable $1: log args, print, exit $RC/$2.
+# Why: One stand-in for every tool a test runs by its path.
+# From: Issue #479, PR #544
+_fake_tool() {
+    printf '#!/bin/sh\necho "$*" >> "%s.args"\n[ -z "${OUT_TEXT:-}" ] || printf "%%s\\n" "${OUT_TEXT}"\nexit "${RC:-%s}"\n' "$1" "${2:-0}" > "$1"
+    chmod +x "$1"
+}
+
+# What: Make each named command print "name args" to stdout.
+# Why: One stub owner for steps a test checks by their output.
+# From: Issue #479, PR #544
+_echoes() {
+    local c
+    for c in "$@"; do
+        eval "${c}() { echo \"${c} \$*\"; }"
+    done
+}
+
+# What: Make each named command log "name args" to $CALL_LOG.
+# Why: One stub owner for steps a test checks by their calls.
+# From: Issue #479, PR #544
+_record() {
+    local c
+    for c in "$@"; do
+        eval "${c}() { echo \"${c} \$*\" >> \"\${CALL_LOG:?CALL_LOG required}\"; }"
+    done
+}
+
 # What: Make a git repo at v9.9.9-NG with that tag; print it.
 # Why: Both require_new branches check one tagged release.
 # From: Issue #479, PR #544
@@ -885,27 +913,11 @@ _dup_error_ids() {
 # Why: No binary or user may land after a failed earlier step.
 # From: Issue #398, Issue #479, PR #544
 @test "release images stop at the first failed step" {
-    local log="${BATS_TEST_TMPDIR}/calls"
+    export CALL_LOG="${BATS_TEST_TMPDIR}/calls"
+    local log="${CALL_LOG}"
     _print _ci_nproc 2
     _pass _ci_configure_tree _ci_make_gated
-    # What: Stub the image-side tools to log their arguments.
-    # Why: The test reads which steps ran and with what.
-    _ci_logged() { echo "$*" >> "${log}"; }
-    # What: Stub apt to log its package list and mode.
-    # Why: Each image installs only its own SOT package list.
-    _ci_apt_install() { _ci_logged apt "$@"; }
-    # What: Stub install to log its arguments.
-    # Why: Release binaries must land in /out only after make.
-    install() { _ci_logged install "$@"; }
-    # What: Stub make to log its arguments.
-    # Why: make install feeds the pump image tree.
-    make() { _ci_logged make "$@"; }
-    # What: Stub mv to log its arguments.
-    # Why: pump is renamed distcc-pump in the pump image.
-    mv() { _ci_logged mv "$@"; }
-    # What: Stub useradd to log its arguments.
-    # Why: The runtime user must be a system user with no login.
-    useradd() { _ci_logged useradd "$@"; }
+    _record _ci_apt_install install make mv useradd
     run _ci_image_release_build
     [ "${status}" -eq 0 ]
     grep -q '^install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text$' "${log}"
@@ -928,29 +940,21 @@ _dup_error_ids() {
 # Why: native is the reference; only ng carries the checkout.
 # From: Issue #264, Issue #479, PR #544
 @test "e2e images: native installs Debian distcc, ng builds the tree" {
-    local log="${BATS_TEST_TMPDIR}/calls" native
+    export CALL_LOG="${BATS_TEST_TMPDIR}/calls"
+    local log="${CALL_LOG}" native
     native="$(_ci_sot_scalar e2e.native_apt)"
     _print _ci_nproc 2
-    _pass useradd update-distcc-symlinks
-    # What: Stub apt, configure and make install to log calls.
-    # Why: The test reads which flavor installed and built what.
-    _ci_logged() { echo "$*" >> "${log}"; }
-    # What: Stub apt to log its package list.
-    # Why: Only native adds the Debian distcc packages.
-    _ci_apt_install() { _ci_logged apt "$@"; }
-    # What: Stub configure to log that the tree was configured.
-    # Why: Only the ng image builds the checkout.
-    _ci_configure_tree() { _ci_logged configure; }
-    _pass _ci_make_gated make
+    _pass useradd update-distcc-symlinks _ci_make_gated make
+    _record _ci_apt_install _ci_configure_tree
     run _stubbed '_pass mkdir chown' _ci_image_e2e native
     [ "${status}" -eq 0 ]
-    grep -q "^apt .*${native} image$" "${log}"
-    [ "$(grep -c '^configure' "${log}")" -eq 0 ]
+    grep -q "^_ci_apt_install .*${native} image$" "${log}"
+    [ "$(grep -c '^_ci_configure_tree' "${log}")" -eq 0 ]
     : > "${log}"
     run _stubbed '_pass mkdir chown' _ci_image_e2e ng
     [ "${status}" -eq 0 ]
     [ "$(grep -c "${native}" "${log}")" -eq 0 ]
-    grep -q '^configure' "${log}"
+    grep -q '^_ci_configure_tree' "${log}"
     _fail _ci_make_gated 1
     run _stubbed '_pass mkdir chown' _ci_image_e2e ng
     [ "${status}" -eq 1 ]
@@ -1030,8 +1034,8 @@ _dup_error_ids() {
 @test "self-compile gates its make output in both passes" {
     local dir="${BATS_TEST_TMPDIR}/w" pass
     mkdir -p "${dir}/src"
-    printf '#!/bin/sh\n' | tee "${dir}/src/distcc" > "${dir}/src/distccd"
-    chmod +x "${dir}/src/distcc" "${dir}/src/distccd"
+    _fake_tool "${dir}/src/distcc"
+    _fake_tool "${dir}/src/distccd"
     _pass _ci_tree_copy _ci_configure_tree
     _print _ci_nproc 2
     _print make "gcc -c src/x.c"
@@ -1061,8 +1065,7 @@ _dup_error_ids() {
     cmake() {
         echo "cmake $*" >> "${log}"
         mkdir -p "${dir}/build"
-        printf '#!/bin/sh\n' > "${dir}/build/ccache"
-        chmod +x "${dir}/build/ccache"
+        _fake_tool "${dir}/build/ccache"
     }
     run _ci_workload_ccache plain "${dir}"
     [ "${status}" -eq 0 ]
@@ -1418,16 +1421,13 @@ _dup_error_ids() {
     local d="${BATS_TEST_TMPDIR}/b"
     mkdir -p "${d}"
     cd "${d}"
-    printf '#!/bin/sh\necho "--jobs --nice --listen --daemon --log-file --allow --user --port"\n' > distccd
-    chmod +x distccd
-    run _ci_popt_fallback_smoke_test
+    _fake_tool distccd
+    OUT_TEXT="--jobs --nice --listen --daemon --log-file --allow --user --port" run _ci_popt_fallback_smoke_test
     [ "${status}" -eq 0 ]
-    printf '#!/bin/sh\necho "--jobs --nice"\n' > distccd
-    run _ci_popt_fallback_smoke_test
+    OUT_TEXT="--jobs --nice" run _ci_popt_fallback_smoke_test
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-POPT-0002"*"missing --listen"* ]]
-    printf '#!/bin/sh\necho boom\nexit 3\n' > distccd
-    run _ci_popt_fallback_smoke_test
+    OUT_TEXT=boom RC=3 run _ci_popt_fallback_smoke_test
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-POPT-0003"*"boom"* ]]
     _pass gcc
@@ -1470,8 +1470,7 @@ _dup_error_ids() {
     local bin="${BATS_TEST_TMPDIR}/bin" root="${BATS_TEST_TMPDIR}/root" t
     mkdir -p "${bin}" "${root}"
     for t in python3 pkg-config eu-strip rpmbuild fakeroot; do
-        printf '#!/bin/sh\n' > "${bin}/${t}"
-        chmod +x "${bin}/${t}"
+        _fake_tool "${bin}/${t}"
     done
     _print _ci_python python3
     _forbid _ci_configure_tree _ci_make_gated
@@ -1479,24 +1478,20 @@ _dup_error_ids() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PACKAGE-0001"*"missing tool: alien"* ]]
     [[ "${output}" != *"must not run"* ]]
-    cp "${bin}/fakeroot" "${bin}/alien"
+    _fake_tool "${bin}/alien"
     _pass _ci_configure_tree
-    # What: Stub the make gate to echo its arguments.
-    # Why: Packaging must run the deb target through the gate.
-    _ci_make_gated() { echo "gated $*"; }
+    _echoes _ci_make_gated
     CI_REPO_ROOT="${root}" PATH="${bin}" run ci_cmd_package
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"gated "*"deb"* ]]
-    # What: Stub the SBOM writer to echo its arguments.
-    # Why: The package SBOM must scan the found tarball.
-    ci_cmd_sbom() { echo "sbom $*"; }
+    [[ "${output}" == *"_ci_make_gated "*"deb"* ]]
+    _echoes ci_cmd_sbom
     CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PACKAGE-0002"* ]]
     touch "${root}/distcc-9.9.tar.gz"
     CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
     [ "${status}" -eq 0 ]
-    [ "${output}" = "sbom ./distcc-9.9.tar.gz out.json" ]
+    [ "${output}" = "ci_cmd_sbom ./distcc-9.9.tar.gz out.json" ]
 }
 
 # What: Every container variant and release action, stubbed.
@@ -1507,28 +1502,21 @@ _dup_error_ids() {
     export GITHUB_REPOSITORY_OWNER=o
     base="$(_ci_sot_scalar release.images.distcc-ng-buildtools.ref)"
     base="${base%:*}"
-    # What: Stub the image build to echo its arguments.
-    # Why: The test checks which SOT spec and tags each picks.
-    _ci_image_build() { echo "build $*"; }
-    # What: Stub the registry push to echo its tags.
-    # Why: Only the variant's own tags may be pushed.
-    _ci_registry_push() { echo "push $*"; }
+    _echoes _ci_image_build _ci_registry_push
     _print _ci_built_sha abc1234
     GITHUB_OUTPUT="${out}" run ci_cmd_container nightly
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"build release.images.distcc-ng-nightly nightly --tag "*"distcc-ng-nightly:latest"* ]]
-    [[ "${output}" == *"push "*"distcc-ng-nightly:latest"* ]]
+    [[ "${output}" == *"_ci_image_build release.images.distcc-ng-nightly nightly --tag "*"distcc-ng-nightly:latest"* ]]
+    [[ "${output}" == *"_ci_registry_push "*"distcc-ng-nightly:latest"* ]]
     grep -q '^image=.*distcc-ng-nightly:latest$' "${out}"
     _forbid _ci_registry_push
     run ci_cmd_container verify-image
     [ "${status}" -eq 0 ]
-    [ "${output}" = "build release.images.distcc-ng-buildtools abc1234" ]
-    # What: Stub the push again after the verify-image check.
-    # Why: buildtools must push both of its tags, nothing else.
-    _ci_registry_push() { echo "push $*"; }
+    [ "${output}" = "_ci_image_build release.images.distcc-ng-buildtools abc1234" ]
+    _echoes _ci_registry_push
     run ci_cmd_container buildtools
     [ "${status}" -eq 0 ]
-    [[ "${output}" == *"push ${base}:latest ${base}:abc1234"* ]]
+    [[ "${output}" == *"_ci_registry_push ${base}:latest ${base}:abc1234"* ]]
     : > "${out}"
     GITHUB_OUTPUT="${out}" run ci_cmd_container build plain amd64 v9.9
     [ "${status}" -eq 0 ]
@@ -1537,7 +1525,7 @@ _dup_error_ids() {
     run ci_cmd_container build plain sparc v9.9
     [ "${status}" -eq 2 ]
     run ci_cmd_container push img:tag
-    [ "${output}" = "push img:tag" ]
+    [ "${output}" = "_ci_registry_push img:tag" ]
     run ci_cmd_container bogus
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
@@ -1635,13 +1623,12 @@ _dup_error_ids() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0004"* ]]
     cd "${BATS_TEST_TMPDIR}"
-    printf '#!/bin/sh\nexit 0\n' > autogen.sh
-    printf '#!/bin/sh\nexit 3\n' > configure
-    chmod +x autogen.sh configure
+    _fake_tool autogen.sh
+    _fake_tool configure 3
     run _ci_configure_tree "${BATS_TEST_TMPDIR}/c.log" --x
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0005"* ]]
-    printf '#!/bin/sh\nexit 4\n' > autogen.sh
+    _fake_tool autogen.sh 4
     run _ci_configure_tree "${BATS_TEST_TMPDIR}/c.log" --x
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-0003"* ]]
@@ -3409,14 +3396,6 @@ _fake_osv() {
     [[ "${output}" == *"no new vulnerability"* ]]
 }
 
-# What: Make a fake SOT tool at $1 that logs args, exits $RC.
-# Why: A scan phase is judged by the args and exit it passes.
-# From: Issue #479, PR #544
-_fake_tool() {
-    printf '#!/bin/sh\necho "$*" >> "%s.args"\n[ -z "${OUT_TEXT:-}" ] || printf "%%s\\n" "${OUT_TEXT}"\nexit "${RC:-0}"\n' "$1" > "$1"
-    chmod +x "$1"
-}
-
 # What: Trivy and syft via a fake tool: pass, fail, no tool.
 # Why: A finding or a scanner error must fail the scan step.
 # From: Issue #479, PR #544
@@ -3494,26 +3473,13 @@ _fake_tool() {
 # Why: The fuzzers must build from configure made on the host.
 # From: Issue #267, Issue #479, PR #544
 @test "clusterfuzzlite build runs its steps in order and fails closed" {
-    local log="${BATS_TEST_TMPDIR}/steps"
-    # What: Stub each step to log its name and arguments.
-    # Why: The test checks order and the sanitizer passed on.
-    _ci_step() { echo "$*" >> "${log}"; }
-    # What: Stub the host install as one logged step.
-    # Why: configure is generated on the host, after the install.
-    ci_cmd_install() { _ci_step install "$@"; }
-    # What: Stub autogen as one logged step.
-    # Why: autogen must run before the image tag and the run.
-    _ci_run_autogen() { _ci_step autogen; }
-    # What: Stub the base-builder alias as one logged step.
-    # Why: CFL builds FROM the SOT tag this alias sets.
-    _ci_image_alias() { _ci_step alias "$@"; }
-    # What: Stub the CFL run as one logged step.
-    # Why: The sanitizer must reach the build container.
-    _ci_cfl_run() { _ci_step run "$@"; }
+    export CALL_LOG="${BATS_TEST_TMPDIR}/steps"
+    local log="${CALL_LOG}"
+    _record ci_cmd_install _ci_run_autogen _ci_image_alias _ci_cfl_run
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_clusterfuzzlite_build address
     [ "${status}" -eq 0 ]
-    [ "$(cut -d' ' -f1 "${log}" | paste -sd' ')" = "install autogen alias run" ]
-    grep -qx 'run build -e SANITIZER=address' "${log}"
+    [ "$(cut -d' ' -f1 "${log}" | paste -sd' ')" = "ci_cmd_install _ci_run_autogen _ci_image_alias _ci_cfl_run" ]
+    grep -qx '_ci_cfl_run build -e SANITIZER=address' "${log}"
     _fail _ci_run_autogen 1 "autogen broke"
     _forbid _ci_image_alias _ci_cfl_run
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_clusterfuzzlite_build address
@@ -3526,13 +3492,11 @@ _fake_tool() {
 # Why: No release may be cut for a tag configure.ac disowns.
 # From: Issue #479, PR #544
 @test "github release is cut only after the version check" {
-    # What: Stub the release create to echo its arguments.
-    # Why: The test checks tag, target and the latest flag.
-    _ci_gh_release_create() { echo "create $*"; }
+    _echoes _ci_gh_release_create
     _pass _ci_check_release_version
     GITHUB_SHA=abc run _ci_publish_github_release v9.9-NG
     [ "${status}" -eq 0 ]
-    [[ "${output}" == "create v9.9-NG abc distcc-ng v9.9-NG distcc-ng v9.9-NG --latest" ]]
+    [[ "${output}" == "_ci_gh_release_create v9.9-NG abc distcc-ng v9.9-NG distcc-ng v9.9-NG --latest" ]]
     _fail _ci_check_release_version 1
     _forbid _ci_gh_release_create
     GITHUB_SHA=abc run _ci_publish_github_release v9.9-NG
@@ -3601,9 +3565,7 @@ _fake_tool() {
     run _ci_verify_all img net
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"redis ran"* ]]
-    # What: Stub brew to echo its arguments.
-    # Why: Every listed package must reach one brew install.
-    brew() { echo "brew $*"; }
+    _echoes brew
     run _ci_brew_install "a b"
     [ "${status}" -eq 0 ]
     [ "${output}" = "brew install a b" ]
@@ -3685,18 +3647,17 @@ _fake_tool() {
 }
 
 # What: Runs a fake scanner exiting 1, 127 and 128.
-# Why: v2.6.0 docs/output.md:796-798: 127 and 128 are errors.
+# Why: v2.6.0 docs/usage.md:790-799: 127 and 128 are errors.
 # From: Issue #267, Issue #479, PR #544
 @test "OSV run keeps findings 1-126 and fails on a scanner error" {
     local bin="${BATS_TEST_TMPDIR}/osv"
-    printf '%s\n' '#!/bin/sh' 'exit "${OSV_RC}"' > "${bin}"
-    chmod +x "${bin}"
-    OSV_RC=1 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    _fake_tool "${bin}"
+    RC=1 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
     [ "${status}" -eq 0 ]
-    OSV_RC=127 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    RC=127 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SCAN-0002"*"exit=127"* ]]
-    OSV_RC=128 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
+    RC=128 run _ci_osv_run "${bin}" sarif "${BATS_TEST_TMPDIR}/o" "${BATS_TEST_TMPDIR}"
     [ "${status}" -eq 2 ]
 }
 
@@ -3797,6 +3758,39 @@ _fake_tool() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-ATTEST-0001"* ]]
     [[ "${output}" != *"must not run"* ]]
+}
+
+# What: Tool pin refresh: newest stable tag, then its sha256.
+# Why: sot-update moves a version and its digest together.
+# From: Issue #479, PR #544
+@test "sot-update reads the newest stable tag and its recorded sha256" {
+    local h; h="$(printf 'a%.0s' {1..64})"
+    _fixture_manifest 'external_versions:' '  t:' '    version: "v1.2.0"' '    source: "o/t"' \
+        '    tag_prefix: "v"' '    url: "https://github.com/o/t/releases/download/v{bare}/t-{bare}.tar.gz"'
+    _print gh v1.2.0 v1.10.0 v1.9.3 other-9.9
+    run _ci_tool_latest_version external_versions.t
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "1.10.0" ]
+    _print gh other-9.9
+    run _ci_tool_latest_version external_versions.t
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0005"* ]]
+    _print gh "{\"assets\":[{\"name\":\"t-1.10.0.tar.gz\",\"digest\":\"sha256:${h}\"}]}"
+    run _ci_release_asset_sha external_versions.t 1.10.0
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "${h}" ]
+    _print gh '{"assets":[{"name":"t-1.10.0.tar.gz"}]}'
+    run _ci_release_asset_sha external_versions.t 1.10.0
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0008"* ]]
+    _fixture_manifest 'external_versions:' '  t:' '    version: "1"' '    source: "o/t"' \
+        '    url: "https://example.org/t-{bare}.tar.gz"'
+    run _ci_release_asset_sha external_versions.t 1
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0006"* ]]
+    _fail gh 1 "HTTP 502"
+    run _ci_tool_latest_version external_versions.t
+    [ "${status}" -eq 1 ]
 }
 
 # What: Runs sot-update on a SOT whose pins are all current.
