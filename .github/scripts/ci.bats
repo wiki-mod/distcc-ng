@@ -459,6 +459,33 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
 }
 
+# What: Resolves the PR of a PR run, a dispatch, then no PR.
+# Why: A dispatched PR branch is checked too; AG-GH-002 holds.
+# From: Issue #479, PR #544
+@test "metadata finds the pull request of a PR run and a dispatch" {
+    local ev="${BATS_TEST_TMPDIR}/ev.json"
+    printf '%s\n' '{"pull_request":{"number":7,"base":{"sha":"b1"},"head":{"sha":"h1"}}}' > "${ev}"
+    GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" _ci_metadata_pr
+    [ "${PR_NUMBER} ${BASE} ${HEAD}" = "7 b1 h1" ]
+    _print gh '{"number":9,"baseRefOid":"b2","headRefOid":"h2"}'
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update \
+        run _stubbed '_pass git' eval '_ci_metadata_pr && echo "${PR_NUMBER} ${BASE} ${HEAD}"'
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "9 b2 h2" ]
+    _print gh ''
+    _forbid _ci_metadata_fetch_live
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NotRun: no open pull request has head x"* ]]
+    [[ "${output}" != *"must not run"* ]]
+    _fail gh 1
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
+    [ "${status}" -eq 2 ]
+    GITHUB_EVENT_NAME=push run ci_cmd_metadata
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-0002"* ]]
+}
+
 # What: Checks a draft PR with no label and no milestone.
 # Why: AG-WF-009; ready_for_review re-checks it for real.
 # From: Issue #479, PR #544

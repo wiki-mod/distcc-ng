@@ -3210,15 +3210,46 @@ _ci_metadata_fetch_live() {
     PR_DRAFT="$(jq -r '.isDraft | if type == "boolean" then . else error("isDraft") end' <<< "${json}")" || return 2
 }
 
+# What: Set PR_NUMBER, BASE, HEAD; exit 3 if no PR is open.
+# Why: sot-update's PR runs only by dispatch; AG-GH-002 holds.
+# From: Issue #479, PR #544
+_ci_metadata_pr() {
+    local json range=()
+    case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
+        pull_request)
+            PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
+            _ci_mapfile range _ci_event_range || return 2
+            [ "${#range[@]}" -eq 2 ] || return 2
+            BASE="${range[0]}" HEAD="${range[1]}" ;;
+        workflow_dispatch)
+            json="$(gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
+                --head "${GITHUB_REF_NAME:?GITHUB_REF_NAME required}" --state open \
+                --json number,baseRefOid,headRefOid --jq '.[0] // empty')" || return 2
+            if [ -z "${json}" ]; then
+                ci_log "[CI-META]" "NotRun: no open pull request has head ${GITHUB_REF_NAME}"
+                return 3
+            fi
+            PR_NUMBER="$(jq -er '.number' <<< "${json}")" || return 2
+            BASE="$(jq -er '.baseRefOid' <<< "${json}")" || return 2
+            HEAD="$(jq -er '.headRefOid' <<< "${json}")" || return 2
+            git -C "${CI_REPO_ROOT}" fetch -q origin "${BASE}" || return 2 ;;
+        *)
+            ci_log "[CI-ERROR-META-0002]" "no pull request context in a ${GITHUB_EVENT_NAME} run"
+            return 2 ;;
+    esac
+}
+
 # What: Runs metadata check(s); fetches live PR data first.
 # Why: One PR-context gate for title, tracking and changelog.
 # From: Issue #479
 ci_cmd_metadata() {
-    local sub="${1:-all}" rc=0 range=()
-    PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
-    _ci_mapfile range _ci_event_range || return 2
-    [ "${#range[@]}" -eq 2 ] || return 2
-    BASE="${range[0]}" HEAD="${range[1]}"
+    local sub="${1:-all}" rc=0
+    _ci_metadata_pr || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) return 0 ;;
+        *) return "${rc}" ;;
+    esac
     _ci_metadata_fetch_live || return 2
     case "${sub}" in
         title)     _ci_check_pr_title || rc=1 ;;
