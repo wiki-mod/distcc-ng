@@ -2126,12 +2126,20 @@ _ci_sot_refresh() {
     done
 }
 
-# What: Print the open PR whose head is branch $1, or nothing.
+# What: Print the one open PR with head branch $1, or none.
 # Why: sot-update and the metadata gate share one PR lookup.
 # From: Issue #479, PR #544
 _ci_open_pr() {
-    gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" --head "${1:?branch required}" \
-        --state open --json number,baseRefOid,headRefOid --jq '.[0] // empty'
+    local prs n
+    prs="$(gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" --head "${1:?branch required}" \
+        --state open --json number,baseRefOid,headRefOid)" || return 1
+    n="$(jq -er 'length' <<< "${prs}")" || return 1
+    case "${n}" in
+        0) ;;
+        1) jq -ec '.[0]' <<< "${prs}" ;;
+        *) ci_log "[CI-ERROR-PR-0001]" "${n} open pull requests have head $1; none is picked"
+           return 1 ;;
+    esac
 }
 
 # What: Open or refresh the one SOT pin update pull request.
@@ -3193,9 +3201,18 @@ _ci_check_changelog() {
             ci_log "[CI-META-CHANGELOG]" "skipped: no-changelog-needed label"
             return 0 ;;
     esac
-    local changed
-    changed="$(_ci_changed_paths "${BASE:?BASE required}" "${HEAD:-HEAD}")" || return 1
-    if grep -qx 'CHANGELOG.md' <<< "${changed}"; then
+    local changed fork rc=0
+    # What: Diff from the merge base, the PR's own changes only.
+    # Why: A base tip that gained a CHANGELOG entry must not pass.
+    # From: Issue #479, PR #544
+    if ! fork="$(git -C "${CI_REPO_ROOT}" merge-base "${BASE:?BASE required}" "${HEAD:-HEAD}")"; then
+        ci_log "[CI-ERROR-META-CHANGELOG-0002]" "no merge base of ${BASE} and ${HEAD:-HEAD}"
+        return 1
+    fi
+    changed="$(_ci_changed_paths "${fork}" "${HEAD:-HEAD}")" || return 1
+    grep -qx 'CHANGELOG.md' <<< "${changed}" || rc=$?
+    [ "${rc}" -le 1 ] || return 1
+    if [ "${rc}" -eq 0 ]; then
         ci_log "[CI-META-CHANGELOG]" "OK: CHANGELOG.md touched"
         return 0
     fi
@@ -3238,6 +3255,10 @@ _ci_metadata_pr() {
             PR_NUMBER="$(jq -er '.number' <<< "${json}")" || return 2
             BASE="$(jq -er '.baseRefOid' <<< "${json}")" || return 2
             HEAD="$(jq -er '.headRefOid' <<< "${json}")" || return 2
+            if [ "${HEAD}" != "${GITHUB_SHA:?GITHUB_SHA required}" ]; then
+                ci_log "[CI-ERROR-META-0003]" "PR #${PR_NUMBER} head ${HEAD} is not this run's ${GITHUB_SHA}"
+                return 2
+            fi
             git -C "${CI_REPO_ROOT}" fetch -q origin "${BASE}" || return 2 ;;
         *)
             ci_log "[CI-ERROR-META-0002]" "no pull request context in a ${GITHUB_EVENT_NAME} run"
@@ -3250,6 +3271,10 @@ _ci_metadata_pr() {
 # From: Issue #479
 ci_cmd_metadata() {
     local sub="${1:-all}" rc=0
+    case "${sub}" in
+        title|tracking|changelog|all) ;;
+        *) ci_log "[CI-ERROR-META-0001]" "unknown metadata check=\"${sub}\""; return 2 ;;
+    esac
     _ci_metadata_pr || rc=$?
     case "${rc}" in
         0) ;;
@@ -3265,7 +3290,6 @@ ci_cmd_metadata() {
             _ci_check_pr_title || rc=1
             _ci_check_pr_tracking || rc=1
             _ci_check_changelog || rc=1 ;;
-        *) ci_log "[CI-ERROR-META-0001]" "unknown metadata check=\"${sub}\""; return 2 ;;
     esac
     return "${rc}"
 }

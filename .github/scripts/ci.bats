@@ -415,7 +415,7 @@ _dup_error_ids() {
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
         _print _ci_changed_paths .github/yaml/build-manifest.yml
-        PR_AUTHOR="${a}" PR_LABELS="dependencies" BASE=b HEAD=h run _ci_check_changelog
+        PR_AUTHOR="${a}" PR_LABELS="dependencies" BASE=b HEAD=h run _stubbed '_print git m' _ci_check_changelog
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0001"* ]]
     done
@@ -459,7 +459,7 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
 }
 
-# What: Resolves the PR of a PR run, a dispatch, then no PR.
+# What: PR run, dispatch, head mismatch, two PRs, then no PR.
 # Why: A dispatched PR branch is checked too; AG-GH-002 holds.
 # From: Issue #479, PR #544
 @test "metadata finds the pull request of a PR run and a dispatch" {
@@ -467,17 +467,28 @@ _dup_error_ids() {
     printf '%s\n' '{"pull_request":{"number":7,"base":{"sha":"b1"},"head":{"sha":"h1"}}}' > "${ev}"
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" _ci_metadata_pr
     [ "${PR_NUMBER} ${BASE} ${HEAD}" = "7 b1 h1" ]
-    _print gh '{"number":9,"baseRefOid":"b2","headRefOid":"h2"}'
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update \
+    _print gh '[{"number":9,"baseRefOid":"b2","headRefOid":"h2"}]'
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update GITHUB_SHA=h2 \
         run _stubbed '_pass git' eval '_ci_metadata_pr && echo "${PR_NUMBER} ${BASE} ${HEAD}"'
     [ "${status}" -eq 0 ]
     [ "${output}" = "9 b2 h2" ]
-    _print gh ''
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update GITHUB_SHA=h3 \
+        run _stubbed '_forbid git' _ci_metadata_pr
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-0003"*"head h2 is not this run's h3"* ]]
+    _print gh '[{"number":9},{"number":10}]'
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run _ci_metadata_pr
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-PR-0001"*"2 open pull requests have head x"* ]]
+    _print gh '[]'
     _forbid _ci_metadata_fetch_live
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"NotRun: no open pull request has head x"* ]]
     [[ "${output}" != *"must not run"* ]]
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-META-0001"* ]]
     _fail gh 1
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
     [ "${status}" -eq 2 ]
@@ -936,6 +947,31 @@ _dup_error_ids() {
 @test "changelog is skipped by the no-changelog-needed label" {
     PR_LABELS="ci no-changelog-needed" run _ci_check_changelog
     [ "${status}" -eq 0 ]
+}
+
+# What: A base gains CHANGELOG.md after the fork; the PR not.
+# Why: Only the PR's own changes may satisfy AG-REL-002.
+# From: Issue #479, PR #544
+@test "changelog check diffs from the merge base, not the base tip" {
+    local r="${BATS_TEST_TMPDIR}/r" trunk base head
+    mkdir -p "${r}/src"
+    ( cd "${r}" && git init -q && git config user.email t@t && git config user.name t \
+      && git commit -q --allow-empty -m root ) || return 1
+    trunk="$(git -C "${r}" symbolic-ref --short HEAD)"
+    ( cd "${r}" && git checkout -q -b pr && printf 'x\n' > src/x.c && git add src/x.c \
+      && git commit -q -m pr && git checkout -q "${trunk}" && printf 'e\n' > CHANGELOG.md \
+      && git add CHANGELOG.md && git commit -q -m entry ) || return 1
+    base="$(git -C "${r}" rev-parse "${trunk}")"
+    head="$(git -C "${r}" rev-parse pr)"
+    CI_REPO_ROOT="${r}" BASE="${base}" HEAD="${head}" PR_LABELS="" run _ci_check_changelog
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0001"* ]]
+    ( cd "${r}" && git checkout -q pr && printf 'p\n' > CHANGELOG.md && git add CHANGELOG.md \
+      && git commit -q -m own ) || return 1
+    head="$(git -C "${r}" rev-parse pr)"
+    CI_REPO_ROOT="${r}" BASE="${base}" HEAD="${head}" PR_LABELS="" run _ci_check_changelog
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"OK: CHANGELOG.md touched"* ]]
 }
 
 # What: Reads a PR, a push and a dispatch payload.
@@ -2105,13 +2141,18 @@ _unregistered_arms() {
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0003"* ]]
 }
 
-# What: Diffs from the zero SHA; parses a missing log.
+# What: Zero-SHA base, then a failing diff; a missing log.
 # Why: Neither may read as no change or as a parse result.
 # From: Issue #479, PR #544
 @test "changelog and comfychair fail closed on bad input" {
     BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
     [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0002"* ]]
+    _fail _ci_changed_paths 1 "[CI-ERROR-DIFF-0001] cannot diff"
+    BASE=HEAD HEAD=HEAD PR_LABELS="" run _ci_check_changelog
+    [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
+    [[ "${output}" != *"CI-ERROR-META-CHANGELOG-0001"* ]]
     run _ci_parse_comfychair "${BATS_TEST_TMPDIR}/nope.log"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
@@ -3084,12 +3125,12 @@ _fake_osv() {
 @test "sot-update creates its PR once, then edits the open one" {
     _print _ci_sot_refresh '| `a` | `x` | `1` | `2` |'
     _pass _ci_git_identity _ci_git_auth_setup
-    _print gh ''
+    _print gh '[]'
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr create"* ]]
     [[ "${output}" != *"gh pr edit"* ]]
-    _print gh '{"number":12,"baseRefOid":"b","headRefOid":"h"}'
+    _print gh '[{"number":12,"baseRefOid":"b","headRefOid":"h"}]'
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr edit 12"* ]]
