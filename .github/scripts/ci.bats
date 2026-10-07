@@ -438,6 +438,27 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
 }
 
+# What: Reads live PR data, then replies lacking a field.
+# Why: A field jq cannot read must fail, never read empty.
+# From: Issue #479, PR #544
+@test "live PR fetch sets every field or fails closed" {
+    local bad ok='{"title":"fix(ci): x","labels":[{"name":"ci"},{"name":"bug"}],"milestone":null,"isDraft":false}'
+    _print gh "${ok}"
+    PR_NUMBER=5 GITHUB_REPOSITORY=o/r _ci_metadata_fetch_live
+    [ "${PR_TITLE}" = "fix(ci): x" ]
+    [ "${PR_LABELS}" = "ci bug" ]
+    [ -z "${PR_MILESTONE_TITLE}" ]
+    [ "${PR_DRAFT}" = "false" ]
+    for bad in 'del(.title)' 'del(.labels)' '.isDraft = "no"'; do
+        _print gh "$(jq -c "${bad}" <<< "${ok}")"
+        PR_NUMBER=5 GITHUB_REPOSITORY=o/r run _ci_metadata_fetch_live
+        [ "${status}" -eq 2 ]
+    done
+    _fail gh 1
+    PR_NUMBER=5 GITHUB_REPOSITORY=o/r run _ci_metadata_fetch_live
+    [ "${status}" -eq 2 ]
+}
+
 # What: Checks a draft PR with no label and no milestone.
 # Why: AG-WF-009; ready_for_review re-checks it for real.
 # From: Issue #479, PR #544
@@ -845,6 +866,22 @@ _dup_error_ids() {
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
     done
+}
+
+# What: Copies a fixture repo over a stale dir, then fails cp.
+# Why: Every workload must start from a fresh, full copy.
+# From: Issue #479, PR #544
+@test "tree copy replaces the workdir with a full fresh copy" {
+    local repo="${BATS_TEST_TMPDIR}/repo" dir="${BATS_TEST_TMPDIR}/w"
+    mkdir -p "${repo}/sub" "${dir}/src"
+    printf 'a\n' > "${repo}/sub/f"
+    printf 'old\n' > "${dir}/src/stale"
+    CI_REPO_ROOT="${repo}" _ci_tree_copy "${dir}"
+    [ "$(cat "${dir}/src/sub/f")" = "a" ]
+    [ ! -e "${dir}/src/stale" ]
+    CI_REPO_ROOT="${repo}" run _stubbed '_fail cp 1 boom' _ci_tree_copy "${dir}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"boom"* ]]
 }
 
 # What: Sets the SOT nightly tag to v3.6.6-NG and publishes.
