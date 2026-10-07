@@ -3753,12 +3753,12 @@ ci_cmd_lint() {
     return "${rc}"
 }
 
-# What: apt-get update+install, bounded 2x3-minute retry.
+# What: apt-get update+install, two bounded attempts.
 # Why: The default ubuntu mirror can hang with no timeout.
 # From: Issue #493, Issue #479
 _ci_apt_install() {
     local packages="${1:?package list required}" mode="${2:-runner}" rc=0
-    local as_root=(sudo) apt_opts="" upgrade=""
+    local as_root=(sudo) apt_opts="" upgrade="" limit="3m"
     if [ "$(id -u)" -eq 0 ]; then
         as_root=()
     fi
@@ -3772,10 +3772,14 @@ _ci_apt_install() {
             # What: Image builds full-upgrade the base before installing.
             # Why: Every image gets the packages current at build time.
             # From: Issue #479, PR #544
-            upgrade="apt-get full-upgrade -y ${apt_opts} &&" ;;
+            upgrade="apt-get full-upgrade -y ${apt_opts} &&"
+            # What: An image attempt may take 6 minutes, not 3.
+            # Why: CFL's Ubuntu mirror ran 90s green and over 3m red.
+            # From: Issue #493, Issue #479, PR #544
+            limit="6m" ;;
         *) ci_log "[CI-ERROR-INSTALL-0003]" "apt mode=${mode} (runner|image)"; return 2 ;;
     esac
-    _ci_wait_until 2 10 _ci_apt_attempt "${packages}" "${apt_opts}" "${upgrade}" "${as_root[@]}" || rc=$?
+    _ci_wait_until 2 10 _ci_apt_attempt "${limit}" "${packages}" "${apt_opts}" "${upgrade}" "${as_root[@]}" || rc=$?
     case "${rc}" in
         0) ;;
         1) ci_log "[CI-ERROR-INSTALL-0001]" "apt install failed after 2 attempts"; return 1 ;;
@@ -3790,17 +3794,17 @@ _ci_apt_install() {
 # Why: Else every retry stops at "dpkg was interrupted".
 # From: Issue #493, Issue #479, PR #544
 _ci_apt_attempt() {
-    local packages="$1" apt_opts="$2" upgrade="$3" rc=0 why=""
-    shift 3
-    "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
+    local limit="$1" packages="$2" apt_opts="$3" upgrade="$4" rc=0 why=""
+    shift 4
+    "$@" timeout -k 10s "${limit}" env DEBIAN_FRONTEND=noninteractive \
         bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}" || rc=$?
     if [ "${rc}" -eq 0 ]; then
         return 0
     fi
-    [ "${rc}" -ne 124 ] || why=" (timed out after 3m)"
+    [ "${rc}" -ne 124 ] || why=" (timed out after ${limit})"
     ci_log "[CI-INSTALL-APT]" "attempt ${CI_ATTEMPT}/${CI_TRIES}: apt exited ${rc}${why}"
     [ "${CI_ATTEMPT}" -lt "${CI_TRIES}" ] || return 1
-    if ! "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+    if ! "$@" timeout -k 10s "${limit}" env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         ci_log "[CI-ERROR-INSTALL-0004]" "dpkg --configure -a failed after attempt ${CI_ATTEMPT}"
         return 2
     fi

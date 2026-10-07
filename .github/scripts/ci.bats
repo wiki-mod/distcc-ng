@@ -1569,7 +1569,7 @@ _dup_error_ids() {
     [ "${output}" = "0" ]
 }
 
-# What: apt cut off once, dpkg failing, apt failing twice.
+# What: apt cut off, dpkg failing, apt failing, image limit.
 # Why: A killed install leaves dpkg interrupted for the retry.
 # From: Issue #493, Issue #479, PR #544
 @test "apt retry first finishes a dpkg run the timeout cut off" {
@@ -1604,6 +1604,9 @@ _dup_error_ids() {
     [[ "${output}" == *"attempt 1/2: apt exited 100"* ]]
     [[ "${output}" == *"attempt 2/2: apt exited 100"*"CI-ERROR-INSTALL-0001"* ]]
     [[ "${output}" != *"timed out"* ]]
+    APT_RC=124 run _ci_apt_install "p q" image
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"attempt 1/2: apt exited 124 (timed out after 6m)"* ]]
 }
 
 # What: Gates a clean make, a warning make and a missing log.
