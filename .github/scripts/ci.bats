@@ -1235,6 +1235,93 @@ _dup_error_ids() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Packages without alien, then with all tools; SBOM.
+# Why: A missing tool fails first; the SBOM needs the tarball.
+# From: Issue #479, PR #544
+@test "package needs every packaging tool; SBOM needs the tarball" {
+    local bin="${BATS_TEST_TMPDIR}/bin" root="${BATS_TEST_TMPDIR}/root" t
+    mkdir -p "${bin}" "${root}"
+    for t in python3 pkg-config eu-strip rpmbuild fakeroot; do
+        printf '#!/bin/sh\n' > "${bin}/${t}"
+        chmod +x "${bin}/${t}"
+    done
+    _print _ci_python python3
+    _forbid _ci_configure_tree _ci_make_gated
+    CI_REPO_ROOT="${root}" PATH="${bin}" run ci_cmd_package
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PACKAGE-0001"*"missing tool: alien"* ]]
+    [[ "${output}" != *"must not run"* ]]
+    cp "${bin}/fakeroot" "${bin}/alien"
+    _pass _ci_configure_tree
+    # What: Stub the make gate to echo its arguments.
+    # Why: Packaging must run the deb target through the gate.
+    _ci_make_gated() { echo "gated $*"; }
+    CI_REPO_ROOT="${root}" PATH="${bin}" run ci_cmd_package
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"gated "*"deb"* ]]
+    # What: Stub the SBOM writer to echo its arguments.
+    # Why: The package SBOM must scan the found tarball.
+    ci_cmd_sbom() { echo "sbom $*"; }
+    CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PACKAGE-0002"* ]]
+    touch "${root}/distcc-9.9.tar.gz"
+    CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "sbom ./distcc-9.9.tar.gz out.json" ]
+}
+
+# What: Every container variant and release action, stubbed.
+# Why: Each builds its SOT image, pushes only its own tags.
+# From: Issue #359, Issue #479, PR #544
+@test "container variants build their SOT image and push only theirs" {
+    local out="${BATS_TEST_TMPDIR}/out" base
+    export GITHUB_REPOSITORY_OWNER=o
+    base="$(_ci_sot_scalar release.images.distcc-ng-buildtools.ref)"
+    base="${base%:*}"
+    # What: Stub the image build to echo its arguments.
+    # Why: The test checks which SOT spec and tags each picks.
+    _ci_image_build() { echo "build $*"; }
+    # What: Stub the registry push to echo its tags.
+    # Why: Only the variant's own tags may be pushed.
+    _ci_registry_push() { echo "push $*"; }
+    _print _ci_built_sha abc1234
+    GITHUB_OUTPUT="${out}" run ci_cmd_container nightly
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"build release.images.distcc-ng-nightly nightly --tag "*"distcc-ng-nightly:latest"* ]]
+    [[ "${output}" == *"push "*"distcc-ng-nightly:latest"* ]]
+    grep -q '^image=.*distcc-ng-nightly:latest$' "${out}"
+    _forbid _ci_registry_push
+    run ci_cmd_container verify-image
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "build release.images.distcc-ng-buildtools abc1234" ]
+    # What: Stub the push again after the verify-image check.
+    # Why: buildtools must push both of its tags, nothing else.
+    _ci_registry_push() { echo "push $*"; }
+    run ci_cmd_container buildtools
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"push ${base}:latest ${base}:abc1234"* ]]
+    : > "${out}"
+    GITHUB_OUTPUT="${out}" run ci_cmd_container build plain amd64 v9.9
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"--platform linux/amd64 --tag"* ]]
+    grep -q '^image=' "${out}"
+    run ci_cmd_container build plain sparc v9.9
+    [ "${status}" -eq 2 ]
+    run ci_cmd_container push img:tag
+    [ "${output}" = "push img:tag" ]
+    run ci_cmd_container bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
+    run _ci_container_release bogus
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CONTAINER-0004"* ]]
+    _fail _ci_registry_push 1 "denied"
+    GITHUB_OUTPUT="${out}" run ci_cmd_container nightly
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"denied"* ]]
+}
+
 # What: Logs the apt line of an image and a runner install.
 # Why: An image ships the packages current on its build day.
 # From: Issue #479, PR #544
@@ -1722,6 +1809,38 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
     [[ "${output}" != *"NotMet"* ]]
+}
+
+# What: Recheck: BR-07 regresses, a first post, a list error.
+# Why: A regression is named; proposal links carry Met only.
+# From: Issue #312, Issue #479, PR #544
+@test "openssf recheck flags a regression and edits its one comment" {
+    _print _ci_run_url u
+    # What: Stub verdicts: BR-07 is NotMet, all others Met.
+    # Why: One regressed criterion must leave the proposal link.
+    _ci_ossf_verdict() { case "$*" in *br07*) echo NotMet ;; *) echo Met ;; esac; }
+    # What: Stub gh: comment list prints $EXISTING, body a state.
+    # Why: The previous state says BR-07 was Met last time.
+    gh() {
+        case "$*" in
+            *"/comments --paginate"*) echo "${EXISTING:-}" ;;
+            *"issues/comments/"*"--jq"*) echo 'x <!-- openssf-baseline-recheck-state: {"BR-07":"Met"} -->' ;;
+        esac
+    }
+    EXISTING=77 DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_scan_openssf
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"## REGRESSED"*"- BR-07"* ]]
+    [[ "${output}" == *"osps_ac_03.01_status=Met"* ]]
+    [[ "${output}" != *"osps_br_07"* ]]
+    [[ "${output}" == *"would run: gh api --method PATCH repos/o/r/issues/comments/77"* ]]
+    DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_scan_openssf
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"REGRESSED"* ]]
+    [[ "${output}" == *"would run: gh api --method POST"* ]]
+    _fail gh 1 "HTTP 502"
+    DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_scan_openssf
+    [ "${status}" -eq 1 ]
+    [[ "${output}" != *"would run"* ]]
 }
 
 # What: Picks prune candidates from ten fixture versions.
@@ -3005,6 +3124,209 @@ _fake_osv() {
     OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"no new vulnerability"* ]]
+}
+
+# What: Make a fake SOT tool at $1 that logs args, exits $RC.
+# Why: A scan phase is judged by the args and exit it passes.
+# From: Issue #479, PR #544
+_fake_tool() {
+    printf '#!/bin/sh\necho "$*" >> "%s.args"\n[ -z "${OUT_TEXT:-}" ] || printf "%%s\\n" "${OUT_TEXT}"\nexit "${RC:-0}"\n' "$1" > "$1"
+    chmod +x "$1"
+}
+
+# What: Trivy and syft via a fake tool: pass, fail, no tool.
+# Why: A finding or a scanner error must fail the scan step.
+# From: Issue #479, PR #544
+@test "trivy and sbom pass the tool's exit on, with the SOT flags" {
+    local t="${BATS_TEST_TMPDIR}/tool"
+    _fake_tool "${t}"
+    _print _ci_tool_bin "${t}"
+    run ci_cmd_trivy_scan img:1
+    [ "${status}" -eq 0 ]
+    grep -q -- '--severity HIGH,CRITICAL' "${t}.args"
+    grep -q -- '--exit-code 1' "${t}.args"
+    grep -q -- '--ignorefile .*/.trivyignore.yaml' "${t}.args"
+    RC=1 run ci_cmd_trivy_scan img:1
+    [ "${status}" -eq 1 ]
+    run ci_cmd_sbom img:1 out.json
+    [ "${status}" -eq 0 ]
+    grep -q -- 'img:1 -o spdx-json=out.json' "${t}.args"
+    RC=3 run ci_cmd_sbom img:1 out.json
+    [ "${status}" -eq 3 ]
+    _fail _ci_tool_bin 2 "no pin"
+    run ci_cmd_trivy_scan img:1
+    [ "${status}" -eq 2 ]
+    run ci_cmd_sbom img:1 out.json
+    [ "${status}" -eq 2 ]
+}
+
+# What: Scorecard JSON to SARIF, then the tool and jq failing.
+# Why: Only a real SARIF of the run may reach the upload step.
+# From: Issue #479, PR #544
+@test "scorecard converts its JSON to SARIF and fails closed" {
+    local t="${BATS_TEST_TMPDIR}/tool" out="${BATS_TEST_TMPDIR}/s.sarif"
+    _fake_tool "${t}"
+    _print _ci_tool_bin "${t}"
+    _pass _ci_artifact_offer
+    OUT_TEXT='{"scorecard":{"version":"v5"},"checks":[{"name":"A","score":10,"reason":"ok","documentation":{"short":"a","url":"u"}},{"name":"B","score":2,"reason":"low","details":["d"],"documentation":{"short":"b","url":"u"}}]}' \
+        GITHUB_REPOSITORY=o/r RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_scorecard_scan "${out}"
+    [ "${status}" -eq 0 ]
+    grep -q -- '--repo=github.com/o/r' "${t}.args"
+    [ "$(jq -r '.runs[0].results | length' "${out}")" = "1" ]
+    [ "$(jq -r '.runs[0].results[0].level' "${out}")" = "warning" ]
+    [ "$(jq -r '.runs[0].tool.driver.rules | length' "${out}")" = "2" ]
+    RC=1 GITHUB_REPOSITORY=o/r RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_scorecard_scan "${out}"
+    [ "${status}" -eq 1 ]
+    OUT_TEXT='not json' GITHUB_REPOSITORY=o/r RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_scorecard_scan "${out}"
+    [ "${status}" -eq 1 ]
+}
+
+# What: CodeQL for python and c-cpp, then each step failing.
+# Why: c-cpp traces ci.sh build; a failed step gives no SARIF.
+# From: Issue #479, PR #544
+@test "codeql traces the ci.sh build for c-cpp and fails closed" {
+    local t="${BATS_TEST_TMPDIR}/tool"
+    _fake_tool "${t}"
+    _print _ci_tool_bin "${t}"
+    _forbid ci_cmd_install
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_codeql_scan python out.sarif
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"must not run"* ]]
+    grep -q -- 'database create .* --language=python' "${t}.args"
+    grep -q -- 'database analyze .*codeql/python-queries:codeql-suites/python-security-extended.qls .*--sarif-category=/language:python' "${t}.args"
+    _pass ci_cmd_install
+    : > "${t}.args"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_codeql_scan c-cpp out.sarif
+    [ "${status}" -eq 0 ]
+    grep -q -- '--language=cpp .*--command=bash .github/scripts/ci.sh build default' "${t}.args"
+    RC=1 RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_codeql_scan python out.sarif
+    [ "${status}" -eq 2 ]
+    _fail ci_cmd_install 1 "apt down"
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_codeql_scan c-cpp out.sarif
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"apt down"* ]]
+}
+
+# What: CFL build steps in order, then autogen failing.
+# Why: The fuzzers must build from configure made on the host.
+# From: Issue #267, Issue #479, PR #544
+@test "clusterfuzzlite build runs its steps in order and fails closed" {
+    local log="${BATS_TEST_TMPDIR}/steps"
+    # What: Stub each step to log its name and arguments.
+    # Why: The test checks order and the sanitizer passed on.
+    _ci_step() { echo "$*" >> "${log}"; }
+    # What: Stub the host install as one logged step.
+    # Why: configure is generated on the host, after the install.
+    ci_cmd_install() { _ci_step install "$@"; }
+    # What: Stub autogen as one logged step.
+    # Why: autogen must run before the image tag and the run.
+    _ci_run_autogen() { _ci_step autogen; }
+    # What: Stub the base-builder alias as one logged step.
+    # Why: CFL builds FROM the SOT tag this alias sets.
+    _ci_image_alias() { _ci_step alias "$@"; }
+    # What: Stub the CFL run as one logged step.
+    # Why: The sanitizer must reach the build container.
+    _ci_cfl_run() { _ci_step run "$@"; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_clusterfuzzlite_build address
+    [ "${status}" -eq 0 ]
+    [ "$(cut -d' ' -f1 "${log}" | paste -sd' ')" = "install autogen alias run" ]
+    grep -qx 'run build -e SANITIZER=address' "${log}"
+    _fail _ci_run_autogen 1 "autogen broke"
+    _forbid _ci_image_alias _ci_cfl_run
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_clusterfuzzlite_build address
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"autogen broke"* ]]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+# What: Releases a tag past and failing its version check.
+# Why: No release may be cut for a tag configure.ac disowns.
+# From: Issue #479, PR #544
+@test "github release is cut only after the version check" {
+    # What: Stub the release create to echo its arguments.
+    # Why: The test checks tag, target and the latest flag.
+    _ci_gh_release_create() { echo "create $*"; }
+    _pass _ci_check_release_version
+    GITHUB_SHA=abc run _ci_publish_github_release v9.9-NG
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == "create v9.9-NG abc distcc-ng v9.9-NG distcc-ng v9.9-NG --latest" ]]
+    _fail _ci_check_release_version 1
+    _forbid _ci_gh_release_create
+    GITHUB_SHA=abc run _ci_publish_github_release v9.9-NG
+    [ "${status}" -eq 1 ]
+    [[ "${output}" != *"must not run"* ]]
+}
+
+# What: Release lookup: exists, missing, API error; create.
+# Why: An API or auth error must never read as no release.
+# From: Issue #479, PR #544
+@test "release lookup tells missing from an API error" {
+    _pass gh
+    GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
+    [ "${status}" -eq 0 ]
+    _fail gh 1 "release not found"
+    GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
+    [ "${status}" -eq 1 ]
+    _fail gh 1 "HTTP 401: Bad credentials"
+    GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0010"*"Bad credentials"* ]]
+    _print _ci_release_assets a.tar.gz b.rpm
+    DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_gh_release_create v1 abc t n --prerelease
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"gh release create v1 a.tar.gz b.rpm --repo o/r --target abc"*"--prerelease"* ]]
+    _fail _ci_release_assets 1
+    _forbid gh
+    DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_gh_release_create v1 abc t n
+    [ "${status}" -eq 1 ]
+}
+
+# What: Redis check: a hit, no hit, a failed pass, no Redis.
+# Why: Only a hit in a fresh container proves Redis served it.
+# From: Issue #285, Issue #479, PR #544
+@test "verify ccache-redis needs a hit from a fresh container" {
+    _pass sleep _ci_container_logged
+    # What: Stub container runs; builds print $HITS as stats.
+    # Why: The second, fresh build must report a ccache hit.
+    _ci_container_run() {
+        case "$*" in *"workload checkout"*) [ -z "${PASS_FAIL:-}" ] || return 1
+            echo "  Hits: ${HITS:-0} / 10" ;; esac
+    }
+    HITS=4 RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_verify_ccache_redis img net
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"ccache hit in a fresh container"* ]]
+    HITS=0 RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_verify_ccache_redis img net
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-VERIFY-0002"* ]]
+    PASS_FAIL=1 RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_verify_ccache_redis img net
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-VERIFY-0003"* ]]
+    _fail _ci_container_logged 1
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_verify_ccache_redis img net
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-VERIFY-0004"* ]]
+}
+
+# What: verify all with in-image checks failing; then brew.
+# Why: Redis must still run so one failure hides no other.
+# From: Issue #285, Issue #479, PR #544
+@test "verify all runs every check; brew installs the list" {
+    _fail _ci_verify_in_image 1
+    # What: Stub the Redis check to report that it ran.
+    # Why: It must run even after the in-image checks failed.
+    _ci_verify_ccache_redis() { echo "redis ran"; }
+    run _ci_verify_all img net
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"redis ran"* ]]
+    # What: Stub brew to echo its arguments.
+    # Why: Every listed package must reach one brew install.
+    brew() { echo "brew $*"; }
+    run _ci_brew_install "a b"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "brew install a b" ]
+    _fail brew 1 "no formula"
+    run _ci_brew_install "a b"
+    [ "${status}" -eq 1 ]
 }
 
 # What: Uploads a 4 MB SARIF through a decoding gh stub.
