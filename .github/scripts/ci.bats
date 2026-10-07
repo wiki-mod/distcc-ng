@@ -822,6 +822,31 @@ _dup_error_ids() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Self-compiles a stub tree: clean make, then a warning.
+# Why: The distributed build must pass the warning gate too.
+# From: Issue #479, PR #544
+@test "self-compile gates its make output in both passes" {
+    local dir="${BATS_TEST_TMPDIR}/w" pass
+    mkdir -p "${dir}/src"
+    printf '#!/bin/sh\n' | tee "${dir}/src/distcc" > "${dir}/src/distccd"
+    chmod +x "${dir}/src/distcc" "${dir}/src/distccd"
+    _pass _ci_tree_copy _ci_configure_tree
+    _print _ci_nproc 2
+    _print make "gcc -c src/x.c"
+    # What: Stub the ng pump launcher to log, then run its args.
+    # Why: The pump pass must reach make through the launcher.
+    pump() { echo "pump ran" >&2; "$@"; }
+    run _ci_workload_self_compile pump "${dir}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"pump ran"* ]]
+    _print make "src/x.c:12:5: warning: unused variable 'y'"
+    for pass in plain pump; do
+        run _ci_workload_self_compile "${pass}" "${dir}"
+        [ "${status}" -eq 1 ]
+        [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
+    done
+}
+
 # What: Sets the SOT nightly tag to v3.6.6-NG and publishes.
 # Why: git push -f on a v* tag would clobber a real release.
 # From: Issue #479
@@ -1408,7 +1433,7 @@ _dup_error_ids() {
 " ]
 }
 
-# What: Runs AC-03 and BR-07 on failing, null and real data.
+# What: AC-03 and BR-07 on failing, null, partial, real data.
 # Why: A tool failure must never pose as a compliance finding.
 # From: Issue #312, Issue #479, PR #544
 @test "OpenSSF API checks fail closed instead of reading NotMet" {
@@ -1427,6 +1452,11 @@ _dup_error_ids() {
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0003"* ]]
+    _print gh '{"secret_scanning":{"status":"enabled"}}'
+    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-OSSF-0003"* ]]
+    [[ "${output}" != *"NotMet"* ]]
     # What: Stub gh: a met ruleset, scanning on, push off.
     # Why: Real Met and NotMet verdicts must still come out.
     gh() { case "$*" in *rulesets/7*) echo '["pull_request","deletion"]' ;; *) echo '{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}' ;; esac; }
@@ -2233,7 +2263,7 @@ _unregistered_arms() {
     _ci_mapfile texts _ci_banned_shell_texts
     [ "${#texts[@]}" -eq 2 ]
     mkdir -p "${fx}/packaging"
-    printf '%s\n' '#!/sbin/openrc-run' "# ${texts[0]}fickdiehenne" "echo '${texts[1]}'" \
+    printf '%s\n' '#!/sbin/openrc-run' "# ${texts[0]}anything" "echo '${texts[1]}'" \
         > "${fx}/packaging/svc.initd"
     run ci_guard_shellcheck_directives "${fx}"
     [ "${status}" -eq 1 ]

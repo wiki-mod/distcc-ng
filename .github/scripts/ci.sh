@@ -1226,7 +1226,7 @@ _ci_workload_self_compile() {
     local make_cc=(CC="distcc gcc" CXX="distcc g++") runner=()
     case "${pass}" in
         plain) ;;
-        pump) runner=(pump) ;;
+        pump) runner=(_ci_workload_pump) ;;
         *) ci_log "[CI-ERROR-WORKLOAD-0005]" "self-compile pass=${pass} (plain|pump)"; return 2 ;;
     esac
     _ci_tree_copy "${dir}" || return 1
@@ -1234,7 +1234,8 @@ _ci_workload_self_compile() {
     _ci_configure_tree "${dir}/configure.log" PYTHON=python3 || return 1
     local nj
     nj="$(_ci_nproc)" || return 2
-    "${runner[@]}" make -j"${nj}" "${make_cc[@]}" >&2 || return 1
+    "${runner[@]}" make -j"${nj}" "${make_cc[@]}" 2>&1 | tee "${dir}/make.log" >&2 || return 1
+    _ci_warning_gate "${dir}/make.log" "self-compile ${pass} make" || return 1
     test -x ./distcc && test -x ./distccd || return 1
     if [ "${pass}" = "plain" ]; then
         probe="$(mktemp -d)" || return 1
@@ -2619,10 +2620,11 @@ _ci_ossf_check_br07() {
         ci_log "[CI-ERROR-OSSF-0002]" "cannot read ${GITHUB_REPOSITORY}; no verdict"
         return 2
     fi
-    # What: An unreadable field is an error, never NotMet.
-    # Why: github.token hides it; a NotMet there would be false.
+    # What: Either unreadable field is an error, never NotMet.
+    # Why: github.token hides them; a NotMet there would be false.
     # From: Issue #312, PR #544
-    if ! jq -e '.secret_scanning.status' <<< "${analysis}" >/dev/null; then
+    if ! jq -e '.secret_scanning.status and .secret_scanning_push_protection.status' \
+        <<< "${analysis}" >/dev/null; then
         ci_log "[CI-ERROR-OSSF-0003]" "token cannot read security_and_analysis; no verdict"
         return 2
     fi
