@@ -193,8 +193,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
   their suppression comment; their code is unchanged.
 
 - **`AGENTS.md`** (issue #479, PR #544): `[AG-CI-001]` now describes the
-  rewritten CI (logic once in `ci.sh`, workflows only call it, no
-  composite actions) and `[AG-REL-002]` names the `validate.yml`
+  rewritten CI (logic once in `ci.sh`, every pin in the SOT, each
+  `run:` step one `ci.sh` command, no composite actions) and `[AG-REL-002]` names the `validate.yml`
   `metadata` job's changelog check instead of the removed
   `changelog-check` workflow. `[AG-CODE-004]` applies at every scale (a
   one-line alias, a test helper, a workflow job), forbids a second
