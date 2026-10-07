@@ -77,7 +77,10 @@ are checked for every pull request author alike, bots included. A
 `workflow_dispatch` run on a branch with an open pull request checks that
 pull request too, so the `sot-update` pull request, which starts CI only
 by dispatch, is held to the same gate; a dispatch on a branch without one
-logs NotRun.
+logs NotRun. Bot pull requests carry the SOT milestone `bot_milestone`:
+`sot-update` sets its title and adds its new pull request to the project
+board with `PROJECT_AUTOMATION_PAT`, and both `dependabot.yml` entries set
+its number, which `ci_guard_sot_mirrors` binds to the SOT.
 
 **Compile cache**: every job that builds the `default` variant (the
 `validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)

@@ -15,6 +15,7 @@ updates:
       actions:
         patterns: ["*"]
     labels: [dependencies, no-changelog-needed]
+    milestone: 3
   - package-ecosystem: github-actions
     directory: /
     target-branch: current_dev
@@ -24,3 +25,4 @@ updates:
       actions:
         patterns: ["*"]
     labels: [dependencies, no-changelog-needed]
+    milestone: 3

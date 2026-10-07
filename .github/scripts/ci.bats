@@ -2300,8 +2300,8 @@ _unregistered_arms() {
     [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
 }
 
-# What: Checks the real tree, then a drifted cron and option.
-# Why: Both must be literal YAML; the SOT owns their values.
+# What: Real tree, then a drifted cron, option and milestones.
+# Why: All are literal YAML; the SOT owns their values.
 # From: Issue #479, PR #544
 @test "mirror guard passes the real tree and fails closed on drift" {
     local fx="${BATS_TEST_TMPDIR}/fx"
@@ -2309,14 +2309,17 @@ _unregistered_arms() {
     [ "${status}" -eq 0 ]
     mkdir -p "${fx}/.github/workflows"
     _fixture_manifest 'schedules:' '  n:' '    workflow: "w"' '    cron: "0 1 * * *"' \
-        'release:' '  ghcr_packages: ["p"]'
+        'release:' '  ghcr_packages: ["p"]' 'bot_milestone:' '  number: "3"'
     printf '%s\n' 'on:' '  schedule:' "    - cron: '0 2 * * *'" > "${fx}/.github/workflows/w.yml"
     printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      package:' '        options:' \
         '          - all' '          - q' '        default: all' > "${fx}/.github/workflows/housekeeping.yml"
+    printf '%s\n' 'updates:' '  - package-ecosystem: a' '    milestone: 4' '  - package-ecosystem: b' \
+        > "${fx}/.github/dependabot.yml"
     run ci_guard_sot_mirrors "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0001"*"0 2 * * *"* ]]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0003"* ]]
 }
 
 # What: Runs three checks with the checkout check failing.
@@ -3140,6 +3143,14 @@ _fake_osv() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr create"* ]]
     [[ "${output}" != *"gh pr edit"* ]]
+    # What: Stub gh: no open PR; create logs args, prints a URL.
+    # Why: The SOT milestone and that URL's board add must follow.
+    gh() { case "$1 $2" in "pr list") echo '[]' ;; "pr create") echo "create $*" >&2; echo "https://x/pull/7" ;;
+        *) echo "gh $*" ;; esac; }
+    PROJECT_PAT=t GH_TOKEN=x GITHUB_REPOSITORY=o/r run _stubbed '_pass git' ci_cmd_sot_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"--milestone current_dev backlog"* ]]
+    [[ "${output}" == *"gh project item-add 11 --owner wiki-mod --url https://x/pull/7"* ]]
 }
 
 # What: Runs ci_cmd_harden with an unknown subcommand.

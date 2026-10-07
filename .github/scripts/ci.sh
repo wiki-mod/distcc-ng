@@ -2152,7 +2152,7 @@ _ci_open_pr() {
 ci_cmd_sot_update() {
     : "${GH_TOKEN:?GH_TOKEN required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local branch="sot-update" title="chore(deps): refresh SOT pins" rows body open wf
+    local branch="sot-update" title="chore(deps): refresh SOT pins" rows body open wf milestone url
     cd "${CI_REPO_ROOT}" || return 1
     rows="$(_ci_sot_refresh)" || return 1
     if [ -z "${rows}" ]; then
@@ -2173,9 +2173,12 @@ ci_cmd_sot_update() {
     _ci_mutate git push -q -f origin "HEAD:refs/heads/${branch}" || return 1
     open="$(_ci_open_pr "${branch}")" || return 1
     if [ -z "${open}" ]; then
-        _ci_mutate gh pr create --repo "${GITHUB_REPOSITORY}" --base current_dev --head "${branch}" \
-            --title "${title}" --body-file "${body}" \
-            --label dependencies --label no-changelog-needed || return 1
+        milestone="$(_ci_sot_scalar bot_milestone.title)" || return 2
+        url="$(_ci_mutate gh pr create --repo "${GITHUB_REPOSITORY}" --base current_dev --head "${branch}" \
+            --title "${title}" --body-file "${body}" --milestone "${milestone}" \
+            --label dependencies --label no-changelog-needed)" || return 1
+        printf '%s\n' "${url}"
+        _ci_board_add "${url}" "${PROJECT_PAT:-}" || return 1
     else
         open="$(jq -er '.number' <<< "${open}")" || return 1
         _ci_mutate gh pr edit "${open}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}" || return 1
@@ -3467,11 +3470,11 @@ _ci_dockerfile_pins() {
     ' "$1"
 }
 
-# What: Fail if a workflow literal no longer mirrors the SOT.
-# Why: Crons and choices are YAML literals; the SOT owns them.
+# What: Fail if a YAML literal no longer mirrors the SOT.
+# Why: Crons, choices, milestones are literals; SOT owns them.
 # From: Issue #479, PR #544
 ci_guard_sot_mirrors() {
-    local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs num
     want=""
     names="$(_ci_sot_children schedules)" || return 2
     for n in ${names}; do
@@ -3501,6 +3504,22 @@ ci_guard_sot_mirrors() {
         _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0002]" \
             "housekeeping package options differ from all + release.ghcr_packages" "${pkgs}" "${got}" \
             || rc=$?
+        [ "${rc}" -ne 2 ] || return 2
+    fi
+    f="${root}/.github/dependabot.yml"
+    if [ -f "${f}" ]; then
+        num="$(_ci_sot_scalar bot_milestone.number)" || return 2
+        got="$(awk '
+            /^  - package-ecosystem:/ { if (n) print (ms == "" ? "none" : ms); n++; ms = "" }
+            /^    milestone:/ { ms = $2 }
+            END { if (n) print (ms == "" ? "none" : ms) }
+        ' "${f}")" || return 2
+        want=""
+        if [ -n "${got}" ]; then
+            want="$(awk -v w="${num}" '{ print w }' <<< "${got}")" || return 2
+        fi
+        _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0003]" \
+            "dependabot.yml milestones differ from bot_milestone.number" "${want}" "${got}" || rc=$?
     fi
     return "${rc}"
 }

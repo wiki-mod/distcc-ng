@@ -249,6 +249,13 @@ project_board:
   owner: "wiki-mod"
   number: "11"
 
+# What: Milestone of bot PRs: sot-update and Dependabot.
+# Why: AG-GH-002; dependabot.yml mirrors its number.
+# From: Issue #479, PR #544
+bot_milestone:
+  title: "current_dev backlog"
+  number: "3"
+
 # What: apt packages CodeQL needs for a c-cpp build.
 # Why: One owner; security.yml installs this first.
 # From: Issue #479

@@ -94,6 +94,10 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # What: PAT for adding the new PR to the board only.
+          # Why: AG-GH-002; github.token cannot write Projects v2.
+          # From: Issue #479, PR #544
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
         run: bash .github/scripts/ci.sh sot-update
 
   heartbeat:
