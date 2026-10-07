@@ -881,6 +881,149 @@ _dup_error_ids() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Release build and runtime images, each step failing.
+# Why: No binary or user may land after a failed earlier step.
+# From: Issue #398, Issue #479, PR #544
+@test "release images stop at the first failed step" {
+    local log="${BATS_TEST_TMPDIR}/calls"
+    _print _ci_nproc 2
+    _pass _ci_configure_tree _ci_make_gated
+    # What: Stub the image-side tools to log their arguments.
+    # Why: The test reads which steps ran and with what.
+    _ci_logged() { echo "$*" >> "${log}"; }
+    # What: Stub apt to log its package list and mode.
+    # Why: Each image installs only its own SOT package list.
+    _ci_apt_install() { _ci_logged apt "$@"; }
+    # What: Stub install to log its arguments.
+    # Why: Release binaries must land in /out only after make.
+    install() { _ci_logged install "$@"; }
+    # What: Stub make to log its arguments.
+    # Why: make install feeds the pump image tree.
+    make() { _ci_logged make "$@"; }
+    # What: Stub mv to log its arguments.
+    # Why: pump is renamed distcc-pump in the pump image.
+    mv() { _ci_logged mv "$@"; }
+    # What: Stub useradd to log its arguments.
+    # Why: The runtime user must be a system user with no login.
+    useradd() { _ci_logged useradd "$@"; }
+    run _ci_image_release_build
+    [ "${status}" -eq 0 ]
+    grep -q '^install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text$' "${log}"
+    grep -q '^mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump$' "${log}"
+    run _ci_image_release_runtime
+    [ "${status}" -eq 0 ]
+    grep -q '^useradd --system .*--shell /usr/sbin/nologin distcc$' "${log}"
+    : > "${log}"
+    _fail _ci_make_gated 1
+    run _ci_image_release_build
+    [ "${status}" -eq 1 ]
+    [ "$(grep -c '^install\|^mv' "${log}")" -eq 0 ]
+    _fail _ci_apt_install 1
+    run _ci_image_release_runtime
+    [ "${status}" -eq 1 ]
+    [ "$(grep -c '^useradd' "${log}")" -eq 0 ]
+}
+
+# What: e2e images: native adds Debian distcc; ng builds tree.
+# Why: native is the reference; only ng carries the checkout.
+# From: Issue #264, Issue #479, PR #544
+@test "e2e images: native installs Debian distcc, ng builds the tree" {
+    local log="${BATS_TEST_TMPDIR}/calls" native
+    native="$(_ci_sot_scalar e2e.native_apt)"
+    _print _ci_nproc 2
+    _pass useradd update-distcc-symlinks
+    # What: Stub apt, configure and make install to log calls.
+    # Why: The test reads which flavor installed and built what.
+    _ci_logged() { echo "$*" >> "${log}"; }
+    # What: Stub apt to log its package list.
+    # Why: Only native adds the Debian distcc packages.
+    _ci_apt_install() { _ci_logged apt "$@"; }
+    # What: Stub configure to log that the tree was configured.
+    # Why: Only the ng image builds the checkout.
+    _ci_configure_tree() { _ci_logged configure; }
+    _pass _ci_make_gated make
+    run _stubbed '_pass mkdir chown' _ci_image_e2e native
+    [ "${status}" -eq 0 ]
+    grep -q "^apt .*${native} image$" "${log}"
+    [ "$(grep -c '^configure' "${log}")" -eq 0 ]
+    : > "${log}"
+    run _stubbed '_pass mkdir chown' _ci_image_e2e ng
+    [ "${status}" -eq 0 ]
+    [ "$(grep -c "${native}" "${log}")" -eq 0 ]
+    grep -q '^configure' "${log}"
+    _fail _ci_make_gated 1
+    run _stubbed '_pass mkdir chown' _ci_image_e2e ng
+    [ "${status}" -eq 1 ]
+}
+
+# What: Leg: pass, too few, client fail, warning, no listen.
+# Why: Only the server log proves the compiles went remote.
+# From: Issue #479, Issue #264, PR #544
+@test "e2e leg needs enough server-side compiles and a clean daemon" {
+    local ok='distccd[1] (dcc_job_summary) client: 172.18.0.5:4000 COMPILE_OK exit:0'
+    _print _ci_nproc 2
+    _pass sleep _ci_container_logged
+    # What: Stub container runs; the client exits $CLIENT_RC.
+    # Why: A failed client workload must fail the leg.
+    _ci_container_run() { case "$*" in *" workload "*) echo "${CLIENT_OUT:-}"; return "${CLIENT_RC:-0}" ;; esac; }
+    # What: Stub docker: logs prints $SERVER_LOG, rm passes.
+    # Why: The leg reads the server's log for its verdict.
+    docker() { [ "$1" != logs ] || printf '%s\n' "${SERVER_LOG}"; }
+    SERVER_LOG="$(printf '%s\n' "${ok}" "${ok}" "${ok}")" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" 3 n 172.18.0.0/16
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"ng-ng-plain: 3 COMPILE_OK from the client (need >= 3)"* ]]
+    SERVER_LOG="${ok}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" 3 n 172.18.0.0/16
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0005"* ]]
+    CLIENT_RC=2 SERVER_LOG="${ok}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" 1 n 172.18.0.0/16
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0009"* ]]
+    SERVER_LOG="$(printf '%s\n' "${ok}" 'distccd[1] (x) Warning: odd')" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" 1 n 172.18.0.0/16
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0015"* ]]
+    CLIENT_OUT=nothing SERVER_LOG="${ok}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" objects n 172.18.0.0/16
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0010"* ]]
+    _fail _ci_container_logged 1
+    SERVER_LOG="${ok}" RUNNER_TEMP="${BATS_TEST_TMPDIR}" \
+        run _ci_e2e_leg distributed ng:ng plain self-compile "" 1 n 172.18.0.0/16
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0014"* ]]
+}
+
+# What: Mode run with the first leg failing; mode retries.
+# Why: Every leg runs; a mode fails only after all attempts.
+# From: Issue #479, Issue #264, PR #544
+@test "e2e mode runs every leg and retries up to max_attempts" {
+    local calls="${BATS_TEST_TMPDIR}/calls"
+    # What: Stub docker: inspect prints a subnet, volume passes.
+    # Why: The mode run needs the stack network's subnet.
+    docker() { [ "$2" != inspect ] || echo 172.18.0.0/16; }
+    # What: Stub the leg: log it; the first call fails.
+    # Why: Later legs must still run after one failed.
+    _ci_e2e_leg() { echo "$3" >> "${calls}"; [ "$(wc -l < "${calls}")" -gt 1 ]; }
+    run _ci_e2e_mode_run distributed self-compile "" 5 n
+    [ "${status}" -eq 1 ]
+    [ "$(paste -sd' ' "${calls}")" = "plain pump" ]
+    _pass _ci_e2e_images
+    : > "${calls}"
+    # What: Stub an attempt: log it; the first one fails.
+    # Why: heartbeat allows two attempts; the second passes.
+    _ci_e2e_attempt() { echo a >> "${calls}"; [ "$(wc -l < "${calls}")" -gt 1 ]; }
+    run _ci_e2e_mode heartbeat
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"heartbeat: PASS"* ]]
+    _fail _ci_e2e_attempt 1
+    run _ci_e2e_mode heartbeat
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0006"*"failed on all 2 attempt(s)"* ]]
+}
+
 # What: Self-compiles a stub tree: clean make, then a warning.
 # Why: The distributed build must pass the warning gate too.
 # From: Issue #479, PR #544
@@ -904,6 +1047,91 @@ _dup_error_ids() {
         [ "${status}" -eq 1 ]
         [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
     done
+}
+
+# What: ccache workload plain, local; clone and cmake fail.
+# Why: Only the plain pass may compile through distcc.
+# From: Issue #81, Issue #263, Issue #479, PR #544
+@test "ccache workload sets the distcc launcher only for plain" {
+    local dir="${BATS_TEST_TMPDIR}/w" log="${BATS_TEST_TMPDIR}/calls"
+    _print _ci_nproc 2
+    _pass git
+    # What: Stub cmake: log its arguments; fake the ccache binary.
+    # Why: The test reads which launcher flags the build got.
+    cmake() {
+        echo "cmake $*" >> "${log}"
+        mkdir -p "${dir}/build"
+        printf '#!/bin/sh\n' > "${dir}/build/ccache"
+        chmod +x "${dir}/build/ccache"
+    }
+    run _ci_workload_ccache plain "${dir}"
+    [ "${status}" -eq 0 ]
+    grep -q -- '-DCMAKE_C_COMPILER_LAUNCHER=distcc' "${log}"
+    : > "${log}"
+    run _ci_workload_ccache local "${dir}"
+    [ "${status}" -eq 0 ]
+    [ "$(grep -c -- 'LAUNCHER' "${log}")" -eq 0 ]
+    run _stubbed '_fail git 128 "no such tag"' _ci_workload_ccache plain "${dir}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"no such tag"* ]]
+    _fail cmake 1 "cmake broke"
+    run _ci_workload_ccache plain "${dir}"
+    [ "${status}" -eq 1 ]
+}
+
+# What: Samba fetch: bad signature, good one, then cached.
+# Why: VER-SOURCE: a bad signature must stop the build.
+# From: Issue #264, Issue #285, Issue #479, PR #544
+@test "samba fetch stops on a bad signature and caches a good one" {
+    local cache="${BATS_TEST_TMPDIR}/c" dest="${BATS_TEST_TMPDIR}/d" calls="${BATS_TEST_TMPDIR}/dl"
+    # What: Stub the download to log the URL and write a file.
+    # Why: A verified cache must skip every later download.
+    _ci_download() { echo "$1" >> "${calls}"; printf 'x' > "$2"; }
+    _pass gunzip tar
+    # What: Stub gpg: import passes; verify exits $GPG_RC.
+    # Why: Only a verified signature may mark the cache good.
+    gpg() { case "$*" in *--verify*) return "${GPG_RC:-0}" ;; esac; }
+    GPG_RC=1 CI_WORKLOAD_CACHE="${cache}" run _ci_workload_samba_fetch "${dest}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0002"* ]]
+    [ ! -e "${cache}/samba/.verified" ]
+    CI_WORKLOAD_CACHE="${cache}" run _ci_workload_samba_fetch "${dest}"
+    [ "${status}" -eq 0 ]
+    [ -e "${cache}/samba/.verified" ]
+    : > "${calls}"
+    CI_WORKLOAD_CACHE="${cache}" run _ci_workload_samba_fetch "${dest}"
+    [ "${status}" -eq 0 ]
+    [ ! -s "${calls}" ]
+}
+
+# What: Fuzz build on a fixture: skip, rename, libs, Makefile.
+# Why: Only libFuzzer's entry may define main in the link.
+# From: Issue #267, Issue #479, PR #544
+@test "fuzz build skips and renames SOT mains and ships two libs" {
+    local root="${BATS_TEST_TMPDIR}/r" out="${BATS_TEST_TMPDIR}/out" t="${BATS_TEST_TMPDIR}/cc"
+    mkdir -p "${root}/src" "${root}/lzo" "${root}/test/fuzz" "${out}" "${BATS_TEST_TMPDIR}/lib"
+    touch "${root}/src/distcc.c" "${root}/src/daemon.c" "${root}/src/util.c" "${root}/lzo/minilzo.c" \
+        "${root}/test/fuzz/fuzz_x.c" "${BATS_TEST_TMPDIR}/lib/libpopt.so.0" "${BATS_TEST_TMPDIR}/lib/libc.so.6"
+    printf '%s\n' 'prefix = /usr/local' 'sysconfdir = ${prefix}/etc' 'datarootdir = ${prefix}/share' \
+        'LIBS = -lpopt' > "${root}/Makefile"
+    _fake_tool "${t}"
+    _pass _ci_run_configure
+    _print ldd "libpopt.so.0 => ${BATS_TEST_TMPDIR}/lib/libpopt.so.0 (0x1)" \
+        "libc.so.6 => ${BATS_TEST_TMPDIR}/lib/libc.so.6 (0x2)"
+    CI_REPO_ROOT="${root}" CC="${t}" CXX="${t}" OUT="${out}" LIB_FUZZING_ENGINE=-fsanitize=fuzzer \
+        run _ci_workload_fuzz_build
+    [ "${status}" -eq 0 ]
+    [ "$(grep -c 'src/distcc.c' "${t}.args")" -eq 0 ]
+    grep -q -- '-Dmain=distccng_disabled_main_daemon .*src/daemon.c' "${t}.args"
+    grep -q -- '-DSYSCONFDIR="/usr/local/etc"' "${t}.args"
+    grep -q -- 'fuzz_x .*-fsanitize=fuzzer -lpopt' "${t}.args"
+    [ -e "${out}/libpopt.so.0" ]
+    [ ! -e "${out}/libc.so.6" ]
+    printf '%s\n' 'prefix = /usr/local' > "${root}/Makefile"
+    CI_REPO_ROOT="${root}" CC="${t}" CXX="${t}" OUT="${out}" LIB_FUZZING_ENGINE=-fsanitize=fuzzer \
+        run _ci_workload_fuzz_build
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-WORKLOAD-0009"*"no sysconfdir"* ]]
 }
 
 # What: Copies a fixture repo over a stale dir, then fails cp.
@@ -1493,6 +1721,58 @@ _dup_error_ids() {
 @test "report fails closed when GH_TOKEN is unset" {
     GH_TOKEN="" run ci_cmd_report
     [ "${status}" -ne 0 ]
+}
+
+# What: Report success and failure, with and without an issue.
+# Why: One standing issue: reused on failure, closed on pass.
+# From: Issue #479, Issue #81, PR #476, PR #544
+@test "report keeps one standing issue: comment, close or open" {
+    _print _ci_run_url u
+    _pass _ci_report_track
+    # What: Stub gh: the issue list prints $EXISTING.
+    # Why: Every branch depends on whether an issue is open.
+    gh() { case "$*" in "issue list"*) echo "${EXISTING:-}" ;; esac; }
+    export GH_TOKEN=x GITHUB_REPOSITORY=o/r GITHUB_SERVER_URL=https://h SCOPE=nightly DRY_RUN=true
+    JOBS="a=success" run ci_cmd_report
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"nothing to do"* ]]
+    EXISTING=9 JOBS="a=success" run ci_cmd_report
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh issue close 9"* ]]
+    EXISTING=9 JOBS=$'a=failure\nb=skipped' run ci_cmd_report
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"gh issue comment 9"*"Still\\ failing:"*"failed:\\ a"* ]]
+    [[ "${output}" != *"issue create"* ]]
+    JOBS="a=failure" run ci_cmd_report
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh issue create"* ]]
+    _fail gh 1 "HTTP 502"
+    JOBS="a=failure" run ci_cmd_report
+    [ "${status}" -eq 1 ]
+    [[ "${output}" != *"would run"* ]]
+}
+
+# What: Bug type: already typed, untyped, no Bug type at all.
+# Why: The standing issue must end up typed as a Bug.
+# From: Issue #479, PR #476, PR #544
+@test "report types its issue as Bug once and fails without the type" {
+    # What: Stub gh graphql: the issue type is $TYPE, Bug is $BUG.
+    # Why: Each branch depends on the issue's and repo's types.
+    gh() {
+        case "$*" in
+            *"issue(number"*) echo "I1 ${TYPE:--}" ;;
+            *"issueTypes"*) echo "${BUG:-}" ;;
+        esac
+    }
+    TYPE=Bug DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_report_ensure_bug_type 9
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"would run"* ]]
+    BUG=T1 DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_report_ensure_bug_type 9
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh api graphql"*"issueId=I1"*"typeId=T1"* ]]
+    DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_report_ensure_bug_type 9
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-REPORT-0001"* ]]
 }
 
 # What: Adds an issue url with PROJECT_PAT set, then empty.
