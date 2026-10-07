@@ -1159,6 +1159,82 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
+# What: Real popt/ tree, then a copy with six fixes undone.
+# Why: A reverted vendored popt must fail popt-vendor.
+# From: Issue #479, PR #544
+@test "popt CVE fingerprints pass the real tree and fail a reverted one" {
+    local fx="${BATS_TEST_TMPDIR}/fx" i
+    cd "${CI_REPO_ROOT}"
+    run _ci_popt_cve_fingerprint_check
+    [ "${status}" -eq 0 ]
+    mkdir -p "${fx}"
+    cp -a "${CI_REPO_ROOT}/popt" "${fx}/"
+    printf 'old\n' > "${fx}/popt/POPT_VERSION"
+    sed -i 's/poptJlu32lpair/x/' "${fx}/popt/poptint.h"
+    touch "${fx}/popt/findme.c"
+    sed -i 's/== POPT_OPTION_DEPTH/>= 0/' "${fx}/popt/popt.c"
+    sed -i 's/calloc/malloc/g' "${fx}/popt/poptconfig.c"
+    sed -i 's/maxargvlen = argvlen \* 2;/maxargvlen = argvlen;/' "${fx}/popt/poptparse.c"
+    cd "${fx}"
+    run _ci_popt_cve_fingerprint_check
+    [ "${status}" -eq 1 ]
+    for i in 1 2 3 4 5 6; do
+        [[ "${output}" == *"CI-ERROR-POPT-CVE-000${i}"* ]]
+    done
+}
+
+# What: Smoke-tests stub distccd builds; gcc-compiles popt.
+# Why: A popt regression compiles; --help or -Werror shows it.
+# From: Issue #479, PR #544
+@test "popt smoke test and strict compile fail closed" {
+    local d="${BATS_TEST_TMPDIR}/b"
+    mkdir -p "${d}"
+    cd "${d}"
+    printf '#!/bin/sh\necho "--jobs --nice --listen --daemon --log-file --allow --user --port"\n' > distccd
+    chmod +x distccd
+    run _ci_popt_fallback_smoke_test
+    [ "${status}" -eq 0 ]
+    printf '#!/bin/sh\necho "--jobs --nice"\n' > distccd
+    run _ci_popt_fallback_smoke_test
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-POPT-0002"*"missing --listen"* ]]
+    printf '#!/bin/sh\necho boom\nexit 3\n' > distccd
+    run _ci_popt_fallback_smoke_test
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-POPT-0003"*"boom"* ]]
+    _pass gcc
+    RUNNER_TEMP="${d}" run _ci_popt_strict_compile
+    [ "${status}" -eq 0 ]
+    _fail gcc 1 "popt.c:1:1: error: x"
+    RUNNER_TEMP="${d}" run _ci_popt_strict_compile
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"error: x"* ]]
+}
+
+# What: Builds popt-fallback without, then with, the fallback.
+# Why: A leaked libpopt-dev must fail, not build system popt.
+# From: Issue #479, PR #544
+@test "build popt variants gate on the fallback line and fingerprints" {
+    _print _ci_python python3
+    _pass _ci_make_gated _ci_popt_fallback_smoke_test
+    # What: Stub configure to log that system popt was found.
+    # Why: The fallback check reads only the configure log.
+    _ci_configure_tree() { printf 'checking for popt... yes\n' > "$1"; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build popt-fallback
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-POPT-0001"* ]]
+    # What: Stub configure to log the bundled-popt fallback.
+    # Why: Only this line proves the build used bundled popt.
+    _ci_configure_tree() { printf 'system libpopt not found (or disabled); building bundled popt\n' > "$1"; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build popt-fallback
+    [ "${status}" -eq 0 ]
+    _fail _ci_popt_cve_fingerprint_check 1
+    _forbid _ci_popt_strict_compile
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build popt-vendor
+    [ "${status}" -eq 1 ]
+    [[ "${output}" != *"must not run"* ]]
+}
+
 # What: Logs the apt line of an image and a runner install.
 # Why: An image ships the packages current on its build day.
 # From: Issue #479, PR #544
@@ -1178,7 +1254,7 @@ _dup_error_ids() {
     [ "${output}" = "0" ]
 }
 
-# What: Installs with apt cut off once, then dpkg failing.
+# What: apt cut off once, dpkg failing, apt failing twice.
 # Why: A killed install leaves dpkg interrupted for the retry.
 # From: Issue #493, Issue #479, PR #544
 @test "apt retry first finishes a dpkg run the timeout cut off" {
@@ -1187,24 +1263,32 @@ _dup_error_ids() {
     # Why: The test runs as a plain user without sudo.
     sudo() { "$@"; }
     _pass sleep
-    # What: Stub timeout: log calls, fail the first apt run.
+    # What: Stub timeout: log calls; the first apt run times out.
     # Why: Replays an apt run the timeout cut off mid-dpkg.
     timeout() {
         shift 3
         echo "$*" >> "${log}"
         case "$*" in
             *"dpkg --configure -a"*) [ -z "${DPKG_FAIL:-}" ] ;;
-            *) [ "$(grep -c 'apt-get' "${log}")" -ge 2 ] ;;
+            *) [ -z "${APT_RC:-}" ] || return "${APT_RC}"
+               [ "$(grep -c 'apt-get' "${log}")" -ge 2 ] || return 124 ;;
         esac
     }
     run _ci_apt_install "p q"
     [ "${status}" -eq 0 ]
     [[ "$(sed -n 2p "${log}")" == *"dpkg --configure -a"* ]]
     [ "$(grep -c 'apt-get' "${log}")" -eq 2 ]
+    [[ "${output}" == *"attempt 1/2: apt exited 124 (timed out after 3m)"* ]]
     : > "${log}"
     DPKG_FAIL=1 run _ci_apt_install "p q"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-INSTALL-0004"* ]]
+    : > "${log}"
+    APT_RC=100 run _ci_apt_install "p q"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"attempt 1/2: apt exited 100"* ]]
+    [[ "${output}" == *"attempt 2/2: apt exited 100"*"CI-ERROR-INSTALL-0001"* ]]
+    [[ "${output}" != *"timed out"* ]]
 }
 
 # What: Gates a clean make, a warning make and a missing log.

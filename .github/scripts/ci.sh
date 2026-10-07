@@ -3790,14 +3790,16 @@ _ci_apt_install() {
 # Why: Else every retry stops at "dpkg was interrupted".
 # From: Issue #493, Issue #479, PR #544
 _ci_apt_attempt() {
-    local packages="$1" apt_opts="$2" upgrade="$3"
+    local packages="$1" apt_opts="$2" upgrade="$3" rc=0 why=""
     shift 3
-    if "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
-        bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}"; then
+    "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive \
+        bash -c "apt-get update && ${upgrade} apt-get install -y ${apt_opts} ${packages}" || rc=$?
+    if [ "${rc}" -eq 0 ]; then
         return 0
     fi
+    [ "${rc}" -ne 124 ] || why=" (timed out after 3m)"
+    ci_log "[CI-INSTALL-APT]" "attempt ${CI_ATTEMPT}/${CI_TRIES}: apt exited ${rc}${why}"
     [ "${CI_ATTEMPT}" -lt "${CI_TRIES}" ] || return 1
-    ci_log "[CI-INSTALL-APT]" "attempt ${CI_ATTEMPT} failed or timed out, retrying"
     if ! "$@" timeout -k 10s 3m env DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         ci_log "[CI-ERROR-INSTALL-0004]" "dpkg --configure -a failed after attempt ${CI_ATTEMPT}"
         return 2
