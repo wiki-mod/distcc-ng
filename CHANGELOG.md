@@ -183,12 +183,24 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (title/tracking/changelog)`, `OSV scan` and the unchanged `Analyze (...)`
   names. See `doc/ci-workflows.md`.
 
-- **`AGENTS.md` `[AG-INT-006]`, `.github/scripts/ci.sh`** (issue #479,
+- **`.github/scripts/ci.sh` shellcheck suppression guard** (issue #479,
   PR #544): the texts `shellcheck disable=` and
   `shellcheck source=/dev/null` are banned from every shell source of
-  the repository; `ci.sh lint` fails on their mere presence and reads
-  the list from the rule. The two Alpine OpenRC units lose their
-  suppression comment; their code is unchanged.
+  the repository, as `AGENTS.md` `[AG-INT-003]` forbids silencing a
+  real warning; `ci.sh lint` fails on their mere presence and reads the
+  list from `.github/yaml/build-manifest.yml`
+  (`ci_engine.banned_shell_texts`). The two Alpine OpenRC units lose
+  their suppression comment; their code is unchanged.
+
+- **`AGENTS.md`** (issue #479, PR #544): `[AG-CI-001]` now describes the
+  rewritten CI (logic once in `ci.sh`, workflows only call it, no
+  composite actions) and `[AG-REL-002]` names the `validate.yml`
+  `metadata` job's changelog check instead of the removed
+  `changelog-check` workflow. `[AG-CODE-004]` applies at every scale (a
+  one-line alias, a test helper, a workflow job), forbids a second
+  implementation of an existing capability, and requires a found
+  duplicate to be consolidated in the same change rather than only
+  reported.
 
 - **`docker/verify/Dockerfile`** (issue #479, PR #544): `actionlint` is
   no longer compiled with Go in a separate `golang` builder stage; the

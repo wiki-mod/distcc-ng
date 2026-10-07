@@ -326,6 +326,10 @@ verify:
 # From: Issue #479, PR #544
 ci_engine:
   selftest_apt: "bats parallel"
+  # What: Texts no shell source may contain; presence fails.
+  # Why: Each silences a real shellcheck warning (AG-INT-003).
+  # From: Issue #479, PR #544
+  banned_shell_texts: ["shellcheck disable=", "shellcheck source=/dev/null"]
   # What: The only actions a workflow may use; transport only.
   # Why: Cache/artifact APIs need a token run: steps never get.
   # From: Issue #479, PR #544

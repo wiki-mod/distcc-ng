@@ -63,7 +63,7 @@ Dieses Mapping ordnet die bisherigen numerischen Regeln der neuen stabilen Rule-
 | 58 | `[AG-WF-014]` | PR Scope |
 | 59 | `[AG-WF-015]` | Harmless Cleanup |
 | 60 | `[AG-WF-016]` | 5-Minuten-Agent-Updates |
-| 61 | `[AG-CI-001]` | Workflow-Dateien / Composite Actions |
+| 61 | `[AG-CI-001]` | CI-Logik einmal in ci.sh, Workflows nur Aufrufe |
 | 62 | `[AG-INT-001]` | Evidence / No Hallucination |
 | 63 | `[AG-INT-002]` | Verifizierbare Commands / RTFM |
 | 64 | `[AG-LAW-003]` | Stabile Rule-IDs |

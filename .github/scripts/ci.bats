@@ -62,6 +62,15 @@ _print() {
     eval "${c}() { printf '%s\n' $(printf '%q ' "$@"); }"
 }
 
+# What: Apply the stub calls in $1, then run the rest of $@.
+# Why: Under run, core-tool stubs stay out of bats cleanup.
+# From: Issue #479, PR #544
+_stubbed() {
+    eval "$1"
+    shift
+    "$@"
+}
+
 # What: Make command $1 print $3 to stderr and return $2.
 # Why: One commented owner for every failing-tool stub.
 # From: Issue #479, PR #544
@@ -189,12 +198,10 @@ _dup_error_ids() {
     _fixture_manifest 'a:' '  b: "x"'
     chmod 640 "${CI_MANIFEST}"
     cp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
-    _fail mv 1 "mv broke"
-    run _ci_sot_set a.b "new"
+    run _stubbed '_fail mv 1 "mv broke"' _ci_sot_set a.b "new"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"mv broke"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
-    unset -f mv
     run _ci_sot_set a.nope "v"
     [ "${status}" -eq 2 ]
     _ci_sot_set a.b "new"
@@ -1032,14 +1039,11 @@ _dup_error_ids() {
     # What: Stub timeout to log the command it would run.
     # Why: The test reads the apt line without a real apt.
     timeout() { shift 3; echo "$*" >> "${log}"; }
-    # What: Install as uid 0 with rm stubbed, in run's subshell.
-    # Why: A test-wide rm stub would break bats' own cleanup.
-    _install_as_root() { _print id 0; _pass rm; _ci_apt_install "$@"; }
-    run _install_as_root "p q" image
+    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q" image
     [ "${status}" -eq 0 ]
     grep -qF 'apt-get update && apt-get full-upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends p q' "${log}"
     : > "${log}"
-    run _install_as_root "p q"
+    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q"
     [ "${status}" -eq 0 ]
     grep -qF 'apt-get install -y' "${log}"
     run grep -c 'upgrade' "${log}"
@@ -1454,11 +1458,9 @@ _dup_error_ids() {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     cd "${fx}"
-    _fail git 128
-    run _ci_ossf_verdict _ci_ossf_check_qa05
+    run _stubbed '_fail git 128' _ci_ossf_verdict _ci_ossf_check_qa05
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
-    unset -f git
     run _ci_ossf_verdict _ci_ossf_check_ac04
     [ "${status}" -eq 2 ]
     run _ci_ossf_verdict _ci_ossf_check_br01
@@ -1878,11 +1880,9 @@ _unregistered_arms() {
 # Why: A lost class skips the jobs that guard its paths.
 # From: Issue #479, PR #544
 @test "classifier: a glob matcher error is rc 2, never no match" {
-    _fail sed 1 "sed broke"
-    run _ci_glob_match "src/*.c" "src/dopt.c"
+    run _stubbed '_fail sed 1 "sed broke"' _ci_glob_match "src/*.c" "src/dopt.c"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"sed broke"* ]]
-    unset -f sed
     _fixture_manifest 'labels:' '  documentation:' '    paths: ["**/*.md"]' '    exclude: ["CHANGELOG.md"]'
     # What: Stub the matcher: error only on the CHANGELOG.md glob.
     # Why: Only the exclude list holds that glob in the fixture.
@@ -1997,11 +1997,10 @@ _unregistered_arms() {
 @test "guards fail closed when they find nothing to check" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
-    cp "${CI_REPO_ROOT}/AGENTS.md" "${fx}/AGENTS.md"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-COMMENT-0002"* ]]
-    CI_REPO_ROOT="${fx}" run ci_guard_shellcheck_directives "${fx}"
+    run ci_guard_shellcheck_directives "${fx}"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0004"* ]]
     run ci_guard_orchestrator_only
@@ -2226,9 +2225,9 @@ _unregistered_arms() {
 }
 
 # What: Scans an initd file holding both banned texts.
-# Why: AG-INT-006: the mere presence is the violation.
-# From: Issue #479, PR #544, AG-INT-006
-@test "directive guard fails on each AG-INT-006 text" {
+# Why: AG-INT-003: the mere presence is the violation.
+# From: Issue #479, PR #544
+@test "directive guard fails on each banned shell text" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
     _ci_mapfile texts _ci_banned_shell_texts
@@ -2238,13 +2237,13 @@ _unregistered_arms() {
         > "${fx}/packaging/svc.initd"
     run ci_guard_shellcheck_directives "${fx}"
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"svc.initd:2: AG-INT-006 text ${texts[0]}"* ]]
-    [[ "${output}" == *"svc.initd:3: AG-INT-006 text ${texts[1]}"* ]]
+    [[ "${output}" == *"svc.initd:2: banned shell text ${texts[0]}"* ]]
+    [[ "${output}" == *"svc.initd:3: banned shell text ${texts[1]}"* ]]
 }
 
 # What: Scans a tree whose source= names a real file.
-# Why: Only the AG-INT-006 texts fail; source= stays usable.
-# From: Issue #479, PR #544, AG-INT-006
+# Why: Only the banned texts fail; source= stays usable.
+# From: Issue #479, PR #544
 @test "directive guard passes a shell tree without banned text" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/lib" "${fx}/.github"
@@ -2257,13 +2256,12 @@ _unregistered_arms() {
 
 # What: Runs ci_cmd_lint on a clean tree, then a banned text.
 # Why: The guard is only proof if the lint entry runs it.
-# From: Issue #479, PR #544, AG-INT-006
-@test "the real lint entry fails on an AG-INT-006 text" {
+# From: Issue #479, PR #544
+@test "the real lint entry fails on a banned shell text" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
     _ci_mapfile texts _ci_banned_shell_texts
     mkdir -p "${fx}/contrib"
-    cp "${CI_REPO_ROOT}/AGENTS.md" "${fx}/AGENTS.md"
     printf '%s\n' '#!/bin/sh' 'x=1' > "${fx}/contrib/tool"
     _pass ci_guard_line_endings ci_guard_full_sha ci_guard_pins_in_sot ci_guard_sot_mirrors \
         ci_guard_orchestrator_only ci_guard_comment_format _ci_lint_actionlint _ci_lint_shellcheck
@@ -2272,21 +2270,23 @@ _unregistered_arms() {
     printf '%s\n' '#!/bin/sh' "# ${texts[0]}SC2086" 'x=1' > "${fx}/contrib/tool"
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 1 ]
-    [[ "${output}" == *"contrib/tool:2: AG-INT-006 text"* ]]
+    [[ "${output}" == *"contrib/tool:2: banned shell text"* ]]
 }
 
-# What: Reads the ban list from AGENTS.md without the rule.
+# What: Reads the ban list from a SOT lacking it, then empty.
 # Why: An empty list would pass every shell file silently.
-# From: Issue #479, PR #544, AG-INT-006
-@test "banned texts fail closed without a readable AG-INT-006" {
-    local fx="${BATS_TEST_TMPDIR}/fx"
-    mkdir -p "${fx}"
-    printf '%s\n' '# rules' > "${fx}/AGENTS.md"
-    CI_REPO_ROOT="${fx}" run _ci_banned_shell_texts
+# From: Issue #479, PR #544
+@test "banned texts fail closed on a missing or empty SOT list" {
+    _fixture_manifest 'ci_engine:' '  selftest_apt: "bats"'
+    run _ci_banned_shell_texts
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0002"* ]]
-    CI_REPO_ROOT="${fx}" run ci_guard_shellcheck_directives "${fx}"
+    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+    run ci_guard_shellcheck_directives "${CI_REPO_ROOT}"
     [ "${status}" -eq 2 ]
+    _fixture_manifest 'ci_engine:' '  banned_shell_texts: []'
+    run _ci_banned_shell_texts
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0003"* ]]
 }
 
 # What: Scans a file whose heredoc has no terminator.
@@ -2668,10 +2668,7 @@ _fake_curl() {
     mkdir -p "${BATS_TEST_TMPDIR}/tool-v1"
     : > "${BATS_TEST_TMPDIR}/tool-v1/stale"
     _forbid curl
-    # What: Fetch with rm failing, inside run's own subshell.
-    # Why: A test-wide rm stub would break bats' own cleanup.
-    _fetch_rm_broken() { _fail rm 1 "rm broke"; _ci_fetch_tool x.tool; }
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _fetch_rm_broken
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail rm 1 "rm broke"' _ci_fetch_tool x.tool
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"rm broke"* ]]
     [[ "${output}" != *"must not run"* ]]
@@ -3056,10 +3053,7 @@ _fake_osv() {
 # From: Issue #479, PR #544
 @test "harden stop fails closed when its state file cannot be read" {
     _fixture_harden_state
-    # What: Stop harden with sed failing, inside run's subshell.
-    # Why: A test-wide sed stub would reach bats' own helpers.
-    _stop_sed_broken() { _fail sed 1 "sed broke"; _ci_harden_stop; }
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stop_sed_broken
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail sed 1 "sed broke"' _ci_harden_stop
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"sed broke"* ]]
     [ ! -e "${_CI_HARDEN_DIR}/post_event.json" ]

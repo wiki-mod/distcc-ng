@@ -63,9 +63,10 @@ orchestrator-only workflows (`ci_guard_orchestrator_only`), the
 a block directly above every function, nested stub and bats test, over
 every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
 `test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`), no
-`AGENTS.md` `[AG-INT-006]` ShellCheck suppression text in any shell
-source of the repository (`ci_guard_shellcheck_directives`, which reads
-the banned texts from that rule), actionlint, and `shellcheck -x` over
+ShellCheck suppression text in any shell source of the repository
+(`ci_guard_shellcheck_directives`, which reads the banned texts from the
+SOT's `ci_engine.banned_shell_texts`; `AGENTS.md` `[AG-INT-003]`
+forbids silencing a real warning), actionlint, and `shellcheck -x` over
 every shell source of those directories (`*.bats` at the
 `--severity=warning` floor Issue #479 sets, everything else at every
 level).

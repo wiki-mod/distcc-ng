@@ -3338,30 +3338,22 @@ _ci_shell_sources() {
         }' {} +
 }
 
-# What: Print the shell texts AG-INT-006 bans, one per line.
-# Why: The rule is the one owner of the list; no checker copy.
-# From: Issue #479, PR #544, AG-INT-006
+# What: Print the SOT's banned shell texts, one per line.
+# Why: The SOT owns the list; ci.sh holds no copy of it.
+# From: Issue #479, PR #544
 _ci_banned_shell_texts() {
-    local line list texts
-    if ! line="$(grep -F -- '**[AG-INT-006]**' "${CI_REPO_ROOT}/AGENTS.md")"; then
-        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0002]" "AGENTS.md has no [AG-INT-006] rule"
-        return 2
-    fi
-    list="${line#*"The texts "}"
-    list="${list%%" MUST NOT appear"*}"
-    texts="$(awk '{ while (match($0, /`[^`]+`/)) {
-        print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' <<< "${list}")" \
-        || return 2
-    if [ -z "${texts}" ] || [ "${list}" = "${line}" ]; then
-        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0003]" "[AG-INT-006] names no banned text"
+    local texts
+    texts="$(_ci_sot_list ci_engine.banned_shell_texts)" || return 2
+    if [ -z "${texts}" ]; then
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0003]" "ci_engine.banned_shell_texts names no text"
         return 2
     fi
     printf '%s\n' "${texts}"
 }
 
-# What: Fail on any AG-INT-006 banned text in a shell source.
-# Why: Its mere presence is the violation; nothing is exempt.
-# From: Issue #479, PR #544, AG-INT-006
+# What: Fail on any SOT-banned text in a shell source.
+# Why: AG-INT-003: a silenced warning is itself a violation.
+# From: Issue #479, PR #544
 ci_guard_shellcheck_directives() {
     local root="${1:-${CI_REPO_ROOT}}" texts out
     local files=()
@@ -3372,7 +3364,7 @@ ci_guard_shellcheck_directives() {
         return 2
     fi
     out="$(CI_BANNED="${texts}" awk 'BEGIN { n = split(ENVIRON["CI_BANNED"], b, "\n") }
-        { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": AG-INT-006 text " b[i] }
+        { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": banned shell text " b[i] }
         ' "${files[@]}")" || return 2
     _ci_guard_hits "[CI-ERROR-GUARD-SHELLCHECK-0001]" <<< "${out}"
 }
