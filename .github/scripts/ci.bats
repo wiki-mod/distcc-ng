@@ -459,7 +459,7 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
 }
 
-# What: PR run, dispatch, head mismatch, two PRs, then no PR.
+# What: PR run, dispatch with fork PRs, bad heads, fork only.
 # Why: A dispatched PR branch is checked too; AG-GH-002 holds.
 # From: Issue #479, PR #544
 @test "metadata finds the pull request of a PR run and a dispatch" {
@@ -467,7 +467,7 @@ _dup_error_ids() {
     printf '%s\n' '{"pull_request":{"number":7,"base":{"sha":"b1"},"head":{"sha":"h1"}}}' > "${ev}"
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${ev}" _ci_metadata_pr
     [ "${PR_NUMBER} ${BASE} ${HEAD}" = "7 b1 h1" ]
-    _print gh '[{"number":9,"baseRefOid":"b2","headRefOid":"h2"}]'
+    _print gh '[{"number":8,"baseRefOid":"f","headRefOid":"f","isCrossRepository":true},{"number":9,"baseRefOid":"b2","headRefOid":"h2","isCrossRepository":false}]'
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=sot-update GITHUB_SHA=h2 \
         run _stubbed '_pass git' eval '_ci_metadata_pr && echo "${PR_NUMBER} ${BASE} ${HEAD}"'
     [ "${status}" -eq 0 ]
@@ -476,11 +476,11 @@ _dup_error_ids() {
         run _stubbed '_forbid git' _ci_metadata_pr
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-META-0003"*"head h2 is not this run's h3"* ]]
-    _print gh '[{"number":9},{"number":10}]'
+    _print gh '[{"number":9,"isCrossRepository":false},{"number":10,"isCrossRepository":false}]'
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run _ci_metadata_pr
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-PR-0001"*"2 open pull requests have head x"* ]]
-    _print gh '[]'
+    _print gh '[{"number":8,"baseRefOid":"f","headRefOid":"f","isCrossRepository":true}]'
     _forbid _ci_metadata_fetch_live
     GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=o/r GITHUB_REF_NAME=x run ci_cmd_metadata
     [ "${status}" -eq 0 ]
@@ -3130,11 +3130,16 @@ _fake_osv() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr create"* ]]
     [[ "${output}" != *"gh pr edit"* ]]
-    _print gh '[{"number":12,"baseRefOid":"b","headRefOid":"h"}]'
+    _print gh '[{"number":12,"baseRefOid":"b","headRefOid":"h","isCrossRepository":false}]'
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"would run: gh pr edit 12"* ]]
     [[ "${output}" != *"gh pr create"* ]]
+    _print gh '[{"number":8,"baseRefOid":"f","headRefOid":"f","isCrossRepository":true}]'
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh pr create"* ]]
+    [[ "${output}" != *"gh pr edit"* ]]
 }
 
 # What: Runs ci_cmd_harden with an unknown subcommand.

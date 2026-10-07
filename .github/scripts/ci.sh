@@ -2131,8 +2131,12 @@ _ci_sot_refresh() {
 # From: Issue #479, PR #544
 _ci_open_pr() {
     local prs n
+    # What: Keep only PRs whose head branch is in this repo.
+    # Why: --head matches a fork's branch of the same name too.
+    # From: Issue #479, PR #544
     prs="$(gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" --head "${1:?branch required}" \
-        --state open --json number,baseRefOid,headRefOid)" || return 1
+        --state open --json number,baseRefOid,headRefOid,isCrossRepository)" || return 1
+    prs="$(jq -ec '[.[] | select(.isCrossRepository == false)]' <<< "${prs}")" || return 1
     n="$(jq -er 'length' <<< "${prs}")" || return 1
     case "${n}" in
         0) ;;
