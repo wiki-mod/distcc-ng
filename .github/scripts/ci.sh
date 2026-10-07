@@ -42,10 +42,10 @@ CI_STACK_LABEL="ci-stack"
 # From: Issue #285, Issue #479, PR #544
 CI_CCACHE_HIT_RE='Hits:[[:space:]]*[1-9]'
 
-# What: The directories whose files CI itself owns.
+# What: The directories and files that CI itself owns.
 # Why: Lint, comment and LF guards check one tree, not three.
 # From: Issue #479, PR #544
-CI_OWNED_DIRS=".github docker test/e2e .clusterfuzzlite"
+CI_OWNED_PATHS=".github docker test/e2e .clusterfuzzlite .trivyignore.yaml"
 
 # What: The known ci.sh subcommands.
 # Why: One list drives dispatch and error text (no twin).
@@ -3378,14 +3378,14 @@ _ci_comment_violations() {
 ci_guard_comment_format() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out d
     local files=() found=()
-    for d in ${CI_OWNED_DIRS}; do
+    for d in ${CI_OWNED_PATHS}; do
         [ -e "${root}/${d}" ] || continue
         _ci_mapfile found find "${root}/${d}" -type f \( -name '*.sh' \
             -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \) || return 2
         files+=("${found[@]}")
     done
     if [ "${#files[@]}" -eq 0 ]; then
-        ci_log "[CI-ERROR-GUARD-COMMENT-0002]" "no file to check under ${root} (${CI_OWNED_DIRS})"
+        ci_log "[CI-ERROR-GUARD-COMMENT-0002]" "no file to check under ${root} (${CI_OWNED_PATHS})"
         return 2
     fi
     for f in "${files[@]}"; do
@@ -3706,7 +3706,7 @@ _ci_lint_actionlint() {
 _ci_lint_shellcheck() {
     local rc=0 d f
     local found=() sh=() bats=()
-    for d in ${CI_OWNED_DIRS}; do
+    for d in ${CI_OWNED_PATHS}; do
         [ -e "${CI_REPO_ROOT}/${d}" ] || continue
         _ci_mapfile found _ci_shell_sources "${CI_REPO_ROOT}/${d}" || return 2
         for f in "${found[@]}"; do
@@ -3730,7 +3730,7 @@ _ci_lint_shellcheck() {
 # From: Issue #479
 ci_cmd_lint() {
     local rc=0 d
-    for d in ${CI_OWNED_DIRS}; do
+    for d in ${CI_OWNED_PATHS}; do
         ci_guard_line_endings "${CI_REPO_ROOT}/${d}" || rc=1
     done
     # What: Full-SHA scan of the dirs that may carry a pin.

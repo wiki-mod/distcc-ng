@@ -103,6 +103,22 @@ uploads any crash reproducers even when the fuzz step fails
 (`scorecard-results`, 5 days). Names and retention live in
 `ci_engine.artifacts`.
 
+**Trivy exceptions**: `ci.sh scan trivy` fails a release image on any
+HIGH or CRITICAL finding except those listed in `.trivyignore.yaml`. An
+entry is only for a finding with no fix available that is assessed as not
+exploitable in that image, and it carries an expiry date so it is
+reviewed again:
+
+```yaml
+vulnerabilities:
+  - id: CVE-YYYY-NNNNN
+    paths:
+      - usr/local/lib/some/path
+    statement: >-
+      Why this is accepted, and what would change the assessment.
+    expired_at: YYYY-MM-DD
+```
+
 **Action pin updates**: `GITHUB_TOKEN` cannot be granted the `workflows`
 permission that editing `.github/workflows/` requires, so `sot-update`
 cannot move these pins. `.github/dependabot.yml` bumps them weekly
