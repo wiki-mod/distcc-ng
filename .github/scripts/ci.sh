@@ -2126,6 +2126,14 @@ _ci_sot_refresh() {
     done
 }
 
+# What: Print the open PR whose head is branch $1, or nothing.
+# Why: sot-update and the metadata gate share one PR lookup.
+# From: Issue #479, PR #544
+_ci_open_pr() {
+    gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" --head "${1:?branch required}" \
+        --state open --json number,baseRefOid,headRefOid --jq '.[0] // empty'
+}
+
 # What: Open or refresh the one SOT pin update pull request.
 # Why: GITHUB_TOKEN PRs start no CI, so a dispatch runs it.
 # From: Issue #479, PR #544
@@ -2151,13 +2159,13 @@ ci_cmd_sot_update() {
     _ci_mutate git commit -q -m "${title}" -- "${CI_MANIFEST}" || return 1
     _ci_git_auth_setup || return 1
     _ci_mutate git push -q -f origin "HEAD:refs/heads/${branch}" || return 1
-    open="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state open \
-        --json number --jq '.[0].number // empty')" || return 1
+    open="$(_ci_open_pr "${branch}")" || return 1
     if [ -z "${open}" ]; then
         _ci_mutate gh pr create --repo "${GITHUB_REPOSITORY}" --base current_dev --head "${branch}" \
             --title "${title}" --body-file "${body}" \
             --label dependencies --label no-changelog-needed || return 1
     else
+        open="$(jq -er '.number' <<< "${open}")" || return 1
         _ci_mutate gh pr edit "${open}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}" || return 1
     fi
     for wf in validate.yml security.yml; do
@@ -3222,9 +3230,7 @@ _ci_metadata_pr() {
             [ "${#range[@]}" -eq 2 ] || return 2
             BASE="${range[0]}" HEAD="${range[1]}" ;;
         workflow_dispatch)
-            json="$(gh pr list --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
-                --head "${GITHUB_REF_NAME:?GITHUB_REF_NAME required}" --state open \
-                --json number,baseRefOid,headRefOid --jq '.[0] // empty')" || return 2
+            json="$(_ci_open_pr "${GITHUB_REF_NAME:?GITHUB_REF_NAME required}")" || return 2
             if [ -z "${json}" ]; then
                 ci_log "[CI-META]" "NotRun: no open pull request has head ${GITHUB_REF_NAME}"
                 return 3

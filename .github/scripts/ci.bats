@@ -3066,6 +3066,24 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
+# What: Dry-runs sot-update with no open PR, then with one.
+# Why: The PR is created once; later runs refresh its body.
+# From: Issue #479, PR #544
+@test "sot-update creates its PR once, then edits the open one" {
+    _print _ci_sot_refresh '| `a` | `x` | `1` | `2` |'
+    _pass _ci_git_identity _ci_git_auth_setup
+    _print gh ''
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh pr create"* ]]
+    [[ "${output}" != *"gh pr edit"* ]]
+    _print gh '{"number":12,"baseRefOid":"b","headRefOid":"h"}'
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run ci_cmd_sot_update
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"would run: gh pr edit 12"* ]]
+    [[ "${output}" != *"gh pr create"* ]]
+}
+
 # What: Runs ci_cmd_harden with an unknown subcommand.
 # Why: start and stop are the agent's only lifecycle steps.
 # From: Issue #479, PR #544
