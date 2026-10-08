@@ -1173,17 +1173,17 @@ ci_cmd_image() {
 }
 
 # What: Print tarball, signature, key URL of pinned Samba.
-# Why: One owner of Samba's release layout; it signs the .tar.
+# Why: The SOT owns the layout; Samba signs the plain .tar.
 # From: Issue #264, Issue #285, Issue #479, PR #544
 _ci_workload_samba_release() {
-    local ver
+    local ver key
     ver="$(_ci_sot_scalar external_versions.samba.version)" || return 2
-    printf '%s\n' "https://download.samba.org/pub/samba/stable/samba-${ver}.tar.gz" \
-        "https://download.samba.org/pub/samba/stable/samba-${ver}.tar.asc" \
-        "https://download.samba.org/pub/samba/samba-pubkey.asc"
+    for key in url sig_url key_url; do
+        _ci_tool_url external_versions.samba "${ver}" "${key}" || return 2
+    done
 }
 
-# What: Fetch Samba, GPG-verify it, extract a fresh tree.
+# What: Fetch Samba, check sha256 and GPG, extract fresh.
 # Why: VER-SOURCE: a bad signature is a hard stop.
 # From: Issue #264, Issue #285, Issue #479, PR #544
 _ci_workload_samba_fetch() {
@@ -1196,6 +1196,7 @@ _ci_workload_samba_fetch() {
         _ci_fresh_dir "${cache}" || return 1
         mkdir -m 700 "${cache}/gnupg" || return 1
         _ci_download "${rel[0]}" "${cache}/src.tar.gz" || return 1
+        _ci_sha256_ok external_versions.samba "${cache}/src.tar.gz" || return 1
         _ci_download "${rel[1]}" "${cache}/sig" || return 1
         _ci_download "${rel[2]}" "${cache}/key" || return 1
         gunzip -c "${cache}/src.tar.gz" > "${cache}/src.tar" || return 1
@@ -1271,7 +1272,7 @@ _ci_workload_self_compile() {
 # Why: Same source/flags; only the distcc launcher may differ.
 # From: Issue #81, Issue #263, Issue #479, PR #544
 _ci_workload_ccache() {
-    local pass="${1:-}" dir="${2:-}" tag
+    local pass="${1:-}" dir="${2:-}" tag src
     local launcher=()
     tag="$(_ci_sot_scalar external_versions.ccache_heartbeat.version)" || return 2
     case "${pass}" in
@@ -1280,7 +1281,8 @@ _ci_workload_ccache() {
         *) ci_log "[CI-ERROR-WORKLOAD-0004]" "ccache pass=${pass} (plain|local)"; return 2 ;;
     esac
     _ci_fresh_dir "${dir}" || return 1
-    git clone --depth 1 --branch "${tag}" https://github.com/ccache/ccache "${dir}/src" >&2 || return 1
+    src="$(_ci_sot_scalar external_versions.ccache_heartbeat.source)" || return 2
+    git clone --depth 1 --branch "${tag}" "https://github.com/${src}" "${dir}/src" >&2 || return 1
     # What: Two named -Wno-error flags, not -Werror off.
     # Why: GCC 12 false positives; other warnings still fail.
     # From: Issue #263
@@ -1438,18 +1440,29 @@ ci_cmd_package() {
     _ci_make_gated "${log}" deb
 }
 
-# What: Generate an SBOM for the just-built source tarball.
+# What: SBOM of the one source tarball the SOT assets name.
 # Why: OSPS-QA-02.02; scans the exact asset a release ships.
-# From: Issue #479
+# From: Issue #479, PR #544
 _ci_package_sbom() {
-    local out="${1:?output file required}" tarball
+    local out="${1:?output file required}" pats pat hits
+    local tars=() matches=()
+    pats="$(_ci_sot_list release.assets)" || return 2
     cd "${CI_REPO_ROOT}" || return 1
-    tarball="$(find . -maxdepth 1 -name 'distcc-*.tar.gz' -print -quit)" || return 1
-    [ -n "${tarball}" ] || {
-        ci_log "[CI-ERROR-PACKAGE-0002]" "no distcc-*.tar.gz found"
-        return 1
-    }
-    ci_cmd_sbom "${tarball}" "${out}"
+    while IFS= read -r pat; do
+        case "${pat}" in *.tar.gz) ;; *) continue ;; esac
+        # What: compgen rc 1 means no match; only a match is read.
+        # Why: An unmatched glob is a normal answer, not an error.
+        # From: Issue #479, PR #544
+        if hits="$(compgen -G "${pat}")"; then
+            mapfile -t matches <<< "${hits}"
+            tars+=("${matches[@]}")
+        fi
+    done <<< "${pats}"
+    case "${#tars[@]}" in
+        1) ci_cmd_sbom "${tars[0]}" "${out}" ;;
+        0) ci_log "[CI-ERROR-PACKAGE-0002]" "no release.assets *.tar.gz file found"; return 1 ;;
+        *) ci_log "[CI-ERROR-PACKAGE-0003]" "${#tars[@]} source tarballs: ${tars[*]}"; return 1 ;;
+    esac
 }
 
 # What: Fail unless a release tag matches configure.ac.
@@ -1591,18 +1604,21 @@ _ci_publish_nightly() {
 }
 
 # What: Succeed if release $1 exists; rc 1 if it does not.
-# Why: An API or auth error must not read as no release.
+# Why: The list holds drafts; an API error is never a "no".
 # From: Issue #479, PR #544
 _ci_gh_release_exists() {
-    local err rc=0
-    err="$(gh release view "$1" --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
-        --json tagName 2>&1 >/dev/null)" || rc=$?
-    [ "${rc}" -ne 0 ] || return 0
-    if grep -q 'release not found' <<< "${err}"; then
-        return 1
+    local tags rc=0
+    if ! [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        ci_log "[CI-ERROR-PUBLISH-0011]" "release tag \"$1\" is not [A-Za-z0-9._-]+"
+        return 2
     fi
-    ci_error "[CI-ERROR-PUBLISH-0010]" "cannot look up release $1" "${err}"
-    return 2
+    tags="$(gh api --paginate "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}/releases" \
+        --jq '.[].tag_name' 2>&1)" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        ci_error "[CI-ERROR-PUBLISH-0010]" "cannot list releases to look up $1" "${tags}"
+        return 2
+    fi
+    grep -qxF -- "$1" <<< "${tags}"
 }
 
 # What: Create GitHub release $1 at $2 with the SOT assets.
@@ -1797,14 +1813,22 @@ $(printf '%s\n' "$@")
 _ci_publish_draft_release() {
     : "${GH_TOKEN:?GH_TOKEN required}"
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local since since_date pr_json rows number title category
+    local since since_date pr_json rows number title category n
     local security=() bug=() enhancement=() documentation=()
     since="$(gh release list --repo "${GITHUB_REPOSITORY}" --exclude-drafts \
         --exclude-pre-releases --json tagName,publishedAt \
         --jq 'sort_by(.publishedAt) | last | .publishedAt // empty')" || return 1
     since_date="${since:-2000-01-01}"
     pr_json="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state merged --base current_dev \
-        --search "merged:>=${since_date}" --json number,title --limit 200)" || return 1
+        --search "merged:>=${since_date}" --json number,title --limit 1000)" || return 1
+    # What: Fail when the list fills the limit; it may be cut off.
+    # Why: A draft missing merged PRs must not pass as complete.
+    # From: Issue #479, PR #544
+    n="$(jq -er 'length' <<< "${pr_json}")" || return 2
+    if [ "${n}" -ge 1000 ]; then
+        ci_log "[CI-ERROR-PUBLISH-0012]" "1000+ PRs merged since ${since_date}; the list may be cut"
+        return 1
+    fi
     rows="$(jq -r '.[] | [.number, .title] | @tsv' <<< "${pr_json}")" || return 2
     while IFS=$'\t' read -r number title; do
         [ -n "${number}" ] || continue
@@ -2462,7 +2486,8 @@ _ci_ref_protected() {
 # Why: One owner maps events, crons and tasks to jobs.
 # From: Issue #479, PR #544
 ci_cmd_route() {
-    local wf="${1:?workflow required}" scans openssf weekly task="" gc sot hb langs sans
+    local wf="${1:?workflow required}" scans openssf weekly task="" tasks t on run langs sans
+    local outs=()
     case "${wf}" in
         security)
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "schedule" ]; then
@@ -2483,14 +2508,28 @@ ci_cmd_route() {
                 codeql_languages "${langs}" cfl_sanitizers "${sans}" ;;
         housekeeping)
             weekly="$(_ci_schedule_flag housekeeping_weekly)" || return 2
+            tasks="$(_ci_sot_children housekeeping_tasks)" || return 2
             if [ "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" = "workflow_dispatch" ]; then
                 task="$(_ci_event_value .inputs.task)" || return 2
+                if ! grep -qxF -- "${task}" <<< "${tasks}"; then
+                    ci_log "[CI-ERROR-ROUTE-0002]" "task=\"${task}\" is no housekeeping_tasks key"
+                    return 2
+                fi
             fi
-            gc=false sot=false hb=false
-            if [ "${task}" = gc ]; then gc=true; fi
-            if [ "${weekly}" = true ] || [ "${task}" = sot-update ]; then sot=true; fi
-            if [ "${weekly}" = true ] || [ "${task}" = heartbeat ]; then hb=true; fi
-            _ci_output gc "${gc}" sot_update "${sot}" heartbeat "${hb}" ;;
+            # What: A task runs if dispatched, or weekly when it is.
+            # Why: The SOT owns tasks and cadence; outputs follow names.
+            # From: Issue #479, PR #544
+            for t in ${tasks}; do
+                on="$(_ci_sot_scalar "housekeeping_tasks.${t}.weekly")" || return 2
+                case "${on}" in
+                    true|false) ;;
+                    *) ci_log "[CI-ERROR-ROUTE-0003]" "housekeeping_tasks.${t}.weekly=${on} (true|false)"; return 2 ;;
+                esac
+                run=false
+                if [ "${task}" = "${t}" ] || { [ "${weekly}" = true ] && [ "${on}" = true ]; }; then run=true; fi
+                outs+=("${t//-/_}" "${run}")
+            done
+            _ci_output "${outs[@]}" ;;
         *) ci_log "[CI-ERROR-ROUTE-0001]" "no route for workflow=${wf} (security|housekeeping)"; return 2 ;;
     esac
 }
@@ -2842,12 +2881,12 @@ EOF
     fi
 }
 
-# What: Expand {version} and {bare} in a SOT tool url.
+# What: Expand {version}/{bare} in a SOT url key, default url.
 # Why: One url owner for fetch and the sot-update digest.
 # From: Issue #479, PR #544
 _ci_tool_url() {
-    local spec="$1" ver="$2" url
-    url="$(_ci_sot_scalar "${spec}.url")" || return 2
+    local spec="$1" ver="$2" key="${3:-url}" url
+    url="$(_ci_sot_scalar "${spec}.${key}")" || return 2
     url="${url//\{version\}/${ver}}"
     printf '%s\n' "${url//\{bare\}/${ver#v}}"
 }
@@ -2875,13 +2914,26 @@ _ci_download() {
     return 1
 }
 
+# What: Check $2 against SOT pin $1.sha256; remove it if not.
+# Why: One pin check for every fetched file; none runs bare.
+# From: Issue #479, PR #544
+_ci_sha256_ok() {
+    local spec="$1" file="$2" sha
+    sha="$(_ci_sot_scalar "${spec}.sha256")" || return 2
+    if ! printf '%s  %s\n' "${sha}" "${file}" | sha256sum -c --quiet -; then
+        ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${spec} (${file##*/})"
+        rm -f "${file}" || return 2
+        return 2
+    fi
+}
+
 # What: Fetch, sha256-check and cache one SOT tool; print dir.
 # Why: One tool fetcher; a missing sha256 pin fails closed.
 # From: Issue #479, PR #544
 _ci_fetch_tool() {
-    local spec="$1" ver sha url kind dest file bin
+    local spec="$1" ver url kind dest file bin
     ver="$(_ci_sot_scalar "${spec}.version")" || return 2
-    sha="$(_ci_sot_scalar "${spec}.sha256")" || return 2
+    _ci_sot_scalar "${spec}.sha256" >/dev/null || return 2
     url="$(_ci_tool_url "${spec}" "${ver}")" || return 2
     kind="$(_ci_sot_optional "${spec}.archive")" || return 2
     dest="${RUNNER_TEMP:-/tmp}/${spec##*.}-${ver}"
@@ -2890,11 +2942,7 @@ _ci_fetch_tool() {
         mkdir -p "${dest}" || return 2
         file="${dest}.download"
         _ci_download "${url}" "${file}" || return 2
-        if ! printf '%s  %s\n' "${sha}" "${file}" | sha256sum -c --quiet -; then
-            ci_log "[CI-ERROR-FETCH-0001]" "sha256 mismatch for ${spec} ${ver}"
-            rm -f "${file}"
-            return 2
-        fi
+        _ci_sha256_ok "${spec}" "${file}" || return 2
         case "${kind:-tar.gz}" in
             tar.gz) tar -xzf "${file}" -C "${dest}" || return 2; rm -f "${file}" || return 2 ;;
             binary)
@@ -3368,14 +3416,28 @@ _ci_comment_violations() {
     ' "$1"
 }
 
+# What: Print each CI_OWNED_PATHS entry present under root $1.
+# Why: An absent owned path is reported NotRun, never skipped.
+# From: Issue #479, PR #544
+_ci_owned_paths_in() {
+    local d
+    for d in ${CI_OWNED_PATHS}; do
+        if [ -e "$1/${d}" ]; then
+            printf '%s\n' "${d}"
+        else
+            ci_log "[CI-LINT]" "NotRun: ${d} absent under $1"
+        fi
+    done
+}
+
 # What: Fail on malformed or missing What/Why/From blocks.
 # Why: #479's comment guard; AG-CODE-001 defines the form.
 # From: Issue #479, PR #544
 ci_guard_comment_format() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out d
-    local files=() found=()
-    for d in ${CI_OWNED_PATHS}; do
-        [ -e "${root}/${d}" ] || continue
+    local files=() found=() owned=()
+    _ci_mapfile owned _ci_owned_paths_in "${root}" || return 2
+    for d in "${owned[@]}"; do
         _ci_mapfile found find "${root}/${d}" -type f \( -name '*.sh' \
             -o -name '*.bats' -o -name '*.yml' -o -name '*.yaml' -o -name 'Dockerfile*' \) || return 2
         files+=("${found[@]}")
@@ -3491,15 +3553,15 @@ ci_guard_sot_mirrors() {
     f="${root}/.github/workflows/housekeeping.yml"
     if [ -f "${f}" ]; then
         pkgs="$({ echo all; _ci_sot_list release.ghcr_packages; } | sort)" || return 2
-        got="$(awk '
-            /^      package:$/ { inpkg = 1; next }
-            inpkg && /^        options:$/ { inopt = 1; next }
-            inopt && /^          - / { sub(/^          - /, ""); print; next }
-            inopt { exit }
-        ' "${f}" | sort)" || return 2
+        got="$(_ci_dispatch_options "${f}" package | sort)" || return 2
         _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0002]" \
             "housekeeping package options differ from all + release.ghcr_packages" "${pkgs}" "${got}" \
             || rc=$?
+        [ "${rc}" -ne 2 ] || return 2
+        want="$(_ci_sot_children housekeeping_tasks | sort)" || return 2
+        got="$(_ci_dispatch_options "${f}" task | sort)" || return 2
+        _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0004]" \
+            "housekeeping task options differ from housekeeping_tasks" "${want}" "${got}" || rc=$?
         [ "${rc}" -ne 2 ] || return 2
     fi
     f="${root}/.github/dependabot.yml"
@@ -3518,6 +3580,19 @@ ci_guard_sot_mirrors() {
             "dependabot.yml milestones differ from bot_milestone.number" "${want}" "${got}" || rc=$?
     fi
     return "${rc}"
+}
+
+# What: Print the choice options of input $2 in workflow $1.
+# Why: Mirror checks read every choice list one way.
+# From: Issue #479, PR #544
+_ci_dispatch_options() {
+    awk -v name="$2" '
+        $0 == "      " name ":" { inpkg = 1; next }
+        inpkg && /^      [A-Za-z0-9_-]+:$/ { exit }
+        inpkg && /^        options:$/ { inopt = 1; next }
+        inopt && /^          - / { sub(/^          - /, ""); print; next }
+        inopt { exit }
+    ' "$1"
 }
 
 # What: Fail with a diff when a YAML literal list drifts.
@@ -3701,9 +3776,9 @@ _ci_lint_actionlint() {
 # From: Issue #479, PR #544
 _ci_lint_shellcheck() {
     local rc=0 d f
-    local found=() sh=() bats=()
-    for d in ${CI_OWNED_PATHS}; do
-        [ -e "${CI_REPO_ROOT}/${d}" ] || continue
+    local found=() sh=() bats=() owned=()
+    _ci_mapfile owned _ci_owned_paths_in "${CI_REPO_ROOT}" || return 2
+    for d in "${owned[@]}"; do
         _ci_mapfile found _ci_shell_sources "${CI_REPO_ROOT}/${d}" || return 2
         for f in "${found[@]}"; do
             case "${f}" in
@@ -3733,7 +3808,10 @@ ci_cmd_lint() {
     # Why: Scripts hold none; ci.bats holds test fixtures.
     # From: Issue #479
     for d in .github/workflows .github/yaml docker; do
-        [ -e "${CI_REPO_ROOT}/${d}" ] || continue
+        if [ ! -e "${CI_REPO_ROOT}/${d}" ]; then
+            ci_log "[CI-LINT]" "full-SHA NotRun: ${d} absent"
+            continue
+        fi
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1

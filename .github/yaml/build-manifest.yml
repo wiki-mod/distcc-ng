@@ -33,10 +33,14 @@ external_versions:
   popt_vendor:
     version: "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)"
   # What: Samba release used by the source-adequacy check.
-  # Why: GPG-verified at fetch; bumped by hand with its key.
-  # From: Issue #264, Issue #479
+  # Why: sha256 and GPG checked at fetch; bumped by hand.
+  # From: Issue #264, Issue #479, PR #544
   samba:
     version: "4.25.0"
+    url: "https://download.samba.org/pub/samba/stable/samba-{version}.tar.gz"
+    sha256: "2e2cb7296833b35b8f7a7fb76045e0c57adc0c2cd03264b37df5d58e40f28437"
+    sig_url: "https://download.samba.org/pub/samba/stable/samba-{version}.tar.asc"
+    key_url: "https://download.samba.org/pub/samba/samba-pubkey.asc"
   # What: actionlint release the verify image installs.
   # Why: ci.sh lint runs it inside the buildtools image.
   # From: Issue #267, Issue #479, PR #544
@@ -363,6 +367,17 @@ ci_engine:
     release_packages:
       name: "distcc-release-packages"
       retention_days: "90"
+
+# What: Housekeeping tasks for dispatch, each weekly or not.
+# Why: Route, task choice and job gates read one task list.
+# From: Issue #479, PR #544
+housekeeping_tasks:
+  gc:
+    weekly: "false"
+  sot-update:
+    weekly: "true"
+  heartbeat:
+    weekly: "true"
 
 # What: Each scheduled workflow cron; ci.sh route reads it.
 # Why: on.schedule must repeat it; a guard keeps both equal.

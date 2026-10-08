@@ -1076,15 +1076,23 @@ _dup_error_ids() {
     [ "${status}" -eq 1 ]
 }
 
-# What: Samba fetch: bad signature, good one, then cached.
-# Why: VER-SOURCE: a bad signature must stop the build.
+# What: Samba fetch: bad pin, bad signature, good, cached.
+# Why: VER-SOURCE: a bad pin or signature must stop the build.
 # From: Issue #264, Issue #285, Issue #479, PR #544
 @test "samba fetch stops on a bad signature and caches a good one" {
     local cache="${BATS_TEST_TMPDIR}/c" dest="${BATS_TEST_TMPDIR}/d" calls="${BATS_TEST_TMPDIR}/dl"
-    # What: Stub the download to log the URL and write a file.
+    _fixture_manifest 'external_versions:' '  samba:' '    version: "9"' '    url: "https://h/s-{version}.tgz"' \
+        "    sha256: \"$(printf 'x' | sha256sum | cut -d' ' -f1)\"" '    sig_url: "https://h/s-{version}.asc"' \
+        '    key_url: "https://h/k.asc"'
+    # What: Stub the download to log the URL and write $FX_BODY.
     # Why: A verified cache must skip every later download.
-    _ci_download() { echo "$1" >> "${calls}"; printf 'x' > "$2"; }
+    _ci_download() { echo "$1" >> "${calls}"; printf '%s' "${FX_BODY:-x}" > "$2"; }
     _pass gunzip tar
+    FX_BODY=y CI_WORKLOAD_CACHE="${cache}" run _ci_workload_samba_fetch "${dest}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-FETCH-0001"*"external_versions.samba"* ]]
+    [ "$(head -1 "${calls}")" = "https://h/s-9.tgz" ]
+    [ ! -e "${cache}/samba/.verified" ]
     # What: Stub gpg: import passes; verify exits $GPG_RC.
     # Why: Only a verified signature may mark the cache good.
     gpg() { case "$*" in *--verify*) return "${GPG_RC:-0}" ;; esac; }
@@ -1485,7 +1493,11 @@ _dup_error_ids() {
     touch "${root}/distcc-9.9.tar.gz"
     CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
     [ "${status}" -eq 0 ]
-    [ "${output}" = "ci_cmd_sbom ./distcc-9.9.tar.gz out.json" ]
+    [ "${output}" = "ci_cmd_sbom distcc-9.9.tar.gz out.json" ]
+    touch "${root}/distcc-9.8.tar.gz"
+    CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PACKAGE-0003"*"2 source tarballs"* ]]
 }
 
 # What: Every container variant and release action, stubbed.
@@ -1940,7 +1952,7 @@ _dup_error_ids() {
         case "$1 $2" in
             "release list") echo 2026-01-01 ;;
             "pr list") echo '[{"number":5,"title":"fix(ci): a"}]' ;;
-            "release view") echo "release not found" >&2; return 1 ;;
+            "api --paginate") echo v1.0-NG ;;
         esac
     }
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
@@ -1952,12 +1964,24 @@ _dup_error_ids() {
         case "$1 $2" in
             "release list") echo 2026-01-01 ;;
             "pr list") echo '[]' ;;
-            "release view") echo "HTTP 401: Bad credentials" >&2; return 1 ;;
+            "api --paginate") echo "HTTP 401: Bad credentials" >&2; return 1 ;;
         esac
     }
     DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0010"*"Bad credentials"* ]]
+    [[ "${output}" != *"would run: gh release"* ]]
+    # What: Stub gh: the merged-PR list fills its limit.
+    # Why: A cut list must stop the draft, not shorten it.
+    gh() {
+        case "$1 $2" in
+            "release list") echo 2026-01-01 ;;
+            "pr list") jq -cn '[range(1000) | {number: ., title: "fix(ci): x"}]' ;;
+        esac
+    }
+    DRY_RUN=true GH_TOKEN=x GITHUB_REPOSITORY=o/r run _ci_publish_draft_release
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0012"* ]]
     [[ "${output}" != *"would run: gh release"* ]]
 }
 
@@ -2721,7 +2745,9 @@ _jobs_without_timeout() {
 # From: Issue #479, PR #544
 @test "route housekeeping: the weekly cron or a dispatch task" {
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
-    _fixture_manifest 'schedules:' '  housekeeping_weekly:' '    workflow: "housekeeping"' '    cron: "0 5 * * 1"'
+    _fixture_manifest 'schedules:' '  housekeeping_weekly:' '    workflow: "housekeeping"' '    cron: "0 5 * * 1"' \
+        'housekeeping_tasks:' '  gc:' '    weekly: "false"' '  sot-update:' '    weekly: "true"' \
+        '  heartbeat:' '    weekly: "true"'
     echo '{"schedule":"0 5 * * 1"}' > "${ev}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME=schedule run ci_cmd_route housekeeping
     [ "$(tr '\n' ' ' < "${out}")" = "gc=false sot_update=true heartbeat=true " ]
@@ -2729,6 +2755,12 @@ _jobs_without_timeout() {
     echo '{"inputs":{"task":"gc"}}' > "${ev}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME=workflow_dispatch run ci_cmd_route housekeeping
     [ "$(tr '\n' ' ' < "${out}")" = "gc=true sot_update=false heartbeat=false " ]
+    : > "${out}"
+    echo '{"inputs":{"task":"zap"}}' > "${ev}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_PATH="${ev}" GITHUB_EVENT_NAME=workflow_dispatch run ci_cmd_route housekeeping
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-ROUTE-0002"*"zap"* ]]
+    [ ! -s "${out}" ]
     run ci_cmd_route nightly
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
@@ -2743,9 +2775,11 @@ _jobs_without_timeout() {
     [ "${status}" -eq 0 ]
     mkdir -p "${fx}/.github/workflows"
     _fixture_manifest 'schedules:' '  n:' '    workflow: "w"' '    cron: "0 1 * * *"' \
-        'release:' '  ghcr_packages: ["p"]' 'bot_milestone:' '  number: "3"'
+        'release:' '  ghcr_packages: ["p"]' 'bot_milestone:' '  number: "3"' \
+        'housekeeping_tasks:' '  gc:' '    weekly: "false"'
     printf '%s\n' 'on:' '  schedule:' "    - cron: '0 2 * * *'" > "${fx}/.github/workflows/w.yml"
-    printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      package:' '        options:' \
+    printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      task:' '        options:' '          - gc' \
+        '          - zap' '      package:' '        options:' \
         '          - all' '          - q' '        default: all' > "${fx}/.github/workflows/housekeeping.yml"
     printf '%s\n' 'updates:' '  - package-ecosystem: a' '    milestone: 4' '  - package-ecosystem: b' \
         > "${fx}/.github/dependabot.yml"
@@ -2754,6 +2788,7 @@ _jobs_without_timeout() {
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0001"*"0 2 * * *"* ]]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0003"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0004"*"> zap"* ]]
 }
 
 # What: Runs three checks with the checkout check failing.
@@ -2790,6 +2825,7 @@ _jobs_without_timeout() {
         > "${fx}/.github/a.sh"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[CI-LINT] NotRun: docker absent under ${fx}"* ]]
     printf '%s\n' '#!/usr/bin/env bash' '# ====' '# SECTION' '# ====' 'x=1' > "${fx}/.github/a.sh"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 1 ]
@@ -3466,20 +3502,25 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
 }
 
-# What: Release lookup: exists, missing, API error; create.
+# What: Release lookup: listed, unlisted, API error, bad tag.
 # Why: An API or auth error must never read as no release.
 # From: Issue #479, PR #544
 @test "release lookup tells missing from an API error" {
-    _pass gh
+    _print gh v0 v1
     GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
     [ "${status}" -eq 0 ]
-    _fail gh 1 "release not found"
+    _print gh v0 v10
     GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
     [ "${status}" -eq 1 ]
     _fail gh 1 "HTTP 401: Bad credentials"
     GITHUB_REPOSITORY=o/r run _ci_gh_release_exists v1
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0010"*"Bad credentials"* ]]
+    _forbid gh
+    GITHUB_REPOSITORY=o/r run _ci_gh_release_exists 'v1 x'
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-PUBLISH-0011"* ]]
+    [[ "${output}" != *"must not run"* ]]
     _print _ci_release_assets a.tar.gz b.rpm
     DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_gh_release_create v1 abc t n --prerelease
     [ "${status}" -eq 0 ]

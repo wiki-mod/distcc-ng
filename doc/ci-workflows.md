@@ -186,6 +186,9 @@ The crons live in `build-manifest.yml` (`schedules`); each workflow's
 `on.schedule` repeats them literally, and `ci_guard_sot_mirrors` fails
 lint when the two differ. A `route` job (`ci.sh route <workflow>`) reads
 the firing cron from the event and decides which jobs that run starts.
+Housekeeping's tasks and their weekly cadence live in `housekeeping_tasks`;
+`route` rejects a dispatched task outside that list, and
+`ci_guard_sot_mirrors` binds the `task` choice options to it.
 The security scans run unless `route` wrote `scans=false`, so a failed
 `route` (no output) still runs every required scan instead of skipping it.
 
