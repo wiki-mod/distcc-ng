@@ -1030,7 +1030,9 @@ ci_cmd_e2e() {
             _ci_step_summary _ci_control_build_summary "${st}" || return 1
             return "${st}" ;;
         *)
-            if ! _ci_sot_optional "e2e.modes.${mode}.workload" | grep -q .; then
+            local workload
+            workload="$(_ci_sot_optional "e2e.modes.${mode}.workload")" || return 2
+            if [ -z "${workload}" ]; then
                 ci_log "[CI-ERROR-E2E-0013]" "unknown e2e mode=\"${mode}\" (control or an e2e.modes key)"
                 return 2
             fi

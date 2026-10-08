@@ -189,6 +189,7 @@ EOF
 # Why: A typo must fail with its id before any tool runs.
 # From: Issue #479, PR #544
 @test "unknown commands, variants and modes fail closed before any work" {
+    echo "case: unknown commands, variants and modes fail closed before any work"
     local args id
     local argv=()
     run bash "${BATS_TEST_DIRNAME}/ci.sh" bogus-command
@@ -213,6 +214,11 @@ build bogus|BUILD-0002
 test bogus|TEST-0005
 harden bogus|HARDEN-0001
 EOF
+    echo "case: an e2e mode whose SOT entry is unreadable fails with the SOT id, not as unknown"
+    _fixture_manifest 'e2e:' '  modes:' '    x:' '      workload:' '        k: "v"'
+    run ci_main e2e x
+    [ "${status}" -eq 2 ] && [[ "${output}" == *"[CI-ERROR-SOT-0010]"* ]] && [[ "${output}" != *"E2E-0013"* ]] \
+        || { echo "e2e x: rc ${status}: ${output}"; return 1; }
 }
 
 # What: Guards ci.sh, then a copy that raises one id twice.
