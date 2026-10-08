@@ -1211,11 +1211,11 @@ EOF
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
     _print _ci_event_range b h
-    _print _ci_changed_paths doc/x.md
+    _print _ci_semantic_paths doc/x.md
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=false" ]
-    _print _ci_changed_paths test/fuzz/a.c
+    _print _ci_semantic_paths test/fuzz/a.c
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
@@ -2180,6 +2180,55 @@ src/x.c|build package
 src/x.c,b.py|build e2e package
 src/x.py|build e2e package
 a.md,src/x.c|build package
+EOF
+    echo "case: impact: a comment- or format-only edit is NOOP; a meaning change selects its class"
+    local r="${BATS_TEST_TMPDIR}/sr" base head file expr
+    git init -q "${r}" && git -C "${r}" config user.email t@t && git -C "${r}" config user.name t
+    printf '%s\n' '#!/bin/bash' '# note one' 'x=1 # tail' "cat <<'H'" '# data' 'H' > "${r}/a.sh"
+    printf '%s\n' '@test "t" {' '    # in test' '    run true' '}' > "${r}/a.bats"
+    printf '%s\n' '/*' ' * block one' ' */' 'int a; // line one' 'int b;' > "${r}/a.c"
+    printf '%s\n' '# syntax=docker/dockerfile:1' '# comment one' 'FROM x' 'RUN true' > "${r}/Dockerfile"
+    printf '%s\n' '# py one' 'x = 1' > "${r}/a.py"
+    printf '%s\n' 'impact_classes:' '  sh:' '    paths: ["*.sh", "*.bats"]' '    phases: ["p-sh"]' '  c:' \
+        '    paths: ["*.c"]' '    phases: ["p-c"]' '  dock:' '    paths: ["Dockerfile"]' '    phases: ["p-dock"]' \
+        '  py:' '    paths: ["*.py"]' '    phases: ["p-py"]' '  sot:' '    paths: ["sot.yml"]' '    phases: ["p-sot"]' \
+        '# sot note' 'x: "1"' > "${r}/sot.yml"
+    git -C "${r}" add -A && git -C "${r}" commit -qm base
+    base="$(git -C "${r}" rev-parse HEAD)"
+    CI_MANIFEST="${r}/sot.yml"
+    while IFS='|' read -r file expr want; do
+        git -C "${r}" checkout -q --detach "${base}"
+        case "${expr}" in
+            ADD) printf '%s\n' 'y=1' > "${r}/${file}" ;;
+            DEL) rm "${r}/${file}" ;;
+            *) sed -i "${expr}" "${r}/${file}" ;;
+        esac
+        git -C "${r}" add -A && git -C "${r}" commit -qm row
+        head="$(git -C "${r}" rev-parse HEAD)"
+        _ci_sot_index_drop
+        CI_REPO_ROOT="${r}" run --separate-stderr ci_cmd_impact "${base}" "${head}"
+        [ "${status}" -eq 0 ] && [ "${output}" = "${want}" ] \
+            || { echo "${file} ${expr}: rc ${status}, want ${want}, got ${output}"; return 1; }
+    done <<'EOF'
+a.sh|s/note one/note two/|NOOP
+a.sh|s/# tail/# other/|NOOP
+a.sh|s/$/\r/|NOOP
+a.sh|s/^# data$/# data2/|p-sh
+a.sh|1s/bash/sh/|p-sh
+a.sh|s/x=1/x=2/|p-sh
+a.bats|s/# in test/# in test 2/|NOOP
+a.c|s/block one/block two/|NOOP
+a.c|s/line one/line two/|NOOP
+a.c|s/line one/line one \\/|p-c
+a.c|s/block one/block \/* one/|p-c
+a.c|s/int b;/int c;/|p-c
+Dockerfile|s/comment one/comment two/|NOOP
+Dockerfile|s/dockerfile:1/dockerfile:1.7/|p-dock
+a.py|s/py one/py two/|p-py
+sot.yml|s/sot note/sot other/|NOOP
+sot.yml|s/x: "1"/x: "2"/|p-sot
+b.sh|ADD|p-sh
+a.py|DEL|p-py
 EOF
     echo "case: impact: a SOT or classifier error is rc 2, never NOOP"
     _fixture_manifest 'impact_classes:' '  src:' '    paths: ["src/**"]'

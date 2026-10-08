@@ -175,6 +175,17 @@ relies on for its daemon tests), the nightly/release `build_test` 20, the
 a docs-only PR selects none (`NOOP`). Lint, the `ci.bats` self-test,
 metadata and the security scans run on every PR regardless.
 
+A changed path counts only when its meaning changed (`ci.sh impact`,
+`impact-hit`): shell and bats files are compared through bash's own
+parser (comments dropped, heredocs and strings kept, the shebang kept),
+C sources and headers through gcc's comment-stripping preprocessor (an
+added line with `/*`, `*/`, `??/` or a trailing backslash still counts,
+since it can break a `-Werror` build), the SOT through its reader's
+index, and Dockerfiles without their comment lines (parser directives
+kept; a Dockerfile with a heredoc always counts). Line endings are
+ignored. Any other file type, and any added, deleted or unparsable
+file, counts on every edit.
+
 ## Distributed-compile e2e (`ci.sh e2e <mode>`)
 
 One harness, defined per mode in `build-manifest.yml` (`e2e.modes`):

@@ -711,12 +711,139 @@ _ci_changed_paths() {
     printf '%s\n' "${out}"
 }
 
+# What: Print the SOT path in the repo; rc 3 if outside it.
+# Why: Other revisions are read by path, never a literal.
+# From: Issue #479, PR #544
+_ci_sot_relpath() {
+    local dir name
+    dir="$(cd -- "$(dirname -- "${CI_MANIFEST}")" && pwd)" || return 2
+    name="$(basename -- "${CI_MANIFEST}")" || return 2
+    case "${dir}" in
+        "${CI_REPO_ROOT}") printf '%s\n' "${name}" ;;
+        "${CI_REPO_ROOT}"/*) printf '%s/%s\n' "${dir#"${CI_REPO_ROOT}/"}" "${name}" ;;
+        *) return 3 ;;
+    esac
+}
+
+# What: Print the SOT index of CI_MANIFEST as two arrays.
+# Why: Two SOT revisions mean the same iff these are equal.
+# From: Issue #479, PR #544
+_ci_sot_dump() {
+    _ci_sot_index_drop
+    _ci_sot_index || return
+    declare -p _CI_SOT_K _CI_SOT_V
+}
+
+# What: Write file $2 of revision $1 to $3; rc 3 if absent.
+# Why: One owner reads files of another commit.
+# From: Issue #479, PR #544
+_ci_rev_file() {
+    local listed
+    listed="$(git -C "${CI_REPO_ROOT}" ls-tree --name-only "$1" -- "$2")" || return 1
+    [ -n "${listed}" ] || return 3
+    git -C "${CI_REPO_ROOT}" show "$1:$2" > "$3" || return 1
+}
+
+# What: Print path $2 at rev $1 minus comments and format.
+# Why: A comment- or format-only edit must compare equal.
+# From: Issue #479, PR #544
+_ci_path_normalized() {
+    local f rc=0 first="" sot=""
+    f="$(mktemp)" || return 2
+    _ci_rev_file "$1" "$2" "${f}" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        rm -f "${f}"
+        [ "${rc}" -eq 3 ] && return 3
+        return 2
+    fi
+    sed -i 's/\r$//' "${f}" || { rm -f "${f}"; return 2; }
+    sot="$(_ci_sot_relpath)" || rc=$?
+    case "${rc}" in
+        0|3) rc=0 ;;
+        *) rm -f "${f}"; return 2 ;;
+    esac
+    case "$2" in
+        "${sot}")
+            # What: The SOT means what its reader indexes from it.
+            # Why: Comments and spacing never reach the index.
+            CI_MANIFEST="${f}" _ci_sot_dump || rc=4 ;;
+        *.sh|*.bash|*.bats)
+            # What: bash's own parser prints the body without comments.
+            # Why: Heredocs and strings stay data; nothing is executed.
+            first="$(sed -n '1p' "${f}")" || rc=2
+            case "${first}" in '#!'*) printf '%s\n' "${first}" ;; esac
+            { printf '__ci_w() {\n'; sed 's/^@test \(".*"\) {$/__ci_t() {/' "${f}"; printf '\n}\n'; } > "${f}.w" \
+                && bash -c 'source "$1" && declare -f __ci_w' _ "${f}.w" || rc=4
+            rm -f "${f}.w" ;;
+        *.c|*.h)
+            if ! command -v gcc >&2; then
+                ci_log "[CI-ERROR-IMPACT-0001]" "gcc is required to compare C sources"
+                rm -f "${f}"
+                return 2
+            fi
+            gcc -fpreprocessed -dD -E -P -x c "${f}" || rc=4 ;;
+        Dockerfile|*/Dockerfile|*/Dockerfile.*)
+            # What: Drop comment lines but keep parser directives.
+            # Why: A heredoc body is data, so such a file is not cut.
+            if grep -q '<<' "${f}"; then
+                rc=4
+            else
+                awk '/^[[:space:]]*$/ { next }
+                    /^#[[:space:]]*(syntax|escape|check)[[:space:]]*=/ { print; next }
+                    /^[[:space:]]*#/ { next } { print }' "${f}" || rc=2
+            fi ;;
+        *) cat "${f}" || rc=2 ;;
+    esac
+    rm -f "${f}"
+    return "${rc}"
+}
+
+# What: rc 0 if path $3 means something else at $2 than $1.
+# Why: Unsure counts as changed: added, deleted, unparsable.
+# From: Issue #479, PR #544
+_ci_path_semantic_changed() {
+    local a b ra=0 rb=0 added
+    b="$(_ci_path_normalized "$2" "$3")" || rb=$?
+    [ "${rb}" -ne 2 ] || return 2
+    a="$(_ci_path_normalized "$1" "$3")" || ra=$?
+    [ "${ra}" -eq 0 ] && [ "${rb}" -eq 0 ] && [ "${a}" = "${b}" ] || return 0
+    case "$3" in
+        *.c|*.h)
+            # What: An added line with /*, */, ??/ or a trailing \.
+            # Why: Such a comment edit can break -Werror (-Wcomment).
+            added="$(git -C "${CI_REPO_ROOT}" diff -U0 "$1" "$2" -- "$3")" || return 2
+            added="$(sed -n '/^+++ /d; s/^+//p' <<< "${added}")" || return 2
+            if grep -qE '/\*|\*/|\?\?/|\\$' <<< "${added}"; then
+                return 0
+            fi ;;
+    esac
+    return 1
+}
+
+# What: Print the paths whose meaning changed from $1 to $2.
+# Why: DEFAULT=NOOP: comments and format select no work.
+# From: Issue #479, PR #544
+_ci_semantic_paths() {
+    local p rc
+    local paths=()
+    _ci_mapfile paths _ci_changed_paths "$1" "$2" || return 1
+    for p in ${paths[@]+"${paths[@]}"}; do
+        rc=0
+        _ci_path_semantic_changed "$1" "$2" "${p}" || rc=$?
+        case "${rc}" in
+            0) printf '%s\n' "${p}" ;;
+            1) ci_log "[CI-IMPACT]" "${p}: no semantic change (comments or format only)" ;;
+            *) return 2 ;;
+        esac
+    done
+}
+
 # What: Print the phases selected by the base..head diff.
 # Why: A docs-only diff selects NOOP, never a compile.
 # From: Issue #479
 ci_cmd_impact() {
     local paths
-    paths="$(_ci_changed_paths "${1:?base ref required}" "${2:?head ref required}")" || return 1
+    paths="$(_ci_semantic_paths "${1:?base ref required}" "${2:?head ref required}")" || return
     _ci_phases_for_paths <<< "${paths}"
 }
 
@@ -735,7 +862,7 @@ ci_cmd_impact_hit() {
     fi
     _ci_mapfile range _ci_event_range || return 2
     [ "${#range[@]}" -eq 2 ] || return 2
-    changed="$(_ci_changed_paths "${range[0]}" "${range[1]}")" || return 1
+    changed="$(_ci_semantic_paths "${range[0]}" "${range[1]}")" || return
     classes="$(_ci_classify_paths <<< "${changed}")" || return 2
     if grep -qx "${class}" <<< "${classes}"; then
         _ci_output hit true
@@ -4777,7 +4904,7 @@ ci_cmd_scorecard_scan() {
 # Why: A PR may not add a known-vulnerable tool version.
 # From: Issue #479
 ci_cmd_osv_scan() {
-    local out="${1:-osv-results.sarif}" bin base base_sot base_tree old new added pins=0
+    local out="${1:-osv-results.sarif}" bin base base_sot sot rc=0 old new added pins=0
     local dirs=() range=()
     bin="$(_ci_tool_bin external_versions.osv_scanner)" || return 2
     _ci_mapfile dirs _ci_osv_tool_dirs || return 2
@@ -4794,13 +4921,14 @@ ci_cmd_osv_scan() {
     # From: Issue #267, Issue #479, PR #544
     base_sot="$(mktemp)" || return 1
     git -C "${CI_REPO_ROOT}" fetch -q --depth=1 origin "${base}" || return 1
-    base_tree="$(git -C "${CI_REPO_ROOT}" ls-tree --name-only "${base}" -- .github/yaml/build-manifest.yml)" \
-        || return 1
-    if [ -z "${base_tree}" ]; then
-        ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${base} has no SOT yet"
-        return 0
-    fi
-    git -C "${CI_REPO_ROOT}" show "${base}:.github/yaml/build-manifest.yml" > "${base_sot}" || return 1
+    sot="$(_ci_sot_relpath)" || return 2
+    _ci_rev_file "${base}" "${sot}" "${base_sot}" || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) ci_log "[CI-SCAN]" "OSV PR gate NotRun: base ${base} has no SOT yet"
+           return 0 ;;
+        *) return 1 ;;
+    esac
     grep -q '^    bin:' "${base_sot}" || pins=$?
     case "${pins}" in
         0) ;;
