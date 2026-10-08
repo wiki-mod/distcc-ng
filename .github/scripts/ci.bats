@@ -1492,7 +1492,7 @@ _fixture_harden_state() {
     CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PACKAGE-0002"* ]]
-    touch "${root}/distcc-9.9.tar.gz"
+    touch "${root}/distcc-9.9.tar.gz" "${root}/distcc-9.9.tar.bz2"
     CI_REPO_ROOT="${root}" run _ci_package_sbom out.json
     [ "${status}" -eq 0 ]
     [ "${output}" = "ci_cmd_sbom distcc-9.9.tar.gz out.json" ]

@@ -1460,20 +1460,13 @@ ci_cmd_package() {
 # Why: OSPS-QA-02.02; scans the exact asset a release ships.
 # From: Issue #479, PR #544
 _ci_package_sbom() {
-    local out="${1:?output file required}" pats pat hits
-    local tars=() matches=()
-    pats="$(_ci_sot_list release.assets)" || return 2
+    local out="${1:?output file required}" asset
+    local tars=() assets=()
+    _ci_mapfile assets _ci_release_asset_hits || return
     cd "${CI_REPO_ROOT}" || return 1
-    while IFS= read -r pat; do
-        case "${pat}" in *.tar.gz) ;; *) continue ;; esac
-        # What: compgen rc 1 means no match; only a match is read.
-        # Why: An unmatched glob is a normal answer, not an error.
-        # From: Issue #479, PR #544
-        if hits="$(compgen -G "${pat}")"; then
-            mapfile -t matches <<< "${hits}"
-            tars+=("${matches[@]}")
-        fi
-    done <<< "${pats}"
+    for asset in ${assets[@]+"${assets[@]}"}; do
+        case "${asset}" in *.tar.gz) tars+=("${asset}") ;; esac
+    done
     case "${#tars[@]}" in
         1) ci_cmd_sbom "${tars[0]}" "${out}" ;;
         0) ci_log "[CI-ERROR-PACKAGE-0002]" "no release.assets *.tar.gz file found"; return 1 ;;
@@ -1573,20 +1566,34 @@ _ci_git_auth_setup() {
     gh auth setup-git
 }
 
+# What: Print every file a SOT release.assets glob matches.
+# Why: One glob owner for publish and the source SBOM.
+# From: Issue #362, Issue #479, PR #544
+_ci_release_asset_hits() {
+    local pats pat hits
+    pats="$(_ci_sot_list release.assets)" || return 2
+    cd "${CI_REPO_ROOT}" || return 1
+    while IFS= read -r pat; do
+        # What: compgen rc 1 means no match; only a match prints.
+        # Why: An unmatched glob is a normal answer, not an error.
+        # From: Issue #479, PR #544
+        if hits="$(compgen -G "${pat}")"; then
+            printf '%s\n' "${hits}"
+        fi
+    done <<< "${pats}"
+}
+
 # What: Print the built release assets the SOT globs match.
 # Why: Nightly and release ship one set; none found fails.
 # From: Issue #362, Issue #479, PR #544
 _ci_release_assets() {
-    local pats pat found=0
-    pats="$(_ci_sot_list release.assets)" || return 2
-    cd "${CI_REPO_ROOT}" || return 1
-    while IFS= read -r pat; do
-        compgen -G "${pat}" && found=1
-    done <<< "${pats}"
-    if [ "${found}" -eq 0 ]; then
+    local hits
+    hits="$(_ci_release_asset_hits)" || return
+    if [ -z "${hits}" ]; then
         ci_log "[CI-ERROR-PUBLISH-0007]" "no release asset matches release.assets"
         return 1
     fi
+    printf '%s\n' "${hits}"
 }
 
 # What: Force-move the nightly tag; republish its prerelease.
@@ -2139,6 +2146,13 @@ _ci_release_asset_sha() {
     printf '%s\n' "${sha#sha256:}"
 }
 
+# What: Succeed if image ref $1 is name:tag@sha256:<64 hex>.
+# Why: Refresh and the pin guard need one tracked-pin rule.
+# From: Issue #479, PR #544
+_ci_pin_tracked() {
+    [[ "$1" =~ ^[^@]+:[^/@]+@sha256:[0-9a-f]{64}$ ]]
+}
+
 # What: Move every SOT pin to its channel's newest release.
 # Why: Prints one markdown row per change for the PR body.
 # From: Issue #479, PR #544
@@ -2151,7 +2165,7 @@ _ci_sot_refresh() {
             ref="$(_ci_sot_scalar "${path}")" || return 2
             tag="${ref%@*}"
             old="${ref##*@}"
-            if [ "${tag}" = "${ref}" ] || [[ "${tag##*/}" != *:* ]]; then
+            if ! _ci_pin_tracked "${ref}"; then
                 ci_log "[CI-ERROR-SOT-0004]" "${path}=${ref}: no tracked tag (name:tag@sha256:...)"
                 return 2
             fi
@@ -3822,7 +3836,7 @@ ci_guard_sot_pins() {
         keys="$(_ci_sot_children "${s}")" || return 2
         for k in ${keys}; do
             v="$(_ci_sot_scalar "${s}.${k}")" || return 2
-            [[ "${v}" =~ ^[^@]+:[^/@]+@sha256:[0-9a-f]{64}$ ]] || bad+="${s}.${k}=${v}"$'\n'
+            _ci_pin_tracked "${v}" || bad+="${s}.${k}=${v}"$'\n'
         done
     done
     _ci_guard_hits "[CI-ERROR-GUARD-PIN-0004]" "" " is not name:tag@sha256:<64 hex>" <<< "${bad}" || rc=1
