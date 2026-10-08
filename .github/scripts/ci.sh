@@ -2601,9 +2601,22 @@ _ci_pr_category_label() {
 # From: Issue #479, PR #544
 _ci_variables_label_pr() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
-    local files hits labels=() category PR_NUMBER
+    local files hits labels=() category PR_NUMBER want got
     PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
-    files="$(gh pr diff "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --name-only)" || return 1
+    want="$(_ci_event_value .pull_request.changed_files)" || return 2
+    # What: Read the PR file list page by page, not the diff.
+    # Why: The diff API refuses a PR of over 300 files (HTTP 406).
+    # From: Issue #479, PR #544
+    files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+        --jq '.[].filename')" || return 1
+    got="$(awk 'NF { n++ } END { print n + 0 }' <<< "${files}")"
+    # What: Fail on a list shorter than the PR's file count.
+    # Why: The files API stops at 3000; no partial labels.
+    # From: Issue #479, PR #544
+    if [ "${got}" != "${want}" ]; then
+        ci_log "[CI-ERROR-VARIABLES-0002]" "PR #${PR_NUMBER} lists ${got} of ${want} changed files"
+        return 1
+    fi
     hits="$(_ci_classify_paths labels <<< "${files}")" || return 2
     _ci_mapfile labels printf '%s' "${hits}" || return 2
     _ci_metadata_fetch_live || return 2

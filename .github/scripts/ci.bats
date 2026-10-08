@@ -2446,22 +2446,32 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
-# What: Labels PR 5, whose diff touches one workflow file.
+# What: Labels PR 5 (one workflow file), then a short list.
 # Why: The board and release notes read these labels.
 # From: Issue #479, PR #544
 @test "label-pr applies path labels and the title category" {
     local ev="${BATS_TEST_TMPDIR}/ev.json"
-    printf '{"pull_request":{"number":5}}' > "${ev}"
+    printf '{"pull_request":{"number":5,"changed_files":1}}' > "${ev}"
     _fixture_manifest 'labels:' '  ci:' '    paths: [".github/workflows/**"]'
-    # What: Stub gh: a workflow diff; echo pr edit.
+    # What: Stub gh: one workflow file; echo pr edit.
     # Why: Labels must come from the SOT path map.
-    gh() { case "$1 $2" in "pr diff") echo .github/workflows/v.yml ;; "pr edit") echo "edit $*" ;; esac; }
+    gh() {
+        case "$1 $2" in
+            "api --paginate") [ "$3" = "repos/o/r/pulls/5/files" ] && echo .github/workflows/v.yml ;;
+            "pr edit") echo "edit $*" ;;
+        esac
+    }
     # What: Stub live PR data with a fix(ci) title.
     # Why: The title sets the category label offline.
     _ci_metadata_fetch_live() { export PR_TITLE="fix(ci): x"; }
     GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" run _ci_variables_label_pr
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"--add-label ci,bug"* ]]
+    printf '{"pull_request":{"number":5,"changed_files":3001}}' > "${ev}"
+    GITHUB_REPOSITORY=o/r GITHUB_EVENT_PATH="${ev}" run _ci_variables_label_pr
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-VARIABLES-0002"*"lists 1 of 3001"* ]]
+    [[ "${output}" != *"edit "* ]]
 }
 
 # What: Maps a feat, fix, docs and security title.
