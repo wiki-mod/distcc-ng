@@ -3976,7 +3976,9 @@ _ci_lint_shellcheck() {
 # From: Issue #479
 ci_cmd_lint() {
     local rc=0 d
-    for d in ${CI_OWNED_PATHS}; do
+    local owned=()
+    _ci_mapfile owned _ci_owned_paths_in "${CI_REPO_ROOT}" || return 2
+    for d in "${owned[@]}"; do
         ci_guard_line_endings "${CI_REPO_ROOT}/${d}" || rc=1
     done
     # What: Full-SHA scan of the dirs that may carry a pin.

@@ -2883,6 +2883,7 @@ _fixture_harden_state() {
         _ci_lint_shellcheck
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NotRun: docker absent under ${fx}"* ]]
     printf '%s\n' '#!/bin/sh' "# ${texts[0]}SC2086" 'x=1' > "${fx}/contrib/tool"
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 1 ]
