@@ -1306,13 +1306,14 @@ EOF
     done
 }
 
-# What: Smoke-tests stub distccd builds; gcc-compiles popt.
+# What: distccd --help smoke; strict compile flags and stop.
 # Why: A popt regression compiles; --help or -Werror shows it.
-# From: Issue #479, PR #544
+# From: Issue #479, Issue #63, PR #544
 @test "popt smoke test and strict compile fail closed" {
-    local d="${BATS_TEST_TMPDIR}/b"
+    local d="${BATS_TEST_TMPDIR}/b" f
     mkdir -p "${d}"
     cd "${d}"
+    echo "case: popt fallback smoke test"
     _fake_tool distccd
     OUT_TEXT="--jobs --nice --listen --daemon --log-file --allow --user --port" run _ci_popt_fallback_smoke_test
     [ "${status}" -eq 0 ]
@@ -1322,13 +1323,21 @@ EOF
     OUT_TEXT=boom RC=3 run _ci_popt_fallback_smoke_test
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-POPT-0003"*"boom"* ]]
-    _pass gcc
-    RUNNER_TEMP="${d}" run _ci_popt_strict_compile
+    echo "case: popt strict compile: five files, Werror flags, stop on error"
+    _fake_tool gcc
+    PATH="${d}:${PATH}" RUNNER_TEMP="${d}" run _ci_popt_strict_compile
     [ "${status}" -eq 0 ]
-    _fail gcc 1 "popt.c:1:1: error: x"
-    RUNNER_TEMP="${d}" run _ci_popt_strict_compile
+    [ "$(wc -l < gcc.args)" -eq 5 ]
+    for f in popt poptconfig popthelp poptparse poptint; do
+        grep -qF -- "-Isrc -Ipopt -Wall -Wextra -Werror -Wno-unused -Wno-unused-parameter -c popt/${f}.c " gcc.args \
+            || { echo "popt/${f}.c: not compiled with the strict flags"; cat gcc.args; return 1; }
+    done
+    rm gcc.args
+    _fake_tool gcc 1
+    OUT_TEXT="popt.c:1:1: error: x" PATH="${d}:${PATH}" RUNNER_TEMP="${d}" run _ci_popt_strict_compile
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"error: x"* ]]
+    [ "$(wc -l < gcc.args)" -eq 1 ]
 }
 
 # What: popt variants by their SOT steps; bad step and flag.
