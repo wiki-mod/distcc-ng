@@ -1090,11 +1090,17 @@ EOF
     [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
 }
 
-# What: Runs fuzz impact on a push, a docs PR and a fuzz PR.
-# Why: Only a reviewed PR diff may skip a class.
+# What: Fuzz impact on a push, docs PR, fuzz PR, broken diff.
+# Why: Only a PR diff may skip a class; a broken one fails.
 # From: Issue #479, PR #544
-@test "impact-hit runs every class off a PR, diffs on a PR" {
+@test "impact-hit runs every class off a PR, diffs on a PR, fails closed" {
     local out="${BATS_TEST_TMPDIR}/out"
+    _print _ci_event_range b h
+    _fail git 128
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
+    : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
     _print _ci_event_range b h
@@ -1106,17 +1112,6 @@ EOF
     : > "${out}"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
-}
-
-# What: Runs fuzz impact on a PR whose git diff fails.
-# Why: A false miss would skip fuzzing on a broken diff.
-# From: Issue #479, PR #544
-@test "impact-hit fails closed when the PR diff fails" {
-    _print _ci_event_range b h
-    _fail git 128
-    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
 }
 
 # What: Rates all-success, one skip and an empty list.
@@ -1196,8 +1191,8 @@ EOF
     [ "${status}" -ne 0 ]
 }
 
-# What: Expands a two-OS variant and an opt-in variant.
-# Why: An opt-in variant is never a PR gate.
+# What: Two-OS and opt-in variants; backslashes in both.
+# Why: Opt-in is never a PR gate; jq keeps values strings.
 # From: Issue #479, PR #544
 @test "matrix expands variant x os and excludes opt-in variants" {
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p"' '      brew: "q"' \
@@ -1206,12 +1201,6 @@ EOF
     run ci_cmd_matrix
     [ "${status}" -eq 0 ]
     [ "${output}" = '{"include":[{"variant":"a","os":"ubuntu-latest","apt":"p"},{"variant":"a","os":"macos-latest","brew":"q"}]}' ]
-}
-
-# What: Expands both matrices with backslashes in the SOT.
-# Why: jq builds the JSON, so any value stays a string.
-# From: Issue #479, PR #544
-@test "both matrices stay valid JSON for any SOT value" {
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p\q"' '      os: [ubuntu-latest]' \
         'release:' '  container:' '    variants:' '      plain: "p"' '    platforms:' '      amd64:' \
         '        runner: "r\1"' '        optional: "false"'
@@ -1446,10 +1435,10 @@ EOF
     [[ "${output}" == *"attempt 1/2: apt exited 124 (timed out after 6m)"* ]]
 }
 
-# What: Gates a clean make, a warning make and a missing log.
-# Why: Warnings are errors (AG-INT-003) on every tree build.
+# What: Clean, warning, no log; make, configure, autogen fail.
+# Why: Warnings are errors (AG-INT-003); each rc is checked.
 # From: Issue #479, PR #544
-@test "make gate passes a clean build and fails on a warning" {
+@test "make gate and configure: warnings and tool failures fail" {
     _print make "gcc -c src/x.c"
     run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
     [ "${status}" -eq 0 ]
@@ -1461,12 +1450,6 @@ EOF
     run _ci_warning_gate "${BATS_TEST_TMPDIR}/missing.log" "make check"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-WARN-0002"* ]]
-}
-
-# What: Fails make, then configure, then autogen in turn.
-# Why: set -e is off under ||, so each rc needs a check.
-# From: Issue #479, PR #544
-@test "make gate and configure fail closed when the tool fails" {
     _fail make 2 boom
     run _ci_make_gated "${BATS_TEST_TMPDIR}/m.log"
     [ "${status}" -eq 1 ]
@@ -1552,16 +1535,8 @@ EOF
     [[ "${output}" == *"CI-ERROR-TEST-0009"*'"zap"'* ]]
 }
 
-# What: Runs report with an empty GH_TOKEN.
-# Why: A silent no-op would hide broken status reporting.
-# From: Issue #479, Issue #81
-@test "report fails closed when GH_TOKEN is unset" {
-    GH_TOKEN="" run ci_cmd_report
-    [ "${status}" -ne 0 ]
-}
-
-# What: Report success and failure, with and without an issue.
-# Why: One standing issue: reused on failure, closed on pass.
+# What: Report pass/fail, with and without an issue; no token.
+# Why: One standing issue; a no-op hides broken reporting.
 # From: Issue #479, Issue #81, PR #476, PR #544
 @test "report keeps one standing issue: comment, close or open" {
     _print _ci_run_url u
@@ -1587,6 +1562,8 @@ EOF
     JOBS="a=failure" run ci_cmd_report
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"would run"* ]]
+    GH_TOKEN="" run ci_cmd_report
+    [ "${status}" -ne 0 ]
 }
 
 # What: Bug type: already typed, untyped, no Bug type at all.
@@ -1629,8 +1606,8 @@ EOF
     [ "${status}" -eq 2 ]
 }
 
-# What: Writes a one-line and a two-line output pair.
-# Why: A newline in k=v would end the value early.
+# What: Writes one- and two-line pairs, then a bare name.
+# Why: A newline ends a k=v value; half a pair shifts all.
 # From: Issue #479, PR #544
 @test "output writer uses the delimiter form for multi-line values" {
     local out="${BATS_TEST_TMPDIR}/out"
@@ -1641,6 +1618,9 @@ EOF
     [ "${lines[2]}" = "x" ]
     [ "${lines[3]}" = "y" ]
     [ "${lines[4]}" = "${lines[1]#b<<}" ]
+    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_output a 1 b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CORE-0004"* ]]
 }
 
 # What: Writes a summary set, unset, then from a failing tool.
@@ -1661,19 +1641,10 @@ EOF
     [ "${status}" -eq 1 ]
 }
 
-# What: Calls the output writer with a name and no value.
-# Why: Writing half a pair would shift every later output.
+# What: Offers two SOT files, then none and a missing file.
+# Why: Upload needs the SOT name; no files is no artifact.
 # From: Issue #479, PR #544
-@test "output writer fails closed on an odd argument count" {
-    GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_output a 1 b
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-CORE-0004"* ]]
-}
-
-# What: Offers two files under the SOT artifact kind k.
-# Why: The workflow step only forwards these outputs.
-# From: Issue #479, PR #544
-@test "artifact offer writes SOT name, files and retention" {
+@test "artifact offer writes SOT name, files, retention; needs files" {
     local out="${BATS_TEST_TMPDIR}/out" f1="${BATS_TEST_TMPDIR}/f1" f2="${BATS_TEST_TMPDIR}/f2"
     _fixture_actions
     : > "${f1}"; : > "${f2}"
@@ -1684,13 +1655,7 @@ EOF
     [ "${lines[3]}" = "${f2}" ]
     [ "${lines[5]}" = "artifact_retention_days=7" ]
     [ "${lines[6]}" = "artifact_if_missing=error" ]
-}
-
-# What: Offers no files, then a file that does not exist.
-# Why: An upload of nothing would hide a lost report.
-# From: Issue #479, PR #544
-@test "artifact offer fails closed on a missing or empty file set" {
-    _fixture_actions
+    rm -f "${out}"
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_artifact_offer k ""
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-ARTIFACT-0001"* ]]
@@ -1700,8 +1665,8 @@ EOF
     [ ! -s "${BATS_TEST_TMPDIR}/out" ]
 }
 
-# What: Plans keys over a README edit, then an m4 edit.
-# Why: Only configure.ac and m4/ change the autoconf output.
+# What: Keys over a README and an m4 edit; no-ccache variant.
+# Why: Autoconf inputs key the cache; no ccache, no plan.
 # From: Issue #54, Issue #479, PR #544
 @test "cache plan keys default on OS, arch, autoconf inputs, run" {
     local out="${BATS_TEST_TMPDIR}/out" sum1 sum2
@@ -1732,10 +1697,15 @@ EOF
     [ "${lines[4]}" = "key=build-Linux-X64-${sum1}-7" ]
     [ "${lines[6]}" = "build-Linux-X64-${sum1}-" ]
     [ "${lines[7]}" = "build-Linux-X64-" ]
+    rm -f "${out}"
+    _forbid ccache
+    GITHUB_OUTPUT="${out}" run ci_cmd_cache coverage
+    [ "${status}" -eq 0 ]
+    [ ! -e "${out}" ]
 }
 
-# What: Runs CFL as a crash with one reproducer on disk.
-# Why: The upload step runs after the failure via always().
+# What: CFL crash with a reproducer, then rc 3 with none.
+# Why: Crashes are offered; the fuzz rc is never swallowed.
 # From: Issue #267, Issue #479, PR #544
 @test "CFL run offers crash reproducers and keeps its exit code" {
     local out="${BATS_TEST_TMPDIR}/out"
@@ -1749,14 +1719,7 @@ EOF
     [ "${status}" -eq 1 ]
     grep -qx 'artifact_name=cfl-crashes-address' "${out}"
     grep -qx "artifact_path=${RUNNER_TEMP}/cfl-workspace/out/artifacts" "${out}"
-}
-
-# What: Runs CFL with rc 3 and an empty artifacts dir.
-# Why: No reproducer means no artifact; rc is never masked.
-# From: Issue #267, Issue #479, PR #544
-@test "CFL run without crashes offers nothing and passes rc" {
-    local out="${BATS_TEST_TMPDIR}/out"
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
+    rm -rf "${out}" "${RUNNER_TEMP}/cfl-workspace"
     _fail _ci_cfl_run 3
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
     GITHUB_OUTPUT="${out}" run ci_cmd_clusterfuzzlite_run address
@@ -1764,21 +1727,10 @@ EOF
     [ ! -e "${out}" ]
 }
 
-# What: Plans the cache for the coverage variant.
-# Why: Build and cache must agree on the ccache variants.
-# From: Issue #54, Issue #479, PR #544
-@test "cache plan writes nothing for a variant without ccache" {
-    local out="${BATS_TEST_TMPDIR}/out"
-    _forbid ccache
-    GITHUB_OUTPUT="${out}" run ci_cmd_cache coverage
-    [ "${status}" -eq 0 ]
-    [ ! -e "${out}" ]
-}
-
-# What: Drafts with a failing list, no draft, an auth error.
-# Why: Empty lookups would publish a wrong, empty draft.
+# What: Drafts on list and auth errors; groups a fix PR body.
+# Why: No write after an API error; notes follow categories.
 # From: Issue #479, PR #544
-@test "draft release stops on an API error before it writes" {
+@test "draft release stops on API errors and groups PRs by category" {
     local log="${BATS_TEST_TMPDIR}/gh"
     # What: Stub gh: log calls; release list fails.
     # Why: The log shows whether any edit or create ran.
@@ -1824,22 +1776,16 @@ EOF
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0012"* ]]
     [[ "${output}" != *"would run: gh release"* ]]
-}
-
-# What: Appends one fix PR to an empty body under Fixed.
-# Why: The heading is a value; only the body is a nameref.
-# From: Issue #479, PR #544
-@test "draft release body groups PRs under their category heading" {
     local body=""
     _ci_draft_release_append body "Fixed" "* #5 | fix(ci): a"
     [ "${body}" = "$(printf '%s\n%s\n' '### Fixed' '* #5 | fix(ci): a')
 " ]
 }
 
-# What: AC-03 and BR-07 on failing, null, partial, real data.
-# Why: A tool failure must never pose as a compliance finding.
+# What: API, local and verdict checks on bad and real data.
+# Why: A tool or API failure is never a compliance finding.
 # From: Issue #312, Issue #479, PR #544
-@test "OpenSSF API checks fail closed instead of reading NotMet" {
+@test "OpenSSF checks give no verdict on a tool or API error" {
     _fail gh 1
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03 7
     [ "${status}" -eq 2 ]
@@ -1867,27 +1813,6 @@ EOF
     [ "${output}" = "Met" ]
     GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
     [ "${output}" = "NotMet" ]
-}
-
-# What: Checks a base-SHA bootstrap, then a ref-taking one.
-# Why: Base-SHA checkouts run no PR code; a head ref does.
-# From: Issue #312, PR #544
-@test "BR-01 flags only a ref-taking checkout in a target workflow" {
-    local fx="${BATS_TEST_TMPDIR}/fx" boot
-    boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
-    mkdir -p "${fx}/.github/workflows"
-    printf '%s\n' 'on: pull_request_target' "      - run: ${boot}" \
-        '        env: {HEAD: "${{ github.event.pull_request.head.sha }}"}' > "${fx}/.github/workflows/a.yml"
-    cd "${fx}"
-    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "Met" ]
-    printf '%s\n' 'on: pull_request_target' "      - run: ${boot} 1 \"\$HEAD\"" > "${fx}/.github/workflows/b.yml"
-    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "NotMet" ]
-}
-
-# What: Runs each local check in an empty dir, git broken.
-# Why: A failed tool must never read as Met or NotMet.
-# From: Issue #312, Issue #479, PR #544
-@test "OpenSSF local checks give no verdict on a tool error" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     cd "${fx}"
@@ -1907,41 +1832,34 @@ EOF
     [ "${status}" -eq 2 ]
     GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
     [ "${status}" -eq 2 ]
-}
-
-# What: Builds one proposal query over three calls.
-# Why: The link may carry only criteria re-verified as Met.
-# From: Issue #312, PR #544
-@test "ossf add_met: only Met adds a pair; an encode error fails" {
-    local qs=""
-    _ci_ossf_add_met qs NotMet "OSPS-AC-03.01" "x y"
-    [ -z "${qs}" ]
-    _ci_ossf_add_met qs Met "OSPS-AC-03.01" "x y"
-    _ci_ossf_add_met qs Met "OSPS-BR-01.01" "z"
-    [ "${qs}" = "osps_ac_03.01_status=Met&osps_ac_03.01_justification=x%20y&osps_br_01.01_status=Met&osps_br_01.01_justification=z" ]
-    _fail _ci_ossf_urlencode 1 "jq broke"
-    run _ci_ossf_add_met qs Met "OSPS-VM-02.01" "w"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"jq broke"* ]]
-}
-
-# What: Maps grep hits, a miss and a missing file to verdicts.
-# Why: Only rc 0 and 1 are answers; others are tool errors.
-# From: Issue #479, Issue #312, PR #544
-@test "ossf verdict: Met, NotMet, and a tool error is no verdict" {
-    local fx="${BATS_TEST_TMPDIR}/fx"
-    printf 'has Security Advisory here\n' > "${fx}"
-    [ "$(_ci_ossf_verdict grep -q 'Security Advisor' "${fx}")" = "Met" ]
-    [ "$(_ci_ossf_verdict grep -q 'nope-xyz' "${fx}")" = "NotMet" ]
-    [ "$(_ci_ossf_verdict grep -qi 'SECURITY ADVISOR' "${fx}")" = "Met" ]
+    local doc="${BATS_TEST_TMPDIR}/security.md"
+    printf 'has Security Advisory here\n' > "${doc}"
+    [ "$(_ci_ossf_verdict grep -q 'Security Advisor' "${doc}")" = "Met" ]
+    [ "$(_ci_ossf_verdict grep -q 'nope-xyz' "${doc}")" = "NotMet" ]
+    [ "$(_ci_ossf_verdict grep -qi 'SECURITY ADVISOR' "${doc}")" = "Met" ]
     run _ci_ossf_verdict grep -q 'x' "${BATS_TEST_TMPDIR}/missing"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
     [[ "${output}" != *"NotMet"* ]]
 }
 
-# What: Recheck: BR-07 regresses, a first post, a list error.
-# Why: A regression is named; proposal links carry Met only.
+# What: Checks a base-SHA bootstrap, then a ref-taking one.
+# Why: Base-SHA checkouts run no PR code; a head ref does.
+# From: Issue #312, PR #544
+@test "BR-01 flags only a ref-taking checkout in a target workflow" {
+    local fx="${BATS_TEST_TMPDIR}/fx" boot
+    boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
+    mkdir -p "${fx}/.github/workflows"
+    printf '%s\n' 'on: pull_request_target' "      - run: ${boot}" \
+        '        env: {HEAD: "${{ github.event.pull_request.head.sha }}"}' > "${fx}/.github/workflows/a.yml"
+    cd "${fx}"
+    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "Met" ]
+    printf '%s\n' 'on: pull_request_target' "      - run: ${boot} 1 \"\$HEAD\"" > "${fx}/.github/workflows/b.yml"
+    [ "$(_ci_ossf_verdict _ci_ossf_check_br01)" = "NotMet" ]
+}
+
+# What: Recheck regression, first post, list error; add_met.
+# Why: One comment per state; only Met adds a proposal pair.
 # From: Issue #312, Issue #479, PR #544
 @test "openssf recheck flags a regression and edits its one comment" {
     _print _ci_run_url u
@@ -1970,6 +1888,16 @@ EOF
     DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_scan_openssf
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"would run"* ]]
+    local qs=""
+    _ci_ossf_add_met qs NotMet "OSPS-AC-03.01" "x y"
+    [ -z "${qs}" ]
+    _ci_ossf_add_met qs Met "OSPS-AC-03.01" "x y"
+    _ci_ossf_add_met qs Met "OSPS-BR-01.01" "z"
+    [ "${qs}" = "osps_ac_03.01_status=Met&osps_ac_03.01_justification=x%20y&osps_br_01.01_status=Met&osps_br_01.01_justification=z" ]
+    _fail _ci_ossf_urlencode 1 "jq broke"
+    run _ci_ossf_add_met qs Met "OSPS-VM-02.01" "w"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"jq broke"* ]]
 }
 
 # What: Picks prune candidates from ten fixture versions.
@@ -2004,18 +1932,8 @@ EOF
     [[ "${output}" != *"must not run"* ]]
 }
 
-# What: Collects protected digests with docker inspect broken.
-# Why: Unknown children would otherwise lose their protection.
-# From: Issue #479, PR #544
-@test "gc protection fails closed when a tag cannot be inspected" {
-    _fail docker 1
-    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
-}
-
-# What: Collects digests from bad JSON, then a 2-child index.
-# Why: A jq error must not drop a child from the keep-set.
+# What: Bad JSON, a 2-child index, a tag inspect that fails.
+# Why: Unknown children would otherwise lose protection.
 # From: Issue #479, PR #544
 @test "gc protection fails closed on unreadable tags or manifests" {
     _print docker 'not json'
@@ -2029,6 +1947,10 @@ EOF
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 0 ]
     [ "${output}" = '["sha256:a","sha256:b"]' ]
+    _fail docker 1
+    GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GC-0002"* ]]
 }
 
 # What: Reads six release payloads, good and malformed.
@@ -2073,36 +1995,10 @@ EOF
     [ "${PROJECT_NUMBER}" = "7" ]
 }
 
-# What: Filters four results: success, failure, skip, cancel.
-# Why: A skipped dependent would mask the root cause.
-# From: Issue #479, PR #476
-@test "failed-jobs filter keeps only failure and cancelled" {
-    run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "e2e x" ]
-}
-
-# What: Gates one successful and one skipped job.
-# Why: Content-based impact selection skips whole jobs.
+# What: Filter, pass, real failure; blank, colon, typo lists.
+# Why: Only success or skipped passes; a bad list never does.
 # From: Issue #479, PR #544
-@test "gate passes when every job succeeded or was skipped" {
-    JOBS="$(printf 'build=success\ne2e=skipped\n')" run ci_cmd_gate
-    [ "${status}" -eq 0 ]
-}
-
-# What: Gates one successful and one failed job.
-# Why: It is the one stable required-check name.
-# From: Issue #479, PR #544
-@test "gate fails closed when a real job failed" {
-    JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
-}
-
-# What: Gates a blank list, a colon pair, no value, a typo.
-# Why: An empty job list must not pass the required gate.
-# From: Issue #479, PR #544
-@test "gate fails closed on a JOBS list with no or bad pairs" {
+@test "gate passes success and skipped only; bad JOBS lists fail" {
     JOBS=" " run ci_cmd_gate
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-JOBS-0002"* ]]
@@ -2114,6 +2010,14 @@ EOF
     JOBS="$(printf 'build=success\ne2e=unknown\n')" run ci_cmd_gate
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e=unknown"* ]]
+    run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "e2e x" ]
+    JOBS="$(printf 'build=success\ne2e=skipped\n')" run ci_cmd_gate
+    [ "${status}" -eq 0 ]
+    JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
 }
 
 # What: Classifies README.md and doc/threat-model.md.
