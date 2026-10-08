@@ -161,24 +161,47 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-CORE-0003"* ]]
 }
 
-# What: Reads scalars at depth, before a comment, and empty.
-# Why: Every pin and spec is read through this one reader.
+# What: Every SOT reader on one fixture: values, gaps, kinds.
+# Why: A wrong path or node kind must fail, never read empty.
 # From: Issue #479, PR #544
-@test "sot scalar reads a scalar at any nesting depth" {
-    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"' '  q: "v1"  # note' '  u: v2 # note' '  e: ""'
-    [ "$(_ci_sot_scalar a.b)" = "x" ]
-    [ "$(_ci_sot_scalar a.c.d)" = "y:z@sha256:0" ]
-    [ "$(_ci_sot_scalar a.q)" = "v1" ]
-    [ "$(_ci_sot_scalar a.u)" = "v2" ]
-    run _ci_sot_scalar a.e
-    [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
-    run _ci_sot_scalar a.c
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0010"*'"a.c"'* ]]
+@test "SOT readers: values, absent paths and node kinds" {
+    local r path rc want got
+    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"' '  q: "v1"  # note' '  u: v2 # note' \
+        '  e: ""' '  l: ["p", "q"]' 'v:' '  one:' '    k: 1' '  two:' '    k: 2' 'other: 1'
+    while IFS='|' read -r r path rc want; do
+        case "${r}" in
+            scalar) run _ci_sot_scalar "${path}" ;;
+            optional) run _ci_sot_optional "${path}" ;;
+            children) run _ci_sot_children "${path}" ;;
+            list) run _ci_sot_list "${path}" ;;
+            mode-*) run _ci_sot_lookup "${r#mode-}" "${path}" ;;
+        esac
+        got="${output//$'\n'/ }"
+        [ "${status}" -eq "${rc}" ] || { echo "${r} ${path}: rc ${status}: ${got}"; return 1; }
+        case "${want}" in
+            =*) [ "${got}" = "${want#=}" ] ;;
+            *) [[ "${got}" == *"${want}"* ]] ;;
+        esac || { echo "${r} ${path}: want ${want}: ${got}"; return 1; }
+    done <<'EOF'
+scalar|a.b|0|=x
+scalar|a.c.d|0|=y:z@sha256:0
+scalar|a.q|0|=v1
+scalar|a.u|0|=v2
+scalar|a.e|0|=
+scalar|a.c|2|CI-ERROR-SOT-0010
+scalar|a.nope|2|CI-ERROR-SOT-0002
+optional|a.nope|0|=
+optional|a.b|0|=x
+optional|a.c|2|CI-ERROR-SOT-0010
+children|v|0|=one two
+children|a.b|2|CI-ERROR-SOT-0010
+children|v.nope|2|CI-ERROR-SOT-0002
+list|a.l|0|=p q
+list|a.c|2|CI-ERROR-SOT-0010
+mode-bogus|a.b|2|CI-ERROR-SOT-0009
+mode-value|a.c.zz|3|=
+EOF
 }
-
-
 
 # What: Clean fixture SOT pins, then each malformed pin form.
 # Why: No tag, no refresh; no digest or sha256, no check.
@@ -200,7 +223,7 @@ _fixture_harden_state() {
     [[ "${output}" != *"external_versions.m"* ]]
 }
 
-# What: Sets a.c.b beside same-named keys, then a bad path.
+# What: Sets a.c.b beside same-named keys; bad path, section.
 # Why: sot-update must never touch a neighbouring pin.
 # From: Issue #479, PR #544
 @test "sot set rewrites one path and fails closed on a missing one" {
@@ -215,6 +238,9 @@ _fixture_harden_state() {
     run _ci_sot_set a.nope "v"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
+    run _ci_sot_set a.c "v"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
 }
 
@@ -235,67 +261,6 @@ _fixture_harden_state() {
     [ "$(_ci_sot_scalar a.b)" = "new" ]
     [ "$(stat -c %a "${CI_MANIFEST}")" = "640" ]
     [ -z "$(find "${BATS_TEST_TMPDIR}" -name 'build-manifest.yml.*')" ]
-}
-
-# What: Reads a key the real SOT does not have.
-# Why: An empty string would pass on as a valid pin.
-# From: Issue #479, PR #544
-@test "sot scalar fails closed on a missing key" {
-    run _ci_sot_scalar external_versions.nope.version
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
-}
-
-# What: Reads the default variant's absent opt_in key.
-# Why: Only _ci_sot_optional may turn absence into empty.
-# From: Issue #479, PR #544
-@test "sot optional reads absent keys as empty" {
-    run _ci_sot_optional build_matrix.variants.default.opt_in
-    [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
-}
-
-# What: Lists children of a build_matrix key that is absent.
-# Why: It would silently empty the build matrix.
-# From: Issue #479, PR #544
-@test "sot children fails closed on a missing section" {
-    run _ci_sot_children build_matrix.nope
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
-}
-
-# What: Lists v in a fixture with nested keys and a sibling.
-# Why: Drift here silently drops or adds a variant or image.
-# From: Issue #479, PR #544
-@test "sot children lists only the direct child keys" {
-    _fixture_manifest 'v:' '  one:' '    k: 1' '  two:' '    k: 2' 'other: 1'
-    run _ci_sot_children v
-    [ "${status}" -eq 0 ]
-    [ "${#lines[@]}" -eq 2 ]
-    [ "${lines[0]}" = "one" ]
-    [ "${lines[1]}" = "two" ]
-}
-
-# What: Drives value, children and set modes on one fixture.
-# Why: Readers and the writer must never disagree on a path.
-# From: Issue #479, PR #544
-@test "sot walker: one path rule for value, children and set" {
-    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: 1' 'e: "y"'
-    run _ci_sot_lookup bogus a.b
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0009"* ]]
-    run _ci_sot_children a.b
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
-    run _ci_sot_set a.c "v"
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
-    [ "$(_ci_sot_children a.c)" = "d" ]
-    run _ci_sot_lookup value a.c.zz
-    [ "${status}" -eq 3 ]
-    _ci_sot_set a.c.d "2"
-    [ "$(_ci_sot_scalar a.c.d)" = "2" ]
-    [ "$(_ci_sot_children a)" = "$(printf 'b\nc')" ]
 }
 
 # What: Maps a half-failed, a clean and an empty command.
