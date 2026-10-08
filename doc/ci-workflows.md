@@ -76,8 +76,10 @@ over every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
 (`ci_guard_comment_format`; an absent one of those paths is logged
 NotRun), no
 ShellCheck suppression text in any shell source of the repository
-(`ci_guard_shellcheck_directives`, which reads the banned texts from the
-SOT's `ci_engine.banned_shell_texts`; `AGENTS.md` `[AG-INT-003]`
+(`ci_guard_banned_texts`, which reads the banned texts from the
+SOT's `ci_engine.banned_shell_texts`, and for CI code in the CI-owned
+paths, i.e. scripts, workflows and Dockerfiles, also
+`ci_engine.banned_ci_texts`: no output may be discarded; `AGENTS.md` `[AG-INT-003]`
 forbids silencing a real warning), actionlint, and `shellcheck -x` over
 every shell source of those directories (`*.bats` at the
 `--severity=warning` floor Issue #479 sets, everything else at every

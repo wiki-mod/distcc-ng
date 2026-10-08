@@ -362,6 +362,10 @@ ci_engine:
   # Why: Each silences a real shellcheck warning (AG-INT-003).
   # From: Issue #479, PR #544
   banned_shell_texts: ["shellcheck disable=", "shellcheck source=/dev/null"]
+  # What: Texts no CI script, workflow or Dockerfile may hold.
+  # Why: Discarded output hides an error (AG-INT-003).
+  # From: Issue #479, PR #544
+  banned_ci_texts: ["/dev/null"]
   # What: The only actions a workflow may use; transport only.
   # Why: Cache/artifact APIs need a token run: steps never get.
   # From: Issue #479, PR #544

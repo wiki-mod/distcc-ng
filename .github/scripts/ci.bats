@@ -5,6 +5,11 @@
 # Why: Issue #479 allows ci.bats as the only CI test file.
 # From: Issue #479
 
+# What: Require bats 1.5 for run --separate-stderr.
+# Why: Without it bats warns (BW02) on every flagged run.
+# From: Issue #479, PR #544
+bats_require_minimum_version 1.5.0
+
 # What: Index the real SOT once per file into a sourced file.
 # Why: The SOT is read-only here; one parse serves every test.
 # From: Issue #479, PR #544
@@ -1803,9 +1808,9 @@ EOF
     # What: Stub gh: a met ruleset, scanning on, push off.
     # Why: Real Met and NotMet verdicts must still come out.
     gh() { case "$*" in *rulesets/7*) echo '["pull_request","deletion"]' ;; *) echo '{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}' ;; esac; }
-    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_ac03 7
+    GITHUB_REPOSITORY=o/r run --separate-stderr _ci_ossf_verdict _ci_ossf_check_ac03 7
     [ "${output}" = "Met" ]
-    GITHUB_REPOSITORY=o/r run _ci_ossf_verdict _ci_ossf_check_br07
+    GITHUB_REPOSITORY=o/r run --separate-stderr _ci_ossf_verdict _ci_ossf_check_br07
     [ "${output}" = "NotMet" ]
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
@@ -2053,7 +2058,7 @@ EOF
 @test "every CI_COMMANDS entry dispatches to its ci_cmd function" {
     local c missing=""
     for c in ${CI_COMMANDS}; do
-        declare -F "ci_cmd_${c//-/_}" >/dev/null || missing+=" ${c}"
+        [ -n "$(declare -F "ci_cmd_${c//-/_}")" ] || missing+=" ${c}"
     done
     [ -z "${missing}" ]
     _echoes ci_cmd_impact_hit
@@ -2191,7 +2196,7 @@ EOF
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-COMMENT-0002"* ]]
-    run ci_guard_shellcheck_directives "${fx}"
+    run ci_guard_banned_texts "${fx}"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0004"* ]]
     run ci_guard_orchestrator_only
@@ -2205,7 +2210,7 @@ EOF
     done <<'EOF'
 ci_guard_line_endings|EOL-0002
 ci_guard_comment_format|COMMENT-0003
-ci_guard_shellcheck_directives|SHELLCHECK-0005
+ci_guard_banned_texts|SHELLCHECK-0005
 ci_guard_full_sha|SHA-0002
 ci_guard_sot_mirrors|MIRROR-0011
 ci_guard_path_mirrors|MIRROR-0012
@@ -2478,38 +2483,56 @@ EOF
     [[ "${output}" != *"t.bats:8:"* ]]
 }
 
-# What: Clean tree, each banned text, no or empty SOT list.
+# What: Banned shell and CI texts, scopes, no or empty list.
 # Why: AG-INT-003: presence is the violation; no list fails.
 # From: Issue #479, PR #544
-@test "directive guard: clean tree, banned texts, no SOT list" {
+@test "banned-text guard: shell and CI code lists, scopes, no SOT list" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/lib" "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' 'y=1' > "${fx}/lib/real.sh"
     printf '%s\n' '#!/usr/bin/env bash' '# shellcheck source=lib/real.sh' '. lib/real.sh' \
         > "${fx}/.github/a.sh"
-    run ci_guard_shellcheck_directives "${fx}"
+    run ci_guard_banned_texts "${fx}"
     [ "${status}" -eq 0 ]
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
-    _ci_mapfile texts _ci_banned_shell_texts
+    _ci_mapfile texts _ci_banned_texts banned_shell_texts
     [ "${#texts[@]}" -eq 2 ]
     mkdir -p "${fx}/packaging"
     printf '%s\n' '#!/sbin/openrc-run' "# ${texts[0]}anything" "echo '${texts[1]}'" \
         > "${fx}/packaging/svc.initd"
-    run ci_guard_shellcheck_directives "${fx}"
+    run ci_guard_banned_texts "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"svc.initd:2: banned shell text ${texts[0]}"* ]]
     [[ "${output}" == *"svc.initd:3: banned shell text ${texts[1]}"* ]]
     _fixture_manifest 'ci_engine:' '  selftest_apt: "bats"'
-    run _ci_banned_shell_texts
+    run _ci_banned_texts banned_shell_texts
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
-    run ci_guard_shellcheck_directives "${CI_REPO_ROOT}"
+    run ci_guard_banned_texts "${CI_REPO_ROOT}"
     [ "${status}" -eq 2 ]
     _fixture_manifest 'ci_engine:' '  banned_shell_texts: []'
-    run _ci_banned_shell_texts
+    run _ci_banned_texts banned_shell_texts
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0003"* ]]
+    CI_MANIFEST="${BATS_TEST_DIRNAME}/../yaml/build-manifest.yml"
+    _ci_sot_index_drop
+    rm -rf "${fx}" && mkdir -p "${fx}/.github/workflows" "${fx}/docker/x" "${fx}/src"
+    _ci_mapfile texts _ci_banned_texts banned_ci_texts
+    printf '%s\n' '#!/usr/bin/env bash' "true > ${texts[0]}" > "${fx}/src/product.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'y=1' > "${fx}/.github/ok.sh"
+    run ci_guard_banned_texts "${fx}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" != *"src/product.sh"* ]]
+    printf '%s\n' 'jobs:' "  - run: x > ${texts[0]}" > "${fx}/.github/workflows/w.yml"
+    printf '%s\n' 'FROM x' "RUN y 2>${texts[0]}" > "${fx}/docker/x/Dockerfile"
+    printf '%s\n' '#!/usr/bin/env bash' "z >${texts[0]}" > "${fx}/.github/ok.sh"
+    run ci_guard_banned_texts "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"SHELLCHECK-0006"*"workflows/w.yml:2: banned CI text ${texts[0]}"* ]]
+    [[ "${output}" == *"docker/x/Dockerfile:2: banned CI text"* ]]
+    [[ "${output}" == *".github/ok.sh:2: banned CI text"* ]]
+    [[ "${output}" != *"src/product.sh"* ]]
 }
 
 # What: Runs ci_cmd_lint on a clean tree, then a banned text.
@@ -2518,7 +2541,7 @@ EOF
 @test "the real lint entry fails on a banned shell text" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
-    _ci_mapfile texts _ci_banned_shell_texts
+    _ci_mapfile texts _ci_banned_texts banned_shell_texts
     mkdir -p "${fx}/contrib"
     printf '%s\n' '#!/bin/sh' 'x=1' > "${fx}/contrib/tool"
     _pass ci_guard_line_endings ci_guard_full_sha ci_guard_pins_in_sot ci_guard_sot_mirrors \
@@ -2745,7 +2768,7 @@ _fake_curl() {
         "    sha256: \"${sum}\"" '    bin: "d/tool"'
     [ "$(_ci_tool_url x.tool v1.2)" = "https://h/v1.2/t_1.2.tgz" ]
     _fake_curl "${BATS_TEST_TMPDIR}/t.tar.gz"
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.tool
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run --separate-stderr _ci_tool_bin x.tool
     [ "${status}" -eq 0 ]
     [ "$(cat "${output}")" = "bin" ]
     [ -x "${output}" ]
@@ -2755,7 +2778,7 @@ _fake_curl() {
     _fixture_manifest 'x:' '  osv:' '    version: "v2"' '    url: "https://h/osv"' \
         "    sha256: \"${sum}\"" '    archive: "binary"' '    bin: "osv-scanner"'
     _fake_curl "${BATS_TEST_TMPDIR}/raw"
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_tool_bin x.osv
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run --separate-stderr _ci_tool_bin x.osv
     [ "${status}" -eq 0 ]
     [ "$(cat "${output}")" = "exe" ]
     printf 'evil' > "${BATS_TEST_TMPDIR}/evil"
@@ -3346,7 +3369,7 @@ _fake_osv() {
     _print _ci_tool_bin /bin/true
     # What: Stub sudo: swallow tee input, pass everything else.
     # Why: No root step may touch the machine running the test.
-    sudo() { [ "$1" != tee ] || cat > /dev/null; }
+    sudo() { [ "$1" != tee ] || cat > "${BATS_TEST_TMPDIR}/sudo-tee"; }
     _pass timeout
     # What: Stub curl: write FX_BODY to -o, report HTTP 200.
     # Why: Each run picks its monitor reply through FX_BODY.

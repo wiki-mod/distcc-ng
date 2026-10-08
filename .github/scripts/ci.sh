@@ -648,16 +648,16 @@ _ci_stack_teardown() {
         docker logs --tail 100 "${c}" || rc=1
     done
     if [ "${#ctrs[@]}" -gt 0 ]; then
-        docker rm -f "${ctrs[@]}" >/dev/null || rc=1
+        docker rm -f "${ctrs[@]}" >&2 || rc=1
     fi
     _ci_mapfile vols docker volume ls -q --filter "label=${CI_STACK_LABEL}=${net}" || rc=1
     if [ "${#vols[@]}" -gt 0 ]; then
-        docker volume rm "${vols[@]}" >/dev/null || rc=1
+        docker volume rm "${vols[@]}" >&2 || rc=1
     fi
     local nets=""
     nets="$(docker network ls --format '{{.Name}}')" || rc=1
     if [[ $'\n'"${nets}"$'\n' == *$'\n'"${net}"$'\n'* ]]; then
-        docker network rm "${net}" >/dev/null || rc=1
+        docker network rm "${net}" >&2 || rc=1
     fi
     if [ "${rc}" -ne 0 ]; then
         ci_log "[CI-ERROR-STACK-0001]" "teardown of ${net} failed; resources may leak"
@@ -671,7 +671,7 @@ _ci_stack_teardown() {
 _ci_stack_run() {
     local net="$1" rc=0
     shift
-    docker network create --label "${CI_STACK_LABEL}=${net}" "${net}" >/dev/null || return 1
+    docker network create --label "${CI_STACK_LABEL}=${net}" "${net}" >&2 || return 1
     ( CI_STACK="${net}"; "$@" "${net}" ) || rc=$?
     if ! _ci_stack_teardown "${net}" && [ "${rc}" -eq 0 ]; then
         rc=1
@@ -806,7 +806,7 @@ ci_cmd_plan() {
     fi
     base="${range[0]}" head="${range[1]}"
     cd "${CI_REPO_ROOT}" || return 1
-    if [ -z "${base}" ] || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+    if [ -z "${base}" ] || ! git rev-parse --verify "${base}^{commit}" >&2; then
         # What: An unknown base (first push) selects every phase.
         # Why: No diff exists to classify; NOOP would skip all.
         # From: Issue #479
@@ -922,7 +922,7 @@ _ci_e2e_leg() {
     nj="$(_ci_nproc)" || return 2
     _ci_container_run "${srv_image}" -d --name "${srv}" --network-alias distccd-server -- \
         distccd --no-detach --daemon --verbose --log-stderr --port 3632 \
-        --allow "${subnet}" --jobs "${nj}" >/dev/null || return 1
+        --allow "${subnet}" --jobs "${nj}" >&2 || return 1
     # What: Wait for distccd's own "listening on" log line.
     # Why: A TCP probe is a denied client; listen() follows it.
     # From: Issue #479, PR #544
@@ -936,7 +936,7 @@ _ci_e2e_leg() {
         bash "${CI_CONTAINER_SH}" workload "${workload}" "${pass}" \
         "/work/workload/${id}" "${extra}" > "${out}.client" 2>&1 || client_rc=$?
     docker logs "${srv}" > "${out}.server" 2>&1 || return 1
-    docker rm -f "${srv}" >/dev/null || return 1
+    docker rm -f "${srv}" >&2 || return 1
     if [ "${client_rc}" -ne 0 ]; then
         ci_log "[CI-ERROR-E2E-0009]" "${id}: client workload exited ${client_rc}"
         cat "${out}.client" >&2
@@ -976,7 +976,7 @@ _ci_e2e_mode_run() {
     _ci_mapfile legs _ci_sot_list "e2e.modes.${mode}.legs" || return 2
     _ci_mapfile passes _ci_sot_list "e2e.modes.${mode}.passes" || return 2
     subnet="$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "${net}")" || return 1
-    docker volume create --label "${CI_STACK_LABEL}=${net}" "${net}-cache" >/dev/null || return 1
+    docker volume create --label "${CI_STACK_LABEL}=${net}" "${net}-cache" >&2 || return 1
     for leg in "${legs[@]}"; do
         for pass in "${passes[@]}"; do
             _ci_e2e_leg "${mode}" "${leg}" "${pass}" "${workload}" "${extra}" \
@@ -1139,7 +1139,7 @@ _ci_verify_selftest() {
     printf 'needle_marker\nhaystack\n' > hay.txt || return 1
     _ci_expect_output ripgrep '^needle_marker$' rg needle_marker hay.txt || return 1
     _ci_expect_output grep '^needle_marker$' grep needle_marker hay.txt || return 1
-    ccache --zero-stats >/dev/null || return 1
+    ccache --zero-stats >&2 || return 1
     ccache gcc -c ok.c -o ok.o || return 1
     ccache gcc -c ok.c -o ok.o || return 1
     _ci_expect_output ccache "${CI_CCACHE_HIT_RE}" ccache --show-stats || return 1
@@ -1181,7 +1181,7 @@ _ci_verify_selftest_ssh() {
     mkdir -p /run/sshd || return 1
     /usr/sbin/sshd -f "${d}/sshd_config" -E "${d}/sshd.log" || return 1
     _ci_expect_output ssh '^ssh_marker$' ssh -p 2222 -i "${d}/client_key" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile="${d}/known_hosts" -o BatchMode=yes \
         -o ConnectionAttempts=10 -o ConnectTimeout=2 127.0.0.1 'echo ssh_marker' \
         || { cat "${d}/sshd.log" >&2; return 1; }
     kill "$(cat "${d}/sshd.pid")"
@@ -1337,7 +1337,7 @@ _ci_workload_samba_fetch() {
 # From: Issue #87, Issue #264, PR #544
 _ci_workload_pump() {
     local rc=0
-    if command -v pump >/dev/null; then
+    if command -v pump >&2; then
         pump "$@"
         return
     fi
@@ -1551,7 +1551,7 @@ ci_cmd_package() {
     cd "${CI_REPO_ROOT}" || return 1
     py="$(_ci_python)" || return 1
     for tool in "${py}" pkg-config eu-strip rpmbuild alien fakeroot; do
-        command -v "${tool}" >/dev/null 2>&1 \
+        command -v "${tool}" >&2 \
             || { ci_log "[CI-ERROR-PACKAGE-0001]" "missing tool: ${tool}"; return 1; }
     done
     _ci_configure_tree "${log}.configure" PYTHON="${py}" --enable-Werror || return 1
@@ -1644,7 +1644,7 @@ _ci_container_release() {
             platform="${3:?platform required (amd64|arm64)}"
             version="${4:?version required}"
             pkg="$(_ci_release_pkg "${variant}")" || return 2
-            _ci_sot_scalar "release.container.platforms.${platform}.runner" >/dev/null || return 2
+            _ci_sot_scalar "release.container.platforms.${platform}.runner" >&2 || return 2
             image="$(_ci_release_image "${pkg}" "${version}" "${platform}")" || return 2
             _ci_image_build "release.images.${pkg}" "${version}" \
                 --platform "linux/${platform}" --tag "${image}" || return 1
@@ -1714,7 +1714,7 @@ _ci_publish_nightly() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     cd "${CI_REPO_ROOT}" || return 1
     ref="$(_ci_built_sha)" || return 1
-    _ci_release_assets > /dev/null || return 1
+    _ci_release_assets >&2 || return 1
     _ci_git_identity || return 1
     _ci_mutate git tag -f "${tag}" || return 1
     _ci_git_auth_setup || return 1
@@ -1858,7 +1858,7 @@ _ci_changelog_from_event() {
 # From: Issue #479, PR #544
 _ci_changelog_plan() {
     local rc=0
-    _ci_changelog_from_event >/dev/null || rc=$?
+    _ci_changelog_from_event >&2 || rc=$?
     case "${rc}" in
         0) _ci_output insert true ;;
         3) _ci_output insert false ;;
@@ -2813,7 +2813,7 @@ _ci_ossf_check_ac03() {
         ci_log "[CI-ERROR-OSSF-0001]" "cannot read ruleset ${id}; no verdict"
         return 2
     fi
-    jq -e 'contains(["pull_request"]) and contains(["deletion"])' <<< "${types}" >/dev/null
+    jq -e 'contains(["pull_request"]) and contains(["deletion"])' <<< "${types}" >&2
 }
 
 # What: No pull_request_target fork code, no raw event text.
@@ -2854,12 +2854,12 @@ _ci_ossf_check_br07() {
     # Why: github.token hides them; a NotMet there would be false.
     # From: Issue #312, PR #544
     if ! jq -e '.secret_scanning.status and .secret_scanning_push_protection.status' \
-        <<< "${analysis}" >/dev/null; then
+        <<< "${analysis}" >&2; then
         ci_log "[CI-ERROR-OSSF-0003]" "token cannot read security_and_analysis; no verdict"
         return 2
     fi
     jq -e '.secret_scanning.status == "enabled" and .secret_scanning_push_protection.status == "enabled"' \
-        <<< "${analysis}" >/dev/null
+        <<< "${analysis}" >&2
 }
 
 # What: No compiled binary is tracked in the git tree.
@@ -3088,7 +3088,7 @@ _ci_sha256_ok() {
 _ci_fetch_tool() {
     local spec="$1" ver url kind dest file bin
     ver="$(_ci_sot_scalar "${spec}.version")" || return 2
-    _ci_sot_scalar "${spec}.sha256" >/dev/null || return 2
+    _ci_sot_scalar "${spec}.sha256" >&2 || return 2
     url="$(_ci_tool_url "${spec}" "${ver}")" || return 2
     kind="$(_ci_sot_optional "${spec}.archive")" || return 2
     dest="${RUNNER_TEMP:-/tmp}/${spec##*.}-${ver}"
@@ -3218,7 +3218,7 @@ _ci_verify_in_image() {
     # From: Issue #285, PR #528
     _ci_container_run "${image}" -d --name "${name}" --cap-add=SYS_PTRACE \
         --security-opt "seccomp=${CI_REPO_ROOT}/docker/verify/seccomp-verify.json" \
-        -- sleep infinity >/dev/null || return 1
+        -- sleep infinity >&2 || return 1
     for check in "${checks[@]}"; do
         _ci_mapfile argv _ci_verify_argv "${check}" || return 2
         [ "${#argv[@]}" -gt 0 ] || return 2
@@ -3254,7 +3254,7 @@ _ci_verify_ccache_redis() {
     # Why: The ccache-remote-storage workload needs about 2GB.
     # From: Issue #479, Issue #285
     _ci_container_run "${redis}" -d --name "${net}-redis" --network-alias redis \
-        --memory=2g -- >/dev/null || return 1
+        --memory=2g -- >&2 || return 1
     if ! _ci_wait_until 30 1 _ci_container_logged "${net}-redis" 'Ready to accept connections'; then
         ci_log "[CI-ERROR-VERIFY-0004]" "Redis backend did not become ready within 30s"
         return 1
@@ -3386,7 +3386,7 @@ _ci_pr_on_project_board() {
     items="$(GH_TOKEN="${PROJECT_PAT}" gh pr view "${PR_NUMBER}" \
         --repo "${GITHUB_REPOSITORY}" --json projectItems)" || return 2
     printf '%s' "${items}" | jq -e --arg t "${title}" \
-        '.projectItems[]? | select(.title == $t)' >/dev/null
+        '.projectItems[]? | select(.title == $t)' >&2
 }
 
 # What: Board sub-check; fails once a PAT is set.
@@ -3658,36 +3658,69 @@ _ci_shell_sources() {
         }' {} +
 }
 
-# What: Print the SOT's banned shell texts, one per line.
-# Why: The SOT owns the list; ci.sh holds no copy of it.
+# What: Print SOT list ci_engine.$1, one text per line.
+# Why: The SOT owns the lists; ci.sh holds no copy of them.
 # From: Issue #479, PR #544
-_ci_banned_shell_texts() {
+_ci_banned_texts() {
     local texts
-    texts="$(_ci_sot_list ci_engine.banned_shell_texts)" || return 2
+    texts="$(_ci_sot_list "ci_engine.$1")" || return 2
     if [ -z "${texts}" ]; then
-        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0003]" "ci_engine.banned_shell_texts names no text"
+        ci_log "[CI-ERROR-GUARD-SHELLCHECK-0003]" "ci_engine.$1 names no text"
         return 2
     fi
     printf '%s\n' "${texts}"
 }
 
-# What: Fail on any SOT-banned text in a shell source.
-# Why: AG-INT-003: a silenced warning is itself a violation.
+# What: Print file:line hits of texts $2 in files $3.. ($1).
+# Why: One scan for the shell list and the CI code list.
 # From: Issue #479, PR #544
-ci_guard_shellcheck_directives() {
-    local root="${1:-${CI_REPO_ROOT}}" texts out
-    local files=()
+_ci_banned_hits() {
+    local label="$1" texts="$2"
+    shift 2
+    CI_BANNED="${texts}" awk -v L="${label}" 'BEGIN { n = split(ENVIRON["CI_BANNED"], b, "\n") }
+        { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": banned " L " text " b[i] }
+        ' "$@"
+}
+
+# What: Fail on SOT-banned text: any shell file, CI code too.
+# Why: AG-INT-003: no silenced warning, no discarded output.
+# From: Issue #479, PR #544
+ci_guard_banned_texts() {
+    local root="${1:-${CI_REPO_ROOT}}" texts ci_texts out f d rc=0
+    local files=() owned=() ci_files=() docker=()
     _ci_guard_readable "[CI-ERROR-GUARD-SHELLCHECK-0005]" "${root}" || return 2
-    texts="$(_ci_banned_shell_texts)" || return 2
+    texts="$(_ci_banned_texts banned_shell_texts)" || return 2
+    ci_texts="$(_ci_banned_texts banned_ci_texts)" || return 2
     _ci_mapfile files _ci_shell_sources "${root}" || return 2
     if [ "${#files[@]}" -eq 0 ]; then
         ci_log "[CI-ERROR-GUARD-SHELLCHECK-0004]" "no shell source under ${root}"
         return 2
     fi
-    out="$(CI_BANNED="${texts}" awk 'BEGIN { n = split(ENVIRON["CI_BANNED"], b, "\n") }
-        { for (i = 1; i <= n; i++) if (index($0, b[i])) print FILENAME ":" FNR ": banned shell text " b[i] }
-        ' "${files[@]}")" || return 2
-    _ci_guard_hits "[CI-ERROR-GUARD-SHELLCHECK-0001]" <<< "${out}"
+    out="$(_ci_banned_hits shell "${texts}" "${files[@]}")" || return 2
+    _ci_guard_hits "[CI-ERROR-GUARD-SHELLCHECK-0001]" <<< "${out}" || rc=1
+    # What: CI code = owned shell files, workflows, Dockerfiles.
+    # Why: The SOT is data; it lists the banned texts themselves.
+    # From: Issue #479, PR #544
+    _ci_mapfile owned _ci_owned_paths_in "${root}" || return 2
+    for f in "${files[@]}"; do
+        for d in ${owned[@]+"${owned[@]}"}; do
+            case "${f}" in "${root}/${d}"|"${root}/${d}/"*) ci_files+=("${f}"); break ;; esac
+        done
+    done
+    for f in "${root}"/.github/workflows/*.yml; do
+        if [ -f "${f}" ]; then ci_files+=("${f}"); fi
+    done
+    for d in ${owned[@]+"${owned[@]}"}; do
+        _ci_mapfile docker find "${root}/${d}" -type f -name 'Dockerfile*' || return 2
+        ci_files+=(${docker[@]+"${docker[@]}"})
+    done
+    if [ "${#ci_files[@]}" -eq 0 ]; then
+        ci_log "[CI-LINT]" "banned CI texts NotRun: no CI code under ${root}"
+        return "${rc}"
+    fi
+    out="$(_ci_banned_hits CI "${ci_texts}" "${ci_files[@]}")" || return 2
+    _ci_guard_hits "[CI-ERROR-GUARD-SHELLCHECK-0006]" <<< "${out}" || rc=1
+    return "${rc}"
 }
 
 # What: Fail on any sha256 digest not 64 lowercase hex.
@@ -4157,7 +4190,7 @@ ci_cmd_lint() {
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_pins || rc=1
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
-    ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
+    ci_guard_banned_texts "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
     ci_guard_path_mirrors "${CI_REPO_ROOT}" || rc=1
     # What: Orchestrator, timeout, error-id guards; linters.
@@ -4527,7 +4560,7 @@ _ci_harden_start() {
         > "${_CI_HARDEN_DIR}/agent.json" || return 1
     printf 'correlation_id=%s\nadd_summary=%s\n' "${cid}" "${summary}" \
         > "${RUNNER_TEMP}/ci-harden.state" || return 1
-    _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >/dev/null || return 1
+    _ci_harden_service_unit | sudo tee /etc/systemd/system/agent.service >&2 || return 1
     sudo systemctl daemon-reload || return 1
     timeout 15 sudo service agent start || return 1
     if _ci_wait_until 31 0.3 test -f "${_CI_HARDEN_DIR}/agent.status"; then
@@ -5085,7 +5118,7 @@ ci_cmd_build() {
     _ci_variant_ccache "${variant}" || rc=$?
     case "${rc}" in
         0) cc="cc"
-           if command -v ccache >/dev/null 2>&1; then cc="$(command -v ccache) cc"; fi
+           if command -v ccache >&2; then cc="$(command -v ccache) cc"; fi
            flags+=(CC="${cc}") ;;
         1) ;;
         *) return 2 ;;
@@ -5329,7 +5362,7 @@ ci_main() {
             return 2 ;;
     esac
     fn="ci_cmd_${command//-/_}"
-    if ! declare -F "${fn}" >/dev/null; then
+    if [ -z "$(declare -F "${fn}")" ]; then
         ci_log "[CI-ERROR-CORE-0001]" "command=${command} has no function ${fn}"
         return 2
     fi
