@@ -66,7 +66,9 @@ of every SOT phase and the ClusterFuzzLite base-builder `FROM`
 repeat `ci.sh` constants: the `/ci` bind target, the release `/out`
 trees, the CFL `$SRC` directory and the registry
 (`ci_guard_path_mirrors`), orchestrator-only workflows
-(`ci_guard_orchestrator_only`), the `What:`/`Why:`/`From:` comment form
+(`ci_guard_orchestrator_only`), a `timeout-minutes` on every workflow
+job (`ci_guard_job_timeouts`), each `CI-ERROR` id raised in one place
+only (`ci_guard_error_ids`), the `What:`/`Why:`/`From:` comment form
 of `AGENTS.md` `[AG-CODE-001]` (`From:` holds Issue/PR pointers only),
 with a block directly above every function, nested stub and bats test,
 over every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,

@@ -138,25 +138,18 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-CORE-0002"* ]]
 }
 
-# What: Print each CI-ERROR id that occurs twice in file $1.
-# Why: Triage greps an id to find the one place it is raised.
-# From: Issue #479, PR #544
-_dup_error_ids() {
-    grep -oE 'CI-ERROR-[A-Z0-9-]+-[0-9]{4}' "$1" | sort | uniq -d
-}
-
-# What: Lists duplicate ids in ci.sh, then in a copy with one.
+# What: Guards ci.sh, then a copy that raises one id twice.
 # Why: A shared id would point triage at the wrong failure.
 # From: Issue #479, PR #544
-@test "every CI-ERROR id in ci.sh is raised in one place" {
+@test "the error-id guard fails on an id raised twice" {
     local fx="${BATS_TEST_TMPDIR}/ci.sh"
-    run _dup_error_ids "${CI_SH}"
+    run ci_guard_error_ids "${CI_SH}"
     [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
     cp "${CI_SH}" "${fx}"
     printf '%s\n' 'ci_log "[CI-ERROR-CORE-0002]" "again"' >> "${fx}"
-    run _dup_error_ids "${fx}"
-    [ "${output}" = "CI-ERROR-CORE-0002" ]
+    run ci_guard_error_ids "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-ERRID-0001"*"CI-ERROR-CORE-0002 is raised"* ]]
 }
 
 # What: Points CI_MANIFEST at a path that does not exist.
@@ -2335,32 +2328,18 @@ _dup_error_ids() {
 
 
 
-# What: Print "file job" for each job of $@ with no timeout.
-# Why: Unbounded, a hung job runs to the 6-hour default.
+# What: Guards every workflow, then a copy missing one bound.
+# Why: The copy proves the timeout guard can fail at all.
 # From: Issue #479, PR #544
-_jobs_without_timeout() {
-    awk '
-        FNR == 1 { if (cur != "" && !t) print F " " cur; F = FILENAME; j = 0; cur = ""; t = 0 }
-        /^jobs:/ { j = 1; next }
-        j && /^  [A-Za-z0-9_-]+:$/ { if (cur != "" && !t) print F " " cur; cur = substr($1, 1, length($1) - 1); t = 0 }
-        j && cur != "" && /^    timeout-minutes: [0-9]+$/ { t = 1 }
-        END { if (cur != "" && !t) print F " " cur }
-    ' "$@"
-}
-
-# What: Checks all five workflows, then a copy missing one.
-# Why: The copy proves the timeout check can fail at all.
-# From: Issue #479, PR #544
-@test "every workflow job has a timeout-minutes" {
-    local wfs=("${CI_REPO_ROOT}"/.github/workflows/*.yml) fx="${BATS_TEST_TMPDIR}/validate.yml"
-    [ "${#wfs[@]}" -eq 5 ]
-    run _jobs_without_timeout "${wfs[@]}"
+@test "the timeout guard fails on a job with no timeout-minutes" {
+    local fx="${BATS_TEST_TMPDIR}/validate.yml"
+    run ci_guard_job_timeouts "${CI_REPO_ROOT}"/.github/workflows/*.yml
     [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
     awk '/^  plan:$/ { p = 1 } p && /^    timeout-minutes:/ { p = 0; next } { print }' \
         "${CI_REPO_ROOT}/.github/workflows/validate.yml" > "${fx}"
-    run _jobs_without_timeout "${fx}"
-    [ "${output}" = "${fx} plan" ]
+    run ci_guard_job_timeouts "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-TIME-0001"*"${fx} plan has no timeout-minutes"* ]]
 }
 
 # What: Each command resolves to its function; a gap fails.
@@ -2890,7 +2869,8 @@ _jobs_without_timeout() {
     mkdir -p "${fx}/contrib"
     printf '%s\n' '#!/bin/sh' 'x=1' > "${fx}/contrib/tool"
     _pass ci_guard_line_endings ci_guard_full_sha ci_guard_pins_in_sot ci_guard_sot_mirrors \
-        ci_guard_orchestrator_only ci_guard_comment_format _ci_lint_actionlint _ci_lint_shellcheck
+        ci_guard_orchestrator_only ci_guard_job_timeouts ci_guard_comment_format _ci_lint_actionlint \
+        _ci_lint_shellcheck
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 0 ]
     printf '%s\n' '#!/bin/sh' "# ${texts[0]}SC2086" 'x=1' > "${fx}/contrib/tool"

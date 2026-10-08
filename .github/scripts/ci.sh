@@ -3876,6 +3876,32 @@ ci_guard_orchestrator_only() {
     return "${rc}"
 }
 
+# What: Fail on a workflow job with no timeout-minutes.
+# Why: Unbounded, a hung job runs to the 6-hour default.
+# From: Issue #479, PR #544
+ci_guard_job_timeouts() {
+    local out
+    out="$(awk '
+        FNR == 1 { if (cur != "" && !t) print F " " cur; F = FILENAME; j = 0; cur = ""; t = 0 }
+        /^jobs:/ { j = 1; next }
+        j && /^  [A-Za-z0-9_-]+:$/ { if (cur != "" && !t) print F " " cur; cur = substr($1, 1, length($1) - 1); t = 0 }
+        j && cur != "" && /^    timeout-minutes: [0-9]+$/ { t = 1 }
+        END { if (cur != "" && !t) print F " " cur }
+    ' "$@")" || return 2
+    _ci_guard_hits "[CI-ERROR-GUARD-TIME-0001]" "" " has no timeout-minutes" <<< "${out}"
+}
+
+# What: Fail on a CI-ERROR id that file $1 raises twice.
+# Why: Triage greps an id to find the one place it is raised.
+# From: Issue #479, PR #544
+ci_guard_error_ids() {
+    local ids rc=0
+    ids="$(grep -oE 'CI-ERROR-[A-Z0-9-]+-[0-9]{4}' "$1")" || rc=$?
+    [ "${rc}" -le 1 ] || return 2
+    sort <<< "${ids}" | uniq -d \
+        | _ci_guard_hits "[CI-ERROR-GUARD-ERRID-0001]" "" " is raised in more than one place"
+}
+
 # What: Run the ci.bats regression suite in parallel.
 # Why: The engine tests itself when .github/scripts changes.
 # From: Issue #479
@@ -3956,10 +3982,12 @@ ci_cmd_lint() {
     ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
     ci_guard_path_mirrors "${CI_REPO_ROOT}" || rc=1
-    # What: Run the orchestrator guard, actionlint, shellcheck.
+    # What: Orchestrator, timeout, error-id guards; linters.
     # Why: #479 allows no workflow-local logic, none exempt.
     # From: Issue #479, PR #544
     ci_guard_orchestrator_only "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
+    ci_guard_job_timeouts "${CI_REPO_ROOT}"/.github/workflows/*.yml || rc=1
+    ci_guard_error_ids "${CI_SCRIPT_DIR}/ci.sh" || rc=1
     _ci_lint_actionlint || rc=1
     _ci_lint_shellcheck || rc=1
     return "${rc}"
@@ -5046,7 +5074,7 @@ _ci_coverage_summary() {
 # Why: The SOT defines each variant; an empty list is NotRun.
 # From: Issue #479, PR #544
 ci_cmd_test() {
-    local variant="${1:-default}" log step
+    local variant="${1:?variant required}" log step
     local steps
     _ci_variant_known "${variant}" "[CI-ERROR-TEST-0005]" || return 2
     steps="$(_ci_sot_list "build_matrix.variants.${variant}.test_steps")" || return 2
