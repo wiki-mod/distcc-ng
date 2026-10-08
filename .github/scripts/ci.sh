@@ -303,14 +303,22 @@ _ci_sot_children() {
 # Why: One reader lets phases read path/phase lists as lines.
 # From: Issue #479
 _ci_sot_list() {
-    local raw
+    local raw item
+    local items=()
     raw="$(_ci_sot_scalar "$1")" || return 2
     raw="${raw#"["}"
     raw="${raw%"]"}"
-    printf '%s' "${raw}" \
-        | tr ',' '\n' \
-        | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
-        | awk 'NF'
+    IFS=',' read -ra items <<< "${raw}"
+    # What: Trim blanks, then one quote, at each end of an item.
+    # Why: Same rule as before, without three processes per list.
+    # From: Issue #479, PR #544
+    for item in ${items[@]+"${items[@]}"}; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item#\"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        item="${item%\"}"
+        [ -z "${item//[[:space:]]/}" ] || printf '%s\n' "${item}"
+    done
 }
 
 # What: Set one SOT scalar; swap in the new file by rename.
@@ -750,14 +758,16 @@ ci_cmd_matrix() {
         oses="$(_ci_sot_list "build_matrix.variants.${v}.os")" || return 2
         for os in ${oses}; do
             case "${os}" in
-                macos*) rows+="$(jq -cn --arg v "${v}" --arg o "${os}" --arg b "${brew}" \
-                    '{variant: $v, os: $o, brew: $b}')"$'\n' || return 2 ;;
-                *)      rows+="$(jq -cn --arg v "${v}" --arg o "${os}" --arg a "${apt}" \
-                    '{variant: $v, os: $o, apt: $a}')"$'\n' || return 2 ;;
+                macos*) rows+="${v}"$'\x1f'"${os}"$'\x1f'brew$'\x1f'"${brew}"$'\n' ;;
+                *)      rows+="${v}"$'\x1f'"${os}"$'\x1f'apt$'\x1f'"${apt}"$'\n' ;;
             esac
         done
     done
-    jq -cs '{include: .}' <<< "${rows}"
+    # What: One jq turns every collected row into the matrix.
+    # Why: jq quotes any value; one process, not one per row.
+    # From: Issue #479, PR #544
+    jq -Rcs '[split("\n")[] | select(length > 0) | split("\u001f")
+        | {variant: .[0], os: .[1], (.[2]): .[3]}] | {include: .}' <<< "${rows}"
 }
 
 # What: Print the value(s) of a jq filter on this run's event.
@@ -2097,11 +2107,12 @@ _ci_release_matrix() {
                 true|false) ;;
                 *) ci_log "[CI-ERROR-CONTAINER-0005]" "platform ${p} optional=${opt} (true|false)"; return 2 ;;
             esac
-            rows+="$(jq -cn --arg v "${v}" --arg p "${p}" --arg r "${runner}" --argjson o "${opt}" \
-                '{variant: $v, platform: $p, runs_on: $r, optional: $o}')"$'\n' || return 2
+            rows+="${v}"$'\x1f'"${p}"$'\x1f'"${runner}"$'\x1f'"${opt}"$'\n'
         done
     done
-    jq -cs '{include: .}' <<< "${rows}" || return 2
+    jq -Rcs '[split("\n")[] | select(length > 0) | split("\u001f")
+        | {variant: .[0], platform: .[1], runs_on: .[2], optional: (.[3] == "true")}]
+        | {include: .}' <<< "${rows}" || return 2
     jq -cn '$ARGS.positional' --args "${variants[@]}"
 }
 
