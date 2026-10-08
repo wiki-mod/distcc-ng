@@ -405,21 +405,21 @@ EOF
     [ "${output}" = $'distcc-1.tar.gz\npackaging/a.deb' ]
 }
 
-# What: Checks a PR with the ci label and a milestone.
+# What: A PR with both, no milestone, no label (board unset).
 # Why: AG-GH-002 asks for a label and a milestone, no more.
-# From: Issue #479
-@test "tracking passes with labels and a milestone" {
-    PR_LABELS="ci" PR_MILESTONE_TITLE="current_dev backlog" run _ci_check_pr_tracking
-    [ "${status}" -eq 0 ]
-}
-
-# What: Checks a labelled PR that has no milestone.
-# Why: AG-GH-002 requires a milestone on every PR.
-# From: Issue #479
-@test "tracking fails closed without a milestone" {
-    PR_LABELS="ci" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
+# From: Issue #479, PR #544
+@test "tracking needs a label and a milestone on a ready PR" {
+    local labels ms rc want
+    unset PROJECT_PAT
+    while IFS='|' read -r labels ms rc want; do
+        PR_LABELS="${labels}" PR_MILESTONE_TITLE="${ms}" run _ci_check_pr_tracking
+        [ "${status}" -eq "${rc}" ] || { echo "[${labels}][${ms}]: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"${want}"* ]] || { echo "[${labels}][${ms}]: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+ci|current_dev backlog|0|OK: labels and milestone set
+ci||1|[CI-ERROR-META-TRACKING-0001] PR tracking metadata failed (AG-GH-002); no milestone set
+ |current_dev backlog|1|no labels set
+EOF
 }
 
 # What: Reads live PR data, then replies lacking a field.
@@ -472,68 +472,44 @@ EOF
     [[ "${output}" == *"draft, non-blocking"* ]]
 }
 
-# What: Runs the board check with PROJECT_PAT unset.
-# Why: AG-GH-002 lets only this board sub-check warn.
+# What: Board check: no PAT, on, off board, lookup error.
+# Why: Only a missing PAT may warn; with one it is blocking.
 # From: Issue #479, PR #544
-@test "board check skips when PROJECT_AUTOMATION_PAT is unset" {
-    unset PROJECT_PAT
-    run _ci_check_pr_board
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"CI-META-BOARD"* ]]
+@test "board check warns without a PAT and blocks with one" {
+    local pat lookup rc want
+    while IFS='|' read -r pat lookup rc want; do
+        case "${lookup}" in
+            on) _print _ci_pr_on_project_board ;;
+            off) _fail _ci_pr_on_project_board 1 ;;
+            err) _fail _ci_pr_on_project_board 2 ;;
+            none) _forbid _ci_pr_on_project_board ;;
+        esac
+        PROJECT_PAT="${pat}" run _ci_check_pr_board
+        [ "${status}" -eq "${rc}" ] || { echo "${pat}/${lookup}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"${want}"* ]] || { echo "${pat}/${lookup}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+|none|0|[CI-META-BOARD]
+dummy|on|0|OK: on project board
+dummy|off|1|[CI-ERROR-META-BOARD-0002]
+dummy|err|1|[CI-ERROR-META-BOARD-0001]
+EOF
 }
 
-# What: Board check with a PAT: on, off, lookup error.
-# Why: With a PAT, AG-GH-002 makes the board check blocking.
+# What: Tag v9.9.9-NG: pushed, re-tag, mismatch, git down.
+# Why: POL-RELEASE-05/07: a tag names configure.ac and is new.
 # From: Issue #479, PR #544
-@test "board check with a PAT passes only a PR on the board" {
-    _print _ci_pr_on_project_board
-    PROJECT_PAT="dummy" run _ci_check_pr_board
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"OK: on project board"* ]]
-    _fail _ci_pr_on_project_board 1
-    PROJECT_PAT="dummy" run _ci_check_pr_board
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-BOARD-0002"* ]]
-    _fail _ci_pr_on_project_board 2
-    PROJECT_PAT="dummy" run _ci_check_pr_board
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-BOARD-0001"* ]]
-}
-
-# What: Runs version-check for v99.99.99-NG on the repo.
-# Why: A tag must name the version configure.ac builds.
-# From: Issue #479
-@test "release version-check fails on a tag that mismatches configure.ac" {
-    run bash "${BATS_TEST_DIRNAME}/ci.sh" release version-check v99.99.99-NG
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-RELEASE-0003"* ]]
-}
-
-# What: Checks the fixture's own tag with require_new=false.
-# Why: POL-RELEASE-07 runs after the tag was pushed.
-# From: Issue #479, PR #544
-@test "release version-check require_new=false accepts an already-pushed tag" {
+@test "release version-check: configure.ac match, new tag, git errors" {
+    local fx tag new rc want
     fx="$(_fixture_tag_repo)"
-    CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG false
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"CI-RELEASE"*"OK"* ]]
-}
-
-# What: Checks the fixture's existing tag with the default.
-# Why: Re-tagging would move an already published ref.
-# From: Issue #479, PR #544
-@test "release version-check require_new=true still rejects an existing tag" {
-    fx="$(_fixture_tag_repo)"
-    CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-RELEASE-0004"* ]]
-}
-
-# What: Breaks git inside the require_new tag lookup.
-# Why: POL-RELEASE-05 needs proof the tag is new.
-# From: Issue #479, PR #544
-@test "release version-check fails when git cannot list tags" {
-    fx="$(_fixture_tag_repo)"
+    while IFS='|' read -r tag new rc want; do
+        CI_REPO_ROOT="${fx}" run _ci_check_release_version "${tag}" "${new}"
+        [ "${status}" -eq "${rc}" ] || { echo "${tag}/${new}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"${want}"* ]] || { echo "${tag}/${new}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+v9.9.9-NG|false|0|[CI-RELEASE]
+v9.9.9-NG|true|1|[CI-ERROR-RELEASE-0004]
+v99.99.99-NG|true|1|[CI-ERROR-RELEASE-0003]
+EOF
     _fail git 128 "git broke"
     CI_REPO_ROOT="${fx}" run _ci_check_release_version v9.9.9-NG
     [ "${status}" -eq 1 ]
@@ -542,43 +518,29 @@ EOF
     [[ "${output}" != *"OK"* ]]
 }
 
-# What: Reads the context of a v1.2.3-NG tag push.
-# Why: POL-RELEASE-07; release jobs read only these outputs.
+# What: Tag push, dispatches with and without inputs, others.
+# Why: POL-RELEASE-05/07: only a release trigger names a tag.
 # From: Issue #479, PR #544
-@test "release context: a tag push publishes and moves latest" {
-    GITHUB_EVENT_NAME=push GITHUB_REF=refs/tags/v1.2.3-NG GITHUB_REF_NAME=v1.2.3-NG run _ci_release_context
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "$(printf '%s\n' v1.2.3-NG false true true)" ]
-}
-
-# What: Reads three dispatches: opt-in, no opt-in, no tag.
-# Why: POL-RELEASE-05: a dry run never moves latest.
-# From: Issue #479, PR #544
-@test "release context: a dispatch reads tag and opt-in from inputs" {
-    local ev="${BATS_TEST_TMPDIR}/ev.json"
-    printf '{"inputs":{"tag":"v1.2.3-NG","publish_container":"true"}}' > "${ev}"
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "$(printf '%s\n' v1.2.3-NG true true false)" ]
-    printf '{"inputs":{"tag":"v1.2.3-NG"}}' > "${ev}"
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
-    [ "${lines[2]}" = "false" ]
-    printf '{"inputs":{}}' > "${ev}"
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_release_context
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-EVENT-0001"*".inputs.tag"* ]]
-}
-
-# What: Reads the context of a branch push and a schedule.
-# Why: Guessing a tag there would publish the wrong ref.
-# From: Issue #479, PR #544
-@test "release context fails closed off a release trigger" {
-    GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/current_dev GITHUB_REF_NAME=current_dev run _ci_release_context
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-RELEASE-0007"* ]]
-    GITHUB_EVENT_NAME=schedule run _ci_release_context
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-RELEASE-0008"* ]]
+@test "release context per event: tag push, dispatch, and refusals" {
+    local ev="${BATS_TEST_TMPDIR}/ev.json" event ref json rc want got
+    while IFS='|' read -r event ref json rc want; do
+        printf '%s' "${json}" > "${ev}"
+        GITHUB_EVENT_NAME="${event}" GITHUB_REF="${ref}" GITHUB_REF_NAME="${ref##*/}" GITHUB_EVENT_PATH="${ev}" \
+            run _ci_release_context
+        got="${output//$'\n'/ }"
+        [ "${status}" -eq "${rc}" ] || { echo "${event} ${ref} ${json}: rc ${status}: ${got}"; return 1; }
+        case "${want}" in
+            =*) [ "${got}" = "${want#=}" ] ;;
+            *) [[ "${got}" == *"${want}"* ]] ;;
+        esac || { echo "${event} ${ref} ${json}: want ${want}: ${got}"; return 1; }
+    done <<'EOF'
+push|refs/tags/v1.2.3-NG|{}|0|=v1.2.3-NG false true true
+workflow_dispatch||{"inputs":{"tag":"v1.2.3-NG","publish_container":"true"}}|0|=v1.2.3-NG true true false
+workflow_dispatch||{"inputs":{"tag":"v1.2.3-NG"}}|0|=v1.2.3-NG true false false
+workflow_dispatch||{"inputs":{}}|2|[CI-ERROR-EVENT-0001] workflow_dispatch payload has no .inputs.tag
+push|refs/heads/current_dev|{}|2|[CI-ERROR-RELEASE-0007]
+schedule||{}|2|[CI-ERROR-RELEASE-0008]
+EOF
 }
 
 # What: Runs the tag-push check with check and matrix stubbed.
@@ -675,22 +637,6 @@ EOF
     [ "${output}" = "ghcr.io/o/distcc-ng-nightly:latest" ]
 }
 
-# What: Feeds a pre-release and a note-less dispatch event.
-# Why: Only a published release or explicit notes add one.
-# From: Issue #479, PR #544
-@test "changelog skips a pre-release and a dispatch without notes" {
-    local ev="${BATS_TEST_TMPDIR}/ev.json"
-    _forbid _ci_changelog_insert
-    printf '{"release":{"prerelease":true,"tag_name":"v1","body":"x"}}' > "${ev}"
-    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"skipped: pre-release"* ]]
-    printf '{"inputs":{"tag":"v1","release_notes":""}}' > "${ev}"
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"skipped: no release_notes"* ]]
-}
-
 # What: Plans a release, a note-less dispatch and a push.
 # Why: The write token step must not run without a section.
 # From: Issue #479, PR #544
@@ -707,22 +653,28 @@ EOF
     [ "${status}" -eq 2 ]
 }
 
-# What: Feeds a release event and a dispatch with notes.
+# What: Release, pre-release, dispatch with and without notes.
 # Why: The workflow passes neither; ci.sh reads the event.
 # From: Issue #479, PR #544
-@test "changelog takes a published release's tag and body" {
-    local ev="${BATS_TEST_TMPDIR}/ev.json"
+@test "changelog event: a release or notes insert, others skip" {
+    local ev="${BATS_TEST_TMPDIR}/ev.json" event json want
     # What: Stub the insert to print its tag and notes.
     # Why: The test checks the event parse, not git.
     _ci_changelog_insert() { printf 'insert %s|%s\n' "$1" "$2"; }
-    printf '{"release":{"prerelease":false,"tag_name":"v1.2","body":"notes"}}' > "${ev}"
-    GITHUB_EVENT_NAME=release GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "insert v1.2|notes" ]
-    printf '{"inputs":{"tag":"v2-NG","release_notes":"rn"}}' > "${ev}"
-    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "insert v2-NG|rn" ]
+    while IFS='^' read -r event json want; do
+        printf '%s' "${json}" > "${ev}"
+        GITHUB_EVENT_NAME="${event}" GITHUB_EVENT_PATH="${ev}" run _ci_publish_changelog_update
+        [ "${status}" -eq 0 ] || { echo "${json}: rc ${status}: ${output}"; return 1; }
+        case "${want}" in
+            insert*) [ "${output}" = "${want}" ] ;;
+            *) [[ "${output}" == *"${want}"* && "${output}" != *insert* ]] ;;
+        esac || { echo "${json}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+release^{"release":{"prerelease":false,"tag_name":"v1.2","body":"notes"}}^insert v1.2|notes
+workflow_dispatch^{"inputs":{"tag":"v2-NG","release_notes":"rn"}}^insert v2-NG|rn
+release^{"release":{"prerelease":true,"tag_name":"v1","body":"x"}}^skipped: pre-release
+workflow_dispatch^{"inputs":{"tag":"v1","release_notes":""}}^skipped: no release_notes
+EOF
 }
 
 # What: Inserts a notes file into a fixture repo, dry run.
@@ -743,22 +695,19 @@ EOF
     [ "$(git -C "${fx}" log -1 --format=%s)" = "CHANGELOG.md: add v1.2.3-NG" ]
 }
 
-# What: Logs in with REGISTRY_TOKEN unset, docker forbidden.
-# Why: A missing secret is a hard failure (AG-VAL-001).
+# What: Login and push without a token, then a recorded login.
+# Why: No anonymous push; argv leaks into logs, stdin not.
 # From: Issue #479, PR #544
-@test "registry login fails closed without REGISTRY_TOKEN" {
+@test "registry login needs REGISTRY_TOKEN and pipes it on stdin" {
     _forbid docker
     unset REGISTRY_TOKEN
     GITHUB_ACTOR=octo run _ci_registry_login
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"REGISTRY_TOKEN required"* ]]
-    [[ "${output}" != *"docker must not run"* ]]
-}
-
-# What: Logs in with a docker stub recording stdin and argv.
-# Why: argv leaks into process listings and logs.
-# From: Issue #479, PR #544
-@test "registry login pipes the token on stdin as GITHUB_ACTOR" {
+    [[ "${output}" != *"must not run"* ]]
+    GITHUB_ACTOR=octo run _ci_registry_push some/image:tag
+    [ "${status}" -ne 0 ]
+    [[ "${output}" != *"must not run"* ]]
     # What: Stub docker to record its stdin and argv.
     # Why: The real login needs a registry and a token.
     docker() { cat > "${BATS_TEST_TMPDIR}/stdin"; echo "$*" > "${BATS_TEST_TMPDIR}/argv"; }
@@ -3033,17 +2982,6 @@ _capture_docker() {
     run _ci_container_run img -e K=V
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CONTAINER-0003"* ]]
-    [[ "${output}" != *"must not run"* ]]
-}
-
-# What: Pushes with REGISTRY_TOKEN unset, docker forbidden.
-# Why: An anonymous or stale-credential push must not happen.
-# From: Issue #479, PR #544
-@test "registry push never pushes after a failed login" {
-    _forbid docker
-    unset REGISTRY_TOKEN
-    GITHUB_ACTOR=octo run _ci_registry_push some/image:tag
-    [ "${status}" -ne 0 ]
     [[ "${output}" != *"must not run"* ]]
 }
 
