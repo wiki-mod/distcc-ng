@@ -845,7 +845,7 @@ This section applies when `.github/scripts/ci.sh`, `.github/scripts/ci.bats`, `.
 ### **VER-CI-02** Red path of every new or changed guard and structural test
 **Applies when:** A `ci.sh lint` guard or a `ci.bats` test that checks workflow or engine structure is added or changed.
 **Requirement:** A deliberate violation MUST make the guard or test fail, and the failure MUST name the violation.
-**Procedure:** In a scratch copy, introduce one violation per guarded property, for example a removed job gate, a rerouted `ci.sh` command, a misrouted dispatch arm, or a banned text, and run the guard or test.
+**Procedure:** In a scratch copy, introduce one violation per guarded property, for example a removed job gate, a rerouted `ci.sh` command, a `CI_COMMANDS` entry without its `ci_cmd_*` function, or a banned text, and run the guard or test.
 **Pass criteria:** Each violation turns the guard or test red with its own error id or message; the unmodified tree stays green.
 **Invalid evidence:** A green run alone; a fixture that itself accepts the construct the guard forbids; a fixture that hides the construct from the guard by splitting or encoding it.
 **References:** Issue #479, PR #544.

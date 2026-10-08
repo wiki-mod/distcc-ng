@@ -94,14 +94,17 @@ ci_require_manifest() {
 # Why: One path walker for value, children and set modes.
 # From: Issue #479, PR #544
 _ci_sot_lookup() {
-    local mode="$1" path="$2" value="${3:-}"
+    local mode="$1" path="$2" value="${3:-}" rc=0
     case "${mode}" in
         value|children|set) ;;
         *) ci_log "[CI-ERROR-SOT-0009]" "unknown SOT walk mode=\"${mode}\""; return 2 ;;
     esac
+    # What: Exit 4 on a scalar read of a section, or vice versa.
+    # Why: A wrong node kind must fail, never read as empty.
+    # From: Issue #479, PR #544
     awk -v mode="${mode}" -v path="${path}" -v value="${value}" '
         BEGIN { n = split(path, want, "."); need = 1; hit = 0; childind = -1 }
-        END { if (!hit) exit 3 }
+        END { if (bad) exit 4; if (!hit) exit 3 }
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { if (mode == "set") print; next }
         {
             match($0, /^ */); ind = RLENGTH / 2
@@ -116,12 +119,16 @@ _ci_sot_lookup() {
                 if (ind + 1 == need && key == want[need]) {
                     if (need == n) {
                         hit = 1
-                        if (mode == "value") {
-                            val = $0; sub(/^[^:]*:[[:space:]]*/, "", val)
-                            gsub(/^"|"[[:space:]]*$/, "", val)
-                            print val; exit
+                        rest = $0; sub(/^[^:]*:[[:space:]]*/, "", rest)
+                        if (match(rest, /^"[^"]*"/)) val = substr(rest, 2, RLENGTH - 2)
+                        else { val = rest; sub(/[[:space:]]+#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
+                        section = (rest == "" || rest ~ /^#/)
+                        if (mode == "children") {
+                            if (!section) { bad = 1; exit }
+                            childind = ind + 1; next
                         }
-                        if (mode == "children") { childind = ind + 1; next }
+                        if (section) { bad = 1; exit }
+                        if (mode == "value") { print val; exit }
                         match($0, /^ *[^:]*:/)
                         print substr($0, 1, RLENGTH) " \"" value "\""
                         next
@@ -131,7 +138,12 @@ _ci_sot_lookup() {
             }
             if (mode == "set") print
         }
-    ' "${CI_MANIFEST}"
+    ' "${CI_MANIFEST}" || rc=$?
+    if [ "${rc}" -eq 4 ]; then
+        ci_log "[CI-ERROR-SOT-0010]" "path=\"${path}\" reason=\"${mode} does not fit this node\""
+        return 2
+    fi
+    return "${rc}"
 }
 
 # What: Log a SOT path that the manifest does not have.
@@ -1422,6 +1434,7 @@ ci_cmd_package() {
     _ci_configure_tree "${log}.configure" PYTHON="${py}" --enable-Werror || return 1
     # What: Run make deb without -j, so no jobserver exists.
     # Why: rpmbuild's inner make cannot reach it and warns.
+    # From: Issue #479, PR #544
     _ci_make_gated "${log}" deb
 }
 
@@ -1843,8 +1856,8 @@ ci_cmd_publish() {
     esac
 }
 
-# What: Release subcommands; only version-check exists.
-# Why: The version guardrail runs anywhere, side-effect free.
+# What: Release subcommands: version-check and packages.
+# Why: Both run before a tag and change nothing outward.
 # From: Issue #479
 ci_cmd_release() {
     local sub="${1:-}"
@@ -1872,7 +1885,7 @@ _ci_release_offer_packages() {
 
 # What: Print tag, require_new, publish, tag_push of this run.
 # Why: A dispatch names its tag in inputs; a tag push is one.
-# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-07
+# From: Issue #479, PR #544
 _ci_release_context() {
     local tag publish
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
@@ -1894,7 +1907,7 @@ _ci_release_context() {
 
 # What: Check a tag; in CI also write tag/publish/tag_push.
 # Why: Jobs read the outputs; REL-PRECUT-04 passes a tag.
-# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-06
+# From: Issue #479, PR #544
 _ci_release_version_check() {
     local ctx=() mx=()
     if [ "$#" -gt 0 ]; then
@@ -3062,7 +3075,7 @@ _ci_verify_ccache_redis() {
 
 # What: Print AG-GH-014's allowed types or scopes.
 # Why: The rule is the one taxonomy owner; no checker copy.
-# From: Issue #479, PR #544, AG-GH-014
+# From: Issue #479, PR #544
 _ci_title_taxonomy() {
     local kind="$1" key line list
     case "${kind}" in
@@ -3088,12 +3101,12 @@ _ci_title_taxonomy() {
 
 # What: AG-GH-014 title shape: type, (scope), !, subject.
 # Why: The title check and the category labels parse alike.
-# From: Issue #479, PR #544, AG-GH-014
+# From: Issue #479, PR #544
 CI_TITLE_RE='^([a-zA-Z]+)(\(([a-z0-9-]+)\))?(!)?:[[:space:]](.+)$'
 
 # What: Print the type of an AG-GH-014 title; rc 1 if none.
 # Why: A title that is not type(scope)!: subject has no type.
-# From: Issue #479, PR #544, AG-GH-014
+# From: Issue #479, PR #544
 _ci_title_type() {
     [[ "$1" =~ ${CI_TITLE_RE} ]] || return 1
     printf '%s\n' "${BASH_REMATCH[1]}"
@@ -3101,7 +3114,7 @@ _ci_title_type() {
 
 # What: Validate a PR title against the AG-GH-014 taxonomy.
 # Why: Warn mode and drafts only warn; block mode fails.
-# From: Issue #479, AG-GH-014
+# From: Issue #479
 _ci_check_pr_title() {
     local title="${PR_TITLE:-}"
     local mode="${PR_TITLE_LINT_MODE:-warn}" draft="${PR_DRAFT:-false}"
@@ -3296,7 +3309,7 @@ _ci_guard_hits() {
 }
 
 # What: Fail if any file under root contains a CR byte.
-# Why: The repo is LF-only; CRLF breaks shell/heredoc parsing.
+# Why: CRLF breaks shell and heredoc parsing in CI files.
 # From: Issue #479
 ci_guard_line_endings() {
     local root="${1:-${CI_REPO_ROOT}/.github}" hits
@@ -3344,6 +3357,8 @@ _ci_comment_violations() {
                 body = s; sub(/^#[ ]?/, "", body)
                 kind[np] = substr(body, 1, index(body, ":") - 1)
                 if (length(body) > 60) print F ":" NR ": longer than 60 characters"
+                if (kind[np] == "From" && body !~ /^From: (Issue|PR) #[0-9]+( #[0-9]+)*(, (Issue|PR) #[0-9]+( #[0-9]+)*)*$/)
+                    print F ":" NR ": From names something not an Issue or PR"
             }
         }
         END {
@@ -3793,7 +3808,7 @@ _ci_apt_attempt() {
 }
 
 # What: brew install for a space-separated package list.
-# Why: brew is preinstalled; no retry needed here.
+# Why: macOS legs take their SOT brew list in one way.
 # From: Issue #479
 _ci_brew_install() {
     local packages="${1:?package list required}"
@@ -4791,6 +4806,9 @@ ci_cmd_test() {
             ci_log "[CI-TEST-SKIP]" "popt-vendor has no make-check phase"
             return 0 ;;
         sanitizer)
+            # What: Leak check and ASan link-order check are off.
+            # Why: Leaks are triaged; the C ext loads in plain python3.
+            # From: Issue #266, PR #352, PR #396
             ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 \
                 make check > "${log}" 2>&1 || st=$? ;;
         coverage)
@@ -4822,55 +4840,27 @@ ci_cmd_test() {
     return 0
 }
 
-# What: Route a subcommand to its phase function.
-# Why: One-list membership avoids a duplicated command list.
-# From: Issue #479
+# What: Run ci_cmd_<command> for a CI_COMMANDS entry.
+# Why: CI_COMMANDS is the one list; a name derives its call.
+# From: Issue #479, PR #544
 ci_main() {
-    local command="${1:-}"
+    local command="${1:-}" fn
     if [ "$#" -gt 0 ]; then shift; fi
     case " ${CI_COMMANDS} " in
-        *" ${command} "*)
-            if [ "${command}" = "checkout" ]; then
-                ci_cmd_checkout "$@"
-                return "$?"
-            fi
-            ci_require_manifest || return "$?"
-            case "${command}" in
-                impact) ci_cmd_impact "$@" ;;
-                impact-hit) ci_cmd_impact_hit "$@" ;;
-                plan) ci_cmd_plan "$@" ;;
-                route) ci_cmd_route "$@" ;;
-                build) ci_cmd_build "$@" ;;
-                cache) ci_cmd_cache "$@" ;;
-                test) ci_cmd_test "$@" ;;
-                e2e) ci_cmd_e2e "$@" ;;
-                selftest) ci_cmd_selftest "$@" ;;
-                metadata) ci_cmd_metadata "$@" ;;
-                package) ci_cmd_package "$@" ;;
-                container) ci_cmd_container "$@" ;;
-                publish) ci_cmd_publish "$@" ;;
-                gc) ci_cmd_gc "$@" ;;
-                report) ci_cmd_report "$@" ;;
-                gate) ci_cmd_gate "$@" ;;
-                scan) ci_cmd_scan "$@" ;;
-                variables) ci_cmd_variables "$@" ;;
-                verify) ci_cmd_verify "$@" ;;
-                release) ci_cmd_release "$@" ;;
-                lint) ci_cmd_lint "$@" ;;
-                install) ci_cmd_install "$@" ;;
-                harden) ci_cmd_harden "$@" ;;
-                workload) ci_cmd_workload "$@" ;;
-                image) ci_cmd_image "$@" ;;
-                sot-update) ci_cmd_sot_update "$@" ;;
-                attest) ci_cmd_attest "$@" ;;
-                *) ci_log "[CI-ERROR-CORE-0001]" "command=${command} has no dispatch arm"; return 2 ;;
-            esac
-            ;;
+        *" ${command} "*) ;;
         *)
             ci_log "[CI-ERROR-CORE-0002]" "command=\"${command}\" reason=\"unknown subcommand\" known=\"${CI_COMMANDS}\""
-            return 2
-            ;;
+            return 2 ;;
     esac
+    fn="ci_cmd_${command//-/_}"
+    if ! declare -F "${fn}" >/dev/null; then
+        ci_log "[CI-ERROR-CORE-0001]" "command=${command} has no function ${fn}"
+        return 2
+    fi
+    if [ "${command}" != "checkout" ]; then
+        ci_require_manifest || return
+    fi
+    "${fn}" "$@"
 }
 
 # What: Run the dispatcher only on direct execution.

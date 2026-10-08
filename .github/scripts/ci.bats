@@ -168,13 +168,21 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-CORE-0003"* ]]
 }
 
-# What: Reads a 2- and a 3-level path from a fixture SOT.
+# What: Reads scalars at depth, before a comment, and empty.
 # Why: Every pin and spec is read through this one reader.
 # From: Issue #479, PR #544
 @test "sot scalar reads a scalar at any nesting depth" {
-    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"'
+    _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"' '  q: "v1"  # note' '  u: v2 # note' '  e: ""'
     [ "$(_ci_sot_scalar a.b)" = "x" ]
     [ "$(_ci_sot_scalar a.c.d)" = "y:z@sha256:0" ]
+    [ "$(_ci_sot_scalar a.q)" = "v1" ]
+    [ "$(_ci_sot_scalar a.u)" = "v2" ]
+    run _ci_sot_scalar a.e
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+    run _ci_sot_scalar a.c
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0010"*'"a.c"'* ]]
 }
 
 # What: Matches every base_images and external_services pin.
@@ -286,8 +294,12 @@ _dup_error_ids() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0009"* ]]
     run _ci_sot_children a.b
-    [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
+    run _ci_sot_set a.c "v"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
+    [ "$(_ci_sot_children a.c)" = "d" ]
     run _ci_sot_lookup value a.c.zz
     [ "${status}" -eq 3 ]
     _ci_sot_set a.c.d "2"
@@ -350,7 +362,7 @@ _dup_error_ids() {
 
 # What: Reads types and scopes from the repo's AGENTS.md.
 # Why: AGENTS.md owns the taxonomy; the checker has no copy.
-# From: Issue #479, PR #544, AG-GH-014
+# From: Issue #479, PR #544
 @test "pr-title taxonomy is read from AGENTS.md AG-GH-014" {
     run _ci_title_taxonomy types
     [ "${status}" -eq 0 ]
@@ -363,7 +375,7 @@ _dup_error_ids() {
 
 # What: Feeds AGENTS.md without the rule, then empty lists.
 # Why: An empty taxonomy must not accept or reject at random.
-# From: Issue #479, PR #544, AG-GH-014
+# From: Issue #479, PR #544
 @test "pr-title fails closed when AG-GH-014 is missing or unparsable" {
     local fx="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${fx}"
@@ -2342,58 +2354,22 @@ _jobs_without_timeout() {
     [ "${output}" = "${fx} plan" ]
 }
 
-# What: Print each registered command ci_main of $1 misroutes.
-# Why: A listed command without its own arm is a dead stub.
+# What: Each command resolves to its function; a gap fails.
+# Why: CI_COMMANDS is the one list; a typo must not skip.
 # From: Issue #479, PR #544
-_dispatch_misroutes() {
-    (
-        local c fn out
-        # shellcheck source=.github/scripts/ci.sh
-        source "$1" || exit 2
-        for c in ${CI_COMMANDS}; do
-            fn="ci_cmd_${c//-/_}"
-            # What: Stub the command's phase function to report itself.
-            # Why: The real phases would run builds and API calls.
-            eval "${fn}() { echo \"reached ${fn} \$*\"; }"
-            out="$(ci_main "${c}" a1 2>&1)" || { printf '%s\n' "${c}"; continue; }
-            [ "${out}" = "reached ${fn} a1" ] || printf '%s\n' "${c}"
-        done
-    )
-}
-
-# What: Print each ci_main arm of file $1 not in CI_COMMANDS.
-# Why: An arm missing from CI_COMMANDS can never be reached.
-# From: Issue #479, PR #544
-_unregistered_arms() {
-    local arm
-    local arms=()
-    _ci_mapfile arms awk '/^ci_main\(\)/ { m = 1 } m && /^}/ { exit }
-        m && match($0, /^ +[a-z-]+\) ci_cmd_/) {
-            a = substr($0, RSTART, RLENGTH); sub(/^ +/, "", a); sub(/\).*/, "", a); print a }' "$1" || return 2
-    [ "${#arms[@]}" -gt 0 ] || return 2
-    for arm in "${arms[@]}"; do
-        [[ " ${CI_COMMANDS} " == *" ${arm} "* ]] || printf '%s\n' "${arm}"
+@test "every CI_COMMANDS entry dispatches to its ci_cmd function" {
+    local c missing=""
+    for c in ${CI_COMMANDS}; do
+        declare -F "ci_cmd_${c//-/_}" >/dev/null || missing+=" ${c}"
     done
-}
-
-# What: Checks ci.sh, then copies: gc misrouted, zap added.
-# Why: The copies prove both dispatch checks can fail at all.
-# From: Issue #479, PR #544
-@test "every CI_COMMANDS entry has its own dispatch arm" {
-    local fx="${BATS_TEST_TMPDIR}/ci.sh"
-    run _dispatch_misroutes "${CI_SH}"
+    [ -z "${missing}" ]
+    _echoes ci_cmd_impact_hit
+    run ci_main impact-hit a1
     [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
-    run _unregistered_arms "${CI_SH}"
-    [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
-    sed 's/^\( *gc)\) ci_cmd_gc /\1 ci_cmd_report /' "${CI_SH}" > "${fx}"
-    run _dispatch_misroutes "${fx}"
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "gc" ]
-    sed 's/^\( *\)gate) ci_cmd_gate "\$@" ;;/&\n\1zap) ci_cmd_zap "$@" ;;/' "${CI_SH}" > "${fx}"
-    run _unregistered_arms "${fx}"
-    [ "${output}" = "zap" ]
+    [ "${output}" = "ci_cmd_impact_hit a1" ]
+    CI_COMMANDS="${CI_COMMANDS} zap" run ci_main zap
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-CORE-0001"*"ci_cmd_zap"* ]]
 }
 
 # What: Classifies include_server/basics.py into phases.
@@ -2897,19 +2873,23 @@ _unregistered_arms() {
     [[ "${output}" == *"b.sh:1: heredoc EOF never ends"* ]]
 }
 
-# What: Scans prose, a What-only block and a 61-char line.
+# What: Scans prose, What-only, 61 chars, a non-pointer From.
 # Why: AG-CODE-001 allows only the What/Why/From form.
 # From: Issue #479, PR #544
 @test "comment guard fails closed on prose, a missing Why, a long line" {
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/.github/workflows"
     printf '%s\n' '# Some free prose.' 'a: 1' '# What: Only a what.' 'b: 2' \
-        "# What: $(printf 'x%.0s' {1..60})" '# Why: ok' 'c: 3' > "${fx}/.github/workflows/w.yml"
+        "# What: $(printf 'x%.0s' {1..60})" '# Why: ok' 'c: 3' \
+        '# What: x' '# Why: y' '# From: Issue #1, AG-GH-014' 'd: 4' \
+        '# What: x' '# Why: y' '# From: Issue #1 #2, PR #3' 'e: 5' > "${fx}/.github/workflows/w.yml"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"w.yml:1: not a What/Why/From line"* ]]
     [[ "${output}" == *"w.yml:3: block needs one What, one Why"* ]]
     [[ "${output}" == *"w.yml:5: longer than 60 characters"* ]]
+    [[ "${output}" == *"w.yml:10: From names something not an Issue or PR"* ]]
+    [[ "${output}" != *"w.yml:14:"* ]]
 }
 
 # What: Scans an uncommented function, nested stub and test.

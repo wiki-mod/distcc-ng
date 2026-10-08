@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # What: Release: verify/package/publish/changelog/draft.
 # Why: A tag push releases; dispatch is a pre-tag dry run.
-# From: Issue #479, PR #544, POL-RELEASE-05, POL-RELEASE-07
+# From: Issue #479, PR #544
 name: Release
 
 on:
