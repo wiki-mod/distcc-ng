@@ -2142,20 +2142,17 @@ EOF
 # From: Issue #479, PR #544
 @test "impact: each path class selects exactly its phases" {
     echo "case: impact: a docs-only diff selects nothing (NOOP)"
-    local wf="${CI_REPO_ROOT}/.github/workflows/validate.yml" gated p paths want
-    run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "NOOP" ]
-    echo "case: impact: a c-source diff selects build, e2e and package"
-    while IFS='|' read -r p want; do
-        run _ci_phases_for_paths <<< "${p}"
-        [ "${status}" -eq 0 ] && [ "$(paste -sd ' ' <<< "${output}")" = "${want}" ] \
-            || { echo "${p}: rc ${status}, want ${want}, got ${output}"; return 1; }
-    done <<'EOF'
-src/dopt.c|build e2e package
-include_server/basics.py|build e2e
-LICENSE|NOOP
-EOF
+    local wf="${CI_REPO_ROOT}/.github/workflows/validate.yml" gated p paths want spec docs
+    local pats=() excl=() specs=()
+    _ci_mapfile pats _ci_sot_list labels.documentation.paths
+    _ci_mapfile excl _ci_sot_list labels.documentation.exclude
+    for spec in "${pats[@]}"; do specs+=(":(glob)${spec}"); done
+    for spec in "${excl[@]}"; do specs+=(":(glob,exclude)${spec}"); done
+    docs="$(git -C "${CI_REPO_ROOT}" ls-files -- "${specs[@]}")"
+    [ -n "${docs}" ] || { echo "no tracked file matches labels.documentation"; return 1; }
+    run _ci_phases_for_paths <<< "${docs}"
+    [ "${status}" -eq 0 ] && [ "${output}" = "NOOP" ] \
+        || { echo "$(wc -l <<< "${docs}") documentation files: rc ${status}: ${output}"; return 1; }
     echo "case: impact: a SOT or engine change selects every gated job"
     grep -q "needs.plan.outputs.build == 'true'" "${wf}"
     gated="$( { echo build; grep -oE "contains\(needs\.plan\.outputs\.phases, '[a-z0-9-]+'\)" "${wf}" \
