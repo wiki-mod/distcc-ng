@@ -2133,32 +2133,54 @@ EOF
     [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
 }
 
-# What: Docs, c-source, SOT/engine, include-server, unmatched.
+# What: Real SOT contract rows; phase union on a fixture SOT.
 # Why: A misrouted diff runs wrong jobs or skips needed ones.
 # From: Issue #479, PR #544
 @test "impact: each path class selects exactly its phases" {
     echo "case: impact: a docs-only diff selects nothing (NOOP)"
+    local wf="${CI_REPO_ROOT}/.github/workflows/validate.yml" gated p paths want
     run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
-    echo "case: impact: a c-source diff selects build, e2e and package"
-    run _ci_phases_for_paths < <(printf '%s\n' src/dopt.c)
+    echo "case: impact: a c-source diff selects build"
+    run _ci_phases_for_paths <<< "src/dopt.c"
     [ "${status}" -eq 0 ]
-    [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e package " ]
+    grep -qx build <<< "${output}" || { echo "src/dopt.c: no build: ${output}"; return 1; }
     echo "case: impact: a SOT or engine change selects every gated job"
-    local p
+    grep -q "needs.plan.outputs.build == 'true'" "${wf}"
+    gated="$( { echo build; grep -oE "contains\(needs\.plan\.outputs\.phases, '[a-z0-9-]+'\)" "${wf}" \
+        | sed -E "s/.*'([a-z0-9-]+)'\)$/\1/"; } | sort -u | paste -sd ' ')"
     for p in .github/yaml/build-manifest.yml .github/scripts/ci.sh; do
-        run _ci_phases_for_paths < <(printf '%s\n' "${p}")
-        [ "$(tr '\n' ' ' <<< "${output}")" = "build container e2e package verify " ]
+        run _ci_phases_for_paths <<< "${p}"
+        [ "${status}" -eq 0 ] || { echo "${p}: rc ${status}: ${output}"; return 1; }
+        [ "$(paste -sd ' ' <<< "${output}")" = "${gated}" ] \
+            || { echo "${p}: want the validate.yml gates ${gated}, got ${output}"; return 1; }
     done
-    echo "case: impact: an include-server .py diff selects build but not package"
-    run _ci_phases_for_paths < <(printf '%s\n' include_server/basics.py)
-    [ "${status}" -eq 0 ]
-    [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e " ]
-    echo "case: impact: an unmatched path yields NOOP"
-    run _ci_phases_for_paths < <(printf '%s\n' LICENSE)
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "NOOP" ]
+    echo "case: impact: matched classes give their sorted phase union; none or no phases is NOOP"
+    _fixture_manifest 'impact_classes:' '  src:' '    paths: ["src/**"]' '    phases: ["package", "build"]' \
+        '  py:' '    paths: ["**/*.py"]' '    phases: ["e2e", "build"]' '  docs:' '    paths: ["**/*.md"]' \
+        '    phases: []'
+    while IFS='|' read -r paths want; do
+        run _ci_phases_for_paths < <(tr ',' '\n' <<< "${paths}")
+        [ "${status}" -eq 0 ] || { echo "${paths}: rc ${status}: ${output}"; return 1; }
+        [ "$(paste -sd ' ' <<< "${output}")" = "${want}" ] \
+            || { echo "${paths}: want ${want}, got ${output}"; return 1; }
+    done <<'EOF'
+a.md|NOOP
+LICENSE|NOOP
+a.md,LICENSE|NOOP
+src/x.c|build package
+src/x.c,b.py|build e2e package
+src/x.py|build e2e package
+a.md,src/x.c|build package
+EOF
+    echo "case: impact: a SOT or classifier error is rc 2, never NOOP"
+    _fixture_manifest 'impact_classes:' '  src:' '    paths: ["src/**"]'
+    run _ci_phases_for_paths <<< "src/x.c"
+    [ "${status}" -eq 2 ]
+    _fail _ci_classify_paths 2
+    run _ci_phases_for_paths <<< "a.md"
+    [ "${status}" -eq 2 ]
 }
 
 
