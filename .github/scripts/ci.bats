@@ -812,31 +812,58 @@ EOF
     [[ "${output}" == *"CI-ERROR-E2E-0015"* ]]
 }
 
-# What: Release build and runtime images, each step failing.
+# What: Release image steps in order; each one failing once.
 # Why: No binary or user may land after a failed earlier step.
 # From: Issue #398, Issue #479, PR #544
-@test "release images stop at the first failed step" {
+@test "release images use the SOT packages and stop at the first failed step" {
+    echo "case: release build runs its steps in order with the SOT packages"
     export CALL_LOG="${BATS_TEST_TMPDIR}/calls"
-    local log="${CALL_LOG}"
+    local build runtime i
     _print _ci_nproc 2
-    _pass _ci_configure_tree _ci_make_gated
-    _record _ci_apt_install install make mv useradd
+    _record _ci_apt_install _ci_configure_tree _ci_make_gated install make mv useradd
+    build=("_ci_apt_install $(_ci_sot_scalar release.image_build_apt) image"
+        "_ci_configure_tree /tmp/configure.log PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt"
+        "_ci_make_gated /tmp/make.log -j2"
+        "install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text"
+        "make install DESTDIR=/out-pump"
+        "mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump")
     run _ci_image_release_build
     [ "${status}" -eq 0 ]
-    grep -q '^install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text$' "${log}"
-    grep -q '^mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump$' "${log}"
+    [ "$(cat "${CALL_LOG}")" = "$(printf '%s\n' "${build[@]}")" ] \
+        || { printf 'want:\n'; printf '%s\n' "${build[@]}"; printf 'got:\n'; cat "${CALL_LOG}"; return 1; }
+    echo "case: release build stops at the first failed step"
+    for ((i = 0; i < ${#build[@]}; i++)); do
+        : > "${CALL_LOG}"
+        _record _ci_apt_install _ci_configure_tree _ci_make_gated install make mv
+        _fail "${build[i]%% *}" 1
+        run _ci_image_release_build
+        [ "${status}" -eq 1 ] || { echo "${build[i]%% *} failing: rc ${status}"; return 1; }
+        [ "$(cat "${CALL_LOG}")" = "$(printf '%s\n' "${build[@]:0:i}")" ] \
+            || { echo "${build[i]%% *} failing: later steps ran:"; cat "${CALL_LOG}"; return 1; }
+    done
+    : > "${CALL_LOG}"
+    _record _ci_make_gated
+    _fail _ci_nproc 1
+    run _ci_image_release_build
+    [ "${status}" -eq 2 ]
+    [ "$(cat "${CALL_LOG}")" = "$(printf '%s\n' "${build[@]:0:2}")" ]
+    echo "case: release runtime installs the SOT packages, then the nologin user"
+    : > "${CALL_LOG}"
+    runtime=("_ci_apt_install $(_ci_sot_scalar release.image_runtime_apt) image"
+        "useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin distcc")
     run _ci_image_release_runtime
     [ "${status}" -eq 0 ]
-    grep -q '^useradd --system .*--shell /usr/sbin/nologin distcc$' "${log}"
-    : > "${log}"
-    _fail _ci_make_gated 1
-    run _ci_image_release_build
-    [ "${status}" -eq 1 ]
-    [ "$(grep -c '^install\|^mv' "${log}")" -eq 0 ]
-    _fail _ci_apt_install 1
-    run _ci_image_release_runtime
-    [ "${status}" -eq 1 ]
-    [ "$(grep -c '^useradd' "${log}")" -eq 0 ]
+    [ "$(cat "${CALL_LOG}")" = "$(printf '%s\n' "${runtime[@]}")" ] \
+        || { printf 'want:\n'; printf '%s\n' "${runtime[@]}"; printf 'got:\n'; cat "${CALL_LOG}"; return 1; }
+    for ((i = 0; i < ${#runtime[@]}; i++)); do
+        : > "${CALL_LOG}"
+        _record _ci_apt_install useradd
+        _fail "${runtime[i]%% *}" 1
+        run _ci_image_release_runtime
+        [ "${status}" -eq 1 ] || { echo "${runtime[i]%% *} failing: rc ${status}"; return 1; }
+        [ "$(cat "${CALL_LOG}")" = "$(printf '%s\n' "${runtime[@]:0:i}")" ] \
+            || { echo "${runtime[i]%% *} failing: later steps ran:"; cat "${CALL_LOG}"; return 1; }
+    done
 }
 
 # What: e2e images: native adds Debian distcc; ng builds tree.
