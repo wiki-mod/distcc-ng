@@ -280,8 +280,7 @@ list|a.c|2|CI-ERROR-SOT-0010
 mode-bogus|a.b|2|CI-ERROR-SOT-0009
 mode-value|a.c.zz|3|=
 EOF
-    printf '%s
-' 'a:' '   b: 1' > "${CI_MANIFEST}"
+    printf '%s\n' 'a:' '   b: 1' > "${CI_MANIFEST}"
     _ci_sot_index_drop
     run _ci_sot_scalar a.b
     [ "${status}" -eq 2 ]
@@ -510,7 +509,7 @@ EOF
     for bad in 'del(.title)' 'del(.labels)' '.isDraft = "no"'; do
         _print gh "$(jq -c "${bad}" <<< "${ok}")"
         PR_NUMBER=5 GITHUB_REPOSITORY=o/r run _ci_metadata_fetch_live
-        [ "${status}" -eq 2 ]
+        [ "${status}" -eq 2 ] || { echo "${bad}: rc ${status}: ${output}"; return 1; }
     done
     _fail gh 1
     PR_NUMBER=5 GITHUB_REPOSITORY=o/r run _ci_metadata_fetch_live
@@ -528,9 +527,8 @@ EOF
     _forbid gh _ci_metadata_fetch_live
     for e in workflow_dispatch push; do
         GITHUB_EVENT_NAME="${e}" run ci_cmd_metadata
-        [ "${status}" -eq 2 ]
-        [[ "${output}" == *"CI-ERROR-META-0002"*"in a ${e} run"* ]]
-        [[ "${output}" != *"must not run"* ]]
+        [ "${status}" -eq 2 ] && [[ "${output}" == *"CI-ERROR-META-0002"*"in a ${e} run"* ]] \
+            && [[ "${output}" != *"must not run"* ]] || { echo "${e}: rc ${status}: ${output}"; return 1; }
     done
     GITHUB_EVENT_NAME=pull_request run ci_cmd_metadata bogus
     [ "${status}" -eq 2 ]
@@ -978,8 +976,8 @@ EOF
     _print make "src/x.c:12:5: warning: unused variable 'y'"
     for pass in plain pump; do
         run _ci_workload_self_compile "${pass}" "${dir}"
-        [ "${status}" -eq 1 ]
-        [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]]
+        [ "${status}" -eq 1 ] && [[ "${output}" == *"CI-ERROR-BUILD-WARN-0001"* ]] \
+            || { echo "${pass}: rc ${status}: ${output}"; return 1; }
     done
 }
 
@@ -1338,7 +1336,7 @@ EOF
     run _ci_popt_cve_fingerprint_check
     [ "${status}" -eq 1 ]
     for i in 1 2 3 4 5 6; do
-        [[ "${output}" == *"CI-ERROR-POPT-CVE-000${i}"* ]]
+        [[ "${output}" == *"CI-ERROR-POPT-CVE-000${i}"* ]] || { echo "no CVE-000${i}: ${output}"; return 1; }
     done
 }
 
@@ -2207,7 +2205,7 @@ EOF
     for c in ${CI_COMMANDS}; do
         [ -n "$(declare -F "ci_cmd_${c//-/_}")" ] || missing+=" ${c}"
     done
-    [ -z "${missing}" ]
+    [ -z "${missing}" ] || { echo "no ci_cmd function for:${missing}"; return 1; }
     _echoes ci_cmd_impact_hit
     run ci_main impact-hit a1
     [ "${status}" -eq 0 ]
@@ -2382,7 +2380,7 @@ ci_guard_error_ids|ERRID-0002
 EOF
     for arg in "" "${fx}/none"; do
         run ci_guard_job_timeouts ${arg:+"${arg}"}
-        [ "${status}" -eq 2 ]
+        [ "${status}" -eq 2 ] || { echo "arg '${arg}': rc ${status}: ${output}"; return 1; }
     done
     echo "case: guards fail closed on an unreadable tree, not pass"
     run ci_guard_line_endings "${BATS_TEST_TMPDIR}/nope"
@@ -3310,6 +3308,7 @@ _fake_osv() {
 # Why: Redis must still run so one failure hides no other.
 # From: Issue #285, Issue #479, PR #544
 @test "verify all runs every check; brew installs the list" {
+    echo "case: verify all still runs the Redis check after the in-image checks failed"
     _fail _ci_verify_in_image 1
     # What: Stub the Redis check to report that it ran.
     # Why: It must run even after the in-image checks failed.
@@ -3317,6 +3316,7 @@ _fake_osv() {
     run _ci_verify_all img net
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"redis ran"* ]]
+    echo "case: brew install installs the list and fails closed"
     _echoes brew
     run _ci_brew_install "a b"
     [ "${status}" -eq 0 ]
@@ -3441,21 +3441,30 @@ _fake_osv() {
     [ "$(jq -r '.buildDefinition.resolvedDependencies[0].digest.gitCommit' <<< "${output}")" = "abc" ]
 }
 
-# What: Encodes 7, 8 and 9 byte claims as a JWT does.
+# What: Claims of 7-9 bytes and with - or _, JWT-encoded.
 # Why: Each length restores a different '=' count.
 # From: Issue #38, PR #544
 @test "attest claims decode an unpadded base64url token payload" {
-    local j p
+    local j p n
     export ACTIONS_ID_TOKEN_REQUEST_TOKEN=t ACTIONS_ID_TOKEN_REQUEST_URL=u
     # What: Stub curl: answer the token request with FX_TOKEN.
     # Why: Each loop pass swaps FX_TOKEN, not the stub.
     curl() { printf '{"value":"%s"}' "${FX_TOKEN}"; }
-    for j in '{"a":1}' '{"ab":1}' '{"abc":1}'; do
-        p="$(printf '%s' "${j}" | base64 -w0 | tr '/+' '_-' | tr -d '=')"
+    # What: Keep what base64 -d gets, then decode it for real.
+    # Why: Ubuntu 24.04 coreutils 9.4 rejects unpadded input.
+    base64() {
+        local in
+        in="$(cat)"
+        printf '%s' "${in}" > "${BATS_TEST_TMPDIR}/b64in"
+        command base64 "$@" <<< "${in}"
+    }
+    for j in '{"a":1}' '{"ab":1}' '{"abc":1}' '{"a":"???"}' '{"a":"~~~"}'; do
+        p="$(printf '%s' "${j}" | command base64 -w0 | tr '/+' '_-' | tr -d '=')"
         FX_TOKEN="h.${p}.s"
         run _ci_attest_claims
-        [ "${status}" -eq 0 ]
-        [ "${output}" = "${j}" ]
+        n="$(wc -c < "${BATS_TEST_TMPDIR}/b64in")"
+        [ "${status}" -eq 0 ] && [ "${output}" = "${j}" ] && [ $(( n % 4 )) -eq 0 ] \
+            || { echo "${j}: rc ${status}, ${n} chars to base64 -d: ${output}"; return 1; }
     done
     _fail tr 1 "tr broke"
     run _ci_attest_claims
