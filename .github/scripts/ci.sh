@@ -4675,22 +4675,42 @@ _ci_popt_cve_fingerprint_check() {
     return "${rc}"
 }
 
-# What: Succeed if a variant compiles through ccache.
-# Why: Build and cache plan must name the same variants.
+# What: Fail unless $1 is a SOT build variant; log id $2.
+# Why: An unknown variant must never build or test a default.
+# From: Issue #479, PR #544
+_ci_variant_known() {
+    local variants
+    variants="$(_ci_sot_children build_matrix.variants)" || return 2
+    if ! grep -qxF -- "$1" <<< "${variants}"; then
+        ci_log "$2" "unknown variant=\"$1\""
+        return 2
+    fi
+}
+
+# What: rc 0 if SOT variant $1 builds via ccache, 1 if not.
+# Why: Build and cache plan read one flag; a bad value: rc 2.
 # From: Issue #54, Issue #479, PR #544
 _ci_variant_ccache() {
-    [ "$1" = "default" ]
+    local on
+    on="$(_ci_sot_optional "build_matrix.variants.$1.ccache")" || return 2
+    case "${on}" in
+        true) return 0 ;;
+        ""|false) return 1 ;;
+        *) ci_log "[CI-ERROR-BUILD-0007]" "build_matrix.variants.$1.ccache=${on} (true|false)"; return 2 ;;
+    esac
 }
 
 # What: Write the compile-cache path, key and restore keys.
 # Why: actions/cache only transports; ci.sh owns the policy.
 # From: Issue #54, Issue #362, Issue #479, PR #166, PR #544
 ci_cmd_cache() {
-    local variant="${1:?variant required}" dir sum scope
-    if ! _ci_variant_ccache "${variant}"; then
-        ci_log "[CI-CACHE]" "variant=${variant} has no compile cache"
-        return 0
-    fi
+    local variant="${1:?variant required}" dir sum scope rc=0
+    _ci_variant_ccache "${variant}" || rc=$?
+    case "${rc}" in
+        0) ;;
+        1) ci_log "[CI-CACHE]" "variant=${variant} has no compile cache"; return 0 ;;
+        *) return 2 ;;
+    esac
     : "${RUNNER_OS:?RUNNER_OS required}" "${RUNNER_ARCH:?RUNNER_ARCH required}"
     : "${GITHUB_RUN_ID:?GITHUB_RUN_ID required}"
     cd "${CI_REPO_ROOT}" || return 1
@@ -4705,51 +4725,63 @@ ci_cmd_cache() {
         restore_keys "${scope}-${sum}-"$'\n'"${scope}-"
 }
 
-# What: Build one configure variant from the SOT matrix.
-# Why: Variants differ only in configure; warnings fail.
-# From: Issue #479
+# What: Configure one SOT variant, then run its build steps.
+# Why: The SOT defines each variant; warnings fail the build.
+# From: Issue #479, PR #544
 ci_cmd_build() {
-    local variant="${1:?variant required}" log py cc="cc"
-    local flags=()
+    local variant="${1:?variant required}" log py cc="" val step rc=0
+    local flags=() opts=() steps=()
+    _ci_variant_known "${variant}" "[CI-ERROR-BUILD-0002]" || return 2
     log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
     py="$(_ci_python)" || return 1
+    flags=(PYTHON="${py}")
     # What: Use ccache only where the job installed it.
     # Why: CodeQL's build has none; a cache hit would hide code.
     # From: Issue #54, Issue #479, PR #544
-    if _ci_variant_ccache "${variant}" && command -v ccache >/dev/null 2>&1; then
-        cc="$(command -v ccache) cc"
-    fi
-    case "${variant}" in
-        default)
-            flags=(CC="${cc}" PYTHON="${py}") ;;
-        popt-fallback) flags=(PYTHON="${py}") ;;
-        popt-vendor) flags=(--without-system-popt PYTHON="${py}") ;;
-        coverage) flags=(PYTHON="${py}" CFLAGS="--coverage -O0" LDFLAGS="--coverage" --with-seccomp) ;;
-        sanitizer)
-            flags=(PYTHON="${py}" --without-seccomp
-                CFLAGS="-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation") ;;
-        *) ci_log "[CI-ERROR-BUILD-0002]" "unknown variant=\"${variant}\""; return 2 ;;
+    _ci_variant_ccache "${variant}" || rc=$?
+    case "${rc}" in
+        0) cc="cc"
+           if command -v ccache >/dev/null 2>&1; then cc="$(command -v ccache) cc"; fi
+           flags+=(CC="${cc}") ;;
+        1) ;;
+        *) return 2 ;;
     esac
+    val="$(_ci_sot_optional "build_matrix.variants.${variant}.cflags")" || return 2
+    [ -z "${val}" ] || flags+=(CFLAGS="${val}")
+    val="$(_ci_sot_optional "build_matrix.variants.${variant}.ldflags")" || return 2
+    [ -z "${val}" ] || flags+=(LDFLAGS="${val}")
+    val="$(_ci_sot_optional "build_matrix.variants.${variant}.configure")" || return 2
+    read -ra opts <<< "${val}"
+    flags+=("${opts[@]}")
+    _ci_mapfile steps _ci_sot_list "build_matrix.variants.${variant}.build_steps" || return 2
     cd "${CI_REPO_ROOT}" || return 1
     _ci_configure_tree "${log}.configure" "${flags[@]}" || return 1
-    case "${variant}" in
-        popt-fallback)
+    for step in "${steps[@]}"; do
+        _ci_build_step "${step}" "${log}" "${cc}" || return
+    done
+}
+
+# What: Run one named SOT build step on the configured tree.
+# Why: The SOT orders the steps; each name has one body.
+# From: Issue #479, PR #544
+_ci_build_step() {
+    local step="$1" log="$2" cc="$3"
+    case "${step}" in
+        make)
+            _ci_make_gated "${log}" || return 1
+            if [ "${cc}" != "${cc#*ccache}" ]; then
+                ccache --show-stats || return 1
+            fi ;;
+        popt-fallback-line)
             if ! grep -q "system libpopt not found (or disabled); building bundled popt" "${log}.configure"; then
                 ci_log "[CI-ERROR-BUILD-POPT-0001]" "configure did not fall back to bundled popt (libpopt-dev leaking?)"
                 return 1
             fi ;;
-        popt-vendor)
-            _ci_popt_cve_fingerprint_check || return 1
-            _ci_popt_strict_compile
-            return ;;
+        popt-smoke) _ci_popt_fallback_smoke_test ;;
+        popt-fingerprint) _ci_popt_cve_fingerprint_check ;;
+        popt-strict) _ci_popt_strict_compile ;;
+        *) ci_log "[CI-ERROR-BUILD-0008]" "unknown build step=\"${step}\""; return 2 ;;
     esac
-    _ci_make_gated "${log}" || return 1
-    if [ "${cc}" != "cc" ]; then
-        ccache --show-stats || return 1
-    fi
-    if [ "${variant}" = "popt-fallback" ]; then
-        _ci_popt_fallback_smoke_test || return 1
-    fi
 }
 
 # What: Prove the bundled-popt binary parses real options.
@@ -4872,32 +4904,65 @@ _ci_coverage_summary() {
     printf '%s\n' "${fence}"
 }
 
-# What: Run make check for a variant and verify the result.
-# Why: One owner of per-variant test env and result parsing.
-# From: Issue #479
+# What: Run one SOT variant's test steps on the built tree.
+# Why: The SOT defines each variant; an empty list is NotRun.
+# From: Issue #479, PR #544
 ci_cmd_test() {
-    local variant="${1:-default}" log wrapper st=0
+    local variant="${1:-default}" log step
+    local steps=()
+    _ci_variant_known "${variant}" "[CI-ERROR-TEST-0005]" || return 2
+    _ci_mapfile steps _ci_sot_list "build_matrix.variants.${variant}.test_steps" || return 2
+    if [ "${#steps[@]}" -eq 0 ]; then
+        ci_log "[CI-TEST-SKIP]" "NotRun: variant=${variant} has no test steps"
+        return 0
+    fi
     cd "${CI_REPO_ROOT}" || return 1
     log="${RUNNER_TEMP:-/tmp}/ci-check-${variant}.log"
-    case "${variant}" in
-        popt-vendor)
-            ci_log "[CI-TEST-SKIP]" "popt-vendor has no make-check phase"
-            return 0 ;;
-        sanitizer)
-            # What: Leak check and ASan link-order check are off.
-            # Why: Leaks are triaged; the C ext loads in plain python3.
-            # From: Issue #266, PR #352, PR #396
-            ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1 \
-                make check > "${log}" 2>&1 || st=$? ;;
-        coverage)
+    for step in "${steps[@]}"; do
+        _ci_test_step "${step}" "${variant}" "${log}" || return
+    done
+}
+
+# What: Run one named SOT test step for variant $2.
+# Why: The SOT orders the steps; each name has one body.
+# From: Issue #479, PR #544
+_ci_test_step() {
+    local step="$1" variant="$2" log="$3" wrapper
+    case "${step}" in
+        check) _ci_make_check "${variant}" "${log}" ;;
+        check-coverage)
             wrapper="$(_ci_coverage_python_wrapper)" || return 1
-            make check PYTHON="${wrapper}" > "${log}" 2>&1 || st=$? ;;
-        default|popt-fallback)
-            make check > "${log}" 2>&1 || st=$? ;;
-        *)
-            ci_log "[CI-ERROR-TEST-0005]" "unknown variant=\"${variant}\""
-            return 2 ;;
+            _ci_make_check "${variant}" "${log}" PYTHON="${wrapper}" ;;
+        privileged) _ci_privileged_single_test ;;
+        coverage-report)
+            _ci_coverage_lcov || return 1
+            _ci_coverage_python xml -o "${CI_REPO_ROOT}/coverage-python.xml" || return 1
+            _ci_step_summary _ci_coverage_summary || return 1
+            _ci_artifact_offer coverage "" "${CI_REPO_ROOT}/coverage.info" \
+                "${CI_REPO_ROOT}/coverage-python.xml" ;;
+        *) ci_log "[CI-ERROR-TEST-0009]" "unknown test step=\"${step}\""; return 2 ;;
     esac
+}
+
+# What: make check with the variant's SOT env; gate the log.
+# Why: Warnings, a FAIL line or a bad exit each fail the step.
+# From: Issue #479, PR #544
+_ci_make_check() {
+    local variant="$1" log="$2" val kv st=0
+    local envs=()
+    shift 2
+    val="$(_ci_sot_optional "build_matrix.variants.${variant}.check_env")" || return 2
+    read -ra envs <<< "${val}"
+    for kv in "${envs[@]}"; do
+        if ! [[ "${kv}" =~ ^[A-Z_][A-Z0-9_]*=[^[:space:]]*$ ]]; then
+            ci_log "[CI-ERROR-TEST-0010]" "build_matrix.variants.${variant}.check_env entry \"${kv}\" is not KEY=VALUE"
+            return 2
+        fi
+    done
+    # What: Export the SOT env only into the make check subshell.
+    # Why: Later steps of the job must not inherit sanitizer env.
+    # From: Issue #479, PR #544
+    ( for kv in "${envs[@]}"; do export "${kv?}"; done; make check "$@" ) > "${log}" 2>&1 || st=$?
     cat "${log}" || return 1
     _ci_warning_gate "${log}" "variant=${variant} make check" || return 1
     _ci_parse_comfychair "${log}" || return 1
@@ -4905,17 +4970,6 @@ ci_cmd_test() {
         ci_log "[CI-ERROR-TEST-0006]" "make check exited ${st} for variant=${variant}"
         return 1
     fi
-    case "${variant}" in
-        default|coverage) _ci_privileged_single_test || return 1 ;;
-    esac
-    if [ "${variant}" = "coverage" ]; then
-        _ci_coverage_lcov || return 1
-        _ci_coverage_python xml -o "${CI_REPO_ROOT}/coverage-python.xml" || return 1
-        _ci_step_summary _ci_coverage_summary || return 1
-        _ci_artifact_offer coverage "" "${CI_REPO_ROOT}/coverage.info" \
-            "${CI_REPO_ROOT}/coverage-python.xml" || return 1
-    fi
-    return 0
 }
 
 # What: Run ci_cmd_<command> for a CI_COMMANDS entry.

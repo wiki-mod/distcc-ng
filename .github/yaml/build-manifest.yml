@@ -138,9 +138,9 @@ harden_runner:
 external_services:
   redis: "redis:8@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee"
 
-# What: The configure variants CI builds/tests, per OS.
-# Why: One matrix owner; workflows read, never hardcode.
-# From: Issue #479
+# What: CI variants per OS: packages, configure, step lists.
+# Why: One owner; ci.sh implements steps, workflows only read.
+# From: Issue #479, PR #544
 build_matrix:
   variants:
     # What: Plain configure PYTHON=python3, make check.
@@ -150,24 +150,37 @@ build_matrix:
       os: ["ubuntu-latest", "macos-latest"]
       apt: "clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
       brew: "autoconf automake popt python@3.13 python-setuptools ccache zstd"
+      ccache: "true"
+      build_steps: ["make"]
+      test_steps: ["check", "privileged"]
     # What: Bundled popt fallback, no system libpopt.
     # Why: Proves the vendored-popt path still compiles.
     # From: Issue #479
     popt-fallback:
       os: ["ubuntu-latest"]
       apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+      build_steps: ["popt-fallback-line", "make", "popt-smoke"]
+      test_steps: ["check"]
     # What: Vendored popt/ version and compile check.
     # Why: Guards the vendored popt source against drift.
     # From: Issue #479
     popt-vendor:
       os: ["ubuntu-latest"]
       apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+      configure: "--without-system-popt"
+      build_steps: ["popt-fingerprint", "popt-strict"]
+      test_steps: []
     # What: gcov/lcov coverage build, job-summary output.
     # Why: One coverage owner; ubuntu-only toolchain.
     # From: Issue #479
     coverage:
       os: ["ubuntu-latest"]
       apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage"
+      configure: "--with-seccomp"
+      cflags: "--coverage -O0"
+      ldflags: "--coverage"
+      build_steps: ["make"]
+      test_steps: ["check-coverage", "privileged", "coverage-report"]
     # What: ASan/UBSan sanitizer build, opt-in only.
     # Why: Not a required gate; runs on dispatch/schedule.
     # From: Issue #479
@@ -175,6 +188,14 @@ build_matrix:
       os: ["ubuntu-latest"]
       opt_in: true
       apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev"
+      configure: "--without-seccomp"
+      cflags: "-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation"
+      # What: Leak check and ASan link-order check are off.
+      # Why: Leaks are triaged; the C ext loads in plain python3.
+      # From: Issue #266, PR #352, PR #396
+      check_env: "ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1"
+      build_steps: ["make"]
+      test_steps: ["check"]
 
 # What: The shipped release artifacts.
 # Why: One inventory owner for packages and images.

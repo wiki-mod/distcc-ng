@@ -80,9 +80,16 @@ are checked for every pull request author alike, bots included, on
 board with `PROJECT_AUTOMATION_PAT`, and both `dependabot.yml` entries set
 its number, which `ci_guard_sot_mirrors` binds to the SOT.
 
-**Compile cache**: every job that builds the `default` variant (the
-`validate.yml` matrix legs, `nightly.yml` and `release.yml` `build_test`)
-runs `ci.sh cache default` first, and `actions/cache` restores and saves
+**Build variants**: `build_matrix.variants` in the SOT defines each
+variant completely: OS list, packages, `configure`/`cflags`/`ldflags`,
+`ccache`, `check_env`, and the ordered `build_steps`/`test_steps`.
+`ci.sh build` and `ci.sh test` hold no variant names; they implement the
+named steps and fail closed on an unknown variant, step or flag value.
+
+**Compile cache**: every job that builds a variant with `ccache: "true"`
+(today `default`: the `validate.yml` matrix legs, `nightly.yml` and
+`release.yml` `build_test`) runs `ci.sh cache <variant>` first, and
+`actions/cache` restores and saves
 ccache's own `cache_dir` plus `autom4te.cache` under one key:
 `build-<os>-<arch>-<autoconf inputs>-<run id>`. Restore takes the newest
 entry with the same `configure.ac`/`m4/` content, else the newest for the

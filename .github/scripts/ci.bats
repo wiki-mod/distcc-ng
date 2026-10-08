@@ -1441,7 +1441,7 @@ _dup_error_ids() {
     [[ "${output}" == *"error: x"* ]]
 }
 
-# What: Builds popt-fallback without, then with, the fallback.
+# What: popt variants by their SOT steps; bad step and flag.
 # Why: A leaked libpopt-dev must fail, not build system popt.
 # From: Issue #479, PR #544
 @test "build popt variants gate on the fallback line and fingerprints" {
@@ -1463,6 +1463,17 @@ _dup_error_ids() {
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build popt-vendor
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"must not run"* ]]
+    _fixture_manifest 'build_matrix:' '  variants:' '    v:' '      build_steps: ["make", "zap"]' \
+        '    w:' '      ccache: "maybe"' '      build_steps: ["make"]'
+    _forbid _ci_configure_tree
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build w
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0007"*"maybe"* ]]
+    [[ "${output}" != *"must not run"* ]]
+    _pass _ci_configure_tree
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_build v
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-BUILD-0008"*'"zap"'* ]]
 }
 
 # What: Packages without alien, then with all tools; SBOM.
@@ -1681,7 +1692,7 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
-# What: Runs ci.sh test coverage with make and lcov stubbed.
+# What: coverage test steps, then SOT step and env rows.
 # Why: Each step passing alone does not prove the chain.
 # From: Issue #479, PR #370, PR #544
 @test "test coverage: both reports, the summary, one artifact offer" {
@@ -1709,6 +1720,26 @@ _dup_error_ids() {
         GITHUB_OUTPUT="${out}" GITHUB_STEP_SUMMARY="${sum}" run ci_cmd_test coverage
     [ "${status}" -eq 1 ]
     [ ! -s "${out}" ]
+    _fixture_manifest 'build_matrix:' '  variants:' '    e:' '      test_steps: []' \
+        '    s:' '      check_env: "K_ONE=a:b K_TWO=c"' '      test_steps: ["check"]' \
+        '    b:' '      check_env: "not an env"' '      test_steps: ["check"]' \
+        '    z:' '      test_steps: ["zap"]'
+    run ci_cmd_test e
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"NotRun: variant=e has no test steps"* ]]
+    # What: Stub make: print the env make check gets, as OK lines.
+    # Why: The SOT check_env must reach make check, and only it.
+    make() { printf '%s_Case OK\n' "${K_ONE:-none}" "${K_TWO:-none}"; }
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_test s
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"a:b_Case OK"*"c_Case OK"* ]]
+    [ -z "${K_ONE:-}" ]
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run ci_cmd_test b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0010"* ]]
+    run ci_cmd_test z
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-TEST-0009"*'"zap"'* ]]
 }
 
 # What: Runs report with an empty GH_TOKEN.
