@@ -1825,16 +1825,19 @@ _ci_publish_changelog_update() {
 # Why: A pre-release or a dispatch without notes adds nothing.
 # From: Issue #479, PR #544
 _ci_changelog_from_event() {
-    local pre tag body ctx=()
+    local pre tag body ctx=() fields=()
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         release)
-            pre="$(_ci_event_value .release.prerelease)" || return 2
+            # What: Read both one-line fields in one jq run.
+            # Why: The body may span lines, so it stays separate.
+            # From: Issue #479, PR #544
+            _ci_mapfile fields _ci_event_value '.release.prerelease, .release.tag_name' || return 2
+            pre="${fields[0]}" tag="${fields[1]}"
             case "${pre}" in
                 true) ci_log "[CI-PUBLISH-CHANGELOG]" "skipped: pre-release"; return 3 ;;
                 false) ;;
                 *) ci_log "[CI-ERROR-PUBLISH-0003]" "release.prerelease is \"${pre}\", not a boolean"; return 2 ;;
             esac
-            tag="$(_ci_event_value .release.tag_name)" || return 2
             body="$(_ci_event_value '.release.body // ""')" || return 2 ;;
         workflow_dispatch)
             body="$(_ci_event_value '.inputs.release_notes // ""')" || return 2
@@ -2040,10 +2043,11 @@ _ci_release_offer_packages() {
 # From: Issue #479, PR #544
 _ci_release_context() {
     local tag publish
+    local fields=()
     case "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME required}" in
         workflow_dispatch)
-            tag="$(_ci_event_value .inputs.tag)" || return 2
-            publish="$(_ci_event_value '.inputs.publish_container // false')" || return 2
+            _ci_mapfile fields _ci_event_value '.inputs.tag, (.inputs.publish_container // false)' || return 2
+            tag="${fields[0]}" publish="${fields[1]}"
             printf '%s\n' "${tag}" true "${publish}" false ;;
         push)
             case "${GITHUB_REF:?GITHUB_REF required}" in
@@ -2723,8 +2727,9 @@ _ci_pr_category_label() {
 _ci_variables_label_pr() {
     : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
     local files hits labels=() category PR_NUMBER want got
-    PR_NUMBER="$(_ci_event_value .pull_request.number)" || return 2
-    want="$(_ci_event_value .pull_request.changed_files)" || return 2
+    local fields=()
+    _ci_mapfile fields _ci_event_value '.pull_request.number, .pull_request.changed_files' || return 2
+    PR_NUMBER="${fields[0]}" want="${fields[1]}"
     # What: Read the PR file list page by page, not the diff.
     # Why: The diff API refuses a PR of over 300 files (HTTP 406).
     # From: Issue #479, PR #544
