@@ -3271,30 +3271,44 @@ _ci_verify_ccache_redis() {
     ci_log "[CI-VERIFY]" "ccache hit in a fresh container, served by the SOT-pinned Redis"
 }
 
-# What: Print AG-GH-014's allowed types or scopes.
+# What: Print the AG-GH-014 rule line from AGENTS.md.
+# Why: One read serves the type and the scope list.
+# From: Issue #479, PR #544
+_ci_title_rule() {
+    if ! grep -F -- '**[AG-GH-014]**' "${CI_REPO_ROOT}/AGENTS.md"; then
+        ci_log "[CI-ERROR-META-TITLE-0004]" "AGENTS.md has no [AG-GH-014] rule"
+        return 2
+    fi
+}
+
+# What: Print AG-GH-014's allowed types or scopes; $2 = rule.
 # Why: The rule is the one taxonomy owner; no checker copy.
 # From: Issue #479, PR #544
 _ci_title_taxonomy() {
-    local kind="$1" key line list
+    local kind="$1" line="${2-}" key list out="" re=$'`([a-z-]+)`'
     case "${kind}" in
         types) key="allowed types MUST remain " ;;
         scopes) key="optional lowercase scopes MUST remain " ;;
         *) ci_log "[CI-ERROR-META-TITLE-0003]" "unknown taxonomy kind=\"${kind}\" (types|scopes)"; return 2 ;;
     esac
-    if ! line="$(grep -F -- '**[AG-GH-014]**' "${CI_REPO_ROOT}/AGENTS.md")"; then
-        ci_log "[CI-ERROR-META-TITLE-0004]" "AGENTS.md has no [AG-GH-014] rule"
-        return 2
+    if [ "$#" -lt 2 ]; then
+        line="$(_ci_title_rule)" || return 2
     fi
     list="${line#*"${key}"}"
     if [ "${list}" = "${line}" ]; then
         ci_log "[CI-ERROR-META-TITLE-0005]" "[AG-GH-014] has no \"${key% }\" list"
         return 2
     fi
-    list="$(grep -o -E "\`[a-z-]+\`" <<< "${list%%;*}" | tr -d "\`" | tr '\n' ' ')" || {
+    list="${list%%;*}"
+    while [[ "${list}" =~ ${re} ]]; do
+        out="${out} ${BASH_REMATCH[1]}"
+        list="${list#*"${BASH_REMATCH[0]}"}"
+    done
+    if [ -z "${out}" ]; then
         ci_log "[CI-ERROR-META-TITLE-0006]" "[AG-GH-014] ${kind} list is empty"
         return 2
-    }
-    printf '%s\n' "${list% }"
+    fi
+    printf '%s\n' "${out# }"
 }
 
 # What: AG-GH-014 title shape: type, (scope), !, subject.
@@ -3321,13 +3335,15 @@ _ci_check_pr_title() {
         return 1
     fi
     title="${title%$'\r'}"
-    title="$(printf '%s' "${title}" | sed 's/[[:space:]]*$//')" || return 2
-    local types scopes errs=() t sc subj tsub
-    types="$(_ci_title_taxonomy types)" || return 2
-    scopes="$(_ci_title_taxonomy scopes)" || return 2
+    title="${title%"${title##*[![:space:]]}"}"
+    local types scopes rule errs=() t sc subj tsub
+    rule="$(_ci_title_rule)" || return 2
+    types="$(_ci_title_taxonomy types "${rule}")" || return 2
+    scopes="$(_ci_title_taxonomy scopes "${rule}")" || return 2
     if [[ "${title}" =~ ${CI_TITLE_RE} ]]; then
         t="${BASH_REMATCH[1]}"; sc="${BASH_REMATCH[3]}"; subj="${BASH_REMATCH[5]}"
-        tsub="$(printf '%s' "${subj}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" || return 2
+        tsub="${subj#"${subj%%[![:space:]]*}"}"
+        tsub="${tsub%"${tsub##*[![:space:]]}"}"
         case " ${types} " in *" ${t} "*) ;; *) errs+=("type '${t}' not in: ${types}") ;; esac
         if [ -n "${sc}" ]; then
             case " ${scopes} " in *" ${sc} "*) ;; *) errs+=("scope '(${sc})' not a documented area") ;; esac
