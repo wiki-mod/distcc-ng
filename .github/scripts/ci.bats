@@ -2652,11 +2652,12 @@ EOF
     [[ "${output}" != *"src/product.sh"* ]]
 }
 
-# What: Runs ci_cmd_lint on a clean tree, then a banned text.
-# Why: The guard is only proof if the lint entry runs it.
+# What: lint runs every guard on its input; each can fail it.
+# Why: A dropped or swallowed guard call passes lint silently.
 # From: Issue #479, PR #544
-@test "the real lint entry fails on a banned shell text" {
-    local fx="${BATS_TEST_TMPDIR}/fx"
+@test "lint runs every guard on its input and fails if any fails" {
+    echo "case: the real lint entry fails on a banned shell text"
+    local fx="${BATS_TEST_TMPDIR}/fx" g s want
     local texts=()
     _ci_mapfile texts _ci_banned_texts banned_shell_texts
     mkdir -p "${fx}/contrib"
@@ -2671,6 +2672,38 @@ EOF
     CI_REPO_ROOT="${fx}" run ci_cmd_lint
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"contrib/tool:2: banned shell text"* ]]
+    echo "case: lint runs each guard on its input; any one failing fails lint"
+    local steps=(ci_guard_line_endings ci_guard_full_sha ci_guard_pins_in_sot ci_guard_sot_pins
+        ci_guard_comment_format ci_guard_banned_texts ci_guard_sot_mirrors ci_guard_path_mirrors
+        ci_guard_orchestrator_only ci_guard_job_timeouts ci_guard_error_ids _ci_lint_actionlint
+        _ci_lint_shellcheck)
+    mkdir -p "${fx}/.github/workflows" "${fx}/.github/yaml" "${fx}/docker"
+    printf 'jobs: {}\n' > "${fx}/.github/workflows/w.yml"
+    export CALL_LOG="${BATS_TEST_TMPDIR}/lint.calls"
+    want="$(printf '%s\n' "ci_guard_line_endings ${fx}/.github" "ci_guard_line_endings ${fx}/docker" \
+        "ci_guard_full_sha ${fx}/.github/workflows" "ci_guard_full_sha ${fx}/.github/yaml" \
+        "ci_guard_full_sha ${fx}/docker" "ci_guard_pins_in_sot ${fx}" ci_guard_sot_pins \
+        "ci_guard_comment_format ${fx}" "ci_guard_banned_texts ${fx}" "ci_guard_sot_mirrors ${fx}" \
+        "ci_guard_path_mirrors ${fx}" "ci_guard_orchestrator_only ${fx}/.github/workflows/w.yml" \
+        "ci_guard_job_timeouts ${fx}/.github/workflows/w.yml" "ci_guard_error_ids ${CI_SCRIPT_DIR}/ci.sh" \
+        _ci_lint_actionlint _ci_lint_shellcheck | sort)"
+    for g in none "${steps[@]}"; do
+        : > "${CALL_LOG}"
+        _record "${steps[@]}"
+        [ "${g}" = none ] || _fail "${g}" 1
+        CI_REPO_ROOT="${fx}" run ci_cmd_lint
+        if [ "${g}" = none ]; then
+            [ "${status}" -eq 0 ] || { echo "no guard failing: rc ${status}: ${output}"; return 1; }
+            [ "$(sed 's/ *$//' "${CALL_LOG}" | sort)" = "${want}" ] \
+                || { printf 'want:\n%s\ngot:\n' "${want}"; sed 's/ *$//' "${CALL_LOG}" | sort; return 1; }
+            continue
+        fi
+        [ "${status}" -eq 1 ] || { echo "${g} failing: rc ${status}: ${output}"; return 1; }
+        for s in "${steps[@]}"; do
+            [ "${s}" = "${g}" ] || grep -q -- "^${s} " "${CALL_LOG}" \
+                || { echo "${g} failing: ${s} did not run"; cat "${CALL_LOG}"; return 1; }
+        done
+    done
 }
 
 # What: One-command run:, inline logic, SOT uses:, bad inputs.
