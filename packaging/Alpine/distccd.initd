@@ -1,26 +1,27 @@
 #!/sbin/openrc-run
-# What: OpenRC service unit for distccd, adapted from Alpine's real
-#   distcc package's own init script.
-# Why: Drops the original's dead #ifdef AVAHI/#endif C-preprocessor
-#   markers (never expanded in a real shell script, so that branch was
-#   always unreachable there) rather than carrying over non-functional
-#   avahi wiring.
+# What: OpenRC service unit for distccd, after Alpine's.
+# Why: Alpine's #ifdef AVAHI markers never run in a shell.
 # From: Issue #398
 
 name="distccd"
 description="distcc distributed compiler daemon"
 
+# What: Start after the network and the firewall are up.
+# Why: distccd listens on a TCP port the firewall may open.
+# From: Issue #398
 depend() {
 	need net
 	after firewall
 }
 
+# What: Start distccd as the distcc user with its pidfile.
+# Why: DISTCCD_OPTS is a word list from conf.d, split on use.
+# From: Issue #398
 start() {
 	[ -e "${DISTCCD_PIDFILE}" ] && rm -f "${DISTCCD_PIDFILE}"
 
 	ebegin "Starting distccd"
 	checkpath -d /var/run/distccd -m 755 -o distcc
-	# shellcheck disable=SC2086
 	start-stop-daemon --start --quiet --exec "${DISTCCD_EXEC}" \
 		--pidfile "${DISTCCD_PIDFILE}" -- \
 		--pid-file "${DISTCCD_PIDFILE}" -N "${DISTCCD_NICE}" --user distcc \
@@ -28,6 +29,9 @@ start() {
 	eend $?
 }
 
+# What: Stop distccd by its pidfile, then remove the pidfile.
+# Why: start() makes distccd write it itself via --pid-file.
+# From: Issue #398
 stop() {
 	ebegin "Stopping distccd"
 	start-stop-daemon --stop --quiet --pidfile "${DISTCCD_PIDFILE}" \

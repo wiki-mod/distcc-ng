@@ -1,0 +1,537 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Single source of truth for CI build inputs.
+# Why: One machine-readable owner ends version drift.
+# From: Issue #479
+schema: build-manifest/v1
+
+# What: Base images as name:tag@sha256; tag is the channel.
+# Why: ci.sh sot-update moves each digest along its tag.
+# From: Issue #479, PR #544
+base_images:
+  # What: Debian base of the buildtools and release images.
+  # Why: Full, not slim: buildtools carries a large toolchain.
+  # From: Issue #264, Issue #479, PR #544
+  debian: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
+  # What: OSS-Fuzz builder base of the ClusterFuzzLite image.
+  # Why: :v1 lineage; its old glibc matches the host check.
+  # From: Issue #267, Issue #479, PR #544
+  oss_fuzz_base_builder: "gcr.io/oss-fuzz-base/base-builder:v1@sha256:e67da2b0f6156b29b62734305a8c74db61aaf3158c7ab96386a07974fb33cdc8"
+  # What: ClusterFuzzLite build/run step images run by ci.sh.
+  # Why: Pinned by digest along the v1 channel.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_build_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers:v1@sha256:9407058df630a7f8af9c8f371abc6aacae8362dd99e68b40a06fa0ea75caec2e"
+  cfl_run_fuzzers: "gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers:v1@sha256:f8223bc628dc8c5cd458ae1a58ba6e5fdc5d6b3831f3f5fe737f3a6e9f1c2021"
+
+# What: Tool pins: version, GitHub source, asset url, sha256.
+# Why: sot-update follows source; fetch checks sha256 always.
+# From: Issue #479, PR #544
+external_versions:
+  # What: The vendored popt/ tree's expected identity.
+  # Why: vendor-check compares it to POPT_VERSION.
+  # From: Issue #479
+  popt_vendor:
+    version: "wiki-mod/popt-ng@5f853169618cdd8fb42d6550a683c864d94d7617 (1.19.1)"
+  # What: Samba release used by the source-adequacy check.
+  # Why: sha256 and GPG checked at fetch; bumped by hand.
+  # From: Issue #264, Issue #479, PR #544
+  samba:
+    version: "4.25.0"
+    url: "https://download.samba.org/pub/samba/stable/samba-{version}.tar.gz"
+    sha256: "2e2cb7296833b35b8f7a7fb76045e0c57adc0c2cd03264b37df5d58e40f28437"
+    sig_url: "https://download.samba.org/pub/samba/stable/samba-{version}.tar.asc"
+    key_url: "https://download.samba.org/pub/samba/samba-pubkey.asc"
+  # What: actionlint release the verify image installs.
+  # Why: ci.sh lint runs it inside the buildtools image.
+  # From: Issue #267, Issue #479, PR #544
+  actionlint:
+    version: "v1.7.12"
+    source: "rhysd/actionlint"
+    url: "https://github.com/rhysd/actionlint/releases/download/{version}/actionlint_{bare}_linux_amd64.tar.gz"
+    sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    bin: "actionlint"
+  # What: ccache release built by the weekly heartbeat.
+  # Why: heartbeat/control build the same revision.
+  # From: Issue #479, Issue #81
+  ccache_heartbeat:
+    version: "v4.14.1"
+    source: "ccache/ccache"
+  # What: CodeQL CLI bundle, downloaded/run by ci.sh.
+  # Why: codeql-action's codeql-bundle- tags name the bundle.
+  # From: Issue #479
+  codeql_cli:
+    version: "v2.27.1"
+    source: "github/codeql-action"
+    tag_prefix: "codeql-bundle-"
+    url: "https://github.com/github/codeql-action/releases/download/codeql-bundle-{version}/codeql-bundle-linux64.tar.gz"
+    sha256: "1d380f79896ededc654c7b21fafb3360136f1aeb678ad4df4df9af3910c6b815"
+    bin: "codeql/codeql"
+  # What: OSSF Scorecard CLI release run directly by ci.sh.
+  # Why: Replaces ossf/scorecard-action.
+  # From: Issue #479
+  scorecard:
+    version: "v5.5.0"
+    source: "ossf/scorecard"
+    url: "https://github.com/ossf/scorecard/releases/download/{version}/scorecard_{bare}_linux_amd64.tar.gz"
+    sha256: "83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff"
+    bin: "scorecard"
+  # What: OSV-Scanner CLI release run directly by ci.sh.
+  # Why: Upstream ships a bare binary, not an archive.
+  # From: Issue #479
+  osv_scanner:
+    version: "v2.6.0"
+    source: "google/osv-scanner"
+    url: "https://github.com/google/osv-scanner/releases/download/{version}/osv-scanner_linux_amd64"
+    sha256: "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108"
+    archive: "binary"
+    bin: "osv-scanner"
+  # What: Trivy CLI release run directly by ci.sh.
+  # Why: Replaces aquasecurity/trivy-action.
+  # From: Issue #479
+  trivy:
+    version: "v0.74.0"
+    source: "aquasecurity/trivy"
+    url: "https://github.com/aquasecurity/trivy/releases/download/{version}/trivy_{bare}_Linux-64bit.tar.gz"
+    sha256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+    bin: "trivy"
+  # What: Syft CLI release ci.sh runs for SBOM gen.
+  # Why: Replaces anchore/sbom-action.
+  # From: Issue #479
+  syft:
+    version: "v1.52.0"
+    source: "anchore/syft"
+    url: "https://github.com/anchore/syft/releases/download/{version}/syft_{bare}_linux_amd64.tar.gz"
+    sha256: "caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d"
+    bin: "syft"
+  # What: Sigstore cosign; signs build-provenance attestations.
+  # Why: Replaces actions/attest-build-provenance (no uses:).
+  # From: Issue #38, Issue #479, PR #544
+  cosign:
+    version: "v3.1.3"
+    source: "sigstore/cosign"
+    url: "https://github.com/sigstore/cosign/releases/download/{version}/cosign-linux-amd64"
+    sha256: "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+    archive: "binary"
+    bin: "cosign"
+  # What: StepSecurity agent tarball run by ci.sh harden.
+  # Why: Non-TLS community tier refuses ARM; amd64 only.
+  # From: Issue #479, PR #544
+  harden_runner_agent:
+    version: "v0.17.0"
+    source: "step-security/agent"
+    url: "https://github.com/step-security/agent/releases/download/{version}/agent_{bare}_linux_amd64.tar.gz"
+    sha256: "e0faa2687554ebd5629595bcd5531360781abe3e2746ef8ce5a030961a3acab0"
+    bin: "agent"
+
+# What: harden-runner policy and StepSecurity endpoints.
+# Why: Audit-only egress monitoring, never block (Issue #58).
+# From: Issue #479, PR #544, Issue #58
+harden_runner:
+  egress_policy: "audit"
+  api_url: "https://agent.api.stepsecurity.io/v1"
+  telemetry_url: "https://prod.app-api.stepsecurity.io/v1"
+  web_url: "https://app.stepsecurity.io"
+
+# What: Service images run by CI steps, as name:tag@sha256.
+# Why: ci.sh sot-update moves each digest along its tag.
+# From: Issue #479, PR #544
+external_services:
+  redis: "redis:8@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee"
+
+# What: CI variants per OS: packages, configure, step lists.
+# Why: One owner; ci.sh implements steps, workflows only read.
+# From: Issue #479, PR #544
+build_matrix:
+  variants:
+    # What: Plain configure PYTHON=python3, make check.
+    # Why: The baseline gate; the only variant run on macOS.
+    # From: Issue #479
+    default:
+      os: ["ubuntu-latest", "macos-latest"]
+      apt: "clang libavahi-client-dev libpopt-dev gdb python3-dev python3-setuptools ccache libzstd-dev libelf-dev"
+      brew: "autoconf automake popt python@3.13 python-setuptools ccache zstd"
+      ccache: "true"
+      build_steps: ["make"]
+      test_steps: ["check", "privileged"]
+    # What: Bundled popt fallback, no system libpopt.
+    # Why: Proves the vendored-popt path still compiles.
+    # From: Issue #479
+    popt-fallback:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+      build_steps: ["popt-fallback-line", "make", "popt-smoke"]
+      test_steps: ["check"]
+    # What: Vendored popt/ version and compile check.
+    # Why: Guards the vendored popt source against drift.
+    # From: Issue #479
+    popt-vendor:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake pkg-config libavahi-client-dev python3-dev python3-setuptools libzstd-dev"
+      configure: "--without-system-popt"
+      build_steps: ["popt-fingerprint", "popt-strict"]
+      test_steps: []
+    # What: gcov/lcov coverage build, job-summary output.
+    # Why: One coverage owner; ubuntu-only toolchain.
+    # From: Issue #479
+    coverage:
+      os: ["ubuntu-latest"]
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev libseccomp-dev lcov python3-coverage"
+      configure: "--with-seccomp"
+      cflags: "--coverage -O0"
+      ldflags: "--coverage"
+      build_steps: ["make"]
+      test_steps: ["check-coverage", "privileged", "coverage-report"]
+    # What: ASan/UBSan sanitizer build, opt-in only.
+    # Why: Not a required gate; runs on dispatch/schedule.
+    # From: Issue #479
+    sanitizer:
+      os: ["ubuntu-latest"]
+      opt_in: true
+      apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools libzstd-dev"
+      configure: "--without-seccomp"
+      cflags: "-O2 -fsanitize=address,undefined -fno-sanitize=alignment -fno-sanitize-recover=address -fsanitize-recover=undefined -fno-omit-frame-pointer -g -Wno-stringop-truncation"
+      # What: Leak check and ASan link-order check are off.
+      # Why: Leaks are triaged; the C ext loads in plain python3.
+      # From: Issue #266, PR #352, PR #396
+      check_env: "ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=0 UBSAN_OPTIONS=print_stacktrace=1"
+      build_steps: ["make"]
+      test_steps: ["check"]
+
+# What: The shipped release artifacts.
+# Why: One inventory owner for packages and images.
+# From: Issue #479
+release:
+  # What: Published images: file, stage, ARG=SOT-path, OCI text.
+  # Why: An implicit last stage once changed what was published.
+  # From: Issue #181, Issue #359, Issue #479, PR #544
+  images:
+    distcc-ng:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime"
+      args: ["DEBIAN_IMAGE=base_images.debian"]
+      description: "distcc-ng runtime image."
+    distcc-ng-pump:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime-pump"
+      args: ["DEBIAN_IMAGE=base_images.debian"]
+      description: "distcc-ng runtime image with pump mode enabled."
+    distcc-ng-nightly:
+      dockerfile: "docker/release/Dockerfile"
+      target: "runtime"
+      args: ["DEBIAN_IMAGE=base_images.debian"]
+      description: "distcc-ng nightly runtime image from current_dev."
+    # What: ref is the published tag lint and e2e run on.
+    # Why: tag is this job's local build of the same image.
+    # From: Issue #264, Issue #479, PR #544
+    distcc-ng-buildtools:
+      dockerfile: "docker/verify/Dockerfile"
+      target: "verify"
+      args: ["DEBIAN_IMAGE=base_images.debian"]
+      description: "distcc-ng build, debug and verification image."
+      tag: "distcc-ng-buildtools:local"
+      ref: "ghcr.io/wiki-mod/distcc-ng-buildtools:latest"
+  # What: apt packages of the release build and runtime stages.
+  # Why: libelf for --with-libelf; vendored popt: no libpopt.
+  # From: Issue #398, PR #487, PR #504
+  image_build_apt: "autoconf automake build-essential ccache libelf-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools"
+  image_runtime_apt: "build-essential libelf1 libseccomp2 libzstd1 python3"
+  licenses: "GPL-2.0-or-later"
+  # What: Canonical GHCR package names this repo owns.
+  # Why: One owner for gc/tag construction; no hardcode.
+  # From: Issue #479
+  ghcr_packages: ["distcc-ng", "distcc-ng-pump", "distcc-ng-nightly", "distcc-ng-buildtools", "distcc-ng-e2e"]
+  # What: Globs of the files a nightly or release ships.
+  # Why: One asset set for both publishers; none found fails.
+  # From: Issue #362, Issue #479, PR #544
+  assets: ["distcc-*.tar.gz", "distcc-*.tar.bz2", "packaging/*.rpm", "packaging/*.deb"]
+  # What: Release image variants' packages; platform runners.
+  # Why: One inventory; an optional platform never gates.
+  # From: Issue #479, PR #544
+  container:
+    variants:
+      plain: "distcc-ng"
+      pump: "distcc-ng-pump"
+    platforms:
+      amd64:
+        runner: "ubuntu-latest"
+        optional: "false"
+      arm64:
+        runner: "ubuntu-24.04-arm"
+        optional: "true"
+  # What: Git tag and GitHub pre-release name of the nightly.
+  # Why: It is force-moved each run, so it must never be v*.
+  # From: Issue #479, PR #544
+  nightly_tag: "nightly"
+  # What: apt packages to build the real .rpm/.deb packages.
+  # Why: One owner; nightly/release both install this.
+  # From: Issue #362, Issue #479
+  packaging_apt: "autoconf automake build-essential elfutils fakeroot libelf-dev libpopt-dev libseccomp-dev libzstd-dev pkg-config python3-dev python3-setuptools rpm alien"
+
+# What: The repo's GitHub Projects (v2) board identity.
+# Why: One owner; no repo Variables needed for a fixed value.
+# From: Issue #236, Issue #479, PR #544
+project_board:
+  owner: "wiki-mod"
+  number: "11"
+
+# What: Milestone of bot PRs: sot-update and Dependabot.
+# Why: AG-GH-002; dependabot.yml mirrors its number.
+# From: Issue #479, PR #544
+bot_milestone:
+  title: "current_dev backlog"
+  number: "3"
+
+# What: apt packages CodeQL needs for a c-cpp build.
+# Why: One owner; security.yml installs this first.
+# From: Issue #479
+security:
+  codeql_cpp_apt: "autoconf automake libavahi-client-dev libpopt-dev python3-dev python3-setuptools"
+  # What: apt packages that generate configure for CFL.
+  # Why: base-builder has autoconf 2.69; 2.71 is needed.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_host_apt: "autoconf"
+  # What: apt packages of the ClusterFuzzLite build image.
+  # Why: src/auth.h needs gssapi.h, so libkrb5-dev is required.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_image_apt: "pkg-config libpopt-dev libavahi-client-dev libzstd-dev libseccomp-dev python3-dev python3-setuptools libkrb5-dev"
+  # What: src/*.c the fuzz link skips or renames main in.
+  # Why: Only libFuzzer's main may exist in the link.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_fuzz:
+    exclude_main: ["distcc", "h_argvtostr", "h_compile", "h_dopt", "h_dotd", "h_exten", "h_getline", "h_hosts", "h_includesort", "h_issource", "h_parsemask", "h_pathsafety", "h_sa2str", "h_scanargs", "h_srvrpc", "h_ssh", "h_state", "h_stats", "h_strip", "lsdistcc", "mon-gnome", "mon-text", "history", "renderer"]
+    rename_main: ["daemon", "stringmap"]
+  # What: CFL sanitizers, fuzz seconds and mode of each run.
+  # Why: The matrix and the run read one inventory.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_run:
+    sanitizers: ["address"]
+    seconds: "300"
+    mode: "code-change"
+  # What: CodeQL languages and the query suite they run.
+  # Why: The matrix and the scan read one list and one suite.
+  # From: Issue #479, PR #544
+  codeql:
+    languages: ["c-cpp", "python", "actions"]
+    suite: "security-extended"
+  # What: Local tag of the SOT base-builder; the CFL FROM.
+  # Why: CFL passes no build-args, so ci.sh tags the pin first.
+  # From: Issue #267, Issue #479, PR #544
+  cfl_base:
+    from: "base_images.oss_fuzz_base_builder"
+    tag: "distcc-ng-cfl-base:local"
+  # What: OpenSSF recheck issue, project and ruleset ids.
+  # Why: The recheck edits its one comment on that issue.
+  # From: Issue #312, Issue #479, PR #544
+  openssf:
+    issue: "312"
+    project_id: "13760"
+    ruleset_id: "18300729"
+
+# What: verify image apt groups atop the default matrix apt.
+# Why: The image builds what CI builds, plus debug tools.
+# From: Issue #264, PR #273, PR #291, Issue #479, PR #544
+verify:
+  apt:
+    # What: gcc and autotools beside the matrix clang.
+    # Why: dcc_probe_is_clang needs both compiler families.
+    # From: PR #273, Issue #264
+    toolchain: "build-essential autoconf automake libtool pkg-config libseccomp-dev"
+    # What: Debuggers, tracers, valgrind, binutils.
+    # Why: py-bt for the include server needs python3-dbg.
+    # From: PR #273, PR #291, Issue #264
+    debug: "python3-dbg strace ltrace valgrind binutils"
+    # What: A representative Samba build-dependency subset.
+    # Why: Proves the image builds a large real C project.
+    # From: Issue #264
+    samba: "libkrb5-dev libldap2-dev libgnutls28-dev libpam0g-dev libsystemd-dev libicu-dev liblmdb-dev libacl1-dev libbsd-dev libcap-dev libjansson-dev libreadline-dev libtirpc-dev libcups2-dev libdbus-1-dev libarchive-dev libblkid-dev libcmocka-dev libgpgme11-dev libkeyutils-dev libpcap-dev libtasn1-6-dev libtasn1-bin liburing-dev zlib1g-dev bison flex docbook-xml docbook-xsl xsltproc perl libparse-yapp-perl python3-dnspython python3-markdown"
+    # What: Search, fetch, socket, DNS and lint tools.
+    # Why: Verification inside the container needs them.
+    # From: PR #273, PR #291, Issue #267
+    tools: "ripgrep grep less git ca-certificates wget curl lsof iproute2 dnsutils shellcheck jq"
+    # What: sshd and ssh for SSHMode_Case.
+    # Why: Without them SSHMode_Case NOTRUN-skips here.
+    # From: Issue #275, Issue #440
+    ssh: "openssh-server openssh-client"
+
+# What: Engine self-test packages and the engine's actions.
+# Why: ci.bats needs bats; uses: steps mirror these pins.
+# From: Issue #479, PR #544
+ci_engine:
+  selftest_apt: "bats parallel"
+  # What: Texts no shell source may contain; presence fails.
+  # Why: Each silences a real shellcheck warning (AG-INT-003).
+  # From: Issue #479, PR #544
+  banned_shell_texts: ["shellcheck disable=", "shellcheck source=/dev/null"]
+  # What: Texts no CI script, workflow or Dockerfile may hold.
+  # Why: Discarded output hides an error (AG-INT-003).
+  # From: Issue #479, PR #544
+  banned_ci_texts: ["/dev/null"]
+  # What: The only actions a workflow may use; transport only.
+  # Why: Cache/artifact APIs need a token run: steps never get.
+  # From: Issue #479, PR #544
+  actions:
+    cache:
+      uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+      version: "v6.1.0"
+    upload_artifact:
+      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+      version: "v7.0.1"
+  # What: Upload name and retention days per artifact kind.
+  # Why: ci.sh picks the files; these reports outlive the run.
+  # From: Issue #267, Issue #479, PR #370, PR #544
+  artifacts:
+    coverage:
+      name: "coverage-reports"
+      retention_days: "90"
+    cfl_crashes:
+      name: "cfl-crashes"
+      retention_days: "90"
+    scorecard:
+      name: "scorecard-results"
+      retention_days: "5"
+    release_packages:
+      name: "distcc-release-packages"
+      retention_days: "90"
+
+# What: Housekeeping tasks for dispatch, each weekly or not.
+# Why: Route, task choice and job gates read one task list.
+# From: Issue #479, PR #544
+housekeeping_tasks:
+  gc:
+    weekly: "false"
+  sot-update:
+    weekly: "true"
+  heartbeat:
+    weekly: "true"
+
+# What: Each scheduled workflow cron; ci.sh route reads it.
+# Why: on.schedule must repeat it; a guard keeps both equal.
+# From: Issue #479, PR #544
+schedules:
+  security_scans:
+    workflow: "security"
+    cron: "0 5 * * 0"
+  openssf:
+    workflow: "security"
+    cron: "0 6 1,15 * *"
+  housekeeping_weekly:
+    workflow: "housekeeping"
+    cron: "0 5 * * 1"
+  nightly:
+    workflow: "nightly"
+    cron: "0 4 * * *"
+
+# What: GHCR prune policy applied by ci.sh gc.
+# Why: Keeps a rollback set; only whole series groups age out.
+# From: Issue #479, PR #544
+gc:
+  keep_untagged: 3
+  series_tag_regex: "^manual-([0-9]+)(-amd64|-arm64)?$"
+  keep_series: 2
+
+# What: e2e modes: client:server legs, passes, floor.
+# Why: One harness; floor objects = the build's .o count.
+# From: Issue #479, Issue #264, Issue #81, PR #544
+e2e:
+  modes:
+    distributed:
+      legs: ["ng:ng"]
+      passes: ["plain", "pump"]
+      workload: "self-compile"
+      extra: ""
+      floor: 5
+      server_warnings: "fail"
+      max_attempts: 1
+    heartbeat:
+      legs: ["ng:ng"]
+      passes: ["plain"]
+      workload: "ccache"
+      extra: ""
+      floor: 20
+      server_warnings: "fail"
+      max_attempts: 2
+    # What: full reports the ng server warning scan as NotRun.
+    # Why: waf conf_check probes abort by design; logged as ERROR.
+    # From: Issue #264, PR #544
+    full:
+      legs: ["ng:native", "native:ng"]
+      passes: ["plain", "pump"]
+      workload: "samba"
+      extra: "replace,ldb,tdb,talloc,tevent"
+      floor: "objects"
+      server_warnings: "notrun"
+      max_attempts: 1
+  # What: ng builds the checkout; native is Debian's distcc.
+  # Why: Both sit on the published buildtools toolchain.
+  # From: Issue #264, Issue #479, PR #544
+  images:
+    ng:
+      dockerfile: "test/e2e/Dockerfile"
+      target: "ng"
+      args: ["TOOLCHAIN_IMAGE=release.images.distcc-ng-buildtools.ref"]
+      tag: "distcc-ng-e2e-ng:local"
+    native:
+      dockerfile: "test/e2e/Dockerfile"
+      target: "native"
+      args: ["TOOLCHAIN_IMAGE=release.images.distcc-ng-buildtools.ref"]
+      tag: "distcc-ng-e2e-native:local"
+  image_apt: "cmake libhiredis-dev procps"
+  native_apt: "distcc distcc-pump"
+
+# What: PR labels set from the paths a PR changes.
+# Why: A real doc file is docs; CHANGELOG.md alone is not.
+# From: Issue #479, PR #544
+labels:
+  documentation:
+    paths: ["doc/**", "**/*.md"]
+    exclude: ["CHANGELOG.md"]
+  ci:
+    paths: [".github/workflows/**"]
+  packaging:
+    paths: ["packaging/**", "docker/**"]
+  pump:
+    paths: ["include_server/**"]
+  seccomp:
+    paths: ["src/sandbox-seccomp.*", "src/sandbox-config.*"]
+  zstd:
+    paths: ["src/compress-zstd.c"]
+  config:
+    paths: ["src/config-parser.*", "src/client-config.*"]
+
+# What: Diff path-classes and the validate jobs they select.
+# Why: DEFAULT=NOOP; every phase named here gates a real job.
+# From: Issue #479, PR #544
+impact_classes:
+  c-source:
+    paths: ["src/**", "**/*.c", "**/*.h", "configure.ac", "Makefile.in"]
+    phases: ["build", "e2e", "package"]
+  include-server:
+    paths: ["include_server/**", "**/*.py"]
+    phases: ["build", "e2e"]
+  packaging:
+    paths: ["packaging/**"]
+    phases: ["package"]
+  docker:
+    paths: ["docker/**"]
+    phases: ["container", "verify"]
+  fuzz:
+    paths: ["src/**", "test/fuzz/**", ".clusterfuzzlite/**"]
+    phases: []
+  workflows:
+    paths: [".github/workflows/**"]
+    phases: []
+  sot:
+    paths: [".github/yaml/**"]
+    phases: ["build", "e2e", "verify", "container", "package"]
+  ci-engine:
+    paths: [".github/scripts/**"]
+    phases: ["build", "e2e", "verify", "container", "package"]
+  e2e-harness:
+    paths: ["test/e2e/**"]
+    phases: ["e2e"]
+  governance:
+    paths: ["AGENTS.md", "CLAUDE.md", ".github/AGENTS.md"]
+    phases: []
+  docs:
+    paths: ["**/*.md", "doc/**"]
+    phases: []

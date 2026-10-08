@@ -1,0 +1,232 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Release: verify/package/publish/changelog/draft.
+# Why: A tag push releases; dispatch is a pre-tag dry run.
+# From: Issue #479, PR #544
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify, e.g. v3.6.6-NG (must match configure.ac). This does NOT create the tag or publish a release -- push the tag for that."
+        required: true
+        type: string
+      publish_container:
+        description: "Also build+scan+push the container images during this dry run (still no GitHub Release, no tag)"
+        required: false
+        type: boolean
+        default: false
+      release_notes:
+        description: "Set only to manually retry a failed CHANGELOG.md insert for `tag`"
+        required: false
+        type: string
+        default: ""
+  release:
+    types: [published]
+  push:
+    branches: [current_dev]
+    tags: ["v*"]
+
+# What: One release run per tag at a time.
+# Why: concurrency is evaluated before any job can run ci.sh.
+# From: Issue #479, PR #544
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version_check:
+    name: Verify release tag matches configure.ac
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      publish: ${{ steps.check.outputs.publish }}
+      tag_push: ${{ steps.check.outputs.tag_push }}
+      container_matrix: ${{ steps.check.outputs.container_matrix }}
+      variants: ${{ steps.check.outputs.variants }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: check
+        run: bash .github/scripts/ci.sh release version-check
+
+  update_changelog:
+    name: Insert release notes into CHANGELOG.md
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - id: plan
+        run: bash .github/scripts/ci.sh publish changelog-plan
+      - if: steps.plan.outputs.insert == 'true'
+        env:
+          # What: Push with the PAT, not github.token.
+          # Why: current_dev's ruleset has no bot bypass actor.
+          # From: Issue #479, PR #544, Issue #460
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+        run: bash .github/scripts/ci.sh publish changelog
+
+  update_draft_release:
+    name: Refresh the current_dev draft release
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/current_dev') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh publish draft-release
+
+  build_test:
+    name: Build + test (default)
+    needs: [version_check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.default.apt
+      - id: cache
+        env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh cache "$VARIANT"
+      - if: steps.cache.outputs.key != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
+          restore-keys: ${{ steps.cache.outputs.restore_keys }}
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: default
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    needs: [version_check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e distributed
+
+  package:
+    name: Build packages, SBOM, and (real tag only) publish the release
+    needs: [version_check, build_test, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.version_check.outputs.tag }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+      - id: packages
+        run: bash .github/scripts/ci.sh release packages
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.packages.outputs.artifact_name }}
+          path: ${{ steps.packages.outputs.artifact_path }}
+          retention-days: ${{ steps.packages.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.packages.outputs.artifact_if_missing }}
+      - env:
+          OUT: distcc-ng-${{ env.TAG }}.spdx.json
+        run: bash .github/scripts/ci.sh scan package-sbom "$OUT"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: distcc-ng-${{ env.TAG }}.spdx.json
+        run: bash .github/scripts/ci.sh attest release "$OUT"
+      - if: needs.version_check.outputs.tag_push == 'true'
+        env:
+          # What: Publish with a real PAT, not github.token.
+          # Why: github.token releases never fire release: events.
+          # From: Issue #479, PR #544, Issue #460
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+        run: bash .github/scripts/ci.sh publish github-release "$TAG"
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  build_container:
+    name: Build ${{ matrix.variant }} ${{ matrix.platform }} image
+    needs: [version_check, build_test, e2e]
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 60
+    continue-on-error: ${{ matrix.optional }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.version_check.outputs.container_matrix) }}
+    env:
+      TAG: ${{ needs.version_check.outputs.tag }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
+      - id: build
+        env:
+          VARIANT: ${{ matrix.variant }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bash .github/scripts/ci.sh container build "$VARIANT" "$PLATFORM" "$TAG"
+      - env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: bash .github/scripts/ci.sh scan trivy "$IMAGE"
+      - env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          OUT: distcc-ng-${{ matrix.variant }}-${{ env.TAG }}-${{ matrix.platform }}.spdx.json
+        run: bash .github/scripts/ci.sh scan sbom "$IMAGE" "$OUT"
+      - if: needs.version_check.outputs.publish == 'true'
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh container push "$IMAGE"
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  publish_manifest:
+    name: Publish ${{ matrix.variant }} multi-arch manifest
+    needs: [version_check, build_container]
+    if: needs.version_check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.version_check.outputs.variants) }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: manifest
+        env:
+          VARIANT: ${{ matrix.variant }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh publish manifest "$VARIANT"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.manifest.outputs.image }}
+        run: bash .github/scripts/ci.sh attest image "$IMAGE"

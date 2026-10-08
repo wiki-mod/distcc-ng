@@ -83,21 +83,50 @@ this reason.
   other. This reduces, rather than removes, a pre-existing hard requirement,
   and does not raise any minimum version.
 
+## Documented warning exceptions
+
+`AGENTS.md` `[AG-INT-003]` treats every warning as an error unless this
+section documents it as an exception. Each entry names the exact warning,
+where it comes from, and the maintainer decision that accepts it.
+
+- **rpmbuild: "It's not recommended to have unversioned Obsoletes"**, four
+  times, for `packaging/RedHat/rpm.spec`'s `Obsoletes: distcc`,
+  `Obsoletes: distcc-server`, `Obsoletes: crosstool-distcc
+  distcc-include-server` and `Obsoletes: crosstool-distcc-server`. This
+  fork's packages install at the same paths as the real `distcc` and
+  `distcc-server` packages at every version, so there is no version
+  boundary to draw; the Conflicts/Obsoletes stay unversioned on purpose.
+  Decided in PR #437 (issue #412, merged 2026-08-06), which recorded in the
+  spec that rpm warns about this and accepted it; the two `crosstool-*`
+  lines come unchanged from upstream `distcc/distcc`'s spec and carry the
+  same warning for the same reason.
+
+Not covered here, and therefore still open warnings of `ci.sh package`:
+rpmbuild's "bogus date in %changelog" for the 2008 "Sat Mar 12 2008"
+entry, and setuptools' "setup.py install is deprecated".
+
 ## Dependency management policy
 
 This section documents how this fork selects, obtains, and tracks its
 dependencies (raised by issue #267's OSSF Scorecard/Baseline review,
 criterion `OSPS-DO-06.01`).
 
-- **GitHub Actions** (the workflows under `.github/workflows/`) are the one
-  category of dependency with automated update tooling: `.github/dependabot.yml`
-  opens a weekly update PR per action, for both `master` and `current_dev`.
-  Each such PR still goes through the same review, CI, and (for `master`)
-  explicit maintainer-approval gates as any other pull request — Dependabot
-  only proposes the update, it never merges one itself. `.github/workflows/osv-scanner.yml`
-  adds a real-time gate on top of that periodic cadence: every pull request
-  and push is checked against OSV.dev's advisory database for known-
-  vulnerable action versions (see `SECURITY.md`'s SCA policy section).
+- **CI container images and CI tools** are the one category of dependency
+  with automated update tooling. The only third-party actions are
+  `actions/cache` and `actions/upload-artifact`, pinned by commit SHA in
+  `ci_engine.actions` and mirrored literally in the workflows;
+  `.github/dependabot.yml` proposes their bumps weekly, because
+  `GITHUB_TOKEN` cannot edit workflow files. Every image and tool is
+  pinned in `.github/yaml/build-manifest.yml`:
+  images as `name:tag@sha256:<digest>` (the tag is the tracked channel),
+  tools as a release version plus the sha256 of the downloaded asset, which
+  `ci.sh` checks on every fetch. `housekeeping.yml` runs `ci.sh sot-update`
+  weekly: it moves each pin to the newest stable release of its channel
+  (a tool's new sha256 is the digest GitHub records for that release
+  asset), opens or refreshes one pull request against `current_dev`, and
+  dispatches `Validate` and `Security` on it. That pull request goes
+  through the same review and approval gates as any other (`AGENTS.md`
+  `[AG-VAL-007]`); the job only proposes, it never merges.
 - **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`)
   are detected at `./configure` time via `configure.ac`'s `PKG_CHECK_MODULES`
   calls against whatever the build host already provides, per the

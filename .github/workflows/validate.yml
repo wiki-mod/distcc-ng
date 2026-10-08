@@ -1,0 +1,256 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: PR/push entry; self-test, plan, build/test matrix.
+# Why: One thin orchestrator; all logic lives in ci.sh.
+# From: Issue #479
+name: Validate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [current_dev, master]
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# What: Cancel a run when a newer same-event run starts.
+# Why: issues/PR-target runs share a base ref with pushes.
+# From: Issue #479, PR #544
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: PR metadata (title/tracking/changelog)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          # What: PAT for the AG-GH-002 board sub-check only.
+          # Why: github.token above cannot read Projects v2.
+          # From: Issue #479, PR #544
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh metadata all
+
+  lint:
+    name: Static lint (actionlint / shellcheck / guards)
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh lint
+
+  engine-selftest:
+    name: CI engine self-test (ci.bats)
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt ci_engine.selftest_apt
+      - run: bash .github/scripts/ci.sh selftest
+
+  plan:
+    name: Plan (content-based impact matrix)
+    # What: The one filter for content runs; others need plan.
+    # Why: Issue and PR-target events run only repo automation.
+    # From: Issue #479, PR #544
+    if: github.event_name != 'issues' && github.event_name != 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      phases: ${{ steps.plan.outputs.phases }}
+      container_variants: ${{ steps.plan.outputs.container_variants }}
+      publish_buildtools: ${{ steps.plan.outputs.publish_buildtools }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout 0
+      - id: plan
+        run: bash .github/scripts/ci.sh plan
+
+  build_test:
+    name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    # What: id-token/attestations for the build attestation.
+    # Why: A fork PR gets no id-token; ci.sh logs it NotRun.
+    # From: Issue #38, Issue #479, PR #544
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: ${{ matrix.apt }}
+        run: bash .github/scripts/ci.sh install apt "${APT_PACKAGES}"
+      - if: runner.os == 'macOS' && matrix.brew != ''
+        env:
+          BREW_PACKAGES: ${{ matrix.brew }}
+        run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
+      - id: cache
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh cache "$VARIANT"
+      - if: steps.cache.outputs.key != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
+          restore-keys: ${{ steps.cache.outputs.restore_keys }}
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - id: test
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: steps.test.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.test.outputs.artifact_name }}
+          path: ${{ steps.test.outputs.artifact_path }}
+          retention-days: ${{ steps.test.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.test.outputs.artifact_if_missing }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh attest build "$VARIANT"
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e
+
+  container:
+    name: Release images build + Trivy (${{ matrix.variant }})
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'container')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.container_variants) }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: build
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh container build "$VARIANT" amd64 "pr-$GITHUB_SHA"
+      - env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: bash .github/scripts/ci.sh scan trivy "$IMAGE"
+
+  package:
+    name: Release packages (rpm/deb) build
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'package')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+
+  verify_image:
+    name: Verify container build + self-test
+    needs: plan
+    if: contains(needs.plan.outputs.phases, 'verify')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh container verify-image
+      - run: bash .github/scripts/ci.sh verify all
+
+  publish_buildtools:
+    name: Publish distcc-ng-buildtools:latest
+    needs: [plan, verify_image]
+    # What: Publish when plan says so (verify, protected ref).
+    # Why: ci.sh owns the ref policy; YAML only forwards it.
+    # From: Issue #479, PR #544
+    if: needs.plan.outputs.publish_buildtools == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh container buildtools
+
+  required_gate:
+    # What: One stable name over a skippable impact matrix.
+    # Why: A skipped phase passes; a failed or cancelled fails.
+    # From: Issue #479, PR #544
+    name: Validate (required)
+    needs: [lint, engine-selftest, plan, build_test, e2e, container, package, verify_image, publish_buildtools]
+    if: always() && needs.plan.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          JOBS: |
+            lint=${{ needs.lint.result }}
+            engine-selftest=${{ needs['engine-selftest'].result }}
+            plan=${{ needs.plan.result }}
+            build_test=${{ needs.build_test.result }}
+            e2e=${{ needs.e2e.result }}
+            container=${{ needs.container.result }}
+            package=${{ needs.package.result }}
+            verify_image=${{ needs.verify_image.result }}
+            publish_buildtools=${{ needs.publish_buildtools.result }}
+        run: bash .github/scripts/ci.sh gate
+
+  variables:
+    name: Repo automation (labeler + project board)
+    if: github.event_name == 'issues' || github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh harden start
+      - if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh variables label-pr
+      - env:
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh variables add-to-project
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop

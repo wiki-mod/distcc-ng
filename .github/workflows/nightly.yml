@@ -1,0 +1,183 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: Nightly build/test/e2e, nightly:latest publish.
+# Why: schedule/dispatch resolve github.sha to master.
+# From: Issue #479, Issue #81, Issue #500
+name: Nightly
+
+concurrency:
+  group: nightly-publish
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan (full matrix)
+    # What: No diff base on a schedule; plan picks every phase.
+    # Why: current_dev is checked daily on every variant and OS.
+    # From: Issue #479, PR #544
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - id: plan
+        run: bash .github/scripts/ci.sh plan
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  build_test:
+    name: Build + test (${{ matrix.variant }} / ${{ matrix.os }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: ${{ matrix.apt }}
+        run: bash .github/scripts/ci.sh install apt "${APT_PACKAGES}"
+      - if: runner.os == 'macOS' && matrix.brew != ''
+        env:
+          BREW_PACKAGES: ${{ matrix.brew }}
+        run: bash .github/scripts/ci.sh install brew "${BREW_PACKAGES}"
+      - id: cache
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh cache "$VARIANT"
+      - if: steps.cache.outputs.key != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
+          restore-keys: ${{ steps.cache.outputs.restore_keys }}
+      - env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - id: test
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: steps.test.outputs.artifact_name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.test.outputs.artifact_name }}
+          path: ${{ steps.test.outputs.artifact_path }}
+          retention-days: ${{ steps.test.outputs.artifact_retention_days }}
+          if-no-files-found: ${{ steps.test.outputs.artifact_if_missing }}
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  sanitizer:
+    name: Build + test (sanitizer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - run: bash .github/scripts/ci.sh install sot-apt build_matrix.variants.sanitizer.apt
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh build "$VARIANT"
+      - env:
+          VARIANT: sanitizer
+        run: bash .github/scripts/ci.sh test "$VARIANT"
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  e2e:
+    name: Distributed compile E2E (2-container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - run: bash .github/scripts/ci.sh e2e distributed
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  bidirectional_e2e:
+    name: Full bidirectional native-compat E2E
+    # What: The full build runs on manual dispatch only.
+    # Why: It takes hours; a daily schedule cannot afford it.
+    # From: Issue #264, Issue #479
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - run: bash .github/scripts/ci.sh e2e full
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  publish:
+    name: Publish distcc-ng-nightly:latest
+    needs: [build_test, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 0 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - run: bash .github/scripts/ci.sh install sot-apt release.packaging_apt
+      - run: bash .github/scripts/ci.sh package
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh attest release
+      - id: image
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh container nightly
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: bash .github/scripts/ci.sh attest image "$IMAGE"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci.sh publish nightly
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop
+
+  report:
+    name: Report nightly status
+    needs: [plan, build_test, sanitizer, e2e, publish]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - run: bash .github/scripts/ci.sh harden start
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          SCOPE: nightly build+publish (current_dev)
+          JOBS: |
+            plan=${{ needs.plan.result }}
+            build_test=${{ needs.build_test.result }}
+            sanitizer=${{ needs.sanitizer.result }}
+            e2e=${{ needs.e2e.result }}
+            publish=${{ needs.publish.result }}
+        run: bash .github/scripts/ci.sh report
+      - if: always()
+        run: bash .github/scripts/ci.sh harden stop

@@ -1,0 +1,147 @@
+# distcc-ng (https://github.com/wiki-mod/distcc-ng)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What: GHCR cleanup, SOT pin refresh, ccache heartbeat.
+# Why: One owner for housekeeping; logic lives in ci.sh.
+# From: Issue #479
+name: Housekeeping
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Which housekeeping task to run"
+        type: choice
+        options:
+          - gc
+          - heartbeat
+          - sot-update
+        default: gc
+      package:
+        description: "Which GHCR package to prune (gc task)"
+        type: choice
+        options:
+          - all
+          - distcc-ng
+          - distcc-ng-pump
+          - distcc-ng-nightly
+          - distcc-ng-buildtools
+          - distcc-ng-e2e
+        default: all
+      dry_run:
+        description: "List what would be deleted without deleting anything"
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: housekeeping-${{ github.event.inputs.task || github.event.schedule || github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  # What: Map this run's cron or dispatch task to its jobs.
+  # Why: ci.sh owns that mapping; the cron lives in the SOT.
+  # From: Issue #479, PR #544
+  route:
+    name: Route housekeeping tasks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      gc: ${{ steps.route.outputs.gc }}
+      sot_update: ${{ steps.route.outputs.sot_update }}
+      heartbeat: ${{ steps.route.outputs.heartbeat }}
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - id: route
+        run: bash .github/scripts/ci.sh route housekeeping
+
+  gc:
+    name: GHCR package cleanup
+    needs: route
+    if: needs.route.outputs.gc == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_PACKAGE_DELETE_PAT }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PACKAGE: ${{ inputs.package }}
+        run: bash .github/scripts/ci.sh gc "$PACKAGE"
+
+  sot_update:
+    name: Refresh SOT pins (images, tools)
+    needs: route
+    if: needs.route.outputs.sot_update == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # What: Push the update branch, open its PR, dispatch CI.
+    # Why: GITHUB_TOKEN PR events start no runs; dispatch does.
+    # From: Issue #479, PR #544
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # What: Always refresh current_dev's SOT.
+      # Why: Its PR targets current_dev; other refs would leak in.
+      # From: Issue #479, PR #544
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/current_dev/.github/scripts/ci.sh" | bash -s -- checkout 1 current_dev
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          # What: PAT for adding the new PR to the board only.
+          # Why: AG-GH-002; github.token cannot write Projects v2.
+          # From: Issue #479, PR #544
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+        run: bash .github/scripts/ci.sh sot-update
+
+  heartbeat:
+    name: Weekly distributed ccache heartbeat
+    needs: route
+    if: needs.route.outputs.heartbeat == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e heartbeat
+
+  control:
+    name: Control build (plain compiler, diagnostic only)
+    needs: route
+    if: needs.route.outputs.heartbeat == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # What: Plain-compiler control build; fails on its own only.
+    # Why: report reads heartbeat alone; control never gates it.
+    # From: Issue #263, Issue #479, PR #544
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - run: bash .github/scripts/ci.sh e2e control
+
+  report:
+    name: Report heartbeat status
+    needs: [route, heartbeat]
+    # What: Report heartbeat runs and runs whose route failed.
+    # Why: A failed route skips heartbeat; it must not go quiet.
+    # From: Issue #479, PR #544
+    if: always() && (needs.route.result != 'success' || needs.heartbeat.result != 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - run: curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$GITHUB_SHA/.github/scripts/ci.sh" | bash -s -- checkout
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_PAT: ${{ secrets.PROJECT_AUTOMATION_PAT }}
+          SCOPE: weekly ccache heartbeat
+          JOBS: |
+            route=${{ needs.route.result }}
+            heartbeat=${{ needs.heartbeat.result }}
+        run: bash .github/scripts/ci.sh report

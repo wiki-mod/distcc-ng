@@ -84,6 +84,18 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`packaging/RedHat/rpm.spec`** (issue #479, PR #544): `make rpm` and
+  `make deb` failed with "can't cd to distcc-ng-3.6.6" since 9990404c,
+  because rpm expands macros inside spec comments and a prose comment
+  named the setup macro, so `%prep` ran a second setup. Prose comments in
+  the spec now carry no percent sign, and the two commented-out
+  directives inherited from upstream write theirs as `%%`, which also
+  removes rpmbuild's two "Macro expanded in comment" warnings. The spec
+  also passes autoconf's `--docdir` instead of the unknown
+  `--with-docdir` (same documentation path), and the `cc`/`c++`/`gcc`/`g++`
+  masquerade links in the RPM are relative (`../../bin/distcc`)
+  instead of absolute (`support-upstream/issue-479-rpm-spec-build-warnings.md`).
+
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
   (this fork's own maintained fork of `rpm-software-management/popt`,
   pinned to an exact commit) instead of that project's four-year-old
@@ -156,6 +168,63 @@ See `doc/release-versioning.md` for the full versioning and release process.
   updated to `distcc-pump` to match the rename below. Refs #485.
 
 ### Changed
+
+- **`.github/scripts/ci.sh`, `.github/scripts/ci.bats`, `.github/yaml/build-manifest.yml`,
+  `.github/workflows/{validate,security,release,nightly,housekeeping}.yml`**
+  (issue #479, PR #544): CI Rewrite 1.2. One Bash engine owns every CI
+  decision, one SOT owns every pin, matrix and schedule, and five thin
+  workflows only call `ci.sh <phase>`. It replaces the former workflows
+  (`c-build.yml`, `nightly-publish.yml`, `package-release.yml`,
+  `changelog-check.yml` and others), every `.github/actions/` composite
+  action, `docker/verify/ci.sh`, `test/e2e*/run-*.sh` and
+  `.clusterfuzzlite/build.sh`'s build logic. Builds are selected by the
+  diff's impact classes, so a docs-only change compiles nothing; the
+  required checks are `Validate (required)`, `PR metadata
+  (title/tracking/changelog)`, `OSV scan` and the unchanged `Analyze (...)`
+  names. See `doc/ci-workflows.md`.
+
+- **`.github/scripts/ci.sh` shellcheck suppression guard** (issue #479,
+  PR #544): the texts `shellcheck disable=` and
+  `shellcheck source=/dev/null` are banned from every shell source of
+  the repository, as `AGENTS.md` `[AG-INT-003]` forbids silencing a
+  real warning; `ci.sh lint` fails on their mere presence and reads the
+  list from `.github/yaml/build-manifest.yml`
+  (`ci_engine.banned_shell_texts`). The two Alpine OpenRC units lose
+  their suppression comment; their code is unchanged.
+
+- **`AGENTS.md`** (issue #479, PR #544): `[AG-CI-001]` now describes the
+  rewritten CI (logic once in `ci.sh`, every pin in the SOT, each
+  `run:` step one `ci.sh` command, no composite actions) and `[AG-REL-002]` names the `validate.yml`
+  `metadata` job's changelog check instead of the removed
+  `changelog-check` workflow. `[AG-CODE-004]` applies at every scale (a
+  one-line alias, a test helper, a workflow job), forbids a second
+  implementation of an existing capability, and requires a found
+  duplicate to be consolidated in the same change rather than only
+  reported.
+
+- **`docker/verify/Dockerfile`** (issue #479, PR #544): `actionlint` is
+  no longer compiled with Go in a separate `golang` builder stage; the
+  buildtools image installs the SOT-pinned release binary (version and
+  sha256 in `.github/yaml/build-manifest.yml`, like trivy and syft), so
+  every image is built from the one Debian base.
+
+- **Container images** (issue #479, PR #544): every image `ci.sh image`
+  builds (release, nightly, buildtools, e2e, ClusterFuzzLite toolchain)
+  now runs `apt-get full-upgrade` before installing its packages, instead
+  of `apt-get upgrade`, so each image carries the packages current at its
+  build time.
+
+- **`.github/scripts/ci.sh` comment guard** (issue #479, PR #544):
+  `ci.sh lint` also fails on a function, nested stub or bats test
+  without a What/Why/From block directly above it, as `AGENTS.md`
+  `[AG-CODE-001]` requires a comment on every function. `ci.bats`
+  places each test's block above its `@test` line.
+
+- **PR metadata checks** (issue #479, PR #544): pull requests opened by
+  Dependabot or `github-actions[bot]` (the SOT pin update) no longer
+  skip the AG-GH-002 tracking, AG-GH-014 title and AG-REL-002 changelog
+  checks; like any pull request they need labels, a milestone and a
+  changelog entry or the `no-changelog-needed` label before merge.
 
 - **`packaging/deb.sh`, `docker/release/Dockerfile`**: the `pump` binary is
   now shipped as `distcc-pump` in the `.deb` package and the

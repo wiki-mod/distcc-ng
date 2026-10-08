@@ -5,7 +5,7 @@ REL-* item ID used below, live in doc/combined-test-and-release_checklist.md. Th
 records execution state and evidence for one concrete release only.
 -->
 
-> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every completed item still requires the evidence required by `AGENTS.md`, especially rules 62 and 87.
+> **Transparency notice:** This release preparation may use AI assistance. Every factual claim and every completed item still requires the evidence required by `AGENTS.md`, especially `[AG-INT-001]` and `[AG-VAL-003]`.
 
 ## Release Identity
 
@@ -44,12 +44,12 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution
 | --- | --- | --- | --- | --- | --- |
 | REL-GOV-01 | Candidate SHA still matches the intended release candidate |  | | | |
 | REL-GOV-02 | No unresolved release blocker remains |  | | | |
-| REL-GOV-03 | Final AGENTS.md self-check performed (rule 78(c)) |  | | | |
-| REL-GOV-04 | Independent review of the finished release PR performed (rule 78(a)) |  | | | |
+| REL-GOV-03 | Final AGENTS.md self-check performed (`[AG-WF-017]` self-audit gate) |  | | | |
+| REL-GOV-04 | Independent review of the finished release PR performed (`[AG-WF-017]` independent-review gate) |  | | | |
 | REL-PRECUT-01 | `[Unreleased]` reviewed end-to-end against real PR history since last tag |  | | | |
 | REL-PRECUT-02 | A real, dated `## [X.Y.Z-NG] - YYYY-MM-DD` section exists for every tag since the last checklist run |  | | | |
 | REL-PRECUT-03 | No open unresolved `security`-labeled issue blocking, or a documented maintainer decision to ship anyway |  | | | |
-| REL-PRECUT-04 | `scripts/check-release-version.sh` run for real against the intended tag |  | | | |
+| REL-PRECUT-04 | `.github/scripts/ci.sh release version-check` run for real against the intended tag |  | | | |
 | REL-PRECUT-05 | Every `support-upstream/` entry since last release has file + README row |  | | | |
 | REL-PRECUT-06 | `master`'s copy of every `release:`-event-triggered workflow matches `current_dev`'s |  | | | |
 | REL-PRECUT-07 | Release branch contains no release-only fixes relative to `current_dev` |  | | | |
@@ -67,8 +67,8 @@ Allowed status values: `PASS`, `FAIL`, `BLOCKED`, `N/A` (the canonical execution
 | REL-ART-06 | Build attestation attached, confirmed present on the real GitHub Release page |  | | | |
 | REL-CI-01 | Real `pull_request`-triggered CI run exists for this release PR |  | | | |
 | REL-CI-02 | Manual pre-tag package/artifact verification run, if used |  | | | |
-| REL-CI-03 | Real tag-triggered `package-release.yml` run exists and succeeded |  | | | |
-| REL-CI-04 | `release: types: [published]` actually triggered `changelog-update-on-release.yml` |  | | | |
+| REL-CI-03 | Real tag-triggered `release.yml` run exists and succeeded |  | | | |
+| REL-CI-04 | `release: types: [published]` actually triggered `release.yml`'s `update_changelog` job |  | | | |
 | REL-DOC-01 | `README.md`/`doc/docker.md` quick-start references match what this release publishes |  | | | |
 | REL-DOC-02 | Every user-visible change since last release is in `CHANGELOG.md` under a dated section |  | | | |
 | REL-PROMO-01 | Explicit, fresh maintainer approval for this specific promotion |  | | | |
@@ -86,33 +86,34 @@ Diff command used to classify this release's change surface (e.g. `git diff --st
 | REL-ART-08 | Real negative test: denied syscall actually blocked | Same trigger as REL-ART-07 |  | | | |
 | REL-ART-09 | Real second-user cross-permission check on a real Unix-permission filesystem | Permission/file-mode-affecting file changed |  | | | |
 | REL-ART-10 | Real two-container distribution test | Distribution/compiler-identity code changed |  | | | |
-| REL-ART-11 | Published-stage identity re-confirmed via registry API | Any Dockerfile or `package-release.yml` changed |  | | | |
+| REL-ART-11 | Published-stage identity re-confirmed via registry API | Any Dockerfile or `release.yml` changed |  | | | |
 | REL-COMPAT-01 | New hard dependency called out against compatibility policy | A new hard dependency was introduced |  | | | |
 | REL-COMPAT-02 | Compatibility-policy platform matrix re-confirmed | Platform-conditional code changed |  | | | |
 
 ## CI / Release Pipeline Evidence (evidence appendix — no independent status)
 
-Opening this release PR triggers the repository's normal `pull_request` CI. It does **not** by itself trigger `.github/workflows/package-release.yml`.
+Opening this release PR triggers the repository's normal `pull_request` CI. It does **not** by itself trigger `.github/workflows/release.yml`.
 
 This table records evidence only. Completion state belongs in the single Live Release Checklist above (`REL-CI-01`-`REL-CI-04`).
 
 | ID | Pipeline | Trigger | Candidate SHA / tag | Evidence |
 | --- | --- | --- | --- | --- |
-| REL-CI-01 | Normal PR CI (`c-build.yml` and other PR workflows) | Release PR (`pull_request` event) | | |
-| REL-CI-02 | Pre-tag package/artifact verification (`package-release.yml`) | Manual `workflow_dispatch` | | |
-| REL-CI-03 | Real release pipeline (`package-release.yml`) | `v*` tag push | | |
-| REL-CI-04 | Changelog automation (`changelog-update-on-release.yml`) | `release: types: [published]` | | |
+| REL-CI-01 | Normal PR CI (`validate.yml`, `security.yml`) | Release PR (`pull_request` event) | | |
+| REL-CI-02 | Pre-tag package/artifact verification (`release.yml`) | Manual `workflow_dispatch` | | |
+| REL-CI-03 | Real release pipeline (`release.yml`) | `v*` tag push | | |
+| REL-CI-04 | Changelog automation (`release.yml` `update_changelog`) | `release: types: [published]` | | |
 
-A green normal PR CI run is not evidence that RPM, DEB, source archives, SBOM, attestations, or release containers from `package-release.yml` were already built or verified.
+A green normal PR CI run is not evidence that RPM, DEB, source archives, SBOM, attestations, or release containers from `release.yml` were already built or verified.
 
 ### Manual pre-tag package/artifact verification (REL-CI-02 evidence)
 
 Run the release workflow explicitly against the current release branch when pre-tag package/artifact evidence is required:
 
 ```bash
-gh workflow run package-release.yml \
+gh workflow run release.yml \
   --repo wiki-mod/distcc-ng \
   --ref release/X.Y.Z-NG \
+  -f tag=vX.Y.Z-NG \
   -f publish_container=false
 ```
 
@@ -195,14 +196,14 @@ A manual pre-tag `workflow_dispatch` result (REL-CI-02) is not proof that the la
 
 ## Publication State
 
-The current repository workflow has no independent manual pre-publication gate between pushing a real release tag and the publication path in `package-release.yml`.
+The current repository workflow has no independent manual pre-publication gate between pushing a real release tag and the publication path in `release.yml`.
 
 This section documents observed publication evidence only. It is **not** a technical pre-publication gate and carries no independent completion status.
 
 Publication state observed:
 Tagged workflow run:
 Published release:
-`changelog-update-on-release.yml` run for this tag (REL-CI-04 evidence):
+`release.yml` `update_changelog` run for this tag (REL-CI-04 evidence):
 
 A real pre-publication gate requires a separate workflow change and is outside this template's scope.
 
@@ -210,7 +211,7 @@ A real pre-publication gate requires a separate workflow change and is outside t
 
 Promotion readiness is determined by the single Live Release Checklist above (`REL-PROMO-*` and `REL-GOV-*`). Do not duplicate CI, artifact, blocker, or governance completion state here.
 
-Maintainer approval is governed by `AGENTS.md` rule 81 and is never inferred from a previous release, another PR, silence, or a generic request to work through this checklist.
+Maintainer approval is governed by `AGENTS.md` `[AG-WF-018]` and is never inferred from a previous release, another PR, silence, or a generic request to work through this checklist.
 
 Approval reference:
 Approved Candidate SHA / tag:
@@ -238,7 +239,7 @@ During this release, did verification discover a gap in the canonical release co
 
 Required `doc/combined-test-and-release_checklist.md` update (name the new or changed ID explicitly):
 
-If a gap is discovered, update the canonical checklist — assign the next unused `REL-*` ID in the relevant family (never reuse or renumber an existing one, same discipline as AGENTS.md rule 64 for rule numbers) — so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
+If a gap is discovered, update the canonical checklist — assign the next unused `REL-*` ID in the relevant family (never reuse or renumber an existing one, same discipline as `AGENTS.md` `[AG-LAW-003]` for rule identifiers) — so future releases inherit the lesson. Do not fix only this PR body's local evidence text.
 
 ## Final Release Record
 
