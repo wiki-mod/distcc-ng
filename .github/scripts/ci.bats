@@ -2512,44 +2512,60 @@ EOF
     [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
 }
 
-# What: Real tree; drift in cron, options, milestone, wiring.
+# What: Clean fixture passes; each drift gives its own id.
 # Why: All are literal YAML; the SOT owns their values.
 # From: Issue #479, PR #544
-@test "mirror guard passes the real tree and fails closed on drift" {
-    local fx="${BATS_TEST_TMPDIR}/fx"
-    run ci_guard_sot_mirrors "${CI_REPO_ROOT}"
-    [ "${status}" -eq 0 ]
-    mkdir -p "${fx}/.github/workflows"
-    _fixture_manifest 'schedules:' '  n:' '    workflow: "w"' '    cron: "0 1 * * *"' \
+@test "mirror guard passes a clean tree and fails closed on each drift" {
+    echo "case: mirror guard passes a tree that mirrors the SOT"
+    local fx="${BATS_TEST_TMPDIR}/fx" file expr id ids
+    _fixture_manifest 'schedules:' '  n:' '    workflow: "validate"' '    cron: "0 1 * * *"' \
         'release:' '  ghcr_packages: ["p"]' 'bot_milestone:' '  number: "3"' \
-        'housekeeping_tasks:' '  gc:' '    weekly: "false"'
-    printf '%s\n' 'on:' '  schedule:' "    - cron: '0 2 * * *'" > "${fx}/.github/workflows/w.yml"
-    printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      task:' '        options:' '          - gc' \
-        '          - zap' '      package:' '        options:' \
-        '          - all' '          - q' '        default: all' > "${fx}/.github/workflows/housekeeping.yml"
-    printf '%s\n' 'updates:' '  - package-ecosystem: a' '    milestone: 4' '  - package-ecosystem: b' \
-        > "${fx}/.github/dependabot.yml"
+        'housekeeping_tasks:' '  gc:' '    weekly: "false"' 'impact_classes:' '  c:' '    paths: ["src/**"]' \
+        '    phases: ["build", "e2e"]' 'security:' '  cfl_base:' '    tag: "b:local"'
+    # What: Write a fixture tree that mirrors the fixture SOT.
+    # Why: Each drift row starts from the same clean tree.
+    _mirror_tree() {
+        rm -rf "${fx}" && mkdir -p "${fx}/.github/workflows" "${fx}/.clusterfuzzlite"
+        printf '%s\n' 'on:' '  schedule:' "    - cron: '0 1 * * *'" 'jobs:' '  build_test:' \
+            "    if: needs.plan.outputs.build == 'true'" '    steps:' '      - run: bash .github/scripts/ci.sh build x' \
+            '  e2e:' "    if: contains(needs.plan.outputs.phases, 'e2e')" '    steps:' \
+            '      - run: bash .github/scripts/ci.sh e2e x' > "${fx}/.github/workflows/validate.yml"
+        printf '%s\n' 'on:' '  workflow_dispatch:' '    inputs:' '      task:' '        options:' '          - gc' \
+            '      package:' '        options:' '          - all' '          - p' '        default: all' \
+            > "${fx}/.github/workflows/housekeeping.yml"
+        printf '%s\n' 'updates:' '  - package-ecosystem: a' '    milestone: 3' '  - package-ecosystem: b' \
+            '    milestone: 3' > "${fx}/.github/dependabot.yml"
+        printf '%s\n' 'FROM b:local' > "${fx}/.clusterfuzzlite/Dockerfile"
+    }
+    _mirror_tree
     run ci_guard_sot_mirrors "${fx}"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0001"*"0 2 * * *"* ]]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0003"* ]]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0004"*"> zap"* ]]
-    mkdir -p "${fx}/.clusterfuzzlite"
-    _fixture_manifest 'impact_classes:' '  c:' '    paths: ["src/**"]' '    phases: ["build", "e2e"]' \
-        'security:' '  cfl_base:' '    tag: "b:local"' 'schedules:' '  n:' '    workflow: "validate"' '    cron: "0 1 * * *"'
-    printf '%s\n' 'on:' '  schedule:' "    - cron: '0 1 * * *'" 'jobs:' '  build_test:' \
-        "    if: needs.plan.outputs.build == 'true'" \
-        '    steps:' '      - run: bash .github/scripts/ci.sh build x' '  e2e:' \
-        "    if: contains(needs.plan.outputs.phases, 'e2e')" '    steps:' \
-        '      - run: bash .github/scripts/ci.sh lint' > "${fx}/.github/workflows/validate.yml"
-    printf '%s\n' 'FROM other:local' > "${fx}/.clusterfuzzlite/Dockerfile"
-    rm -f "${fx}/.github/workflows/housekeeping.yml" "${fx}/.github/dependabot.yml" "${fx}/.github/workflows/w.yml"
+    [ "${status}" -eq 0 ] || { echo "clean tree: rc ${status}: ${output}"; return 1; }
+    [[ "${output}" != *"CI-ERROR"* ]]
+    echo "case: mirror guard fails closed on drift: each drift gives exactly its own id"
+    while IFS='|' read -r file expr id; do
+        _mirror_tree
+        sed -i "${expr}" "${fx}/${file}"
+        run ci_guard_sot_mirrors "${fx}"
+        ids="$(grep -oE 'CI-ERROR-GUARD-MIRROR-[0-9]+' <<< "${output}" | sort -u | paste -sd ' ')"
+        [ "${status}" -eq 1 ] && [ "${ids}" = "CI-ERROR-GUARD-MIRROR-${id}" ] \
+            || { echo "${file} ${expr}: rc ${status}, want ${id}: ${output}"; return 1; }
+    done <<'EOF'
+.github/workflows/validate.yml|s/0 1 \* \* \*/0 2 * * */|0001
+.github/workflows/housekeeping.yml|s/- p$/- q/|0002
+.github/dependabot.yml|0,/milestone: 3/s//milestone: 4/|0003
+.github/dependabot.yml|$d|0003
+.github/workflows/housekeeping.yml|s/- gc$/- gc\n          - zap/|0004
+.github/workflows/validate.yml|s/ci.sh e2e x/ci.sh lint/|0009
+.clusterfuzzlite/Dockerfile|s/FROM b:local/FROM other:local/|0010
+EOF
+    echo "case: mirror guard reports each absent mirrored file as NotRun"
+    _mirror_tree
+    rm "${fx}/.github/workflows/housekeeping.yml" "${fx}/.github/dependabot.yml" "${fx}/.clusterfuzzlite/Dockerfile"
     run ci_guard_sot_mirrors "${fx}"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0009"*"SOT phase e2e gates no validate.yml job"* ]]
-    [[ "${output}" != *"SOT phase build"* ]]
-    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0010"*"FROM b:local"* ]]
+    [ "${status}" -eq 0 ]
+    for file in .github/workflows/housekeeping.yml .github/dependabot.yml .clusterfuzzlite/Dockerfile; do
+        [[ "${output}" == *"NotRun: ${fx}/${file} absent"* ]] || { echo "${file}: no NotRun: ${output}"; return 1; }
+    done
 }
 
 # What: Clean fixture tree, then one drift per path mirror.

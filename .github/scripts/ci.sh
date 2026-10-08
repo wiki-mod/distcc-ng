@@ -3791,6 +3791,8 @@ ci_guard_sot_mirrors() {
         _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0004]" \
             "housekeeping task options differ from housekeeping_tasks" "${want}" "${got}" || rc=$?
         [ "${rc}" -ne 2 ] || return 2
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
     fi
     f="${root}/.github/dependabot.yml"
     if [ -f "${f}" ]; then
@@ -3807,6 +3809,8 @@ ci_guard_sot_mirrors() {
         _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0003]" \
             "dependabot.yml milestones differ from bot_milestone.number" "${want}" "${got}" || rc=$?
         [ "${rc}" -ne 2 ] || return 2
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
     fi
     f="${root}/.github/workflows/validate.yml"
     if [ -f "${f}" ]; then
