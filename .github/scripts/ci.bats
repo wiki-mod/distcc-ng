@@ -129,13 +129,34 @@ _fixture_harden_state() {
     printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
 }
 
-# What: Runs ci.sh with a command no dispatch arm knows.
-# Why: A mistyped workflow command must fail, not skip.
-# From: Issue #479
-@test "unknown subcommand fails closed with a stable id" {
+# What: An unknown command, variant or mode at each entry.
+# Why: A typo must fail with its id before any tool runs.
+# From: Issue #479, PR #544
+@test "unknown commands, variants and modes fail closed before any work" {
+    local args id
+    local argv=()
     run bash "${BATS_TEST_DIRNAME}/ci.sh" bogus-command
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0002"* ]]
+    _forbid docker make _ci_configure_tree
+    while IFS='|' read -r args id; do
+        read -ra argv <<< "${args}"
+        run ci_main "${argv[@]}"
+        [ "${status}" -eq 2 ] || { echo "${args}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"[CI-ERROR-${id}]"* ]] || { echo "${args}: want ${id}: ${output}"; return 1; }
+        [[ "${output}" != *"must not run"* ]] || { echo "${args}: ran a tool: ${output}"; return 1; }
+    done <<'EOF'
+container bogus|CONTAINER-0001
+e2e bogus|E2E-0013
+workload bogus|WORKLOAD-0006
+workload ccache sideways|WORKLOAD-0004
+workload samba sideways /tmp/x|WORKLOAD-0008
+image bogus|IMAGE-0001
+release bogus|RELEASE-0005
+build bogus|BUILD-0002
+test bogus|TEST-0005
+harden bogus|HARDEN-0001
+EOF
 }
 
 # What: Guards ci.sh, then a copy that raises one id twice.
@@ -223,10 +244,10 @@ EOF
     [[ "${output}" != *"external_versions.m"* ]]
 }
 
-# What: Sets a.c.b beside same-named keys; bad path, section.
-# Why: sot-update must never touch a neighbouring pin.
+# What: Sets a.c.b beside twins; bad path, section, broken mv.
+# Why: sot-update never touches a neighbour or half-writes.
 # From: Issue #479, PR #544
-@test "sot set rewrites one path and fails closed on a missing one" {
+@test "sot set rewrites one path, keeps mode, and fails closed" {
     _fixture_manifest 'a:' '  # note' '  b: "x"' '  c:' '    b: "y"' 'b: "z"'
     run _ci_sot_set a.c.b "new"
     [ "${status}" -eq 0 ]
@@ -242,21 +263,11 @@ EOF
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
-}
-
-# What: Sets a value with mv broken, then one on a 640 SOT.
-# Why: A half-written SOT would corrupt every later read.
-# From: Issue #479, PR #544
-@test "sot set keeps the old SOT and its mode around the rename" {
-    _fixture_manifest 'a:' '  b: "x"'
     chmod 640 "${CI_MANIFEST}"
-    cp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
     run _stubbed '_fail mv 1 "mv broke"' _ci_sot_set a.b "new"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"mv broke"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
-    run _ci_sot_set a.nope "v"
-    [ "${status}" -eq 2 ]
     _ci_sot_set a.b "new"
     [ "$(_ci_sot_scalar a.b)" = "new" ]
     [ "$(stat -c %a "${CI_MANIFEST}")" = "640" ]
@@ -309,33 +320,43 @@ EOF
     [ "${status}" -eq 2 ]
 }
 
-# What: Checks a feat(scope) title with enforcement on.
-# Why: Block mode must not reject what AG-GH-014 allows.
-# From: Issue #479
-@test "pr-title accepts a valid Conventional-Commit title" {
-    PR_TITLE="feat(pump): add IPv6 support" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
-    [ "${status}" -eq 0 ]
+# What: Titles per lint mode and draft on a fixture AG-GH-014.
+# Why: Only block mode on a ready PR may fail a bad title.
+# From: Issue #479, PR #544
+@test "pr-title: valid, bad type, bad scope and no type per mode" {
+    local fx="${BATS_TEST_TMPDIR}/repo" title mode draft rc want
+    mkdir -p "${fx}"
+    printf '%s\n' '**[AG-GH-014]** T; allowed types MUST remain `feat` and `fix`; optional lowercase scopes MUST remain `pump` and `ci`; end' \
+        > "${fx}/AGENTS.md"
+    while IFS='|' read -r title mode draft rc want; do
+        CI_REPO_ROOT="${fx}" PR_TITLE="${title}" PR_TITLE_LINT_MODE="${mode}" PR_DRAFT="${draft}" \
+            run _ci_check_pr_title
+        [ "${status}" -eq "${rc}" ] || { echo "${title}/${mode}/${draft}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"${want}"* ]] || { echo "${title}/${mode}/${draft}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+feat(pump): add IPv6|block|false|0|[CI-META-TITLE] OK
+fix: x|block|false|0|[CI-META-TITLE] OK
+add some stuff|block|false|1|[CI-ERROR-META-TITLE-0002]
+add some stuff|warn|false|0|[CI-WARN-META-TITLE]
+add some stuff|block|true|0|[CI-WARN-META-TITLE]
+docs(pump): x|block|false|1|type 'docs' not in: feat fix
+feat(zstd): x|block|false|1|scope '(zstd)' not a documented area
+|block|false|1|[CI-ERROR-META-TITLE-0001]
+EOF
 }
 
-# What: Reads types and scopes from the repo's AGENTS.md.
-# Why: AGENTS.md owns the taxonomy; the checker has no copy.
+# What: Parses a fixture AG-GH-014, then no rule, empty lists.
+# Why: AGENTS.md owns the taxonomy; a gap must not pass.
 # From: Issue #479, PR #544
-@test "pr-title taxonomy is read from AGENTS.md AG-GH-014" {
-    run _ci_title_taxonomy types
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "feat fix security docs refactor perf test build ci chore style revert" ]
-    run _ci_title_taxonomy scopes
-    [ "${status}" -eq 0 ]
-    [ "$(wc -w <<< "${output}")" -eq 15 ]
-    [[ " ${output} " == *" support-upstream "* ]]
-}
-
-# What: Feeds AGENTS.md without the rule, then empty lists.
-# Why: An empty taxonomy must not accept or reject at random.
-# From: Issue #479, PR #544
-@test "pr-title fails closed when AG-GH-014 is missing or unparsable" {
+@test "pr-title taxonomy comes from AG-GH-014 and fails closed" {
     local fx="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${fx}"
+    printf '%s\n' '**[AG-GH-014]** T; allowed types MUST remain `feat` and `fix`; optional lowercase scopes MUST remain `pump`, `support-upstream`; end' \
+        > "${fx}/AGENTS.md"
+    CI_REPO_ROOT="${fx}" run _ci_title_taxonomy types
+    [ "${output}" = "feat fix" ]
+    CI_REPO_ROOT="${fx}" run _ci_title_taxonomy scopes
+    [ "${output}" = "pump support-upstream" ]
     printf '**[AG-GH-001]** nothing here\n' > "${fx}/AGENTS.md"
     CI_REPO_ROOT="${fx}" PR_TITLE="feat: x" PR_TITLE_LINT_MODE=warn run _ci_check_pr_title
     [ "${status}" -eq 2 ]
@@ -347,15 +368,6 @@ EOF
     CI_REPO_ROOT="${fx}" run _ci_title_taxonomy scopes
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-META-TITLE-0005"* ]]
-}
-
-# What: Checks a title without a type with enforcement on.
-# Why: Only block mode turns a title finding into a failure.
-# From: Issue #479
-@test "pr-title fails closed on a bad title in block mode" {
-    PR_TITLE="add some stuff" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
 # What: Adds a url with a token, as a dry run, and without.
@@ -731,15 +743,6 @@ EOF
     [ "$(git -C "${fx}" log -1 --format=%s)" = "CHANGELOG.md: add v1.2.3-NG" ]
 }
 
-# What: Runs ci.sh container with an unknown variant.
-# Why: A variant typo must not build a default image.
-# From: Issue #479
-@test "container rejects an unimplemented variant" {
-    run bash "${BATS_TEST_DIRNAME}/ci.sh" container bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-CONTAINER-0001"* ]]
-}
-
 # What: Logs in with REGISTRY_TOKEN unset, docker forbidden.
 # Why: A missing secret is a hard failure (AG-VAL-001).
 # From: Issue #479, PR #544
@@ -810,29 +813,6 @@ EOF
     run _ci_e2e_count_compile_ok "${BATS_TEST_TMPDIR}/nope.log" 172.18.0.0/16
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-E2E-0002"* ]]
-}
-
-# What: Calls e2e, workload and image with bad modes.
-# Why: A typo must never run a default harness.
-# From: Issue #479, PR #544
-@test "e2e and workload reject unknown modes before touching docker" {
-    _forbid docker
-    run ci_cmd_e2e bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-E2E-0013"* ]]
-    run ci_cmd_workload bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-WORKLOAD-0006"* ]]
-    run ci_cmd_workload ccache sideways
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-WORKLOAD-0004"* ]]
-    run ci_cmd_workload samba sideways /tmp/x
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-WORKLOAD-0008"* ]]
-    run ci_cmd_image bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-IMAGE-0001"* ]]
-    [[ "${output}" != *"must not run"* ]]
 }
 
 # What: Release build and runtime images, each step failing.
@@ -1097,15 +1077,6 @@ EOF
     [[ "${output}" == *"CI-ERROR-PUBLISH-0002"* ]]
 }
 
-# What: Runs ci.sh release with an unknown subcommand.
-# Why: A typo must not fall through to a publish step.
-# From: Issue #479
-@test "release rejects an unknown subcommand" {
-    run bash "${BATS_TEST_DIRNAME}/ci.sh" release bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-RELEASE-0005"* ]]
-}
-
 # What: Checks a PR labelled no-changelog-needed.
 # Why: AG-REL-002 accepts that label in place of an entry.
 # From: Issue #479
@@ -1313,15 +1284,6 @@ EOF
     [ "${status}" -eq 0 ]
     [ "$(jq -r '.include[0].runs_on' <<< "${lines[0]}")" = 'r\1' ]
     [ "$(jq -c . <<< "${lines[1]}")" = '["plain"]' ]
-}
-
-# What: Runs ci.sh build bogus with /tmp as the repo root.
-# Why: No configure or make may run for a mistyped variant.
-# From: Issue #479
-@test "build fails closed on an unknown variant before touching the tree" {
-    CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" build bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-BUILD-0002"* ]]
 }
 
 # What: Real popt/ tree, then a copy with six fixes undone.
@@ -1613,15 +1575,6 @@ EOF
     run _ci_parse_comfychair "${log}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0001"* ]]
-}
-
-# What: Runs ci.sh test bogus with /tmp as the repo root.
-# Why: No make check may run for a mistyped variant.
-# From: Issue #479
-@test "test fails closed on an unknown variant" {
-    CI_REPO_ROOT=/tmp run bash "${BATS_TEST_DIRNAME}/ci.sh" test bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-TEST-0005"* ]]
 }
 
 # What: coverage test steps, then SOT step and env rows.
@@ -3805,15 +3758,6 @@ _fake_osv() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"--milestone current_dev backlog"* ]]
     [[ "${output}" == *"gh project item-add 11 --owner wiki-mod --url https://x/pull/7"* ]]
-}
-
-# What: Runs ci_cmd_harden with an unknown subcommand.
-# Why: start and stop are the agent's only lifecycle steps.
-# From: Issue #479, PR #544
-@test "harden rejects an unknown subcommand" {
-    run ci_cmd_harden bogus
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-HARDEN-0001"* ]]
 }
 
 # What: Starts harden on ARM64 with curl and sudo forbidden.
