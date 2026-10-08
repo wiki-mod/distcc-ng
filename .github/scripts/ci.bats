@@ -179,8 +179,8 @@ _fixture_harden_state() {
 0|HEADSHA|0|full
 1|nosuchref|1|none
 EOF
-    run env -C "${BATS_TEST_TMPDIR}" GITHUB_SERVER_URL="file://${srv}" GITHUB_SHA="${sha}" \
-        bash "${CI_SH}" checkout
+    run env -u GITHUB_REPOSITORY -C "${BATS_TEST_TMPDIR}" GITHUB_SERVER_URL="file://${srv}" \
+        GITHUB_SHA="${sha}" bash "${CI_SH}" checkout
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"GITHUB_REPOSITORY required"* ]]
 }
