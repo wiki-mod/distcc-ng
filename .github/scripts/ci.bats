@@ -151,6 +151,40 @@ _fixture_harden_state() {
     printf 'correlation_id=c\nadd_summary=false\n' > "${BATS_TEST_TMPDIR}/ci-harden.state"
 }
 
+# What: Checkout via file://: depth 1 and 0, bad ref, no env.
+# Why: Every job starts here; a bad ref must not check out.
+# From: Issue #479, PR #544
+@test "checkout fetches the ref shallow or full and fails closed" {
+    local srv="${BATS_TEST_TMPDIR}/srv" ws depth ref rc want sha
+    _fixture_tag_repo > "${BATS_TEST_TMPDIR}/fx.path"
+    git -C "${BATS_TEST_TMPDIR}/fx" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+    sha="$(git -C "${BATS_TEST_TMPDIR}/fx" rev-parse HEAD)"
+    git clone -q --bare "${BATS_TEST_TMPDIR}/fx" "${srv}/o/r"
+    while IFS='|' read -r depth ref rc want; do
+        ws="${BATS_TEST_TMPDIR}/ws-${depth}-${ref:0:7}"
+        mkdir -p "${ws}"
+        ref="${ref/HEADSHA/${sha}}"
+        run env -C "${ws}" GITHUB_SERVER_URL="file://${srv}" GITHUB_REPOSITORY=o/r \
+            bash "${CI_SH}" checkout "${depth}" "${ref}"
+        [ "${status}" -eq "${rc}" ] || { echo "${depth} ${ref}: rc ${status}: ${output}"; return 1; }
+        case "${want}" in
+            shallow) [ "$(git -C "${ws}" rev-parse --is-shallow-repository)" = true ] \
+                && [ "$(git -C "${ws}" rev-parse HEAD)" = "${sha}" ] ;;
+            full) [ "$(git -C "${ws}" rev-parse --is-shallow-repository)" = false ] \
+                && [ "$(git -C "${ws}" rev-list --count HEAD)" -eq 2 ] ;;
+            none) ! git -C "${ws}" rev-parse --verify HEAD ;;
+        esac || { echo "${depth} ${ref}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+1|HEADSHA|0|shallow
+0|HEADSHA|0|full
+1|nosuchref|1|none
+EOF
+    run env -C "${BATS_TEST_TMPDIR}" GITHUB_SERVER_URL="file://${srv}" GITHUB_SHA="${sha}" \
+        bash "${CI_SH}" checkout
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"GITHUB_REPOSITORY required"* ]]
+}
+
 # What: An unknown command, variant or mode at each entry.
 # Why: A typo must fail with its id before any tool runs.
 # From: Issue #479, PR #544
