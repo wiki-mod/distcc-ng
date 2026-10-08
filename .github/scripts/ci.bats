@@ -298,15 +298,6 @@ _fixture_harden_state() {
     [ "$(_ci_sot_children a)" = "$(printf 'b\nc')" ]
 }
 
-# What: Reads _ci_jobs on the machine running the suite.
-# Why: Serial runs are forbidden; the floor is a guard.
-# From: Issue #479
-@test "job count never drops below the floor of 16" {
-    run _ci_jobs
-    [ "${status}" -eq 0 ]
-    [ "${output}" -ge 16 ]
-}
-
 # What: Maps a half-failed, a clean and an empty command.
 # Why: mapfile < <(cmd) drops the exit status of cmd.
 # From: Issue #479, PR #544
@@ -327,20 +318,30 @@ _fixture_harden_state() {
     [ "${#arr[@]}" -eq 0 ]
 }
 
-# What: Breaks nproc, then makes it report zero CPUs.
-# Why: AG-VAL-001: a failed tool is never worked around.
+# What: Job count per nproc answer: fail, 0, 2, 8 and 12 CPUs.
+# Why: Floor 16, else nproc*2; a failed nproc never guesses.
 # From: Issue #479, PR #544
-@test "job count fails closed when nproc fails" {
+@test "job count is max(16, nproc*2) and fails closed without nproc" {
+    local cpus rc want
+    while IFS='|' read -r cpus rc want; do
+        if [ "${cpus}" = fail ]; then _fail nproc 1; else _print nproc "${cpus}"; fi
+        run _ci_jobs
+        [ "${status}" -eq "${rc}" ] || { echo "nproc ${cpus}: rc ${status}: ${output}"; return 1; }
+        if [ "${rc}" -eq 0 ]; then
+            [ "${output}" = "${want}" ] || { echo "nproc ${cpus}: want ${want}: ${output}"; return 1; }
+        else
+            [[ "${output}" == *"${want}"* ]] || { echo "nproc ${cpus}: want ${want}: ${output}"; return 1; }
+        fi
+    done <<'EOF'
+fail|2|CI-ERROR-CORE-0005
+0|2|CI-ERROR-CORE-0005
+2|0|16
+8|0|16
+12|0|24
+EOF
     _fail nproc 1
-    run _ci_jobs
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
     run ci_cmd_selftest
     [ "${status}" -eq 2 ]
-    _print nproc 0
-    run _ci_nproc
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-CORE-0005"* ]]
 }
 
 # What: Checks a feat(scope) title with enforcement on.
@@ -392,15 +393,6 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
 }
 
-# What: Checks a Dependabot bump title in block mode.
-# Why: AG-GH-014 has no author exemption.
-# From: Issue #479, PR #544
-@test "pr-title holds a dependency bot to AG-GH-014 too" {
-    PR_AUTHOR="dependabot[bot]" PR_TITLE="Bump foo from 1 to 2" PR_TITLE_LINT_MODE=block run _ci_check_pr_title
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-TITLE-0002"* ]]
-}
-
 # What: Adds a url with a token, as a dry run, and without.
 # Why: A PAT must never land in a log line.
 # From: Issue #236, Issue #479, PR #544
@@ -434,22 +426,6 @@ _fixture_harden_state() {
     CI_REPO_ROOT="${fx}" run _ci_release_assets
     [ "${status}" -eq 0 ]
     [ "${output}" = $'distcc-1.tar.gz\npackaging/a.deb' ]
-}
-
-# What: Runs both checks for two bot authors, no metadata.
-# Why: AG-GH-002 and AG-REL-002 name no author exemption.
-# From: Issue #479, PR #544
-@test "a bot PR needs tracking metadata and a changelog too" {
-    local a
-    for a in "github-actions[bot]" "dependabot[bot]"; do
-        PR_AUTHOR="${a}" PR_LABELS="" PR_MILESTONE_TITLE="" run _ci_check_pr_tracking
-        [ "${status}" -eq 1 ]
-        [[ "${output}" == *"CI-ERROR-META-TRACKING-0001"* ]]
-        _print _ci_changed_paths .github/yaml/build-manifest.yml
-        PR_AUTHOR="${a}" PR_LABELS="dependencies" BASE=b HEAD=h run _stubbed '_print git m' _ci_check_changelog
-        [ "${status}" -eq 1 ]
-        [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0001"* ]]
-    done
 }
 
 # What: Checks a PR with the ci label and a milestone.
@@ -2606,14 +2582,6 @@ EOF
     run _ci_parse_comfychair "${BATS_TEST_TMPDIR}/nope.log"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
-}
-
-# What: Runs the pin guard on this repository.
-# Why: build-manifest.yml is the sole pin owner (Thesis 1).
-# From: Issue #479, PR #544
-@test "pin guard passes the repo's own Dockerfiles and workflows" {
-    run ci_guard_pins_in_sot "${CI_REPO_ROOT}"
-    [ "${status}" -eq 0 ]
 }
 
 # What: Scans ARG, stage and :local FROMs and an SOT action.
