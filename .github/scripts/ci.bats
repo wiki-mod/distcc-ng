@@ -478,6 +478,7 @@ EOF
 # Why: AG-GH-002 asks for a label and a milestone, no more.
 # From: Issue #479, PR #544
 @test "tracking needs a label and a milestone; drafts warn" {
+    echo "case: tracking needs a label and a milestone on a ready PR"
     local labels ms rc want
     unset PROJECT_PAT
     while IFS='|' read -r labels ms rc want; do
@@ -489,6 +490,7 @@ ci|current_dev backlog|0|OK: labels and milestone set
 ci||1|[CI-ERROR-META-TRACKING-0001] PR tracking metadata failed (AG-GH-002); no milestone set
  |current_dev backlog|1|no labels set
 EOF
+    echo "case: tracking is non-blocking on a draft PR"
     PR_LABELS="" PR_MILESTONE_TITLE="" PR_DRAFT="true" run _ci_check_pr_tracking
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"draft, non-blocking"* ]]
@@ -720,6 +722,7 @@ EOF
 # Why: The workflow passes neither; ci.sh reads the event.
 # From: Issue #479, PR #544
 @test "changelog update: event, notes file retry, dry run" {
+    echo "case: changelog manual retry inserts a notes file, dry run pushes nothing"
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     ( cd "${fx}" && git init -q && printf '# Changelog\n<!-- insertion marker -->\n' > CHANGELOG.md \
@@ -732,6 +735,7 @@ EOF
     grep -qx '## \[1.2.3-NG\] - .*' "${fx}/CHANGELOG.md"
     grep -qx 'line one' "${fx}/CHANGELOG.md"
     [ "$(git -C "${fx}" log -1 --format=%s)" = "CHANGELOG.md: add v1.2.3-NG" ]
+    echo "case: changelog event: a release or notes insert, others skip"
     local ev="${BATS_TEST_TMPDIR}/ev.json" event json want
     # What: Stub the insert to print its tag and notes.
     # Why: The test checks the event parse, not git.
@@ -1126,6 +1130,7 @@ EOF
 # Why: Workflows forward neither; the board owner decides.
 # From: Issue #479, PR #544
 @test "add-to-project: payload values and the PAT decision" {
+    echo "case: event PR number and board url come from the payload"
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"pull_request":{"number":7,"html_url":"https://h/pr/7"}}' > "${ev}"
     GITHUB_EVENT_PATH="${ev}" run _ci_event_value .pull_request.number
@@ -1145,6 +1150,7 @@ EOF
     GITHUB_EVENT_PATH="${ev}" run _ci_variables_add_to_project
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-EVENT-0001"* ]]
+    echo "case: add-to-project leaves the PAT decision to the board owner"
     local ev="${BATS_TEST_TMPDIR}/ev.json"
     printf '{"issue":{"html_url":"https://h/i/3"}}' > "${ev}"
     # What: Stub the board add to print the token it gets.
@@ -1163,12 +1169,14 @@ EOF
 # From: Issue #479, PR #544
 @test "impact-hit runs every class off a PR, diffs on a PR, fails closed" {
     local out="${BATS_TEST_TMPDIR}/out"
+    echo "case: impact-hit fails closed when the PR diff fails"
     _print _ci_event_range b h
     _fail git 128
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=pull_request run ci_cmd_impact_hit fuzz
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
     : > "${out}"
+    echo "case: impact-hit runs every class off a PR, diffs on a PR"
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=push run ci_cmd_impact_hit fuzz
     [ "$(cat "${out}")" = "hit=true" ]
     _print _ci_event_range b h
@@ -1200,6 +1208,7 @@ EOF
 # Why: NOOP skips needed checks; only protected refs publish.
 # From: Issue #479, PR #544
 @test "plan: phases per event and the buildtools publish gate" {
+    echo "case: plan on a dispatch or schedule selects every phase"
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" e
     _print ci_cmd_matrix '{"include":[]}'
     for e in workflow_dispatch:'{"inputs":{}}' schedule:'{"schedule":"0 4 * * *"}'; do
@@ -1212,6 +1221,7 @@ EOF
         grep -qx 'build=true' "${out}"
         grep -qx 'publish_buildtools=true' "${out}"
     done
+    echo "case: plan publishes buildtools only from a protected ref"
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" ref
     printf '{"inputs":{}}' > "${ev}"
     _print ci_cmd_matrix '{"include":[]}'
@@ -1227,6 +1237,7 @@ EOF
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
         GITHUB_SHA=HEAD run ci_cmd_plan
     [ "${status}" -ne 0 ]
+    echo "case: plan classifies the push diff through ci.sh impact"
     local fx="${BATS_TEST_TMPDIR}/repo" ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" b h
     _fixture_manifest 'impact_classes:' '  pk:' '    paths: ["packaging/**"]' '    phases: ["package"]' \
         '  docs:' '    paths: ["**/*.md"]' '    phases: []' 'release:' '  container:' '    variants:' \
@@ -1251,12 +1262,14 @@ EOF
 # Why: Opt-in is never a PR gate; jq keeps values strings.
 # From: Issue #479, PR #544
 @test "matrix expands variant x os and excludes opt-in variants" {
+    echo "case: matrix expands variant x os and excludes opt-in variants"
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p"' '      brew: "q"' \
         '      os: [ubuntu-latest, macos-latest]' '    b:' '      apt: "r"' '      opt_in: true' \
         '      os: [ubuntu-latest]'
     run ci_cmd_matrix
     [ "${status}" -eq 0 ]
     [ "${output}" = '{"include":[{"variant":"a","os":"ubuntu-latest","apt":"p"},{"variant":"a","os":"macos-latest","brew":"q"}]}' ]
+    echo "case: both matrices stay valid JSON for any SOT value"
     _fixture_manifest 'build_matrix:' '  variants:' '    a:' '      apt: "p\q"' '      os: [ubuntu-latest]' \
         'release:' '  container:' '    variants:' '      plain: "p"' '    platforms:' '      amd64:' \
         '        runner: "r\1"' '        optional: "false"'
@@ -1436,6 +1449,7 @@ EOF
 # Why: Images are current; a cut dpkg run is finished first.
 # From: Issue #493, Issue #479, PR #544
 @test "apt install: image upgrade, runner install, dpkg retry" {
+    echo "case: apt retry first finishes a dpkg run the timeout cut off"
     local log="${BATS_TEST_TMPDIR}/calls"
     # What: Stub sudo to run its command directly.
     # Why: The test runs as a plain user without sudo.
@@ -1470,6 +1484,7 @@ EOF
     APT_RC=124 run _ci_apt_install "p q" image
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"attempt 1/2: apt exited 124 (timed out after 6m)"* ]]
+    echo "case: image installs full-upgrade first; runner installs do not"
     local log="${BATS_TEST_TMPDIR}/calls"
     # What: Stub timeout to log the command it would run.
     # Why: The test reads the apt line without a real apt.
@@ -1489,6 +1504,7 @@ EOF
 # Why: Warnings are errors (AG-INT-003); each rc is checked.
 # From: Issue #479, PR #544
 @test "make gate and configure: warnings and tool failures fail" {
+    echo "case: make gate passes a clean build and fails on a warning"
     _print make "gcc -c src/x.c"
     run _ci_make_gated "${BATS_TEST_TMPDIR}/ok.log" all
     [ "${status}" -eq 0 ]
@@ -1500,6 +1516,7 @@ EOF
     run _ci_warning_gate "${BATS_TEST_TMPDIR}/missing.log" "make check"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-BUILD-WARN-0002"* ]]
+    echo "case: make gate and configure fail closed when the tool fails"
     _fail make 2 boom
     run _ci_make_gated "${BATS_TEST_TMPDIR}/m.log"
     [ "${status}" -eq 1 ]
@@ -1589,6 +1606,7 @@ EOF
 # Why: One standing issue; a no-op hides broken reporting.
 # From: Issue #479, Issue #81, PR #476, PR #544
 @test "report keeps one standing issue: comment, close or open" {
+    echo "case: report keeps one standing issue: comment, close or open"
     _print _ci_run_url u
     _pass _ci_report_track
     # What: Stub gh: the issue list prints $EXISTING.
@@ -1612,6 +1630,7 @@ EOF
     JOBS="a=failure" run ci_cmd_report
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"would run"* ]]
+    echo "case: report fails closed when GH_TOKEN is unset"
     GH_TOKEN="" run ci_cmd_report
     [ "${status}" -ne 0 ]
 }
@@ -1643,6 +1662,7 @@ EOF
 # Why: A newline ends a k=v value; half a pair shifts all.
 # From: Issue #479, PR #544
 @test "output writer uses the delimiter form for multi-line values" {
+    echo "case: output writer uses the delimiter form for multi-line values"
     local out="${BATS_TEST_TMPDIR}/out"
     GITHUB_OUTPUT="${out}" _ci_output a 1 b $'x\ny'
     run cat "${out}"
@@ -1651,6 +1671,7 @@ EOF
     [ "${lines[2]}" = "x" ]
     [ "${lines[3]}" = "y" ]
     [ "${lines[4]}" = "${lines[1]#b<<}" ]
+    echo "case: output writer fails closed on an odd argument count"
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_output a 1 b
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-CORE-0004"* ]]
@@ -1678,6 +1699,7 @@ EOF
 # Why: Upload needs the SOT name; no files is no artifact.
 # From: Issue #479, PR #544
 @test "artifact offer writes SOT name, files, retention; needs files" {
+    echo "case: artifact offer writes SOT name, files and retention"
     local out="${BATS_TEST_TMPDIR}/out" f1="${BATS_TEST_TMPDIR}/f1" f2="${BATS_TEST_TMPDIR}/f2"
     _fixture_actions
     : > "${f1}"; : > "${f2}"
@@ -1688,6 +1710,7 @@ EOF
     [ "${lines[3]}" = "${f2}" ]
     [ "${lines[5]}" = "artifact_retention_days=7" ]
     [ "${lines[6]}" = "artifact_if_missing=error" ]
+    echo "case: artifact offer fails closed on a missing or empty file set"
     rm -f "${out}"
     GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/out" run _ci_artifact_offer k ""
     [ "${status}" -eq 2 ]
@@ -1702,6 +1725,7 @@ EOF
 # Why: Autoconf inputs key the cache; no ccache, no plan.
 # From: Issue #54, Issue #479, PR #544
 @test "cache plan keys default on OS, arch, autoconf inputs, run" {
+    echo "case: cache plan keys default on OS, arch, autoconf inputs, run"
     local out="${BATS_TEST_TMPDIR}/out" sum1 sum2
     CI_REPO_ROOT="${BATS_TEST_TMPDIR}/repo"
     mkdir -p "${CI_REPO_ROOT}/m4"
@@ -1731,6 +1755,7 @@ EOF
     [ "${lines[6]}" = "build-Linux-X64-${sum1}-" ]
     [ "${lines[7]}" = "build-Linux-X64-" ]
     rm -f "${out}"
+    echo "case: cache plan writes nothing for a variant without ccache"
     _forbid ccache
     GITHUB_OUTPUT="${out}" run ci_cmd_cache coverage
     [ "${status}" -eq 0 ]
@@ -1741,6 +1766,7 @@ EOF
 # Why: Crashes are offered; the fuzz rc is never swallowed.
 # From: Issue #267, Issue #479, PR #544
 @test "CFL run offers crash reproducers and keeps its exit code" {
+    echo "case: CFL run offers crash reproducers and keeps its exit code"
     local out="${BATS_TEST_TMPDIR}/out"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}/rt"
     _fixture_manifest 'ci_engine:' '  artifacts:' '    cfl_crashes:' '      name: "cfl-crashes"' '      retention_days: "90"' \
@@ -1752,6 +1778,7 @@ EOF
     [ "${status}" -eq 1 ]
     grep -qx 'artifact_name=cfl-crashes-address' "${out}"
     grep -qx "artifact_path=${RUNNER_TEMP}/cfl-workspace/out/artifacts" "${out}"
+    echo "case: CFL run without crashes offers nothing and passes rc"
     rm -rf "${out}" "${RUNNER_TEMP}/cfl-workspace"
     _fail _ci_cfl_run 3
     mkdir -p "${RUNNER_TEMP}/cfl-workspace/out/artifacts"
@@ -1764,6 +1791,7 @@ EOF
 # Why: No write after an API error; notes follow categories.
 # From: Issue #479, PR #544
 @test "draft release stops on API errors and groups PRs by category" {
+    echo "case: draft release stops on an API error before it writes"
     local log="${BATS_TEST_TMPDIR}/gh"
     # What: Stub gh: log calls; release list fails.
     # Why: The log shows whether any edit or create ran.
@@ -1809,6 +1837,7 @@ EOF
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-PUBLISH-0012"* ]]
     [[ "${output}" != *"would run: gh release"* ]]
+    echo "case: draft release body groups PRs under their category heading"
     local body=""
     _ci_draft_release_append body "Fixed" "* #5 | fix(ci): a"
     [ "${body}" = "$(printf '%s\n%s\n' '### Fixed' '* #5 | fix(ci): a')
@@ -1819,6 +1848,7 @@ EOF
 # Why: A tool or API failure is never a compliance finding.
 # From: Issue #312, Issue #479, PR #544
 @test "OpenSSF checks give no verdict on a tool or API error" {
+    echo "case: OpenSSF API checks fail closed instead of reading NotMet"
     _fail gh 1
     GITHUB_REPOSITORY=o/r run _ci_ossf_check_ac03 7
     [ "${status}" -eq 2 ]
@@ -1846,6 +1876,7 @@ EOF
     [ "${output}" = "Met" ]
     GITHUB_REPOSITORY=o/r run --separate-stderr _ci_ossf_verdict _ci_ossf_check_br07
     [ "${output}" = "NotMet" ]
+    echo "case: OpenSSF local checks give no verdict on a tool error"
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}"
     cd "${fx}"
@@ -1870,10 +1901,12 @@ EOF
     [ "$(_ci_ossf_verdict grep -q 'Security Advisor' "${doc}")" = "Met" ]
     [ "$(_ci_ossf_verdict grep -q 'nope-xyz' "${doc}")" = "NotMet" ]
     [ "$(_ci_ossf_verdict grep -qi 'SECURITY ADVISOR' "${doc}")" = "Met" ]
+    echo "case: ossf verdict: Met, NotMet, and a tool error is no verdict"
     run _ci_ossf_verdict grep -q 'x' "${BATS_TEST_TMPDIR}/missing"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
     [[ "${output}" != *"NotMet"* ]]
+    echo "case: BR-01 flags only a ref-taking checkout in a target workflow"
     local fx="${BATS_TEST_TMPDIR}/fx" boot
     boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
     mkdir -p "${fx}/.github/workflows"
@@ -1889,6 +1922,7 @@ EOF
 # Why: One comment per state; only Met adds a proposal pair.
 # From: Issue #312, Issue #479, PR #544
 @test "openssf recheck flags a regression and edits its one comment" {
+    echo "case: openssf recheck flags a regression and edits its one comment"
     _print _ci_run_url u
     # What: Stub verdicts: BR-07 is NotMet, all others Met.
     # Why: One regressed criterion must leave the proposal link.
@@ -1915,6 +1949,7 @@ EOF
     DRY_RUN=true GITHUB_REPOSITORY=o/r run _ci_scan_openssf
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"would run"* ]]
+    echo "case: ossf add_met: only Met adds a pair; an encode error fails"
     local qs=""
     _ci_ossf_add_met qs NotMet "OSPS-AC-03.01" "x y"
     [ -z "${qs}" ]
@@ -1963,6 +1998,7 @@ EOF
 # Why: Unknown children would otherwise lose protection.
 # From: Issue #479, PR #544
 @test "gc protection fails closed on unreadable tags or manifests" {
+    echo "case: gc protection fails closed on unreadable tags or manifests"
     _print docker 'not json'
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng 'not json'
     [ "${status}" -eq 1 ]
@@ -1974,6 +2010,7 @@ EOF
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 0 ]
     [ "${output}" = '["sha256:a","sha256:b"]' ]
+    echo "case: gc protection fails closed when a tag cannot be inspected"
     _fail docker 1
     GITHUB_REPOSITORY_OWNER=wiki-mod run _ci_gc_protected_digests distcc-ng '[{"metadata":{"container":{"tags":["latest"]}}}]'
     [ "${status}" -eq 1 ]
@@ -2026,6 +2063,7 @@ EOF
 # Why: Only success or skipped passes; a bad list never does.
 # From: Issue #479, PR #544
 @test "gate passes success and skipped only; bad JOBS lists fail" {
+    echo "case: gate fails closed on a JOBS list with no or bad pairs"
     JOBS=" " run ci_cmd_gate
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-JOBS-0002"* ]]
@@ -2037,11 +2075,14 @@ EOF
     JOBS="$(printf 'build=success\ne2e=unknown\n')" run ci_cmd_gate
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-JOBS-0001"*"e2e=unknown"* ]]
+    echo "case: failed-jobs filter keeps only failure and cancelled"
     run _ci_failed_jobs "$(printf 'build=success\ne2e=failure\npublish=skipped\nx=cancelled\n')"
     [ "${status}" -eq 0 ]
     [ "${output}" = "e2e x" ]
+    echo "case: gate passes when every job succeeded or was skipped"
     JOBS="$(printf 'build=success\ne2e=skipped\n')" run ci_cmd_gate
     [ "${status}" -eq 0 ]
+    echo "case: gate fails closed when a real job failed"
     JOBS="$(printf 'build=success\ne2e=failure\n')" run ci_cmd_gate
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GATE-0001"* ]]
@@ -2051,20 +2092,25 @@ EOF
 # Why: A misrouted diff runs wrong jobs or skips needed ones.
 # From: Issue #479, PR #544
 @test "impact: each path class selects exactly its phases" {
+    echo "case: impact: a docs-only diff selects nothing (NOOP)"
     run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
+    echo "case: impact: a c-source diff selects build, e2e and package"
     run _ci_phases_for_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e package " ]
+    echo "case: impact: a SOT or engine change selects every gated job"
     local p
     for p in .github/yaml/build-manifest.yml .github/scripts/ci.sh; do
         run _ci_phases_for_paths < <(printf '%s\n' "${p}")
         [ "$(tr '\n' ' ' <<< "${output}")" = "build container e2e package verify " ]
     done
+    echo "case: impact: an include-server .py diff selects build but not package"
     run _ci_phases_for_paths < <(printf '%s\n' include_server/basics.py)
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' <<< "${output}")" = "build e2e " ]
+    echo "case: impact: an unmatched path yields NOOP"
     run _ci_phases_for_paths < <(printf '%s\n' LICENSE)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
@@ -2108,9 +2154,11 @@ EOF
 # Why: A misrouted path runs wrong jobs; an error is no miss.
 # From: Issue #479
 @test "classify: path map hits, excludes, and matcher errors" {
+    echo "case: classify: a src/*.c path maps to the c-source class"
     run _ci_classify_paths < <(printf '%s\n' src/dopt.c)
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"c-source"* ]]
+    echo "case: classifier: a path map's exclude list removes a hit"
     _fixture_manifest 'labels:' '  documentation:' '    paths: ["doc/**", "**/*.md"]' \
         '    exclude: ["CHANGELOG.md"]' '  ci:' '    paths: [".github/workflows/**"]'
     run _ci_classify_paths labels <<< "CHANGELOG.md"
@@ -2118,6 +2166,7 @@ EOF
     [ -z "${output}" ]
     run _ci_classify_paths labels < <(printf '%s\n' CHANGELOG.md README.md .github/workflows/v.yml)
     [ "${output}" = "$(printf '%s\n' ci documentation)" ]
+    echo "case: classifier: a glob matcher error is rc 2, never no match"
     run _stubbed '_fail sed 1 "sed broke"' _ci_glob_match "src/*.c" "src/dopt.c"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"sed broke"* ]]
@@ -2136,10 +2185,13 @@ EOF
 # Why: '*' matches any text; '**/' also covers depth zero.
 # From: Issue #479
 @test "glob match: prefix.*, unrelated files, top-level '**/'" {
+    echo "case: glob match: a prefix.* pattern matches its real extension"
     run _ci_glob_match "src/config-parser.*" "src/config-parser.c"
     [ "${status}" -eq 0 ]
+    echo "case: glob match: a prefix.* pattern rejects an unrelated file"
     run _ci_glob_match "src/config-parser.*" "src/unrelated.c"
     [ "${status}" -ne 0 ]
+    echo "case: glob: '**/' also matches files at the top level"
     run _ci_glob_match "**/*.md" "README.md"
     [ "${status}" -eq 0 ]
     run _ci_glob_match "**/*.md" "doc/a/b.md"
@@ -2180,11 +2232,14 @@ EOF
 # Why: Release notes have four categories; others get none.
 # From: Issue #479
 @test "pr category: label per type, none for other titles" {
+    echo "case: pr category: maps AG-GH-014 types to release-drafter labels"
     [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
     [ "$(_ci_pr_category_label 'fix(protocol): correct frame bug')" = "bug" ]
     [ "$(_ci_pr_category_label 'docs(governance): add rule')" = "documentation" ]
     [ "$(_ci_pr_category_label 'security(config): patch leak')" = "security" ]
+    echo "case: pr category: an uncategorized type prints nothing"
     [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
+    echo "case: pr category: a title not in AG-GH-014 shape gets no label"
     run _ci_pr_category_label 'fix stuff'
     [ "${status}" -eq 0 ]
     [ -z "${output}" ]
@@ -2198,9 +2253,11 @@ EOF
 # Why: CR is the only byte the guard may reject.
 # From: Issue #479
 @test "line-endings guard passes LF and fails on CRLF" {
+    echo "case: line-endings guard passes on an LF-only tree"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'clean line\n' > "${fx}/ok.sh"
     run ci_guard_line_endings "${fx}"
     [ "${status}" -eq 0 ]
+    echo "case: line-endings guard fails closed on a CRLF file"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'bad line\r\n' > "${fx}/crlf.sh"
     run ci_guard_line_endings "${fx}"
     [ "${status}" -eq 1 ]
@@ -2211,10 +2268,12 @@ EOF
 # Why: A full digest is the only accepted pin form.
 # From: Issue #479
 @test "full-sha guard passes 64 hex and fails a short digest" {
+    echo "case: full-sha guard passes on a 64-hex digest"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'image: "debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
     [ "${status}" -eq 0 ]
+    echo "case: full-sha guard fails closed on an abbreviated digest"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"; printf 'image: "debian@sha256:fac46bff"\n' > "${fx}/f.yml"
     run ci_guard_full_sha "${fx}"
     [ "${status}" -eq 1 ]
@@ -2225,6 +2284,7 @@ EOF
 # Why: A guard that checked nothing must not report a pass.
 # From: Issue #479, PR #544
 @test "guards fail closed when they find nothing to check" {
+    echo "case: guards fail closed when they find nothing to check"
     local fx="${BATS_TEST_TMPDIR}/fx" guard id arg
     mkdir -p "${fx}"
     run ci_guard_comment_format "${fx}"
@@ -2257,6 +2317,7 @@ EOF
         run ci_guard_job_timeouts ${arg:+"${arg}"}
         [ "${status}" -eq 2 ]
     done
+    echo "case: guards fail closed on an unreadable tree, not pass"
     run ci_guard_line_endings "${BATS_TEST_TMPDIR}/nope"
     [ "${status}" -eq 2 ]
     run ci_guard_full_sha "${BATS_TEST_TMPDIR}/nope"
@@ -2267,6 +2328,7 @@ EOF
 # Why: No image or action may bypass or rot in the SOT.
 # From: Issue #479, PR #544
 @test "pin guard: allowed FROMs, pins outside, unused actions" {
+    echo "case: pin guard passes ARG FROMs, stage aliases and :local images"
     local fx="${BATS_TEST_TMPDIR}/fx"
     _fixture_actions
     mkdir -p "${fx}/d" "${fx}/.github/workflows"
@@ -2275,6 +2337,7 @@ EOF
         "      - uses: ${FX_PIN}" > "${fx}/.github/workflows/w.yml"
     run ci_guard_pins_in_sot "${fx}"
     [ "${status}" -eq 0 ]
+    echo "case: pin guard fails closed on every pin form outside the SOT"
     local fx="${BATS_TEST_TMPDIR}/fx" d
     d="$(printf 'a%.0s' {1..64})"
     _fixture_actions
@@ -2291,6 +2354,7 @@ EOF
     [[ "${output}" == *"w.yml:1: image or action pin"* ]]
     [[ "${output}" == *"w.yml:2: image or action pin"* ]]
     [[ "${output}" != *"w.yml:3:"* ]]
+    echo "case: pin guard fails closed on a SOT action no workflow uses"
     local fx="${BATS_TEST_TMPDIR}/fx"
     _fixture_actions
     mkdir -p "${fx}/.github/workflows"
@@ -2335,6 +2399,7 @@ EOF
 # Why: The workflow holds no cron and no event decision.
 # From: Issue #479, PR #544
 @test "route: security and housekeeping jobs per event" {
+    echo "case: route security: crons, PRs and dispatch refs pick the jobs"
     local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out"
     _fixture_manifest 'schedules:' '  security_scans:' '    workflow: "security"' '    cron: "0 5 * * 0"' \
         '  openssf:' '    workflow: "security"' '    cron: "0 6 1,15 * *"' 'security:' '  cfl_run:' \
@@ -2358,6 +2423,7 @@ EOF
     grep -qx 'codeql_languages=\["c-cpp","python"\]' "${out}"
     grep -qx 'cfl_sanitizers=\["address"\]' "${out}"
     : > "${out}"
+    echo "case: route housekeeping: the weekly cron or a dispatch task"
     _fixture_manifest 'schedules:' '  housekeeping_weekly:' '    workflow: "housekeeping"' '    cron: "0 5 * * 1"' \
         'housekeeping_tasks:' '  gc:' '    weekly: "false"' '  sot-update:' '    weekly: "true"' \
         '  heartbeat:' '    weekly: "true"'
@@ -2469,6 +2535,7 @@ EOF
 # Why: Comments are What/Why/From; heredocs are not prose.
 # From: Issue #479, PR #544
 @test "comment guard: allowed forms and every violation" {
+    echo "case: comment guard passes standard blocks, directives and heredocs"
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
     mkdir -p "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' '# distcc-ng (https://github.com/wiki-mod/distcc-ng)' \
@@ -2484,12 +2551,14 @@ EOF
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"a.sh:3: not a What/Why/From line"* ]]
+    echo "case: comment guard fails closed on a heredoc that never ends"
     local fx="${BATS_TEST_TMPDIR}/fx" hd='<<'
     mkdir -p "${fx}/.github"
     printf '%s\n' "cat ${hd}EOF" 'text' '# free prose after' > "${fx}/.github/b.sh"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"b.sh:1: heredoc EOF never ends"* ]]
+    echo "case: comment guard fails closed on prose, a missing Why, a long line"
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/.github/workflows"
     printf '%s\n' '# Some free prose.' 'a: 1' '# What: Only a what.' 'b: 2' \
@@ -2503,6 +2572,7 @@ EOF
     [[ "${output}" == *"w.yml:5: longer than 60 characters"* ]]
     [[ "${output}" == *"w.yml:10: From names something not an Issue or PR"* ]]
     [[ "${output}" != *"w.yml:14:"* ]]
+    echo "case: comment guard fails closed on a function without a block"
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/.github"
     printf '%s\n' '# What: Do a thing.' '# Why: A reason.' 'ok() { :; }' '' 'bad() { :; }' \
@@ -2521,6 +2591,7 @@ EOF
 # Why: AG-INT-003: presence is the violation; no list fails.
 # From: Issue #479, PR #544
 @test "banned-text guard: shell and CI code lists, scopes, no SOT list" {
+    echo "case: directive guard passes a shell tree without banned text"
     local fx="${BATS_TEST_TMPDIR}/fx"
     mkdir -p "${fx}/lib" "${fx}/.github"
     printf '%s\n' '#!/usr/bin/env bash' 'y=1' > "${fx}/lib/real.sh"
@@ -2528,6 +2599,7 @@ EOF
         > "${fx}/.github/a.sh"
     run ci_guard_banned_texts "${fx}"
     [ "${status}" -eq 0 ]
+    echo "case: directive guard fails on each banned shell text"
     local fx="${BATS_TEST_TMPDIR}/fx"
     local texts=()
     _ci_mapfile texts _ci_banned_texts banned_shell_texts
@@ -2539,6 +2611,7 @@ EOF
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"svc.initd:2: banned shell text ${texts[0]}"* ]]
     [[ "${output}" == *"svc.initd:3: banned shell text ${texts[1]}"* ]]
+    echo "case: banned texts fail closed on a missing or empty SOT list"
     _fixture_manifest 'ci_engine:' '  selftest_apt: "bats"'
     run _ci_banned_texts banned_shell_texts
     [ "${status}" -eq 2 ]
@@ -2549,6 +2622,7 @@ EOF
     run _ci_banned_texts banned_shell_texts
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0003"* ]]
+    echo "case: banned CI texts only in CI-owned scripts, workflows, Dockerfiles"
     CI_MANIFEST="${BATS_TEST_DIRNAME}/../yaml/build-manifest.yml"
     _ci_sot_index_drop
     rm -rf "${fx}" && mkdir -p "${fx}/.github/workflows" "${fx}/docker/x" "${fx}/src"
@@ -2594,15 +2668,18 @@ EOF
 # Why: #479 lets a step call ci.sh or move ci.sh outputs only.
 # From: Issue #479
 @test "orchestrator guard: allowed steps and each violation" {
+    echo "case: orchestrator guard passes on a single-command run: step"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: bash .github/scripts/ci.sh build\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
     [ "${status}" -eq 0 ]
+    echo "case: orchestrator guard fails closed on inline logic in a run: block"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     printf 'jobs:\n  x:\n    steps:\n      - run: |\n          if [ -x foo ]; then bar; fi\n' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0001"* ]]
+    echo "case: orchestrator guard passes a SOT action fed by step outputs"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' '      - run: |' '          bash .github/scripts/ci.sh cache default' \
@@ -2611,6 +2688,7 @@ EOF
         '        env:' '          A: b' '      - run: bash .github/scripts/ci.sh build' > "${fx}/wf.yml"
     run ci_guard_orchestrator_only "${fx}/wf.yml"
     [ "${status}" -eq 0 ]
+    echo "case: orchestrator guard fails closed on a uses: outside the SOT"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' '      - uses: ./.github/actions/foo' '      - uses: o/a@v1' \
@@ -2620,6 +2698,7 @@ EOF
     [[ "${output}" == *"wf.yml:4: uses: ./.github/actions/foo is not an SOT action pin"* ]]
     [[ "${output}" == *"wf.yml:5: uses: o/a@v1 is not an SOT action pin"* ]]
     [[ "${output}" == *"wf.yml:6: uses: o/a@bbbb"* ]]
+    echo "case: orchestrator guard fails closed on a decided uses: input"
     fx="${BATS_TEST_TMPDIR}/fx"; mkdir -p "${fx}"
     _fixture_actions
     printf '%s\n' 'jobs:' '  x:' '    steps:' "      - uses: ${FX_PIN}" '        with:' '          path: ~/.ccache' \
@@ -2643,6 +2722,7 @@ _capture_docker() {
 # Why: The only path a pin takes into a build; bad specs stop.
 # From: Issue #359, Issue #479, PR #544
 @test "image build: SOT ARGs, labels, version, bad spec first" {
+    echo "case: image build passes SOT ARGs, explicit target and local tag"
     local d; d="$(printf 'a%.0s' {1..64})"
     _fixture_manifest 'base:' "  img: \"b@sha256:${d}\"" 's:' '  x:' '    dockerfile: "d/Dockerfile"' \
         '    target: "t"' '    args: ["A=base.img"]' '    tag: "x:local"'
@@ -2651,6 +2731,7 @@ _capture_docker() {
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "build --pull --file ${CI_REPO_ROOT}/d/Dockerfile --target t --build-arg A=b@sha256:${d} --tag x:local ${CI_REPO_ROOT} " ]
     rm -f "${BATS_TEST_TMPDIR}/argv"
+    echo "case: image build labels a published spec and needs its version"
     _fixture_manifest 'base:' '  img: "b"' 'release:' '  licenses: "L"' '  images:' '    pkg:' \
         '      dockerfile: "f"' '      target: "t"' '      args: ["A=base.img"]' '      description: "D"'
     _capture_docker
@@ -2664,6 +2745,7 @@ _capture_docker() {
     grep -qx 'org.opencontainers.image.version=1.0' "${BATS_TEST_TMPDIR}/argv"
     grep -qx 'org.opencontainers.image.revision=abc' "${BATS_TEST_TMPDIR}/argv"
     rm -f "${BATS_TEST_TMPDIR}/argv"
+    echo "case: image build fails closed on a bad spec before docker runs"
     _fixture_manifest 's:' '  x:' '    dockerfile: "f"' '    target: "t"' '    args: ["NOEQUALS"]'
     _forbid docker
     run _ci_image_build s.x ""
@@ -2679,15 +2761,18 @@ _capture_docker() {
 # Why: --init reaps zombies; a stack run joins its net.
 # From: Issue #479, PR #544
 @test "container run: alone, in a stack, and argv checks" {
+    echo "case: container run: --init and a read-only checkout, --rm alone"
     _capture_docker
     run _ci_container_run img -e K=V -- bash x
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --rm -e K=V img bash x " ]
     rm -f "${BATS_TEST_TMPDIR}/argv"
+    echo "case: container run: inside a stack it joins net and label, no --rm"
     _capture_docker
     CI_STACK=n1 run _ci_container_run img -d --
     [ "${status}" -eq 0 ]
     [ "$(tr '\n' ' ' < "${BATS_TEST_TMPDIR}/argv")" = "run --init -v ${CI_REPO_ROOT}:/ci:ro --network n1 --label ci-stack=n1 -d img " ]
+    echo "case: container run fails closed without -- before the command"
     _forbid docker
     run _ci_container_run img -e K=V
     [ "${status}" -eq 2 ]
@@ -2726,6 +2811,7 @@ _capture_docker() {
 # Why: One bounded poll owner; a probe error stops at once.
 # From: Issue #479, PR #544
 @test "wait-until: retries, gives up after N, stops on error" {
+    echo "case: wait-until retries a probe and fails after N tries"
     _pass sleep
     # What: Probe that succeeds on its third call.
     # Why: Two failures before a pass exercise the retry.
@@ -2736,6 +2822,7 @@ _capture_docker() {
     run _ci_wait_until 2 1 false
     [ "${status}" -eq 1 ]
     rm -f "${BATS_TEST_TMPDIR}/tries"
+    echo "case: wait-until stops at once on a probe error and names tries"
     # What: Probe that logs its attempt, then returns 5.
     # Why: rc >= 2 is the hard-error class that must stop it.
     _probe() { echo "${CI_ATTEMPT}/${CI_TRIES}" >> "${BATS_TEST_TMPDIR}/tries"; return 5; }
@@ -2772,12 +2859,14 @@ _fake_curl() {
 # Why: A failed fetch names its URL; a drop is retried.
 # From: Issue #479, PR #544
 @test "download: names a failed URL, retries a dropped one" {
+    echo "case: a failed download names its URL and fails"
     _fail curl 22
     _pass sleep
     run _ci_download "https://h/x.tar.gz" "${BATS_TEST_TMPDIR}/x"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"attempt 3/3 failed"* ]]
     [[ "${output}" == *"CI-ERROR-FETCH-0003"*"https://h/x.tar.gz"* ]]
+    echo "case: a dropped connection is retried by a later attempt"
     local n="${BATS_TEST_TMPDIR}/n"
     echo 0 > "${n}"
     # What: Stub curl: the first call fails, later ones pass.
@@ -2794,6 +2883,7 @@ _fake_curl() {
 # Why: Only a pinned, matching download may be installed.
 # From: Issue #479, PR #544
 @test "tool fetch: url, tarball, bare binary, sha256 gate" {
+    echo "case: tool fetch expands the url and extracts on a matching sha256"
     local src="${BATS_TEST_TMPDIR}/src" sum
     mkdir -p "${src}/d"; printf 'bin' > "${src}/d/tool"
     tar -czf "${BATS_TEST_TMPDIR}/t.tar.gz" -C "${src}" d
@@ -2806,6 +2896,7 @@ _fake_curl() {
     [ "${status}" -eq 0 ]
     [ "$(cat "${output}")" = "bin" ]
     [ -x "${output}" ]
+    echo "case: tool fetch keeps a bare binary under its bin name"
     local sum
     printf 'exe' > "${BATS_TEST_TMPDIR}/raw"
     sum="$(sha256sum "${BATS_TEST_TMPDIR}/raw" | cut -d' ' -f1)"
@@ -2815,6 +2906,7 @@ _fake_curl() {
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run --separate-stderr _ci_tool_bin x.osv
     [ "${status}" -eq 0 ]
     [ "$(cat "${output}")" = "exe" ]
+    echo "case: tool fetch fails closed on a sha256 mismatch or no pin"
     printf 'evil' > "${BATS_TEST_TMPDIR}/evil"
     _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
         "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"' '  bare:' '    version: "v1"' \
@@ -2829,6 +2921,7 @@ _fake_curl() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
     [[ "${output}" != *"must not run"* ]]
+    echo "case: tool fetch stops when a partial tool dir cannot be removed"
     _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
         "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"'
     mkdir -p "${BATS_TEST_TMPDIR}/tool-v1"
@@ -2886,6 +2979,7 @@ _fake_registry() {
 # Why: ci.sh is the sole pin owner; no tag means no refresh.
 # From: Issue #479, PR #544
 @test "sot refresh: digests and tools; a tagless pin fails" {
+    echo "case: sot refresh moves digests and tool versions, one row each"
     local a b c
     a="$(printf 'a%.0s' {1..64})"; b="$(printf 'b%.0s' {1..64})"; c="$(printf 'c%.0s' {1..64})"
     _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${a}\"" 'external_services:' \
@@ -2902,6 +2996,7 @@ _fake_registry() {
     [ "$(_ci_sot_scalar external_versions.t.version)" = "v1.10.0" ]
     [ "$(_ci_sot_scalar external_versions.t.sha256)" = "${c}" ]
     [ "$(_ci_sot_scalar external_versions.manual.version)" = "1" ]
+    echo "case: sot refresh fails closed on an image pin without a tag"
     _fixture_manifest 'base_images:' "  deb: \"debian@sha256:$(printf 'a%.0s' {1..64})\"" 'external_services:' \
         '  none: "x:1@sha256:0"' 'external_versions:' '  m:' '    version: "1"'
     _fake_registry
@@ -3119,6 +3214,7 @@ _fake_osv() {
 # Why: argv would hit E2BIG; only transient errors retry.
 # From: Issue #479, PR #544
 @test "SARIF upload: body file, retry 5xx or empty, never 4xx" {
+    echo "case: SARIF upload sends the gzip+base64 file in the request body"
     local big="${BATS_TEST_TMPDIR}/big.sarif"
     head -c 3000000 /dev/urandom | base64 > "${big}"
     # What: Stub gh: decode the --input body, echo an id.
@@ -3134,6 +3230,7 @@ _fake_osv() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"SARIF upload id abc refs/heads/x"* ]]
     cmp "${big}" "${BATS_TEST_TMPDIR}/back"
+    echo "case: SARIF upload retries a 5xx or empty answer, never a 4xx"
     local n="${BATS_TEST_TMPDIR}/n" f="${BATS_TEST_TMPDIR}/s.sarif"
     echo '{}' > "${f}"
     _pass sleep
@@ -3172,6 +3269,7 @@ _fake_osv() {
 # Why: The PR gate judges only what the head changed.
 # From: Issue #267, Issue #479, PR #544
 @test "OSV PR gate: NotRun without base pins, fails on new ids" {
+    echo "case: OSV PR gate is NotRun against a base SOT without tool pins"
     _fake_osv '    version: "v1"'
     OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
@@ -3179,6 +3277,7 @@ _fake_osv() {
     OSV_GIT_FAIL=1 OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"NotRun"* ]]
+    echo "case: OSV PR gate fails only on ids the head's tools add"
     _fake_osv '    bin: "x"'
     OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 1 ]
@@ -3341,6 +3440,7 @@ _fake_osv() {
 # Why: A no-op is quiet; one sot-update PR stays open.
 # From: Issue #479, PR #544
 @test "sot-update: quiet no-op, one PR created then edited" {
+    echo "case: sot-update with current pins touches neither git nor PRs"
     local b; b="$(printf 'b%.0s' {1..64})"
     _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${b}\"" 'external_services:' \
         "  red: \"redis:8@sha256:${b}\"" 'external_versions:' '  m:' '    version: "1"'
@@ -3352,6 +3452,7 @@ _fake_osv() {
     [[ "${output}" != *"must not run"* ]]
     unset -f git
     CI_MANIFEST="${BATS_TEST_DIRNAME}/../yaml/build-manifest.yml"
+    echo "case: sot-update creates its PR once, then edits the open one"
     _print _ci_sot_refresh '| `a` | `x` | `1` | `2` |'
     _pass _ci_git_identity _ci_git_auth_setup
     _print gh '[]'
@@ -3388,11 +3489,13 @@ _fake_osv() {
 # Why: The agent ships for x64; bad JSON falls back keyless.
 # From: Issue #479, PR #544
 @test "harden start: NotRun on ARM64, keyless on bad JSON" {
+    echo "case: harden start is NotRun on an ARM64 runner"
     _forbid curl sudo
     RUNNER_OS=Linux RUNNER_ARCH=ARM64 RUNNER_ENVIRONMENT=github-hosted run _ci_harden_start
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"NotRun: agent unsupported on RUNNER_ARCH=ARM64"* ]]
     [[ "${output}" != *"must not run"* ]]
+    echo "case: harden start: a 200 body that is not JSON runs keyless"
     export RUNNER_OS=Linux RUNNER_ARCH=X64 RUNNER_ENVIRONMENT=github-hosted USER=u
     export GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 GITHUB_WORKSPACE=/w RUNNER_TEMP="${BATS_TEST_TMPDIR}"
     export GITHUB_EVENT_PATH="${BATS_TEST_TMPDIR}/event.json"
@@ -3427,22 +3530,26 @@ _fake_osv() {
 # Why: Stop runs under always(); only a confirmed flush ok.
 # From: Issue #479, PR #544
 @test "harden stop: NotRun, unreadable state, unconfirmed, confirmed" {
+    echo "case: harden stop is NotRun when no agent was started"
     _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"NotRun: no agent was started"* ]]
+    echo "case: harden stop fails closed when the agent never confirms"
     _fixture_harden_state
     _pass sleep
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-HARDEN-0003"* ]]
     [ -f "${_CI_HARDEN_DIR}/post_event.json" ]
+    echo "case: harden stop passes once the agent wrote done.json"
     _fixture_harden_state
     printf '{}' > "${_CI_HARDEN_DIR}/done.json"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
     [ "$(cat "${_CI_HARDEN_DIR}/post_event.json")" = '{"event":"post"}' ]
     rm -rf "${_CI_HARDEN_DIR}"
+    echo "case: harden stop fails closed when its state file cannot be read"
     _fixture_harden_state
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail sed 1 "sed broke"' _ci_harden_stop
     [ "${status}" -eq 1 ]
