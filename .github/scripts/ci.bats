@@ -2146,10 +2146,16 @@ EOF
     run _ci_phases_for_paths < <(printf '%s\n' README.md doc/threat-model.md)
     [ "${status}" -eq 0 ]
     [ "${output}" = "NOOP" ]
-    echo "case: impact: a c-source diff selects build"
-    run _ci_phases_for_paths <<< "src/dopt.c"
-    [ "${status}" -eq 0 ]
-    grep -qx build <<< "${output}" || { echo "src/dopt.c: no build: ${output}"; return 1; }
+    echo "case: impact: a c-source diff selects build, e2e and package"
+    while IFS='|' read -r p want; do
+        run _ci_phases_for_paths <<< "${p}"
+        [ "${status}" -eq 0 ] && [ "$(paste -sd ' ' <<< "${output}")" = "${want}" ] \
+            || { echo "${p}: rc ${status}, want ${want}, got ${output}"; return 1; }
+    done <<'EOF'
+src/dopt.c|build e2e package
+include_server/basics.py|build e2e
+LICENSE|NOOP
+EOF
     echo "case: impact: a SOT or engine change selects every gated job"
     grep -q "needs.plan.outputs.build == 'true'" "${wf}"
     gated="$( { echo build; grep -oE "contains\(needs\.plan\.outputs\.phases, '[a-z0-9-]+'\)" "${wf}" \
