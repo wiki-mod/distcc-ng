@@ -185,28 +185,26 @@ _dup_error_ids() {
     [[ "${output}" == *"CI-ERROR-SOT-0010"*'"a.c"'* ]]
 }
 
-# What: Matches every base_images and external_services pin.
-# Why: No tag, no refresh; no digest, a floating build.
-# From: Issue #479, PR #544
-@test "every SOT image pin is name:tag at a full sha256 digest" {
-    local s k v
-    for s in base_images external_services; do
-        for k in $(_ci_sot_children "${s}"); do
-            v="$(_ci_sot_scalar "${s}.${k}")"
-            [[ "${v}" =~ ^[^@]+/?[^/@]*:[^/@]+@sha256:[0-9a-f]{64}$ ]] || { echo "${s}.${k}=${v}"; false; }
-        done
-    done
-}
 
-# What: Checks the sha256 of each SOT tool that has a url.
-# Why: A url without sha256 would run an unverified binary.
+
+# What: Clean fixture SOT pins, then each malformed pin form.
+# Why: No tag, no refresh; no digest or sha256, no check.
 # From: Issue #479, PR #544
-@test "every SOT tool with a url carries a full sha256" {
-    local k
-    for k in $(_ci_sot_children external_versions); do
-        [ -n "$(_ci_sot_optional "external_versions.${k}.url")" ] || continue
-        [[ "$(_ci_sot_scalar "external_versions.${k}.sha256")" =~ ^[0-9a-f]{64}$ ]] || { echo "${k}"; false; }
-    done
+@test "SOT pin guard needs name:tag@digest and a sha256 per url" {
+    local d; d="$(printf 'a%.0s' {1..64})"
+    _fixture_manifest 'base_images:' "  deb: \"debian:trixie@sha256:${d}\"" 'external_services:' \
+        "  red: \"redis:8@sha256:${d}\"" 'external_versions:' '  t:' '    url: "https://h/t"' \
+        "    sha256: \"${d}\"" '  m:' '    version: "1"'
+    run ci_guard_sot_pins
+    [ "${status}" -eq 0 ]
+    _fixture_manifest 'base_images:' "  deb: \"debian@sha256:${d}\"" 'external_services:' \
+        '  red: "redis:8@sha256:abc"' 'external_versions:' '  t:' '    url: "https://h/t"' '  m:' '    version: "1"'
+    run ci_guard_sot_pins
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-PIN-0004"*"base_images.deb=debian@sha256"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-PIN-0004"*"external_services.red=redis:8@sha256:abc"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-PIN-0005"*"external_versions.t has a url"* ]]
+    [[ "${output}" != *"external_versions.m"* ]]
 }
 
 # What: Sets a.c.b beside same-named keys, then a bad path.
@@ -2335,51 +2333,7 @@ _dup_error_ids() {
     done
 }
 
-# What: Print each SOT phase no gated job of file $1 runs.
-# Why: A phase nobody runs is policy that changes nothing.
-# From: Issue #479, PR #544
-_unwired_phases() {
-    local ph gate wiring rc
-    local phases=()
-    _ci_mapfile phases _ci_all_phases || return 2
-    [ "${#phases[@]}" -gt 0 ] || return 2
-    wiring="$(awk '
-        /^  [A-Za-z0-9_-]+:$/ { job = substr($1, 1, length($1) - 1) }
-        /^    if:/ { gate[job] = $0 }
-        match($0, /run: bash \.github\/scripts\/ci\.sh [a-z0-9-]+/) {
-            c = substr($0, RSTART, RLENGTH); sub(/.* /, "", c); cmds[job] = cmds[job] " " c " " }
-        END { for (j in gate) print j "|" gate[j] "|" cmds[j] }
-    ' "$1")" || return 2
-    for ph in "${phases[@]}"; do
-        gate="contains(needs.plan.outputs.phases, '${ph}')"
-        [ "${ph}" != build ] || gate="needs.plan.outputs.build == 'true'"
-        rc=0
-        awk -F'|' -v g="${gate}" -v ph="${ph}" 'index($2, g) && index($3, " " ph " ") { f = 1 }
-            END { exit !f }' <<< "${wiring}" || rc=$?
-        case "${rc}" in
-            0) ;;
-            1) printf '%s\n' "${ph}" ;;
-            *) return 2 ;;
-        esac
-    done
-}
 
-# What: Checks validate.yml, then 2 copies with e2e cut off.
-# Why: The copies prove the wiring check can fail at all.
-# From: Issue #479, PR #544
-@test "every SOT impact phase gates a validate.yml job" {
-    local wf="${CI_REPO_ROOT}/.github/workflows/validate.yml" fx="${BATS_TEST_TMPDIR}/validate.yml"
-    run _unwired_phases "${wf}"
-    [ "${status}" -eq 0 ]
-    [ -z "${output}" ]
-    sed "s/contains(needs.plan.outputs.phases, 'e2e')/false/" "${wf}" > "${fx}"
-    run _unwired_phases "${fx}"
-    [ "${status}" -eq 0 ]
-    [ "${output}" = "e2e" ]
-    sed 's#scripts/ci\.sh e2e#scripts/ci.sh lint#' "${wf}" > "${fx}"
-    run _unwired_phases "${fx}"
-    [ "${output}" = "e2e" ]
-}
 
 # What: Print "file job" for each job of $@ with no timeout.
 # Why: Unbounded, a hung job runs to the 6-hour default.
@@ -2723,14 +2677,6 @@ _jobs_without_timeout() {
     [[ "${output}" == *"SRC required"* ]]
 }
 
-# What: Greps the CFL Dockerfile for the SOT builder tag.
-# Why: CFL builds without build-args, so FROM is a literal.
-# From: Issue #267, Issue #479, PR #544
-@test "the CFL Dockerfile FROM is the SOT base-builder tag" {
-    local tag
-    tag="$(_ci_sot_scalar security.cfl_base.tag)"
-    grep -qx "FROM ${tag}" "${CI_REPO_ROOT}/.clusterfuzzlite/Dockerfile"
-}
 
 # What: Aliases s.a and records the docker calls.
 # Why: A builder without build-args may only see that tag.
@@ -2797,7 +2743,7 @@ _jobs_without_timeout() {
     [[ "${output}" == *"CI-ERROR-ROUTE-0001"* ]]
 }
 
-# What: Real tree, then a drifted cron, option and milestones.
+# What: Real tree; drift in cron, options, milestone, wiring.
 # Why: All are literal YAML; the SOT owns their values.
 # From: Issue #479, PR #544
 @test "mirror guard passes the real tree and fails closed on drift" {
@@ -2820,6 +2766,21 @@ _jobs_without_timeout() {
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0002"* ]]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0003"* ]]
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0004"*"> zap"* ]]
+    mkdir -p "${fx}/.clusterfuzzlite"
+    _fixture_manifest 'impact_classes:' '  c:' '    paths: ["src/**"]' '    phases: ["build", "e2e"]' \
+        'security:' '  cfl_base:' '    tag: "b:local"' 'schedules:' '  n:' '    workflow: "validate"' '    cron: "0 1 * * *"'
+    printf '%s\n' 'on:' '  schedule:' "    - cron: '0 1 * * *'" 'jobs:' '  build_test:' \
+        "    if: needs.plan.outputs.build == 'true'" \
+        '    steps:' '      - run: bash .github/scripts/ci.sh build x' '  e2e:' \
+        "    if: contains(needs.plan.outputs.phases, 'e2e')" '    steps:' \
+        '      - run: bash .github/scripts/ci.sh lint' > "${fx}/.github/workflows/validate.yml"
+    printf '%s\n' 'FROM other:local' > "${fx}/.clusterfuzzlite/Dockerfile"
+    rm -f "${fx}/.github/workflows/housekeeping.yml" "${fx}/.github/dependabot.yml" "${fx}/.github/workflows/w.yml"
+    run ci_guard_sot_mirrors "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0009"*"SOT phase e2e gates no validate.yml job"* ]]
+    [[ "${output}" != *"SOT phase build"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0010"*"FROM b:local"* ]]
 }
 
 # What: Clean fixture tree, then one drift per path mirror.

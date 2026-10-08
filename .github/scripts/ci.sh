@@ -3594,8 +3594,56 @@ ci_guard_sot_mirrors() {
         fi
         _ci_guard_mirror "[CI-ERROR-GUARD-MIRROR-0003]" \
             "dependabot.yml milestones differ from bot_milestone.number" "${want}" "${got}" || rc=$?
+        [ "${rc}" -ne 2 ] || return 2
+    fi
+    f="${root}/.github/workflows/validate.yml"
+    if [ -f "${f}" ]; then
+        got="$(_ci_unwired_phases "${f}")" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-MIRROR-0009]" "SOT phase " " gates no validate.yml job running it" \
+            <<< "${got}" || rc=1
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
+    fi
+    f="${root}/.clusterfuzzlite/Dockerfile"
+    if [ -f "${f}" ]; then
+        want="$(_ci_sot_scalar security.cfl_base.tag)" || return 2
+        if ! grep -qxF -- "FROM ${want}" "${f}"; then
+            ci_log "[CI-ERROR-GUARD-MIRROR-0010]" "${f} has no FROM ${want} (security.cfl_base.tag)"
+            rc=1
+        fi
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
     fi
     return "${rc}"
+}
+
+# What: Print each SOT phase no gated job of workflow $1 runs.
+# Why: A phase nobody runs is policy that changes nothing.
+# From: Issue #479, PR #544
+_ci_unwired_phases() {
+    local ph gate wiring rc
+    local phases=()
+    _ci_mapfile phases _ci_all_phases || return 2
+    [ "${#phases[@]}" -gt 0 ] || return 2
+    wiring="$(awk '
+        /^  [A-Za-z0-9_-]+:$/ { job = substr($1, 1, length($1) - 1) }
+        /^    if:/ { gate[job] = $0 }
+        match($0, /run: bash \.github\/scripts\/ci\.sh [a-z0-9-]+/) {
+            c = substr($0, RSTART, RLENGTH); sub(/.* /, "", c); cmds[job] = cmds[job] " " c " " }
+        END { for (j in gate) print j "|" gate[j] "|" cmds[j] }
+    ' "$1")" || return 2
+    for ph in "${phases[@]}"; do
+        gate="contains(needs.plan.outputs.phases, '${ph}')"
+        [ "${ph}" != build ] || gate="needs.plan.outputs.build == 'true'"
+        rc=0
+        awk -F'|' -v g="${gate}" -v ph="${ph}" 'index($2, g) && index($3, " " ph " ") { f = 1 }
+            END { exit !f }' <<< "${wiring}" || rc=$?
+        case "${rc}" in
+            0) ;;
+            1) printf '%s\n' "${ph}" ;;
+            *) return 2 ;;
+        esac
+    done
 }
 
 # What: Print the choice options of input $2 in workflow $1.
@@ -3723,6 +3771,31 @@ ci_guard_pins_in_sot() {
         _ci_guard_hits "[CI-ERROR-GUARD-PIN-0002]" "${f}:" " bypasses the SOT ARG" \
             <<< "${out}" || rc=1
     done
+    return "${rc}"
+}
+
+# What: Fail on a SOT image pin or tool pin of the wrong form.
+# Why: No tag, no refresh; no digest or sha256, no check.
+# From: Issue #479, PR #544
+ci_guard_sot_pins() {
+    local s k v keys bad="" rc=0
+    for s in base_images external_services; do
+        keys="$(_ci_sot_children "${s}")" || return 2
+        for k in ${keys}; do
+            v="$(_ci_sot_scalar "${s}.${k}")" || return 2
+            [[ "${v}" =~ ^[^@]+:[^/@]+@sha256:[0-9a-f]{64}$ ]] || bad+="${s}.${k}=${v}"$'\n'
+        done
+    done
+    _ci_guard_hits "[CI-ERROR-GUARD-PIN-0004]" "" " is not name:tag@sha256:<64 hex>" <<< "${bad}" || rc=1
+    bad=""
+    keys="$(_ci_sot_children external_versions)" || return 2
+    for k in ${keys}; do
+        v="$(_ci_sot_optional "external_versions.${k}.url")" || return 2
+        [ -n "${v}" ] || continue
+        v="$(_ci_sot_optional "external_versions.${k}.sha256")" || return 2
+        [[ "${v}" =~ ^[0-9a-f]{64}$ ]] || bad+="external_versions.${k}"$'\n'
+    done
+    _ci_guard_hits "[CI-ERROR-GUARD-PIN-0005]" "" " has a url but no 64-hex sha256" <<< "${bad}" || rc=1
     return "${rc}"
 }
 
@@ -3878,6 +3951,7 @@ ci_cmd_lint() {
         ci_guard_full_sha "${CI_REPO_ROOT}/${d}" || rc=1
     done
     ci_guard_pins_in_sot "${CI_REPO_ROOT}" || rc=1
+    ci_guard_sot_pins || rc=1
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
     ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1

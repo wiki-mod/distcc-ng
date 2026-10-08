@@ -57,12 +57,22 @@ path labels are SOT data (`labels`, matched like `impact_classes`, with
 an optional `exclude` list).
 
 **Lint guards** (`ci.sh lint`): LF-only line endings, full-length
-sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`),
-orchestrator-only workflows (`ci_guard_orchestrator_only`), the
-`What:`/`Why:`/`From:` comment form of `AGENTS.md` `[AG-CODE-001]`, with
-a block directly above every function, nested stub and bats test, over
-every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
-`test/e2e/` and `.clusterfuzzlite/` (`ci_guard_comment_format`), no
+sha256 digests, every pin in the SOT (`ci_guard_pins_in_sot`), SOT image
+pins as `name:tag@sha256:<64 hex>` and a sha256 beside every tool `url`
+(`ci_guard_sot_pins`), YAML literals that repeat SOT values: crons,
+dispatch choice lists, Dependabot milestones, the validate.yml job gate
+of every SOT phase and the ClusterFuzzLite base-builder `FROM`
+(`ci_guard_sot_mirrors`), Dockerfile paths and SOT image refs that
+repeat `ci.sh` constants: the `/ci` bind target, the release `/out`
+trees, the CFL `$SRC` directory and the registry
+(`ci_guard_path_mirrors`), orchestrator-only workflows
+(`ci_guard_orchestrator_only`), the `What:`/`Why:`/`From:` comment form
+of `AGENTS.md` `[AG-CODE-001]` (`From:` holds Issue/PR pointers only),
+with a block directly above every function, nested stub and bats test,
+over every shell, bats, YAML and Dockerfile in `.github/`, `docker/`,
+`test/e2e/`, `.clusterfuzzlite/` and `.trivyignore.yaml`
+(`ci_guard_comment_format`; an absent one of those paths is logged
+NotRun), no
 ShellCheck suppression text in any shell source of the repository
 (`ci_guard_shellcheck_directives`, which reads the banned texts from the
 SOT's `ci_engine.banned_shell_texts`; `AGENTS.md` `[AG-INT-003]`
