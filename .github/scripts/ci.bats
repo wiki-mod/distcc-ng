@@ -717,10 +717,10 @@ EOF
     [ "$(cat "${BATS_TEST_TMPDIR}/argv")" = "login ghcr.io -u octo --password-stdin" ]
 }
 
-# What: Counts a five-line log for two hosts and a subnet.
-# Why: Only real remote COMPILE_OK from the client may count.
+# What: Counts a five-line log per host and subnet; no log.
+# Why: Only real client COMPILE_OK counts; no log is no zero.
 # From: Issue #479, Issue #264, PR #544
-@test "e2e compile-ok counter counts only clients inside the CIDR" {
+@test "e2e compile-ok counter counts clients in the CIDR, needs a log" {
     local log="${BATS_TEST_TMPDIR}/server.log"
     {
         printf 'distccd[1] (dcc_job_summary) client: 172.18.0.10:48058 COMPILE_OK exit:0\n'
@@ -732,36 +732,23 @@ EOF
     [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.10/32)" = "2" ]
     [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.20/32)" = "1" ]
     [ "$(_ci_e2e_count_compile_ok "${log}" 172.18.0.0/16)" = "3" ]
+    run _ci_e2e_count_compile_ok "${BATS_TEST_TMPDIR}/nope.log" 172.18.0.0/16
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-E2E-0002"* ]]
 }
 
-# What: Scans a log of a listen line and one COMPILE_OK.
-# Why: Verbose info/debug lines carry no severity prefix.
+# What: Scans a clean verbose log, then one with an ERROR.
+# Why: Info lines have no prefix; ERROR: is a severity one.
 # From: Issue #479, PR #544
-@test "e2e server warning scan passes a clean verbose log" {
+@test "e2e server warning scan passes info lines, fails on ERROR" {
     local log="${BATS_TEST_TMPDIR}/server.log"
     printf 'distccd[7] listening on 0.0.0.0:3632\ndistccd[9] (dcc_job_summary) client: 172.18.0.3:4 COMPILE_OK\n' > "${log}"
     run _ci_e2e_check_server_warnings "${log}"
     [ "${status}" -eq 0 ]
-}
-
-# What: Scans a log holding one ERROR line.
-# Why: ERROR: is one of the severity prefixes distccd logs.
-# From: Issue #479, PR #544
-@test "e2e server warning scan fails on a warning-level line" {
-    local log="${BATS_TEST_TMPDIR}/server.log"
     printf 'distccd[8] (dcc_check_client) ERROR: connection from client denied\n' > "${log}"
     run _ci_e2e_check_server_warnings "${log}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"CI-ERROR-E2E-0015"* ]]
-}
-
-# What: Counts COMPILE_OK in a log file that does not exist.
-# Why: A missing log must not read as zero compiles.
-# From: Issue #479, PR #544
-@test "e2e compile-ok counter fails closed on an unreadable log" {
-    run _ci_e2e_count_compile_ok "${BATS_TEST_TMPDIR}/nope.log" 172.18.0.0/16
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-E2E-0002"* ]]
 }
 
 # What: Release build and runtime images, each step failing.
@@ -1026,18 +1013,10 @@ EOF
     [[ "${output}" == *"CI-ERROR-PUBLISH-0002"* ]]
 }
 
-# What: Checks a PR labelled no-changelog-needed.
-# Why: AG-REL-002 accepts that label in place of an entry.
-# From: Issue #479
-@test "changelog is skipped by the no-changelog-needed label" {
-    PR_LABELS="ci no-changelog-needed" run _ci_check_changelog
-    [ "${status}" -eq 0 ]
-}
-
-# What: A base gains CHANGELOG.md after the fork; the PR not.
-# Why: Only the PR's own changes may satisfy AG-REL-002.
+# What: Merge-base diff, opt-out label, zero SHA, failed diff.
+# Why: Only the PR's own changes or the label meet AG-REL-002.
 # From: Issue #479, PR #544
-@test "changelog check diffs from the merge base, not the base tip" {
+@test "changelog check: merge-base diff, label, and bad input" {
     local r="${BATS_TEST_TMPDIR}/r" trunk base head
     mkdir -p "${r}/src"
     ( cd "${r}" && git init -q && git config user.email t@t && git config user.name t \
@@ -1057,6 +1036,16 @@ EOF
     CI_REPO_ROOT="${r}" BASE="${base}" HEAD="${head}" PR_LABELS="" run _ci_check_changelog
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"OK: CHANGELOG.md touched"* ]]
+    PR_LABELS="ci no-changelog-needed" run _ci_check_changelog
+    [ "${status}" -eq 0 ]
+    BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0002"* ]]
+    _fail _ci_changed_paths 1 "[CI-ERROR-DIFF-0001] cannot diff"
+    BASE=HEAD HEAD=HEAD PR_LABELS="" run _ci_check_changelog
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
+    [[ "${output}" != *"CI-ERROR-META-CHANGELOG-0001"* ]]
 }
 
 # What: Reads a PR, a push and a dispatch payload.
@@ -1494,36 +1483,23 @@ EOF
     [[ "${output}" == *"CI-ERROR-BUILD-0003"* ]]
 }
 
-# What: Parses one OK and one NOTRUN line.
-# Why: NOTRUN is a declared skip, not a failure.
-# From: Issue #479
-@test "comfychair parse passes on all-OK/NOTRUN output" {
-    log="${BATS_TEST_TMPDIR}/log"
-    printf '%s\n' "FooCase           OK" "BarCase           NOTRUN, needs root" > "${log}"
-    run _ci_parse_comfychair "${log}"
-    [ "${status}" -eq 0 ]
-}
-
-# What: Parses one OK and one FAIL line.
-# Why: A failed test must never report green.
-# From: Issue #479
-@test "comfychair parse fails closed on a FAIL line" {
-    log="${BATS_TEST_TMPDIR}/log"
-    printf '%s\n' "FooCase           OK" "BarCase           FAIL" > "${log}"
-    run _ci_parse_comfychair "${log}"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-TEST-0002"* ]]
-}
-
-# What: Parses build noise without any result line.
-# Why: An empty parse must not look like a clean pass.
-# From: Issue #479
-@test "comfychair parse fails closed on zero parsed result lines" {
-    log="${BATS_TEST_TMPDIR}/log"
-    printf '%s\n' "build noise, no result lines" > "${log}"
-    run _ci_parse_comfychair "${log}"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-TEST-0001"* ]]
+# What: OK+NOTRUN, a FAIL line, no result line, no log at all.
+# Why: NOTRUN is a declared skip; nothing else may look green.
+# From: Issue #479, PR #544
+@test "comfychair parse: OK and NOTRUN pass, FAIL or nothing fails" {
+    local log="${BATS_TEST_TMPDIR}/log" lines rc want
+    while IFS='|' read -r lines rc want; do
+        rm -f "${log}"
+        [ "${lines}" = "-" ] || printf '%b\n' "${lines}" > "${log}"
+        run _ci_parse_comfychair "${log}"
+        [ "${status}" -eq "${rc}" ] || { echo "${lines}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"${want}"* ]] || { echo "${lines}: want ${want}: ${output}"; return 1; }
+    done <<'EOF'
+FooCase           OK\nBarCase           NOTRUN, needs root|0|
+FooCase           OK\nBarCase           FAIL|1|[CI-ERROR-TEST-0002]
+build noise, no result lines|1|[CI-ERROR-TEST-0001]
+-|1|[CI-ERROR-TEST-0007]
+EOF
 }
 
 # What: coverage test steps, then SOT step and env rows.
@@ -2432,23 +2408,6 @@ EOF
         run ci_guard_job_timeouts ${arg:+"${arg}"}
         [ "${status}" -eq 2 ]
     done
-}
-
-# What: Zero-SHA base, then a failing diff; a missing log.
-# Why: Neither may read as no change or as a parse result.
-# From: Issue #479, PR #544
-@test "changelog and comfychair fail closed on bad input" {
-    BASE=0000000000000000000000000000000000000000 HEAD=HEAD PR_LABELS="" run _ci_check_changelog
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-META-CHANGELOG-0002"* ]]
-    _fail _ci_changed_paths 1 "[CI-ERROR-DIFF-0001] cannot diff"
-    BASE=HEAD HEAD=HEAD PR_LABELS="" run _ci_check_changelog
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-DIFF-0001"* ]]
-    [[ "${output}" != *"CI-ERROR-META-CHANGELOG-0001"* ]]
-    run _ci_parse_comfychair "${BATS_TEST_TMPDIR}/nope.log"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-TEST-0007"* ]]
 }
 
 # What: Scans ARG, stage and :local FROMs and an SOT action.
