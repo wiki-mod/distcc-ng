@@ -2822,6 +2822,32 @@ _jobs_without_timeout() {
     [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0004"*"> zap"* ]]
 }
 
+# What: Clean fixture tree, then one drift per path mirror.
+# Why: A Dockerfile repeats ci.sh paths it cannot read itself.
+# From: Issue #479, PR #544
+@test "path mirror guard binds Dockerfile paths and SOT refs to ci.sh" {
+    local fx="${BATS_TEST_TMPDIR}/fx"
+    mkdir -p "${fx}/docker/release" "${fx}/.clusterfuzzlite"
+    printf '%s\n' "RUN --mount=type=bind,target=${CI_CONTAINER_ROOT},rw bash x" \
+        "COPY --from=build ${CI_RELEASE_OUT}/ /" "COPY --from=build ${CI_RELEASE_PUMP_OUT}/usr/local/ /usr/local/" \
+        > "${fx}/docker/release/Dockerfile"
+    printf '%s\n' "COPY . \$SRC/${CI_CFL_PROJECT}" > "${fx}/.clusterfuzzlite/Dockerfile"
+    _fixture_manifest 'release:' '  images:' '    a:' "      ref: \"${CI_REGISTRY}/o/a:latest\""
+    run ci_guard_path_mirrors "${fx}"
+    [ "${status}" -eq 0 ]
+    printf '%s\n' 'RUN --mount=type=bind,target=/src bash x' 'COPY --from=build /stage/ /' \
+        > "${fx}/docker/release/Dockerfile"
+    printf '%s\n' 'COPY . $SRC/other' > "${fx}/.clusterfuzzlite/Dockerfile"
+    _fixture_manifest 'release:' '  images:' '    a:' '      ref: "docker.io/o/a:latest"'
+    run ci_guard_path_mirrors "${fx}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0005"*"bind target /src is not ${CI_CONTAINER_ROOT}"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0006"*"COPY source /stage/ is no ci.sh release tree"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0006"*"no COPY from ${CI_RELEASE_PUMP_OUT}/"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0007"*"COPY target \$SRC/other"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-MIRROR-0008"*"release.images.a.ref=docker.io/o/a:latest"* ]]
+}
+
 # What: Runs three checks with the checkout check failing.
 # Why: The failed check must be named, not only counted.
 # From: Issue #479, PR #544

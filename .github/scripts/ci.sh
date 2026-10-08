@@ -27,6 +27,22 @@ CI_REPO_ROOT="${CI_REPO_ROOT:-$(cd -- "${CI_SCRIPT_DIR}/../.." && pwd)}"
 # From: Issue #479, PR #544
 CI_CONTAINER_ROOT="/ci"
 
+# What: Registry host of every image this repo publishes.
+# Why: Login and image names share it; a guard binds the SOT.
+# From: Issue #479, PR #544
+CI_REGISTRY="ghcr.io"
+
+# What: Release build trees the release Dockerfile copies.
+# Why: ci.sh writes them, the Dockerfile COPYs; a guard binds.
+# From: Issue #479, PR #544
+CI_RELEASE_OUT="/out"
+CI_RELEASE_PUMP_OUT="/out-pump"
+
+# What: Directory under $SRC that holds the CFL checkout copy.
+# Why: build.sh runs ci.sh there; the Dockerfile COPYs to it.
+# From: Issue #267, Issue #479, PR #544
+CI_CFL_PROJECT="distcc-ng"
+
 # What: This engine as seen from inside a container.
 # Why: Containers run ci.sh workloads, never inline scripts.
 # From: Issue #479, PR #544
@@ -566,7 +582,7 @@ _ci_stack_run() {
 _ci_registry_login() {
     : "${REGISTRY_TOKEN:?REGISTRY_TOKEN required}"
     : "${GITHUB_ACTOR:?GITHUB_ACTOR required}"
-    printf '%s\n' "${REGISTRY_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+    printf '%s\n' "${REGISTRY_TOKEN}" | docker login "${CI_REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
 }
 
 # What: Log in once, then push every given tag.
@@ -930,9 +946,9 @@ _ci_image_release_build() {
     local nj
     nj="$(_ci_nproc)" || return 2
     _ci_make_gated /tmp/make.log -j"${nj}" || return 1
-    install -D -t /out/usr/local/bin distcc distccd lsdistcc distccmon-text || return 1
-    make install DESTDIR=/out-pump || return 1
-    mv /out-pump/usr/local/bin/pump /out-pump/usr/local/bin/distcc-pump || return 1
+    install -D -t "${CI_RELEASE_OUT}/usr/local/bin" distcc distccd lsdistcc distccmon-text || return 1
+    make install DESTDIR="${CI_RELEASE_PUMP_OUT}" || return 1
+    mv "${CI_RELEASE_PUMP_OUT}/usr/local/bin/pump" "${CI_RELEASE_PUMP_OUT}/usr/local/bin/distcc-pump" || return 1
 }
 
 # What: Runtime packages and the unprivileged distcc user.
@@ -953,7 +969,7 @@ _ci_image_cfl_toolchain() {
     pkgs="$(_ci_sot_scalar security.cfl_image_apt)" || return 2
     _ci_apt_install "${pkgs}" image || return 1
     printf '%s\n' '#!/bin/bash -eu' \
-        "exec bash \"\${SRC}/distcc-ng/.github/scripts/ci.sh\" workload fuzz-build" > "${entry}" || return 1
+        "exec bash \"\${SRC}/${CI_CFL_PROJECT}/.github/scripts/ci.sh\" workload fuzz-build" > "${entry}" || return 1
     chmod 755 "${entry}"
 }
 
@@ -1952,7 +1968,7 @@ _ci_release_version_check() {
 # From: Issue #359, Issue #479, PR #544
 _ci_release_image() {
     local pkg="$1" tag="$2" platform="${3:-}"
-    printf 'ghcr.io/%s/%s:%s%s\n' "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}" \
+    printf '%s/%s/%s:%s%s\n' "${CI_REGISTRY}" "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER required}" \
         "${pkg}" "${tag}" "${platform:+-${platform}}"
 }
 
@@ -3595,6 +3611,53 @@ _ci_dispatch_options() {
     ' "$1"
 }
 
+# What: Fail if a Dockerfile or SOT literal drifts from ci.sh.
+# Why: A Dockerfile cannot read ci.sh; it repeats the values.
+# From: Issue #479, PR #544
+ci_guard_path_mirrors() {
+    local root="${1:-${CI_REPO_ROOT}}" rc=0 f out names refs ref
+    local files=()
+    _ci_mapfile files find "${root}" -name Dockerfile -type f -not -path '*/.git/*' || return 2
+    for f in "${files[@]}"; do
+        out="$(awk -v want="${CI_CONTAINER_ROOT}" '
+            { l = $0
+              while (match(l, /--mount=type=bind,target=[^ ,]+/)) {
+                  t = substr(l, RSTART + 25, RLENGTH - 25)
+                  if (t != want) print FNR ": bind target " t " is not " want
+                  l = substr(l, RSTART + RLENGTH) } }' "${f}")" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-MIRROR-0005]" "${f}:" <<< "${out}" || rc=1
+    done
+    f="${root}/docker/release/Dockerfile"
+    if [ -f "${f}" ]; then
+        out="$(awk -v a="${CI_RELEASE_OUT}/" -v b="${CI_RELEASE_PUMP_OUT}/" '
+            $1 == "COPY" && $2 == "--from=build" {
+                if (index($3, a) == 1) ha = 1
+                else if (index($3, b) == 1) hb = 1
+                else print FNR ": COPY source " $3 " is no ci.sh release tree" }
+            END { if (!ha) print "no COPY from " a; if (!hb) print "no COPY from " b }' "${f}")" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-MIRROR-0006]" "${f}: " <<< "${out}" || rc=1
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
+    fi
+    f="${root}/.clusterfuzzlite/Dockerfile"
+    if [ -f "${f}" ]; then
+        out="$(awk -v want="\$SRC/${CI_CFL_PROJECT}" '
+            $1 == "COPY" && $2 == "." { seen = 1; if ($3 != want) print FNR ": COPY target " $3 " is not " want }
+            END { if (!seen) print "no COPY . " want }' "${f}")" || return 2
+        _ci_guard_hits "[CI-ERROR-GUARD-MIRROR-0007]" "${f}: " <<< "${out}" || rc=1
+    else
+        ci_log "[CI-LINT]" "NotRun: ${f} absent"
+    fi
+    names="$(_ci_sot_children release.images)" || return 2
+    refs=""
+    for f in ${names}; do
+        ref="$(_ci_sot_optional "release.images.${f}.ref")" || return 2
+        [ -z "${ref}" ] || [ "${ref#"${CI_REGISTRY}/"}" != "${ref}" ] || refs+="release.images.${f}.ref=${ref}"$'\n'
+    done
+    _ci_guard_hits "[CI-ERROR-GUARD-MIRROR-0008]" "" " is not in ${CI_REGISTRY}" <<< "${refs}" || rc=1
+    return "${rc}"
+}
+
 # What: Fail with a diff when a YAML literal list drifts.
 # Why: Both mirror checks report want vs got the same way.
 # From: Issue #479, PR #544
@@ -3818,6 +3881,7 @@ ci_cmd_lint() {
     ci_guard_comment_format "${CI_REPO_ROOT}" || rc=1
     ci_guard_shellcheck_directives "${CI_REPO_ROOT}" || rc=1
     ci_guard_sot_mirrors "${CI_REPO_ROOT}" || rc=1
+    ci_guard_path_mirrors "${CI_REPO_ROOT}" || rc=1
     # What: Run the orchestrator guard, actionlint, shellcheck.
     # Why: #479 allows no workflow-local logic, none exempt.
     # From: Issue #479, PR #544
@@ -4729,8 +4793,8 @@ ci_cmd_cache() {
 # Why: The SOT defines each variant; warnings fail the build.
 # From: Issue #479, PR #544
 ci_cmd_build() {
-    local variant="${1:?variant required}" log py cc="" val step rc=0
-    local flags=() opts=() steps=()
+    local variant="${1:?variant required}" log py cc="" val step steps rc=0
+    local flags=() opts=()
     _ci_variant_known "${variant}" "[CI-ERROR-BUILD-0002]" || return 2
     log="${RUNNER_TEMP:-/tmp}/ci-build-${variant}.log"
     py="$(_ci_python)" || return 1
@@ -4752,11 +4816,11 @@ ci_cmd_build() {
     [ -z "${val}" ] || flags+=(LDFLAGS="${val}")
     val="$(_ci_sot_optional "build_matrix.variants.${variant}.configure")" || return 2
     read -ra opts <<< "${val}"
-    flags+=("${opts[@]}")
-    _ci_mapfile steps _ci_sot_list "build_matrix.variants.${variant}.build_steps" || return 2
+    flags+=(${opts[@]+"${opts[@]}"})
+    steps="$(_ci_sot_list "build_matrix.variants.${variant}.build_steps")" || return 2
     cd "${CI_REPO_ROOT}" || return 1
     _ci_configure_tree "${log}.configure" "${flags[@]}" || return 1
-    for step in "${steps[@]}"; do
+    for step in ${steps}; do
         _ci_build_step "${step}" "${log}" "${cc}" || return
     done
 }
@@ -4909,16 +4973,16 @@ _ci_coverage_summary() {
 # From: Issue #479, PR #544
 ci_cmd_test() {
     local variant="${1:-default}" log step
-    local steps=()
+    local steps
     _ci_variant_known "${variant}" "[CI-ERROR-TEST-0005]" || return 2
-    _ci_mapfile steps _ci_sot_list "build_matrix.variants.${variant}.test_steps" || return 2
-    if [ "${#steps[@]}" -eq 0 ]; then
+    steps="$(_ci_sot_list "build_matrix.variants.${variant}.test_steps")" || return 2
+    if [ -z "${steps}" ]; then
         ci_log "[CI-TEST-SKIP]" "NotRun: variant=${variant} has no test steps"
         return 0
     fi
     cd "${CI_REPO_ROOT}" || return 1
     log="${RUNNER_TEMP:-/tmp}/ci-check-${variant}.log"
-    for step in "${steps[@]}"; do
+    for step in ${steps}; do
         _ci_test_step "${step}" "${variant}" "${log}" || return
     done
 }
@@ -4953,7 +5017,7 @@ _ci_make_check() {
     shift 2
     val="$(_ci_sot_optional "build_matrix.variants.${variant}.check_env")" || return 2
     read -ra envs <<< "${val}"
-    for kv in "${envs[@]}"; do
+    for kv in ${envs[@]+"${envs[@]}"}; do
         if ! [[ "${kv}" =~ ^[A-Z_][A-Z0-9_]*=[^[:space:]]*$ ]]; then
             ci_log "[CI-ERROR-TEST-0010]" "build_matrix.variants.${variant}.check_env entry \"${kv}\" is not KEY=VALUE"
             return 2
@@ -4962,7 +5026,7 @@ _ci_make_check() {
     # What: Export the SOT env only into the make check subshell.
     # Why: Later steps of the job must not inherit sanitizer env.
     # From: Issue #479, PR #544
-    ( for kv in "${envs[@]}"; do export "${kv?}"; done; make check "$@" ) > "${log}" 2>&1 || st=$?
+    ( for kv in ${envs[@]+"${envs[@]}"}; do export "${kv?}"; done; make check "$@" ) > "${log}" 2>&1 || st=$?
     cat "${log}" || return 1
     _ci_warning_gate "${log}" "variant=${variant} make check" || return 1
     _ci_parse_comfychair "${log}" || return 1
