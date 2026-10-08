@@ -1235,35 +1235,44 @@ EOF
 # Why: NOOP skips needed checks; only protected refs publish.
 # From: Issue #479, PR #544
 @test "plan: phases per event and the buildtools publish gate" {
-    echo "case: plan on a dispatch or schedule selects every phase"
-    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" e
-    _print ci_cmd_matrix '{"include":[]}'
-    for e in workflow_dispatch:'{"inputs":{}}' schedule:'{"schedule":"0 4 * * *"}'; do
+    echo "case: plan on a dispatch or schedule selects every phase; plan publishes buildtools only from a protected ref"
+    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" e ref want
+    local rel=('release:' '  container:' '    variants:' '      plain: "p"' '    platforms:' '      amd64:' \
+        '        runner: "r1"' '        optional: "false"')
+    _fixture_manifest 'impact_classes:' '  a:' '    paths: ["a/**"]' '    phases: ["verify", "build"]' \
+        '  b:' '    paths: ["b/**"]' '    phases: ["package", "build"]' '  c:' '    paths: ["**/*.md"]' \
+        '    phases: []' "${rel[@]}"
+    _print ci_cmd_matrix '{"include":["m"]}'
+    while IFS='|' read -r e ref want; do
         printf '%s' "${e#*:}" > "${ev}"
         : > "${out}"
         GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME="${e%%:*}" GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
-            GITHUB_REF_NAME=current_dev run ci_cmd_plan
-        [ "${status}" -eq 0 ]
-        grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
-        grep -qx 'build=true' "${out}"
-        grep -qx 'publish_buildtools=true' "${out}"
-    done
-    echo "case: plan publishes buildtools only from a protected ref"
-    local ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" ref
-    printf '{"inputs":{}}' > "${ev}"
-    _print ci_cmd_matrix '{"include":[]}'
-    for ref in bot/x 544/merge; do
-        : > "${out}"
-        GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
-            GITHUB_SHA=HEAD GITHUB_REF_NAME="${ref}" run ci_cmd_plan
-        [ "${status}" -eq 0 ]
-        grep -qx "phases=$(_ci_all_phases | paste -sd ' ')" "${out}"
-        grep -qx 'publish_buildtools=false' "${out}"
-    done
+            GITHUB_REF_NAME="${ref}" run ci_cmd_plan
+        [ "${status}" -eq 0 ] || { echo "${e%%:*} ${ref}: rc ${status}: ${output}"; return 1; }
+        [ "$(grep -E '^(phases|build|matrix|publish_buildtools)=' "${out}" | paste -sd ' ')" \
+            = "phases=build package verify build=true matrix={\"include\":[\"m\"]} publish_buildtools=${want}" ] \
+            || { echo "${e%%:*} ${ref}:"; cat "${out}"; return 1; }
+    done <<'EOF'
+workflow_dispatch:{"inputs":{}}|current_dev|true
+schedule:{"schedule":"0 4 * * *"}|current_dev|true
+workflow_dispatch:{"inputs":{}}|master|true
+workflow_dispatch:{"inputs":{}}|bot/x|false
+workflow_dispatch:{"inputs":{}}|544/merge|false
+EOF
     unset GITHUB_REF_NAME
     GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" \
         GITHUB_SHA=HEAD run ci_cmd_plan
     [ "${status}" -ne 0 ]
+    [[ "${output}" == *"GITHUB_REF_NAME required"* ]]
+    echo "case: plan without verify or build never publishes or builds a matrix"
+    _fixture_manifest 'impact_classes:' '  b:' '    paths: ["b/**"]' '    phases: ["package"]' "${rel[@]}"
+    _fail ci_cmd_matrix 1
+    : > "${out}"
+    GITHUB_OUTPUT="${out}" GITHUB_EVENT_NAME=workflow_dispatch GITHUB_EVENT_PATH="${ev}" GITHUB_SHA=HEAD \
+        GITHUB_REF_NAME=current_dev run ci_cmd_plan
+    [ "${status}" -eq 0 ] || { echo "rc ${status}: ${output}"; return 1; }
+    [ "$(grep -E '^(phases|build|matrix|publish_buildtools)=' "${out}" | paste -sd ' ')" \
+        = 'phases=package build=false matrix={"include":[]} publish_buildtools=false' ] || { cat "${out}"; return 1; }
     echo "case: plan classifies the push diff through ci.sh impact"
     local fx="${BATS_TEST_TMPDIR}/repo" ev="${BATS_TEST_TMPDIR}/ev.json" out="${BATS_TEST_TMPDIR}/out" b h
     _fixture_manifest 'impact_classes:' '  pk:' '    paths: ["packaging/**"]' '    phases: ["package"]' \
