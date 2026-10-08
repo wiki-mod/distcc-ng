@@ -3385,11 +3385,31 @@ _ci_guard_hits() {
     return "${rc}"
 }
 
+# What: Fail with id $1 unless every path $2.. is readable.
+# Why: A guard on a missing input must fail with an id.
+# From: Issue #479, PR #544
+_ci_guard_readable() {
+    local id="$1" p rc=0
+    shift
+    if [ "$#" -eq 0 ]; then
+        ci_log "${id}" "no input path given"
+        return 2
+    fi
+    for p in "$@"; do
+        if [ ! -r "${p}" ]; then
+            ci_log "${id}" "input ${p} does not exist or is not readable"
+            rc=2
+        fi
+    done
+    return "${rc}"
+}
+
 # What: Fail if any file under root contains a CR byte.
 # Why: CRLF breaks shell and heredoc parsing in CI files.
 # From: Issue #479
 ci_guard_line_endings() {
     local root="${1:-${CI_REPO_ROOT}/.github}" hits
+    _ci_guard_readable "[CI-ERROR-GUARD-EOL-0002]" "${root}" || return 2
     hits="$(find "${root}" -type f -exec awk '/\r/ { print FILENAME; nextfile }' {} +)" || return 2
     _ci_guard_hits "[CI-ERROR-GUARD-EOL-0001]" "CR/CRLF found: " <<< "${hits}"
 }
@@ -3465,6 +3485,7 @@ _ci_owned_paths_in() {
 ci_guard_comment_format() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out d
     local files=() found=() owned=()
+    _ci_guard_readable "[CI-ERROR-GUARD-COMMENT-0003]" "${root}" || return 2
     _ci_mapfile owned _ci_owned_paths_in "${root}" || return 2
     for d in "${owned[@]}"; do
         _ci_mapfile found find "${root}/${d}" -type f \( -name '*.sh' \
@@ -3514,6 +3535,7 @@ _ci_banned_shell_texts() {
 ci_guard_shellcheck_directives() {
     local root="${1:-${CI_REPO_ROOT}}" texts out
     local files=()
+    _ci_guard_readable "[CI-ERROR-GUARD-SHELLCHECK-0005]" "${root}" || return 2
     texts="$(_ci_banned_shell_texts)" || return 2
     _ci_mapfile files _ci_shell_sources "${root}" || return 2
     if [ "${#files[@]}" -eq 0 ]; then
@@ -3531,6 +3553,7 @@ ci_guard_shellcheck_directives() {
 # From: Issue #479
 ci_guard_full_sha() {
     local root="${1:-${CI_REPO_ROOT}/.github}" hits bad
+    _ci_guard_readable "[CI-ERROR-GUARD-SHA-0002]" "${root}" || return 2
     hits="$(find "${root}" -type f -exec awk '{
         while (match($0, /sha256:[0-9a-fA-F]+/)) {
             print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
@@ -3562,6 +3585,7 @@ _ci_dockerfile_pins() {
 # From: Issue #479, PR #544
 ci_guard_sot_mirrors() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f wf names n want got pkgs num
+    _ci_guard_readable "[CI-ERROR-GUARD-MIRROR-0011]" "${root}" || return 2
     want=""
     names="$(_ci_sot_children schedules)" || return 2
     for n in ${names}; do
@@ -3678,6 +3702,7 @@ _ci_dispatch_options() {
 ci_guard_path_mirrors() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out names refs ref
     local files=()
+    _ci_guard_readable "[CI-ERROR-GUARD-MIRROR-0012]" "${root}" || return 2
     _ci_mapfile files find "${root}" -name Dockerfile -type f -not -path '*/.git/*' || return 2
     for f in "${files[@]}"; do
         out="$(awk -v want="${CI_CONTAINER_ROOT}" '
@@ -3754,6 +3779,7 @@ _ci_action_pins() {
 ci_guard_pins_in_sot() {
     local root="${1:-${CI_REPO_ROOT}}" rc=0 f out pins pin unused=""
     local files=() wfs=()
+    _ci_guard_readable "[CI-ERROR-GUARD-PIN-0006]" "${root}" || return 2
     for f in "${root}"/.github/workflows/*.yml; do
         [ -f "${f}" ] || continue
         wfs+=("${f}")
@@ -3874,15 +3900,8 @@ _ci_scan_run_blocks() {
 ci_guard_orchestrator_only() {
     local rc=0 f pins out
     pins="$(_ci_action_pins)" || return 2
-    if [ "$#" -eq 0 ]; then
-        ci_log "[CI-ERROR-GUARD-ORCH-0002]" "no workflow file given"
-        return 2
-    fi
+    _ci_guard_readable "[CI-ERROR-GUARD-ORCH-0002]" "$@" || return 2
     for f in "$@"; do
-        if [ ! -f "${f}" ]; then
-            ci_log "[CI-ERROR-GUARD-ORCH-0003]" "workflow file ${f} does not exist"
-            return 2
-        fi
         out="$(_ci_scan_run_blocks "${f}" "${pins}")" || return 2
         _ci_guard_hits "[CI-ERROR-GUARD-ORCH-0001]" <<< "${out}" || rc=1
     done
@@ -3894,6 +3913,7 @@ ci_guard_orchestrator_only() {
 # From: Issue #479, PR #544
 ci_guard_job_timeouts() {
     local out
+    _ci_guard_readable "[CI-ERROR-GUARD-TIME-0002]" "$@" || return 2
     out="$(awk '
         FNR == 1 { if (cur != "" && !t) print F " " cur; F = FILENAME; j = 0; cur = ""; t = 0 }
         /^jobs:/ { j = 1; next }
@@ -3909,6 +3929,7 @@ ci_guard_job_timeouts() {
 # From: Issue #479, PR #544
 ci_guard_error_ids() {
     local ids rc=0
+    _ci_guard_readable "[CI-ERROR-GUARD-ERRID-0002]" "$@" || return 2
     ids="$(grep -oE 'CI-ERROR-[A-Z0-9-]+-[0-9]{4}' "$1")" || rc=$?
     [ "${rc}" -le 1 ] || return 2
     sort <<< "${ids}" | uniq -d \

@@ -2553,11 +2553,11 @@ _fixture_harden_state() {
     [ "${status}" -eq 2 ]
 }
 
-# What: Runs three guards on an empty tree and a missing file.
+# What: Each guard on an empty tree, no input, a missing path.
 # Why: A guard that checked nothing must not report a pass.
 # From: Issue #479, PR #544
 @test "guards fail closed when they find nothing to check" {
-    local fx="${BATS_TEST_TMPDIR}/fx"
+    local fx="${BATS_TEST_TMPDIR}/fx" guard id arg
     mkdir -p "${fx}"
     run ci_guard_comment_format "${fx}"
     [ "${status}" -eq 2 ]
@@ -2567,10 +2567,28 @@ _fixture_harden_state() {
     [[ "${output}" == *"CI-ERROR-GUARD-SHELLCHECK-0004"* ]]
     run ci_guard_orchestrator_only
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0002"* ]]
-    run ci_guard_orchestrator_only "${fx}/none.yml"
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0003"* ]]
+    [[ "${output}" == *"CI-ERROR-GUARD-ORCH-0002"*"no input path given"* ]]
+    while IFS='|' read -r guard id; do
+        run "${guard}" "${fx}/none"
+        [ "${status}" -eq 2 ] || { echo "${guard}: rc ${status}: ${output}"; return 1; }
+        [[ "${output}" == *"[CI-ERROR-GUARD-${id}]"*"input ${fx}/none does not exist"* ]] \
+            || { echo "${guard}: want ${id}: ${output}"; return 1; }
+    done <<'EOF'
+ci_guard_line_endings|EOL-0002
+ci_guard_comment_format|COMMENT-0003
+ci_guard_shellcheck_directives|SHELLCHECK-0005
+ci_guard_full_sha|SHA-0002
+ci_guard_sot_mirrors|MIRROR-0011
+ci_guard_path_mirrors|MIRROR-0012
+ci_guard_pins_in_sot|PIN-0006
+ci_guard_orchestrator_only|ORCH-0002
+ci_guard_job_timeouts|TIME-0002
+ci_guard_error_ids|ERRID-0002
+EOF
+    for arg in "" "${fx}/none"; do
+        run ci_guard_job_timeouts ${arg:+"${arg}"}
+        [ "${status}" -eq 2 ]
+    done
 }
 
 # What: Zero-SHA base, then a failing diff; a missing log.
