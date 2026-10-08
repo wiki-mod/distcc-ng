@@ -1363,29 +1363,10 @@ EOF
     [[ "${output}" == *"denied"* ]]
 }
 
-# What: Logs the apt line of an image and a runner install.
-# Why: An image ships the packages current on its build day.
-# From: Issue #479, PR #544
-@test "image installs full-upgrade first; runner installs do not" {
-    local log="${BATS_TEST_TMPDIR}/calls"
-    # What: Stub timeout to log the command it would run.
-    # Why: The test reads the apt line without a real apt.
-    timeout() { shift 3; echo "$*" >> "${log}"; }
-    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q" image
-    [ "${status}" -eq 0 ]
-    grep -qF 'apt-get update && apt-get full-upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends p q' "${log}"
-    : > "${log}"
-    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q"
-    [ "${status}" -eq 0 ]
-    grep -qF 'apt-get install -y' "${log}"
-    run grep -c 'upgrade' "${log}"
-    [ "${output}" = "0" ]
-}
-
-# What: apt cut off, dpkg failing, apt failing, image limit.
-# Why: A killed install leaves dpkg interrupted for the retry.
+# What: Image full-upgrade, runner install, timed-out dpkg.
+# Why: Images are current; a cut dpkg run is finished first.
 # From: Issue #493, Issue #479, PR #544
-@test "apt retry first finishes a dpkg run the timeout cut off" {
+@test "apt install: image upgrade, runner install, dpkg retry" {
     local log="${BATS_TEST_TMPDIR}/calls"
     # What: Stub sudo to run its command directly.
     # Why: The test runs as a plain user without sudo.
@@ -1420,6 +1401,19 @@ EOF
     APT_RC=124 run _ci_apt_install "p q" image
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"attempt 1/2: apt exited 124 (timed out after 6m)"* ]]
+    local log="${BATS_TEST_TMPDIR}/calls"
+    # What: Stub timeout to log the command it would run.
+    # Why: The test reads the apt line without a real apt.
+    timeout() { shift 3; echo "$*" >> "${log}"; }
+    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q" image
+    [ "${status}" -eq 0 ]
+    grep -qF 'apt-get update && apt-get full-upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends p q' "${log}"
+    : > "${log}"
+    run _stubbed '_print id 0; _pass rm' _ci_apt_install "p q"
+    [ "${status}" -eq 0 ]
+    grep -qF 'apt-get install -y' "${log}"
+    run grep -c 'upgrade' "${log}"
+    [ "${output}" = "0" ]
 }
 
 # What: Clean, warning, no log; make, configure, autogen fail.
@@ -1752,7 +1746,7 @@ EOF
 " ]
 }
 
-# What: API, local and verdict checks on bad and real data.
+# What: API, local and verdict checks; BR-01 checkout scope.
 # Why: A tool or API failure is never a compliance finding.
 # From: Issue #312, Issue #479, PR #544
 @test "OpenSSF checks give no verdict on a tool or API error" {
@@ -1811,12 +1805,6 @@ EOF
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-OSSF-0004"* ]]
     [[ "${output}" != *"NotMet"* ]]
-}
-
-# What: Checks a base-SHA bootstrap, then a ref-taking one.
-# Why: Base-SHA checkouts run no PR code; a head ref does.
-# From: Issue #312, PR #544
-@test "BR-01 flags only a ref-taking checkout in a target workflow" {
     local fx="${BATS_TEST_TMPDIR}/fx" boot
     boot='curl -fsSL "x/ci.sh" | bash -s -- checkout'
     mkdir -p "${fx}/.github/workflows"
@@ -2119,27 +2107,15 @@ EOF
     [[ "${output}" != *"edit "* ]]
 }
 
-# What: Maps a feat, fix, docs and security title.
-# Why: Each of these four types gets its own notes section.
+# What: AG-GH-014 types, an untyped title, a malformed title.
+# Why: Release notes have four categories; others get none.
 # From: Issue #479
-@test "pr category: maps AG-GH-014 types to release-drafter labels" {
+@test "pr category: label per type, none for other titles" {
     [ "$(_ci_pr_category_label 'feat(pump): add IPv6')" = "enhancement" ]
     [ "$(_ci_pr_category_label 'fix(protocol): correct frame bug')" = "bug" ]
     [ "$(_ci_pr_category_label 'docs(governance): add rule')" = "documentation" ]
     [ "$(_ci_pr_category_label 'security(config): patch leak')" = "security" ]
-}
-
-# What: Maps a chore(ci) title.
-# Why: The release notes have exactly these 4 categories.
-# From: Issue #479
-@test "pr category: an uncategorized type prints nothing" {
     [ -z "$(_ci_pr_category_label 'chore(ci): bump a dependency')" ]
-}
-
-# What: Maps a typeless title; parses a breaking-change type.
-# Why: Labels and the title check share one title parser.
-# From: Issue #479, PR #544
-@test "pr category: a title not in AG-GH-014 shape gets no label" {
     run _ci_pr_category_label 'fix stuff'
     [ "${status}" -eq 0 ]
     [ -z "${output}" ]
@@ -2727,7 +2703,7 @@ _fake_curl() {
     [[ "${output}" == *"attempt 1/3 failed"* ]]
 }
 
-# What: Tarball and bare binary; sha256 mismatch, no pin.
+# What: Tarball, bare binary, sha256 gate, stuck partial dir.
 # Why: Only a pinned, matching download may be installed.
 # From: Issue #479, PR #544
 @test "tool fetch: url, tarball, bare binary, sha256 gate" {
@@ -2766,6 +2742,15 @@ _fake_curl() {
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
     [[ "${output}" != *"must not run"* ]]
+    _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
+        "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"'
+    mkdir -p "${BATS_TEST_TMPDIR}/tool-v1"
+    : > "${BATS_TEST_TMPDIR}/tool-v1/stale"
+    _forbid curl
+    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail rm 1 "rm broke"' _ci_fetch_tool x.tool
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"rm broke"* ]]
+    [[ "${output}" != *"must not run"* ]]
 }
 
 # What: Installs a pinned binary, a bad sha, a bad target.
@@ -2790,21 +2775,6 @@ _fake_curl() {
     [ ! -e "${BATS_TEST_TMPDIR}/bin/bad" ]
     run _ci_install_tool x.osv "${BATS_TEST_TMPDIR}/nope/osv"
     [ "${status}" -eq 1 ]
-}
-
-# What: Fetches over a stale partial dir rm cannot remove.
-# Why: Extracting over leftovers would mix old and new files.
-# From: Issue #479, PR #544
-@test "tool fetch stops when a partial tool dir cannot be removed" {
-    _fixture_manifest 'x:' '  tool:' '    version: "v1"' '    url: "https://h/t.tgz"' \
-        "    sha256: \"$(printf '0%.0s' {1..64})\"" '    bin: "tool"'
-    mkdir -p "${BATS_TEST_TMPDIR}/tool-v1"
-    : > "${BATS_TEST_TMPDIR}/tool-v1/stale"
-    _forbid curl
-    RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail rm 1 "rm broke"' _ci_fetch_tool x.tool
-    [ "${status}" -eq 2 ]
-    [[ "${output}" == *"rm broke"* ]]
-    [[ "${output}" != *"must not run"* ]]
 }
 
 # What: Install offline gh and docker stubs for SOT refresh.
@@ -2872,21 +2842,6 @@ _fake_osv() {
     # What: Stub ids: OSV_HEAD_IDS for the head SOT, else base.
     # Why: The gate must fail only on head-added ids.
     _ci_osv_vulns() { if [ "$2" = "${CI_MANIFEST}" ]; then printf '%s\n' ${OSV_HEAD_IDS}; else printf '%s\n' ${OSV_BASE_IDS}; fi; }
-}
-
-# What: Scans a head adding GO-3, then one removing GO-2.
-# Why: Only a vulnerability the PR adds may block it.
-# From: Issue #267, Issue #479, PR #544
-@test "OSV PR gate fails only on ids the head's tools add" {
-    _fake_osv '    bin: "x"'
-    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"CI-ERROR-SCAN-0003"* ]]
-    [[ "${output}" == *"GO-3"* ]]
-    [[ "${output}" != *"GO-2"* ]]
-    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
-    [ "${status}" -eq 0 ]
-    [[ "${output}" == *"no new vulnerability"* ]]
 }
 
 # What: Trivy and syft via a fake tool: pass, fail, no tool.
@@ -3125,10 +3080,10 @@ _fake_osv() {
     [[ "${output}" == *"CI-ERROR-SCAN-0004"*"HTTP none: dial tcp: connection refused"* ]]
 }
 
-# What: Scans against a base without bin pins, then git fails.
-# Why: Its tools cannot be fetched; reading 0 would fail all.
+# What: Base SOT without tool pins; ids the head's tools add.
+# Why: The PR gate judges only what the head changed.
 # From: Issue #267, Issue #479, PR #544
-@test "OSV PR gate is NotRun against a base SOT without tool pins" {
+@test "OSV PR gate: NotRun without base pins, fails on new ids" {
     _fake_osv '    version: "v1"'
     OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 0 ]
@@ -3136,6 +3091,15 @@ _fake_osv() {
     OSV_GIT_FAIL=1 OSV_BASE_IDS="" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
     [ "${status}" -eq 1 ]
     [[ "${output}" != *"NotRun"* ]]
+    _fake_osv '    bin: "x"'
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1 GO-3" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"CI-ERROR-SCAN-0003"* ]]
+    [[ "${output}" == *"GO-3"* ]]
+    [[ "${output}" != *"GO-2"* ]]
+    OSV_BASE_IDS="GO-1 GO-2" OSV_HEAD_IDS="GO-1" GITHUB_EVENT_NAME=pull_request run ci_cmd_osv_scan out.sarif
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"no new vulnerability"* ]]
 }
 
 # What: Runs a fake scanner exiting 1, 127 and 128.
@@ -3371,10 +3335,10 @@ _fake_osv() {
     grep -qx 'add_summary=false' "${RUNNER_TEMP}/ci-harden.state"
 }
 
-# What: No state, no confirmation, then a written done.json.
+# What: No state, unreadable state, unconfirmed, confirmed.
 # Why: Stop runs under always(); only a confirmed flush ok.
 # From: Issue #479, PR #544
-@test "harden stop: NotRun, unconfirmed, confirmed" {
+@test "harden stop: NotRun, unreadable state, unconfirmed, confirmed" {
     _CI_HARDEN_DIR="${BATS_TEST_TMPDIR}/agent"
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
@@ -3390,12 +3354,7 @@ _fake_osv() {
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _ci_harden_stop
     [ "${status}" -eq 0 ]
     [ "$(cat "${_CI_HARDEN_DIR}/post_event.json")" = '{"event":"post"}' ]
-}
-
-# What: Breaks sed while the start-written state is read.
-# Why: The correlation id selects which summary is fetched.
-# From: Issue #479, PR #544
-@test "harden stop fails closed when its state file cannot be read" {
+    rm -rf "${_CI_HARDEN_DIR}"
     _fixture_harden_state
     RUNNER_TEMP="${BATS_TEST_TMPDIR}" run _stubbed '_fail sed 1 "sed broke"' _ci_harden_stop
     [ "${status}" -eq 1 ]
