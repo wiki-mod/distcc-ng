@@ -101,50 +101,144 @@ _ci_mutate() {
 # Why: Every real operation derives state from the manifest.
 # From: Issue #479
 ci_require_manifest() {
-    [ -f "${CI_MANIFEST}" ] && return 0
-    ci_log "[CI-ERROR-CORE-0003]" "manifest=\"${CI_MANIFEST}\" reason=\"manifest not found\""
-    return 2
+    if [ ! -f "${CI_MANIFEST}" ]; then
+        ci_log "[CI-ERROR-CORE-0003]" "manifest=\"${CI_MANIFEST}\" reason=\"manifest not found\""
+        return 2
+    fi
+    _ci_sot_index
 }
 
-# What: Walk the SOT to a dotted path; exit 3 if absent.
-# Why: One path walker for value, children and set modes.
+# What: Index the SOT once per manifest: sorted path arrays.
+# Why: One parse and a binary search replace awk per lookup.
+# From: Issue #479, PR #544
+_ci_sot_index() {
+    local idx rc=0
+    [ "${_CI_SOT_KEY:-}" != "${CI_MANIFEST}" ] || return 0
+    # What: Emit each first-seen path: kind, value, direct kids.
+    # Why: Same path, value and first-hit rules as the writer.
+    # From: Issue #479, PR #544
+    idx="$(awk -v US=$'\x1f' -v GS=$'\x1d' '
+        BEGIN { cur = -1 }
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            match($0, /^ */); n = RLENGTH
+            if (n % 2) { bad = NR; exit }
+            d = n / 2
+            for (i = cur + 1; i < d; i++) { stack[i] = "\001"; inst[i] = 0 }
+            key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
+            stack[d] = key; cur = d
+            path = stack[0]
+            for (i = 1; i <= d; i++) path = path "." stack[i]
+            if (d > 0 && inst[d - 1]) {
+                p = ppath[d - 1]
+                kids[p] = kids[p] (kn[p]++ ? GS : "") key
+            }
+            inst[d] = !(path in kind); ppath[d] = path
+            if (inst[d]) {
+                rest = $0; sub(/^[^:]*:[[:space:]]*/, "", rest)
+                if (match(rest, /^"[^"]*"/)) val = substr(rest, 2, RLENGTH - 2)
+                else { val = rest; sub(/[[:space:]]+#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
+                kind[path] = (rest == "" || rest ~ /^#/) ? "s" : "v"
+                value[path] = val; order[++no] = path
+            }
+        }
+        END {
+            if (bad) { print bad; exit 5 }
+            for (i = 1; i <= no; i++) {
+                p = order[i]
+                printf "%s%s%s%s%s%s%s\n", p, US, kind[p], US, value[p], US, kids[p]
+            }
+        }
+    ' "${CI_MANIFEST}")" || rc=$?
+    case "${rc}" in
+        0) ;;
+        5) ci_log "[CI-ERROR-SOT-0011]" "manifest=\"${CI_MANIFEST}\" line ${idx}: odd indentation"; return 2 ;;
+        *) ci_log "[CI-ERROR-SOT-0012]" "manifest=\"${CI_MANIFEST}\" cannot be read (rc ${rc})"; return 2 ;;
+    esac
+    # What: Sort by path in byte order; emit both arrays quoted.
+    # Why: The lookup bisects with the same C-locale comparison.
+    # From: Issue #479, PR #544
+    idx="$(LC_ALL=C sort -t $'\x1f' -k1,1 <<< "${idx}" | awk -F $'\x1f' '
+        {
+            k = $1; r = substr($0, length($1) + 2)
+            gsub(/\047/, "\047\\\047\047", k); gsub(/\047/, "\047\\\047\047", r)
+            keys = keys " \047" k "\047"; recs = recs " \047" r "\047"
+        }
+        END { printf "_CI_SOT_K=(%s)\n_CI_SOT_V=(%s)\n", keys, recs }
+    ')" || return 2
+    # What: Apply the generated arrays in one eval.
+    # Why: awk single-quotes every key and value it emits.
+    # From: Issue #479, PR #544
+    eval "${idx}"
+    _CI_SOT_KEY="${CI_MANIFEST}"
+}
+
+# What: Forget the SOT index; the next read rebuilds it.
+# Why: A write or a new fixture makes the old index stale.
+# From: Issue #479, PR #544
+_ci_sot_index_drop() {
+    _CI_SOT_K=()
+    _CI_SOT_V=()
+    _CI_SOT_KEY=""
+}
+
+# What: Read a dotted SOT path from the index; 3 if absent.
+# Why: One path rule for value and children reads.
 # From: Issue #479, PR #544
 _ci_sot_lookup() {
-    local mode="$1" path="$2" value="${3:-}" rc=0
+    local mode="$1" path="$2" rec="" kind val lo=0 hi mid LC_ALL=C
     case "${mode}" in
-        value|children|set) ;;
+        value|children) ;;
         *) ci_log "[CI-ERROR-SOT-0009]" "unknown SOT walk mode=\"${mode}\""; return 2 ;;
     esac
-    # What: Exit 4 on a scalar read of a section, or vice versa.
+    _ci_sot_index || return 2
+    hi=$(( ${#_CI_SOT_K[@]} - 1 ))
+    while [ "${lo}" -le "${hi}" ]; do
+        mid=$(( (lo + hi) / 2 ))
+        if [[ "${_CI_SOT_K[mid]}" == "${path}" ]]; then
+            rec="${_CI_SOT_V[mid]}"
+            break
+        elif [[ "${_CI_SOT_K[mid]}" < "${path}" ]]; then
+            lo=$(( mid + 1 ))
+        else
+            hi=$(( mid - 1 ))
+        fi
+    done
+    [ "${lo}" -le "${hi}" ] || return 3
+    kind="${rec%%$'\x1f'*}"
+    rec="${rec#*$'\x1f'}"
+    val="${rec%%$'\x1f'*}"
+    # What: Fail on a scalar read of a section, or vice versa.
     # Why: A wrong node kind must fail, never read as empty.
     # From: Issue #479, PR #544
-    awk -v mode="${mode}" -v path="${path}" -v value="${value}" '
-        BEGIN { n = split(path, want, "."); need = 1; hit = 0; childind = -1 }
+    case "${mode}/${kind}" in
+        value/v) printf '%s\n' "${val}" ;;
+        children/s)
+            rec="${rec#*$'\x1f'}"
+            [ -z "${rec}" ] || printf '%s\n' "${rec//$'\x1d'/$'\n'}" ;;
+        *) ci_log "[CI-ERROR-SOT-0010]" "path=\"${path}\" reason=\"${mode} does not fit this node\""; return 2 ;;
+    esac
+}
+
+# What: Print the SOT with one scalar replaced; 3 if absent.
+# Why: The same path rule as the index, applied while copying.
+# From: Issue #479, PR #544
+_ci_sot_write() {
+    local path="$1" value="$2" rc=0
+    awk -v path="${path}" -v value="${value}" '
+        BEGIN { n = split(path, want, "."); need = 1; hit = 0 }
         END { if (bad) exit 4; if (!hit) exit 3 }
-        /^[[:space:]]*#/ || /^[[:space:]]*$/ { if (mode == "set") print; next }
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
         {
             match($0, /^ */); ind = RLENGTH / 2
             key = $0; sub(/^ +/, "", key); sub(/:.*$/, "", key)
-            if (childind >= 0) {
-                if (ind < childind) { exit }
-                if (ind == childind) { print key }
-                next
-            }
             if (!hit) {
                 if (ind + 1 < need) { need = ind + 1 }
                 if (ind + 1 == need && key == want[need]) {
                     if (need == n) {
                         hit = 1
                         rest = $0; sub(/^[^:]*:[[:space:]]*/, "", rest)
-                        if (match(rest, /^"[^"]*"/)) val = substr(rest, 2, RLENGTH - 2)
-                        else { val = rest; sub(/[[:space:]]+#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
-                        section = (rest == "" || rest ~ /^#/)
-                        if (mode == "children") {
-                            if (!section) { bad = 1; exit }
-                            childind = ind + 1; next
-                        }
-                        if (section) { bad = 1; exit }
-                        if (mode == "value") { print val; exit }
+                        if (rest == "" || rest ~ /^#/) { bad = 1; exit }
                         match($0, /^ *[^:]*:/)
                         print substr($0, 1, RLENGTH) " \"" value "\""
                         next
@@ -152,11 +246,11 @@ _ci_sot_lookup() {
                     need++
                 }
             }
-            if (mode == "set") print
+            print
         }
     ' "${CI_MANIFEST}" || rc=$?
     if [ "${rc}" -eq 4 ]; then
-        ci_log "[CI-ERROR-SOT-0010]" "path=\"${path}\" reason=\"${mode} does not fit this node\""
+        ci_log "[CI-ERROR-SOT-0013]" "path=\"${path}\" reason=\"set does not fit this node\""
         return 2
     fi
     return "${rc}"
@@ -220,7 +314,7 @@ _ci_sot_list() {
 }
 
 # What: Set one SOT scalar; swap in the new file by rename.
-# Why: A failed write must leave the previous SOT intact.
+# Why: A failed write keeps the old SOT; subshells drop after.
 # From: Issue #479, PR #544
 _ci_sot_set() {
     local path="$1" value="$2" tmp rc=0
@@ -229,7 +323,7 @@ _ci_sot_set() {
         rm -f "${tmp}"
         return 2
     fi
-    _ci_sot_lookup set "${path}" "${value}" > "${tmp}" || rc=$?
+    _ci_sot_write "${path}" "${value}" > "${tmp}" || rc=$?
     if [ "${rc}" -ne 0 ]; then
         rm -f "${tmp}" || return 2
         if [ "${rc}" -eq 3 ]; then
@@ -243,6 +337,7 @@ _ci_sot_set() {
         rm -f "${tmp}"
         return 2
     fi
+    _ci_sot_index_drop
 }
 
 # What: Match one SOT path glob to a path; 2 if sed fails.
@@ -2222,6 +2317,7 @@ ci_cmd_sot_update() {
     local branch="sot-update" title="chore(deps): refresh SOT pins" rows body open wf milestone url
     cd "${CI_REPO_ROOT}" || return 1
     rows="$(_ci_sot_refresh)" || return 1
+    _ci_sot_index_drop
     if [ -z "${rows}" ]; then
         ci_log "[CI-SOT-UPDATE]" "every SOT pin is current"
         return 0

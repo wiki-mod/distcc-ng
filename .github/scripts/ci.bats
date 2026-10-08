@@ -5,13 +5,28 @@
 # Why: Issue #479 allows ci.bats as the only CI test file.
 # From: Issue #479
 
-# What: Source ci.sh functions without running dispatch.
+# What: Index the real SOT once per file into a sourced file.
+# Why: The SOT is read-only here; one parse serves every test.
+# From: Issue #479, PR #544
+setup_file() {
+    # shellcheck source=.github/scripts/ci.sh
+    source "${BATS_TEST_DIRNAME}/ci.sh"
+    _ci_sot_index
+    {
+        printf '_CI_SOT_K=(%s)\n' "$(printf '%q ' "${_CI_SOT_K[@]}")"
+        printf '_CI_SOT_V=(%s)\n' "$(printf '%q ' "${_CI_SOT_V[@]}")"
+        printf '_CI_SOT_KEY=%q\n' "${_CI_SOT_KEY}"
+    } > "${BATS_FILE_TMPDIR}/sot-index.sh"
+}
+
+# What: Source ci.sh functions and the file's SOT index.
 # Why: ci.sh runs ci_main only when executed, not sourced.
-# From: Issue #479
+# From: Issue #479, PR #544
 setup() {
     CI_SH="${BATS_TEST_DIRNAME}/ci.sh"
     # shellcheck source=.github/scripts/ci.sh
     source "${CI_SH}"
+    eval "$(< "${BATS_FILE_TMPDIR}/sot-index.sh")"
 }
 
 # What: Point CI_MANIFEST at a fixture of the given lines.
@@ -20,6 +35,8 @@ setup() {
 _fixture_manifest() {
     CI_MANIFEST="${BATS_TEST_TMPDIR}/build-manifest.yml"
     printf '%s\n' "$@" > "${CI_MANIFEST}"
+    _ci_sot_index_drop
+    _ci_sot_index
 }
 
 # What: Fixture SOT with one action; FX_PIN is its pin.
@@ -188,7 +205,8 @@ EOF
 @test "SOT readers: values, absent paths and node kinds" {
     local r path rc want got
     _fixture_manifest 'a:' '  b: "x"' '  c:' '    d: "y:z@sha256:0"' '  q: "v1"  # note' '  u: v2 # note' \
-        '  e: ""' '  l: ["p", "q"]' 'v:' '  one:' '    k: 1' '  two:' '    k: 2' 'other: 1'
+        '  e: ""' '  l: ["p", "q"]' '  w: "it'"'"'s $HOME `id`"' 'v:' '  one:' '    k: 1' '  two:' '    k: 2' \
+        'other: 1'
     while IFS='|' read -r r path rc want; do
         case "${r}" in
             scalar) run _ci_sot_scalar "${path}" ;;
@@ -218,10 +236,20 @@ children|v|0|=one two
 children|a.b|2|CI-ERROR-SOT-0010
 children|v.nope|2|CI-ERROR-SOT-0002
 list|a.l|0|=p q
+scalar|a.w|0|=it's $HOME `id`
 list|a.c|2|CI-ERROR-SOT-0010
 mode-bogus|a.b|2|CI-ERROR-SOT-0009
 mode-value|a.c.zz|3|=
 EOF
+    printf '%s
+' 'a:' '   b: 1' > "${CI_MANIFEST}"
+    _ci_sot_index_drop
+    run _ci_sot_scalar a.b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0011"*"line 2: odd indentation"* ]]
+    CI_MANIFEST="${BATS_TEST_TMPDIR}/none.yml" run _ci_sot_scalar a.b
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"CI-ERROR-SOT-0012"* ]]
 }
 
 # What: Clean fixture SOT pins, then each malformed pin form.
@@ -251,6 +279,7 @@ EOF
     _fixture_manifest 'a:' '  # note' '  b: "x"' '  c:' '    b: "y"' 'b: "z"'
     run _ci_sot_set a.c.b "new"
     [ "${status}" -eq 0 ]
+    _ci_sot_index_drop
     [ "$(_ci_sot_scalar a.c.b)" = "new" ]
     [ "$(_ci_sot_scalar a.b)" = "x" ]
     [ "$(_ci_sot_scalar b)" = "z" ]
@@ -261,13 +290,14 @@ EOF
     [[ "${output}" == *"CI-ERROR-SOT-0002"* ]]
     run _ci_sot_set a.c "v"
     [ "${status}" -eq 2 ]
-    [[ "${output}" == *"CI-ERROR-SOT-0010"* ]]
+    [[ "${output}" == *"CI-ERROR-SOT-0013"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
     chmod 640 "${CI_MANIFEST}"
     run _stubbed '_fail mv 1 "mv broke"' _ci_sot_set a.b "new"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"mv broke"* ]]
     cmp "${CI_MANIFEST}" "${BATS_TEST_TMPDIR}/before"
+    _ci_sot_index
     _ci_sot_set a.b "new"
     [ "$(_ci_sot_scalar a.b)" = "new" ]
     [ "$(stat -c %a "${CI_MANIFEST}")" = "640" ]
@@ -2809,6 +2839,7 @@ _fake_registry() {
     run _ci_sot_refresh
     [ "${status}" -eq 0 ]
     [ "${#lines[@]}" -eq 2 ]
+    _ci_sot_index_drop
     [ "$(_ci_sot_scalar base_images.deb)" = "debian:trixie@sha256:${b}" ]
     [ "$(_ci_sot_scalar external_services.red)" = "redis:8@sha256:${b}" ]
     [ "$(_ci_sot_scalar external_versions.t.version)" = "v1.10.0" ]
