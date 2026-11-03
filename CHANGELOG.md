@@ -167,6 +167,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Documentation
 
+- **`doc/tls-transport-design.md`** (issue #248): Phase 0 transport and
+  protocol audit added as Appendix A (client/server connection lifecycle,
+  network I/O inventory with classified call sites, access-control order,
+  protocol and compatibility matrices, answers to the twelve Phase 0
+  questions, Phase 1 interface options), plus a decision register. Drift
+  corrected: mbedTLS `>= 3.6.3` is the standing default, the
+  "Model A/B" labels are replaced by descriptive names,
+  `DCC_VER_6000`/`DCC_VER_6001` are listed, and TLS as transport is
+  recorded as needing no new protocol version.
 - **`.github/PULL_REQUEST_TEMPLATE/create_and_publish_release.md`,
   `doc/release-checklist.md`**: redesigned per issue #460 Finding 5 --
   every checklist item now carries a stable `REL-*` ID (40 total),

@@ -2,7 +2,7 @@
 
 Tracking issue: [wiki-mod/distcc-ng#248](https://github.com/wiki-mod/distcc-ng/issues/248).
 
-Status: architecture re-evaluation, not yet implemented.
+Status: Phase 0 transport and protocol audit recorded in [Appendix A](#appendix-a-phase-0-transport-and-protocol-audit) (static source audit at `current_dev` `b5fb3d2`); not yet implemented.
 
 This is version 2 of the design document. It deliberately revisits the earlier design from first principles rather than treating previous implementation sketches as requirements. The previous document selected mbedTLS, proposed a dedicated TLS module, and stated that TLS would require a new distcc protocol version. Those were useful investigation results, but they were not sufficiently grounded in a complete audit of the existing transport and I/O boundaries.
 
@@ -63,13 +63,49 @@ compile job semantics
 
 This document intentionally does not assume that the current `int fd` based I/O layer is already a sufficient transport abstraction. TLS has different state and readiness semantics from a POSIX socket, so the correct abstraction boundary must be derived from the existing implementation.
 
+The audit required by this section is recorded in [Appendix A](#appendix-a-phase-0-transport-and-protocol-audit).
+
+### 2.1 Decision register
+
+This register separates what is fixed from what is proposed and what is still open. Section references point into this document unless stated otherwise.
+
+**Established requirements** (not reopened by this document):
+
+- Mutual identity is the target, not encryption alone (§1, §17).
+- No reduced-strength LAN-only crypto mode (§17 item 10).
+- One TLS connection per compile job; no application-level multiplexing (§8).
+- No implicit TLS-to-plaintext retry and no plaintext capability probe before TLS (§5, §17).
+- A valid certificate is not application authorization; `--allow` remains a separate control (§11).
+- No project-specific CPU or cipher capability detection (§9).
+- mbedTLS `>= 3.6.3` is the project's standing TLS library default ([#248 comment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252809516), [#237 Phase-0 supplement §8](https://github.com/wiki-mod/distcc-ng/issues/237#issuecomment-5238840686)); its technical fit is validated in Phase 2 (§9).
+- TLS support is an optional build feature; explicitly required but unavailable TLS fails visibly (§10).
+- The classic listener on port 3632 stays classic and never receives TLS or managed-protocol detection traffic ([#237](https://github.com/wiki-mod/distcc-ng/issues/237) §2.3).
+- A new feature does not by itself imply a new protocol version (`[AG-PROTO-001]`).
+
+**Evidence-backed decisions** from the Phase 0 audit (proposed; final once this document is reviewed):
+
+- TLS is a transport below the existing distcc application protocol. No `DCC_VER_*` is allocated for TLS (§3, §4, Appendix A.8 questions 9 and 10).
+- The TLS handshake runs after the TCP connection and before any GSSAPI exchange and before the `DIST` header, on both client and server (Appendix A.4).
+- TLS applies only to connections that are one bidirectional TCP socket. SSH-mode hosts and pipe-based inetd invocations are not TLS candidates (Appendix A.2, A.5).
+- `sendfile()` must not be used on a TLS connection, and every raw `read()` on a network fd must go through the transport layer (Appendix A.3).
+- `TCP_CORK` and `TCP_DEFER_ACCEPT` remain valid under TLS because they act on the underlying TCP socket (Appendix A.3).
+
+**Open questions** (decided in the named phase):
+
+- Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
+- Phase 2: mbedTLS fit against the Phase 1 interface, including the API calls named in Appendix A.8 question 12.
+- Phase 4: exact transport-selection syntax and TLS listener port.
+- Phase 5: certificate identity model; Appendix A.8 question 8 recommends reusing the #237 role model.
+- Phase 6: whether session resumption is needed.
+- Phase 7: credential reload and ticket-key lifecycle.
+
 ## 3. Transport versus compile protocol
 
 The most important unresolved architecture decision is whether TLS belongs to the transport layer only or requires a change to the distcc application protocol.
 
-Two models must be considered.
+Two models must be considered. Earlier issue comments used the labels "Model A" and "Model B" for these models in a different order than earlier versions of this document; this document therefore names them only by meaning.
 
-### Model A: TLS as transport
+### TLS as transport
 
 ```text
 TCP socket
@@ -89,7 +125,7 @@ existing RPC protocol
 
 Under this model, TLS changes how the byte stream is protected but does not change the compile protocol carried inside it. A new `DCC_VER_*` is not required merely because TLS is enabled.
 
-### Model B: TLS as an application-level protocol feature
+### TLS in the application protocol
 
 ```text
 TCP socket
@@ -109,9 +145,11 @@ compile protocol
 
 Under this model, a new protocol version may be justified.
 
-Version 2 deliberately does not choose between these models by assumption. The decision is an output of the transport/protocol audit.
+The decision between these models is an output of the transport/protocol audit, not an assumption.
 
-The previous statement that TLS "will need a new protocol version" is therefore explicitly superseded by this document. A new protocol version must only be introduced if the final wire contract actually requires one.
+The previous statement that TLS "will need a new protocol version" is explicitly superseded by this document. A new protocol version must only be introduced if the final wire contract actually requires one.
+
+**Phase 0 result:** TLS as transport. The `DIST` header is written only after the connection exists and after any GSSAPI exchange, the protocol version is derived only from compression, preprocessing location and split-DWARF selection, and the existing GSSAPI exchange already runs before `DIST` without any protocol version of its own. See Appendix A.8 questions 1, 3 and 9.
 
 ## 4. Protocol-version policy
 
@@ -136,6 +174,8 @@ That should be avoided.
 If the audit proves that TLS capability negotiation or other TLS-specific semantics must be represented inside the application protocol, then a new fork protocol version must follow #304's numbering policy and receive its own factual wire-format document.
 
 No protocol number should be reserved speculatively.
+
+**Phase 0 result:** the audit found no application-level state, token, or framing that TLS would add or change (Appendix A.6, A.8 question 10). No fork protocol version is allocated for TLS. This decision is reopened only if Phase 1 or Phase 3 produces concrete contrary evidence.
 
 ## 5. Transport selection
 
@@ -287,7 +327,7 @@ The evaluation criteria include:
 - memory footprint
 - vulnerability and maintenance history
 
-mbedTLS remains a strong candidate based on the previous evaluation, but v2 does not make it a requirement before the transport abstraction is proven.
+mbedTLS `>= 3.6.3` is the project's standing TLS library default ([#248 comment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252809516), [amendment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252950732)). The general library comparison is closed. What remains open is the technical fit check in Phase 2 against the transport interface proven in Phase 1; only a concrete technical blocker found there reopens the choice. Appendix A.8 question 12 lists the interface requirements that check must cover.
 
 ## 10. Optional dependency policy
 
@@ -497,6 +537,8 @@ plaintext client -> TLS-only endpoint
 
 A stock plaintext distccd must not receive an opaque TLS stream merely because a client guessed incorrectly, and a TLS client must receive a clear failure when the selected transport is unavailable.
 
+Constraint from [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §2.3: the classic endpoint on port 3632 stays classic, and native TLS discovery traffic must not be sent to it. Same-port protocol sniffing on 3632 is therefore excluded; the remaining candidates are a separate TLS listener or a TLS-only listener on a separately configured port.
+
 ## 17. Security invariants
 
 The following are non-negotiable:
@@ -542,7 +584,7 @@ Once the transport architecture is implemented, test the logical application str
 
 The matrix must include, where applicable:
 
-- DCC protocol versions supported by the fork
+- DCC protocol versions supported by the fork: `DCC_VER_1`, `DCC_VER_2`, `DCC_VER_3`, `DCC_VER_4000`, `DCC_VER_5000`, and `DCC_VER_6000`/`DCC_VER_6001` in builds with `HAVE_SPLIT_DWARF_PUMP`
 - Plain mode
 - Pump mode
 - LZO
@@ -690,6 +732,8 @@ Document the actual connection lifecycle, I/O behavior, protocol state machine, 
 
 No TLS code.
 
+Recorded in Appendix A. Phase 1 starts only after that appendix has been reviewed.
+
 ### Phase 1: transport abstraction proof
 
 Introduce the smallest abstraction necessary to demonstrate that existing plain TCP behavior can run through a generic transport interface without changing RPC semantics.
@@ -698,9 +742,7 @@ No cryptographic implementation is required for this proof.
 
 ### Phase 2: TLS library decision
 
-Re-evaluate the previously investigated TLS libraries against the concrete requirements from Phases 0 and 1.
-
-mbedTLS may remain the selected library, but selection becomes evidence-backed rather than assumed.
+Validate the standing default, mbedTLS `>= 3.6.3`, against the concrete requirements from Phases 0 and 1. The general library comparison is not repeated; only a concrete technical blocker reopens the choice (§9).
 
 ### Phase 3: TLS transport
 
@@ -740,7 +782,6 @@ Reuse the transport layer for scheduler/worker communication when the managed ar
 
 The following must remain open until the relevant evidence exists:
 
-- whether a new distcc protocol version is necessary
 - exact transport-selection syntax
 - same-port versus separate-port TLS
 - exact TLS configuration key names
@@ -750,7 +791,8 @@ The following must remain open until the relevant evidence exists:
 - whether session resumption is needed in the initial release
 - ticket-key management API and rotation interval
 - whether TLS should interact directly with existing `--allow` or remain orthogonal
-- final TLS library choice
+
+Whether a new protocol version is necessary and which TLS library is used are no longer deferred; see §2.1.
 
 Deferring these decisions is intentional. It prevents implementation details from becoming accidental architecture.
 
@@ -837,7 +879,7 @@ This v2 document intentionally supersedes the earlier architectural assumptions 
 
 In particular:
 
-- mbedTLS remains a candidate, not a prerequisite
+- mbedTLS `>= 3.6.3` is the standing project default; its technical fit is validated in Phase 2 (§9)
 - a dedicated `src/tls.c` module remains a possible implementation detail, not a fixed architecture
 - a new distcc protocol version is no longer assumed
 - transport selection is treated as an independent design problem
@@ -869,3 +911,240 @@ prove compatibility, security, performance, and operations
 ```
 
 No implementation detail should be promoted to an architectural requirement merely because it appeared in the earlier design.
+
+## Appendix A: Phase 0 transport and protocol audit
+
+Scope: static source audit of `current_dev` at `b5fb3d2`. All `file:line` references refer to that commit. These are static findings: they establish structure and call paths, not runtime behavior. Behavior claims are verified in Phase 1 by execution.
+
+### A.1 Client connection lifecycle
+
+1. `dcc_compile_remote()` calls `dcc_remote_connect()` (`src/remote.c:301`).
+2. For a TCP host, `dcc_remote_connect()` (`src/remote.c:73`) calls `dcc_connect_by_name()` and sets `from_net_fd = to_net_fd`. The result is one bidirectional socket.
+3. For an SSH host, it calls `dcc_ssh_connect()`, which returns two descriptors to and from the `ssh` child. They are created with `socketpair(AF_UNIX)` or `pipe()` (`src/ssh.c:77-84`).
+4. `dcc_connect_by_addr()` (`src/clinet.c:84`) creates the socket, makes it nonblocking (`src/clinet.c:105`), and completes a nonblocking `connect()` with `dcc_select_for_write()` and the 4-second `dcc_connect_timeout` (`src/clinet.c:63`, `src/clinet.c:124`).
+5. If GSSAPI is configured for the host, `dcc_gssapi_perform_requested_security()` runs on the connected descriptors before any distcc token (`src/remote.c:304-320`).
+6. `dcc_send_header()` (`src/remote.c:142`) corks the socket and writes `DIST <protover>` through `dcc_x_req_header()` (`src/clirpc.c:60`). In pump mode it then writes `CDIR`, followed by `ARGC`/`ARGV`.
+7. The input follows:
+   - pump mode: `dcc_x_many_files()` (`src/remote.c:330`);
+   - otherwise: `dcc_x_file(..., "DOTI", ...)` (`src/remote.c:354`).
+8. Results are read from `from_net_fd` by `dcc_retrieve_results()` (`src/remote.c:372`).
+9. Both descriptors are closed with `dcc_close()` (`src/remote.c:396-401`).
+
+### A.2 Server connection lifecycle
+
+All three entry modes reach `dcc_service_job(in_fd, out_fd, ...)` (`src/serve.c:163`):
+
+| Mode | Accept / origin | Call |
+|---|---|---|
+| preforked standalone (default) | `accept()` `src/prefork.c:175` | `dcc_service_job(acc_fd, acc_fd, ...)` `src/prefork.c:194` |
+| no-fork standalone | `accept()` `src/dparent.c:259` | `dcc_service_job(acc_fd, acc_fd, ...)` `src/dparent.c:277` |
+| inetd / sshd | stdin is the connection | `dcc_service_job(STDIN_FILENO, STDOUT_FILENO, ...)` `src/daemon.c:396` |
+
+In standalone mode, `in_fd == out_fd` is one accepted socket. In inetd mode, stdin and stdout are two descriptors. They may be a socket passed by inetd or systemd, or a pipe when sshd starts the daemon. The code itself records the pipe case: `getpeername()` fails with `ENOTSOCK` (`src/daemon.c:388-391`).
+
+Accepted server sockets are not made nonblocking. On distcc connection descriptors, `dcc_set_nonblocking()` is called only for the client socket (`src/clinet.c:105`) and the SSH descriptor pair (`src/ssh.c:88-89`).
+
+Inside `dcc_service_job()` the steps run in this order:
+
+1. address access control: `dcc_check_client()` (`src/serve.c:175`);
+2. optional GSSAPI: `dcc_gssapi_check_client()` (`src/serve.c:183`);
+3. `dcc_run_job()` (`src/serve.c:197`), which reads `DIST` with `dcc_r_request_header()` (`src/serve.c:803`).
+
+While the compiler runs, `dcc_collect_child()` (`src/exec.c:518`) watches `in_fd` for a client disconnect, using `select()` (`src/exec.c:579`) and a raw one-byte `read()` (`src/exec.c:582`).
+
+### A.3 Network I/O inventory
+
+**Raw system calls on a distcc network descriptor:**
+
+| Site | Call | Under TLS |
+|---|---|---|
+| `src/io.c:197` in `dcc_readx()` | `read()` | must go through the transport layer |
+| `src/io.c:234` in `dcc_writex()` | `write()` | must go through the transport layer |
+| `src/pump.c:116`, `src/pump.c:141` in `dcc_pump_readwrite()` | `read()`/`write()` | must go through the transport layer when either side is a TLS connection |
+| `src/sendfile.c` `sys_sendfile()`, reached from `dcc_pump_sendfile()` at `src/bulk.c:235` (uncompressed `dcc_x_file()` when `HAVE_SENDFILE`, `configure.ac:513`) | `sendfile()` | must not be used; kernel-to-socket copies bypass user-space TLS |
+| `src/rpc.c:167` in `dcc_explain_mismatch()` | `read()` | must go through the transport layer; a raw read would consume TLS record bytes |
+| `src/exec.c:582` in `dcc_collect_child()` | 1-byte `read()` after `select()` | must go through the transport layer; readability can mean a TLS record (for example `close_notify`) rather than EOF, so a raw read would consume TLS data |
+
+**Socket options:**
+
+- `tcp_cork_sock()` (`src/io.c:261-281`; callers `src/remote.c:148`, `:360`, `src/serve.c:801`, `:1069`) acts on the underlying TCP socket. It remains valid under TLS because it only affects how the encrypted records are segmented.
+- `dcc_defer_accept()` (`src/netutil.c:135-148`) sets `TCP_DEFER_ACCEPT` on the listening socket. It remains valid under TLS because a TLS client also sends the first bytes (its handshake).
+
+**Readiness helpers:**
+
+- `dcc_select_for_read()` (`src/io.c:93`) and `dcc_select_for_write()` (`src/io.c:139`) are called from:
+  - `dcc_readx()`/`dcc_writex()`;
+  - `dcc_pump_readwrite()` (`src/pump.c:119`, `:144`);
+  - `dcc_pump_sendfile()` (`src/sendfile.c:209`);
+  - the connect wait (`src/clinet.c:124`).
+- Each waits only in the direction of the operation that returned `EAGAIN`. A TLS operation can need the opposite direction, so under TLS the wait direction must come from the transport.
+
+**Callers of `dcc_readx()` – 14/14 classified:**
+
+- network: `src/auth_common.c:230`, `src/auth_distcc.c:306`, `:351`, `src/auth_distccd.c:255`, `src/compress-lzox1.c:210`, `src/compress-zstd.c:186`, `src/rpc.c:145`, `:206`, `:249`, `:301`, `:344`;
+- local:
+  - `src/compress-lzox1.c:103`, `src/compress-zstd.c:80` (compressing a local input file);
+  - `src/zeroconf.c:678` (host file).
+
+**Callers of `dcc_writex()` – 17/17 classified:**
+
+- network: `src/auth_common.c:193`, `src/auth_distcc.c:281`, `src/auth_distccd.c:268`, `:376`, `src/bulk.c:188`, `src/rpc.c:93`, `:123`, `:368`;
+- local or a separate service:
+  - `src/compress-lzox1.c:245`, `src/compress-zstd.c:207` (decompressed output to a local file or stdout);
+  - `src/state.c:266` (state file);
+  - `src/stats.c:117`, `:138` (stats pipe);
+  - `src/stats.c:497` (separate plaintext statistics HTTP listener, outside #248);
+  - `src/zeroconf.c:173` (host file);
+  - `src/h_srvrpc.c:104`, `:112` (test helper).
+
+**Callers of `dcc_pump_readwrite()` – 5/5 classified:**
+
+- network:
+  - `src/bulk.c:237` (uncompressed send without `sendfile`);
+  - `src/pump.c:69` (uncompressed receive);
+  - `src/sendfile.c:226` (fallback);
+- local:
+  - `src/bulk.c:522` (`dcc_copy_file_to_fd()`; all callers pass `STDERR_FILENO`, `src/compile.c:1203`, `:1228`, `:1254`);
+  - `src/emaillog.c:104`.
+
+**Callers of `dcc_pump_sendfile()` – 2/2 classified:**
+
+- network: `src/bulk.c:235`;
+- local: `src/bulk.c:520` (`dcc_copy_file_to_fd()`).
+
+**Result:** All compile-protocol, compression, bulk and GSSAPI traffic already passes through `dcc_readx()`, `dcc_writex()`, `dcc_pump_readwrite()` and `dcc_pump_sendfile()`. Outside those helpers, only `src/rpc.c:167` and `src/exec.c:582` touch a network descriptor directly.
+
+### A.4 Access control and authentication order
+
+Current server order:
+
+```text
+accept / inetd stdin -> dcc_check_client() (--allow) -> GSSAPI (if enabled) -> DIST ...
+```
+
+Current client order:
+
+```text
+connect -> GSSAPI (if requested for the host) -> DIST ...
+```
+
+`dcc_check_client()` (`src/srvnet.c:231`) allows a connection without a peer address (pipe or SSH case, `src/srvnet.c:247`). It also allows every connection when no `--allow` list is configured (`src/srvnet.c:253`).
+
+GSSAPI is an existing precedent: an authentication exchange already runs on the connection before the `DIST` header, without any protocol version announcing it.
+
+Proposed order with TLS:
+
+```text
+server: accept -> dcc_check_client() -> TLS handshake -> peer identity check
+        -> authorization -> GSSAPI (if enabled) -> DIST ...
+client: connect -> TLS handshake -> server identity check -> GSSAPI (if requested) -> DIST ...
+```
+
+Rejecting by address before the handshake avoids TLS work for connections that `--allow` refuses anyway. Certificate-based authorization can only happen after the handshake.
+
+### A.5 Host specification and transport selection
+
+- **Data model:** `struct dcc_hostdef` (`src/hosts.h`) keeps the transport `mode` (`DCC_MODE_TCP`, `DCC_MODE_SSH`, `DCC_MODE_LOCAL`) separate from `protover`, `compr` and `cpp_where`.
+- **Parser:** SSH is selected when a token contains `@` (`src/hosts.c:671-680`). Comma-separated options are read in `dcc_parse_options()`, which supports `lzo`, `zstd`, `down`, `cpp` and `auth[=name]`.
+- **Stale grammar comment:** `src/hosts.c:42-52` still lists `OPTION = lzo | cpp`. It is out of date relative to the parser and is recorded here as a separate documentation defect.
+- **Fit for TLS:** A TLS selection fits the existing structure without new parser mechanics, either as a host option in `dcc_parse_options()` (valid for TCP hosts only) or as a new mode value. The exact syntax is a Phase 4 decision.
+- **SSH hosts are excluded:** TLS does not apply to SSH-mode hosts. `ssh` already encrypts, and its descriptors lead to a local child process, not to a TCP connection with the peer.
+
+### A.6 Protocol matrix
+
+The protocol version is derived as follows:
+
+- `dcc_get_protover_from_features()` (`src/hosts.c:519-552`) uses only compression and preprocessing location.
+- Split-DWARF pump upgrades the version to `DCC_VER_6000`/`DCC_VER_6001` through `dcc_split_dwarf_upgrade_protover()` (`src/split_dwarf.c:85`).
+- The server accepts exactly `1, 2, 3, 4000, 5000`, plus `6000, 6001` under `HAVE_SPLIT_DWARF_PUMP` (`src/srvrpc.c:57-89`).
+
+| Version | Compression | Preprocessing | Request after `DIST` | Response |
+|---|---|---|---|---|
+| `DCC_VER_1` | none | client | `ARGC`/`ARGV`, `DOTI` | `DONE`, `STAT`, `SERR`, `SOUT`, `DOTO` |
+| `DCC_VER_2` | LZO | client | as 1 | as 1 |
+| `DCC_VER_3` | LZO | server (pump) | `CDIR`, `ARGC`/`ARGV`, `NFIL` + `NAME`/`FILE`/`LINK` | as 1, plus `DOTD` |
+| `DCC_VER_4000` | Zstd | client | as 1 | as 1, with two-integer length tokens |
+| `DCC_VER_5000` | Zstd | server (pump) | as 3 | as 3, with two-integer length tokens |
+| `DCC_VER_6000` | LZO | server, split DWARF | as 3 | as 3, plus `DDWO` between `DOTO` and `DOTD` |
+| `DCC_VER_6001` | Zstd | server, split DWARF | as 3 | as 5000, plus `DDWO` |
+
+- **Where the tokens are read:** response tokens in `src/clirpc.c:112-270`; two-integer tokens with `dcc_r_token_2int()` (`src/clirpc.c:183`, `:205`, `:215`, `:244`, `:261`).
+- **Effect of TLS:** TLS as transport changes none of these rows. Every row must run over the Phase 1 abstraction without TLS and over TLS in Phase 5.
+- **Unknown versions** are rejected after `DIST` (`src/srvrpc.c:77-85`). That rejection is part of the protocol and does not depend on the transport.
+
+### A.7 Compatibility matrix (expected behavior)
+
+| Client | Server endpoint | Expected result |
+|---|---|---|
+| old or new client, plaintext host entry | classic 3632 (old or new `distccd`) | unchanged |
+| new client, TLS host entry | TLS listener of a new `distccd` | TLS handshake, then the unchanged protocol |
+| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | server reads handshake bytes where it expects `DIST` and rejects the token; client sees a handshake failure; the job fails for that host; no plaintext retry |
+| plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake and closes; the client sees a protocol error or EOF |
+| SSH host entry | any | unchanged; TLS not applicable |
+| client built without TLS, TLS host entry | any | explicit configuration error; no plaintext fallback |
+
+### A.8 Answers to the twelve Phase 0 questions
+
+Questions from [#248 comment 5239425798](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5239425798) §39.
+
+1. **Where does a connection become a byte stream?**
+   - Client: `dcc_connect_by_addr()` for TCP, `dcc_ssh_connect()` for SSH (A.1).
+   - Server: `accept()` in `src/prefork.c:175` or `src/dparent.c:259`, or stdin/stdout in inetd mode (A.2).
+2. **Which functions assume a raw POSIX descriptor?** The six raw-call sites and the readiness helpers in A.3. Everything else uses `dcc_readx()`, `dcc_writex()`, `dcc_pump_readwrite()` or `dcc_pump_sendfile()`.
+3. **Can the RPC layer remain transport-agnostic?** Yes. `rpc.c`, `clirpc.c`, `srvrpc.c`, `bulk.c`, the compression modules and the GSSAPI code exchange bytes only through the helpers in A.3. The two exceptions, `src/rpc.c:167` and the `sendfile()` path, are covered by the abstraction.
+4. **Where should handshake state live?** Per connection, owned by the transport layer and bound to the connection descriptor:
+   - created right after `connect()` on the client;
+   - created right after `dcc_check_client()` on the server (A.4);
+   - released at `dcc_close()`.
+5. **How should nonblocking readiness be represented?**
+   - Client sockets are nonblocking (`src/clinet.c:105`); accepted server sockets are blocking (A.2).
+   - The transport must report the direction it is waiting for, so `dcc_select_for_read()`/`dcc_select_for_write()` wait on the right one.
+   - Server-side waits are also bounded by the job-lifetime `alarm()` (`src/prefork.c:184`).
+6. **How do standalone and inetd share the transport layer?**
+   - Both enter `dcc_service_job(in_fd, out_fd)`.
+   - TLS needs one bidirectional stream. Standalone mode has it (`in_fd == out_fd`); inetd mode has it only when stdin is a socket.
+   - The pipe case (sshd) is not a TLS candidate (A.2, A.5).
+7. **How is transport selection represented?** Through `struct dcc_hostdef.mode` and host options. A TLS selection fits either form; the syntax is a Phase 4 decision (A.5).
+8. **How does TLS identity feed authorization?** As a separate check after the handshake, before GSSAPI and `dcc_run_job()` (A.4).
+   - Recommendation for Phase 5, not a decision: reuse the role model of [#237 Phase-0 supplement §8](https://github.com/wiki-mod/distcc-ng/issues/237#issuecomment-5238840686) for the client-to-`distccd` channel. Roles come from the issuing intermediate CA (client CA, worker CA), endpoint identity is carried in the SAN, and one PKI covers both classic and managed mode.
+9. **Does TLS change the wire contract?** No.
+   - `DIST` is written only after the connection is established and after GSSAPI (A.1).
+   - The protocol version is derived only from application features (A.6).
+   - The server reads `DIST` only after its access and authentication checks (A.2).
+10. **If not, what evidence remains for a `DCC_VER_*`?** None was found. A transport below `DIST` adds or changes no token, framing, ordering or state.
+11. **If yes, exactly what bytes and states require a new version?** Not applicable (answer 9).
+12. **Which parts of the mbedTLS evaluation remain valid?** The license, footprint, C-integration and portability reasoning is unaffected. The audit adds the following interface requirements for the Phase 2 fit check. Concrete API names are confirmed against the mbedTLS 3.6 documentation in Phase 2.
+    - wrapping an already-connected descriptor supplied by the caller, on both client and server;
+    - nonblocking handshake and I/O with explicit want-read/want-write results;
+    - a way to distinguish buffered plaintext from socket readability (needed for `src/exec.c:582`, A.3);
+    - an orderly `close_notify` on close;
+    - no dependency on `sendfile()`.
+
+### A.9 Phase 1 interface options
+
+**Option 1 – change signatures.** Network functions take a transport handle instead of `int fd`.
+
+- Advantage: explicit types.
+- Cost: every network caller in A.3 changes, and so do the mixed local/network signatures such as `dcc_r_bulk(ofd, ifd, ...)` with a local `ofd` and a network `ifd`.
+
+**Option 2 – descriptor-keyed transport in `io.c`.** The existing `int fd` API stays.
+
+- A connection descriptor can be bound to a transport object; the raw-call sites in A.3 dispatch through it.
+- Unbound descriptors keep today's `read()`/`write()` behavior.
+- `dcc_pump_sendfile()` falls back to `dcc_pump_readwrite()` for bound descriptors.
+- `dcc_close()` releases the binding.
+
+**Recommendation: Option 2.**
+
+- It extends the existing owner (`io.c`) instead of re-plumbing every caller.
+- It leaves every local-file path untouched.
+- It matches the process model: a client process handles one job, and a server child handles jobs one after another (`src/prefork.c:165-200`).
+
+Phase 1 implements Option 2 for plain TCP only and must show unchanged behavior through the interop and e2e matrix. The same transport object is the reusable component for the future managed scheduler connections of [#237](https://github.com/wiki-mod/distcc-ng/issues/237).
+
+### A.10 Audit limits
+
+- This is a static source audit. It makes no runtime claims.
+- Platform-specific `sendfile()` variants in `src/sendfile.c` were classified by call site, not by platform behavior.
+- `src/lsdistcc.c` (host probing) and `src/zeroconf.c` (service advertisement) were classified as outside the per-job transport. Whether TLS endpoints need advertising or probing is open for Phase 4.
+- The statistics HTTP listener (`src/stats.c`) is a separate plaintext service and outside #248.
