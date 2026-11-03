@@ -98,6 +98,8 @@ This register separates what is fixed from what is proposed and what is still op
 - Phase 5: certificate identity model; Appendix A.8 question 8 recommends reusing the #237 role model.
 - Phase 6: whether session resumption is needed.
 - Phase 7: credential reload and ticket-key lifecycle.
+- Phase 3: a server-side TLS handshake timeout. Existing server reads have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
+- Phase 3/5: how TLS and authentication failures are classified against the host backoff. Today every failure backs off the whole `host:port` for 60 s ([#228](https://github.com/wiki-mod/distcc-ng/issues/228); [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §12.7 classifies TLS/auth failures as security failures).
 
 ## 3. Transport versus compile protocol
 
@@ -1012,7 +1014,44 @@ While the compiler runs, `dcc_collect_child()` (`src/exec.c:518`) watches `in_fd
 - network: `src/bulk.c:235`;
 - local: `src/bulk.c:520` (`dcc_copy_file_to_fd()`).
 
-**Result:** All compile-protocol, compression, bulk and GSSAPI traffic already passes through `dcc_readx()`, `dcc_writex()`, `dcc_pump_readwrite()` and `dcc_pump_sendfile()`. Outside those helpers, only `src/rpc.c:167` and `src/exec.c:582` touch a network descriptor directly.
+**Complete raw-call sweep.**
+
+- **Search:** all of `src/*.c` except `src/h_*.c` and `src/fuzz*`, for `read`, `write`, `recv`, `recvfrom`, `recvmsg`, `send`, `sendto`, `sendmsg`, `readv`, `writev`, `close`, `shutdown`, `fdopen` and `dup2` called as functions.
+- **Result:** 123 matches, comment lines included. Each one is classified:
+  - **On a per-job distcc connection: 7.**
+    - `src/io.c:197`, `:234` (`dcc_readx()`/`dcc_writex()`);
+    - `src/io.c:285` (`close()` inside `dcc_close()`);
+    - `src/pump.c:116`, `:141`;
+    - `src/rpc.c:167`;
+    - `src/exec.c:582`.
+  - **On a listening socket during setup, before any connection: 2.** `src/srvnet.c:98`, `:108`.
+  - **Separate services outside #248.**
+    - statistics HTTP listener and stats pipe: `src/stats.c:104`, `:495`, `:502`, `:585`;
+    - host-probing tool `lsdistcc`: `src/lsdistcc.c:398`, `:584`, `:622`, `:636`.
+  - **Everything else is local:**
+    - files, directories and lock files: `arg.c`, `compile.c`, `dotd.c`, `fix_debug_info.c`, `loadfile.c`, `lock.c`, `tempfile.c`, `timefile.c`, `util.c`, `zeroconf.c`, `bulk.c:526`, `serve.c:412`, `:420`, `srvrpc.c:277-496`;
+    - pipes to child processes: `arg.c`, `compile.c`, `rslave.c`, `ssh.c:139-149`, `mon-notify.c`;
+    - logs and the e-mail log: `trace.c`, `emaillog.c`;
+    - pid file and standard-descriptor detach: `dparent.c:306`, `:310`, `:461`, `:469`;
+    - comment text only: `io.c:33`, `:176`, `lsdistcc.c:718`, `zeroconf.c:174`, `stats.c:500`.
+
+**Closing a connection.** Per-job connections are closed only through `dcc_close()`:
+
+- client: `src/remote.c:398`, `:401`;
+- standalone server: `src/prefork.c:197`, `src/dparent.c:278`;
+- inetd: `src/daemon.c:398` closes only `STDIN_FILENO`. `STDOUT_FILENO` is not closed explicitly and is released at process exit.
+
+No `shutdown()` is called on a per-job connection.
+
+**Result:** All compile-protocol, compression, bulk and GSSAPI traffic already passes through `dcc_readx()`, `dcc_writex()`, `dcc_pump_readwrite()` and `dcc_pump_sendfile()`. Outside those helpers and `dcc_close()`, only `src/rpc.c:167` and `src/exec.c:582` touch a per-job network descriptor directly.
+
+**Server-side I/O timeouts.**
+
+- No `SO_RCVTIMEO` or `SO_SNDTIMEO` is set anywhere in `src/`.
+- Accepted server sockets are blocking (A.2), and `dcc_readx()`/`dcc_writex()` apply `DISTCC_IO_TIMEOUT` only after `EAGAIN`, which a blocking socket does not return.
+- The job-lifetime `alarm()` in `src/prefork.c:183-184` is armed only when `--job-lifetime` is set; the default is 0 (`src/dopt.c:141`, `src/exec.c:81`).
+
+Static finding: a server-side read on a connection that stops sending has no I/O timeout unless `--job-lifetime` is configured. For TLS this means a server-side handshake timeout does not come from existing code. It is a new requirement for Phase 3 (§2.1).
 
 ### A.4 Access control and authentication order
 
@@ -1078,7 +1117,7 @@ The protocol version is derived as follows:
 |---|---|---|
 | old or new client, plaintext host entry | classic 3632 (old or new `distccd`) | unchanged |
 | new client, TLS host entry | TLS listener of a new `distccd` | TLS handshake, then the unchanged protocol |
-| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | server reads handshake bytes where it expects `DIST` and rejects the token; client sees a handshake failure; the job fails for that host; no plaintext retry |
+| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | server reads handshake bytes where it expects `DIST` and rejects the token; client sees a handshake failure; the job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
 | plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake and closes; the client sees a protocol error or EOF |
 | SSH host entry | any | unchanged; TLS not applicable |
 | client built without TLS, TLS host entry | any | explicit configuration error; no plaintext fallback |
@@ -1099,7 +1138,7 @@ Questions from [#248 comment 5239425798](https://github.com/wiki-mod/distcc-ng/i
 5. **How should nonblocking readiness be represented?**
    - Client sockets are nonblocking (`src/clinet.c:105`); accepted server sockets are blocking (A.2).
    - The transport must report the direction it is waiting for, so `dcc_select_for_read()`/`dcc_select_for_write()` wait on the right one.
-   - Server-side waits are also bounded by the job-lifetime `alarm()` (`src/prefork.c:184`).
+   - Server-side reads have no I/O timeout unless `--job-lifetime` is set (default 0). See the server-side timeout finding in A.3. A server-side TLS handshake timeout is therefore a new Phase 3 requirement.
 6. **How do standalone and inetd share the transport layer?**
    - Both enter `dcc_service_job(in_fd, out_fd)`.
    - TLS needs one bidirectional stream. Standalone mode has it (`in_fd == out_fd`); inetd mode has it only when stdin is a socket.
@@ -1133,6 +1172,7 @@ Questions from [#248 comment 5239425798](https://github.com/wiki-mod/distcc-ng/i
 - Unbound descriptors keep today's `read()`/`write()` behavior.
 - `dcc_pump_sendfile()` falls back to `dcc_pump_readwrite()` for bound descriptors.
 - `dcc_close()` releases the binding.
+- **inetd:** `in_fd` is 0 and `out_fd` is 1, two descriptors for one socket (A.2). One transport object is bound to both. The first `dcc_close()` of either descriptor ends the session (for TLS: `close_notify`) and unbinds both. This covers `src/daemon.c:398`, which closes only `STDIN_FILENO`.
 
 **Recommendation: Option 2.**
 
