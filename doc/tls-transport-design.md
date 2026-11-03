@@ -1031,6 +1031,7 @@ While the compiler runs, `dcc_collect_child()` (`src/exec.c:518`) watches `in_fd
   - **Everything else is local:**
     - files, directories and lock files: `arg.c`, `compile.c`, `dotd.c`, `fix_debug_info.c`, `loadfile.c`, `lock.c`, `tempfile.c`, `timefile.c`, `util.c`, `zeroconf.c`, `bulk.c:526`, `serve.c:412`, `:420`, `srvrpc.c:277-496`;
     - pipes to child processes: `arg.c`, `compile.c`, `rslave.c`, `ssh.c:139-149`, `mon-notify.c`;
+    - monitor state file: `mon.c:121`;
     - logs and the e-mail log: `trace.c`, `emaillog.c`;
     - pid file and standard-descriptor detach: `dparent.c:306`, `:310`, `:461`, `:469`;
     - comment text only: `io.c:33`, `:176`, `lsdistcc.c:718`, `zeroconf.c:174`, `stats.c:500`.
@@ -1050,6 +1051,8 @@ No `shutdown()` is called on a per-job connection.
 - No `SO_RCVTIMEO` or `SO_SNDTIMEO` is set anywhere in `src/`.
 - Accepted server sockets are blocking (A.2), and `dcc_readx()`/`dcc_writex()` apply `DISTCC_IO_TIMEOUT` only after `EAGAIN`, which a blocking socket does not return.
 - The job-lifetime `alarm()` in `src/prefork.c:183-184` is armed only when `--job-lifetime` is set; the default is 0 (`src/dopt.c:141`, `src/exec.c:81`).
+- The only other timer is the whole-daemon `--lifetime` `alarm()` (`src/daemon.c:305-307`), which also defaults to 0 (`src/dopt.c:134`).
+- A search of `src/*.c` for `alarm(`, `setitimer`, `SIGALRM` and `SO_KEEPALIVE` finds no further per-connection timeout. The remaining hits are the `SIGALRM` handler (`src/dsignal.c:80-86`) and the separate `lsdistcc` tool (`src/lsdistcc.c:1048-1049`).
 
 Static finding: a server-side read on a connection that stops sending has no I/O timeout unless `--job-lifetime` is configured. For TLS this means a server-side handshake timeout does not come from existing code. It is a new requirement for Phase 3 (§2.1).
 
