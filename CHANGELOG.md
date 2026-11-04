@@ -164,6 +164,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
   a packaging-layer rename only, no upstream build-system change, and no
   `pump` compatibility symlink, exactly mirroring Debian's own choice.
   `packaging/RedHat/rpm.spec` is unaffected. Refs #485.
+- **`src/io.c`** (issue #248, Phase 1): the job connection is now bound to
+  a transport (`struct dcc_transport`) on both client and server. Every
+  network read and write, the disconnect probe in `exec.c` and the
+  mismatch context read in `rpc.c` go through it, and `sendfile()` is
+  used only when the bound transport allows it. Plain TCP, SSH and inetd
+  connections use the plain transport, so the wire behavior is unchanged.
+  This is the hook for native TLS.
 
 ### Documentation
 

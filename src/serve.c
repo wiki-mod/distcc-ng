@@ -175,6 +175,8 @@ int dcc_service_job(int in_fd,
     if ((ret = dcc_check_client(cli_addr, cli_len, opt_allowed)) != 0)
         goto out;
 
+    dcc_transport_bind(in_fd, out_fd, &dcc_transport_plain, NULL);
+
 #ifdef HAVE_GSSAPI
     /* If requested perform authentication. */
     if (dcc_auth_enabled) {

@@ -164,7 +164,7 @@ int dcc_explain_mismatch(const char *buf,
     memcpy(extrabuf, buf, buflen);
 
     /* Read a bit more context, and find the printable prefix. */
-    ret = read(ifd, extrabuf + buflen, sizeof extrabuf - 1 - buflen);
+    ret = dcc_transport_read(ifd, extrabuf + buflen, sizeof extrabuf - 1 - buflen);
     if (ret == -1) {
         ret = 0;                /* pah, use what we've got */
     }

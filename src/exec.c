@@ -579,7 +579,7 @@ int dcc_collect_child(const char *what, pid_t pid,
             ret = select(in_fd+1,&fds,NULL,NULL,&timeout);
             if (ret == 1) {
                 char buf;
-                int nread = read(in_fd, &buf, 1);
+                int nread = dcc_transport_read(in_fd, &buf, 1);
                 if ((nread == -1) && (errno == EWOULDBLOCK)) {
                     /* spurious wakeup, ignore */
                     ;

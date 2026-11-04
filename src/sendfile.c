@@ -197,6 +197,9 @@ dcc_pump_sendfile(int ofd, int ifd, size_t size)
     off_t offset = 0;
     int ret;
 
+    if (!dcc_transport_allows_sendfile(ofd))
+        return dcc_pump_readwrite(ofd, ifd, size);
+
     while (size) {
         /* Handle possibility of partial transmission, e.g. if
          * sendfile() is interrupted by a signal.  size is decremented

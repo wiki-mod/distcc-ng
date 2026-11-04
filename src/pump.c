@@ -113,7 +113,7 @@ dcc_pump_readwrite(int ofd, int ifd, size_t n)
 
     while (n > 0) {
         wanted = (n > sizeof buf) ? (sizeof buf) : n;
-        r_in = read(ifd, buf, (size_t) wanted);
+        r_in = dcc_transport_read(ifd, buf, (size_t) wanted);
 
         if (r_in == -1 && errno == EAGAIN) {
             if ((ret = dcc_select_for_read(ifd, dcc_get_io_timeout())) != 0)
@@ -138,7 +138,7 @@ dcc_pump_readwrite(int ofd, int ifd, size_t n)
          * going until they're all written out. */
 
         while (r_in > 0) {
-            r_out = write(ofd, p, (size_t) r_in);
+            r_out = dcc_transport_write(ofd, p, (size_t) r_in);
 
             if (r_out == -1 && errno == EAGAIN) {
                 if ((ret = dcc_select_for_write(ofd,
