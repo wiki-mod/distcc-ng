@@ -98,7 +98,7 @@ criterion `OSPS-DO-06.01`).
   adds a real-time gate on top of that periodic cadence: every pull request
   and push is checked against OSV.dev's advisory database for known-
   vulnerable action versions (see `SECURITY.md`'s SCA policy section).
-- **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`)
+- **C library dependencies** (`libzstd`, `libseccomp`, `popt`, `avahi-client`, `gnutls`)
   are detected at `./configure` time via `configure.ac`'s `PKG_CHECK_MODULES`
   calls against whatever the build host already provides, per the
   compatibility policy above (optional where possible, a documented

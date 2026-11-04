@@ -1,7 +1,7 @@
 # Native TLS transport with mutual identity — this fork's design work traces back to upstream's own original author
 
 **Fork issue:** [wiki-mod/distcc-ng#248](https://github.com/wiki-mod/distcc-ng/issues/248)
-**Fixed by:** not yet implemented — design/scoping tracked in #248, this entry documents the design work so far
+**Fixed by:** implemented on branch `dev/issue248_tls-transport-audit` for [wiki-mod/distcc-ng#248](https://github.com/wiki-mod/distcc-ng/issues/248), not yet merged; design, operator guide and test results in `doc/tls-transport-design.md`
 **Upstream location:** no code location — this documents an upstream *discussion*, not a bug in upstream's current source
 **Checked against:** [distcc/distcc discussion #517](https://github.com/distcc/distcc/discussions/517) ("better network security and performance via UNIX socket and SSH"), checked 2026-07-19
 **Searched upstream issues/PRs for:** `TLS`, `SSL`, `encrypt`, `mutual` — no open or closed PR implementing this found; [distcc/distcc#155](https://github.com/distcc/distcc/issues/155) (CVE-2004-2687, the origin of `--enable-tcp-insecure`) is the closest related issue, and predates/motivates discussion #517.
@@ -42,7 +42,12 @@ long-term answer:
 
 That sentence is this fork's design starting point.
 
-## This fork's design work so far (see #248 for the live version)
+## First design sketch (superseded)
+
+This was the first sketch. Design v2 (`doc/tls-transport-design.md`)
+revisited it from an audit of the code; the result is under "What was
+built" below.
+
 
 - **Library**: [mbedTLS](https://www.trustedfirmware.org/projects/mbed-tls/) — the only real candidate with an explicit GPLv2 license
   option (matching this project's own license with no compatibility
@@ -94,8 +99,32 @@ That sentence is this fork's design starting point.
   following this project's existing `doc/protocol-1.txt`–`protocol-3.txt`/
   `protocol-4000.txt` convention.
 
+## What was built
+
+- **Library**: GnuTLS `>= 3.6.5` (LGPL-2.1-or-later, compatible with
+  GPL-2.0-or-later), an optional build dependency (`--with-gnutls`). The
+  mbedTLS choice above was dropped after the Mbed TLS maintainers announced
+  on 2026-10-08 that maintenance ends in April 2027; GnuTLS also reports
+  which direction a nonblocking operation waits for, which the transport
+  needs.
+- **Transport below the protocol**: TLS 1.3 only, started right after the
+  TCP connection and before the `DIST` header. No new protocol version:
+  every existing version (1, 2, 3, 4000, 5000, 6000, 6001) runs unchanged
+  through TLS.
+- **One TLS connection per job**, as distcc already uses one TCP connection
+  per job, so the SSH single-stream bottleneck from discussion #517 does not
+  arise; session resumption turned out to be unnecessary.
+- **Mutual identity** from a private CA per role (following #237 §8), with
+  extended key usage checks, an optional CRL and an optional client-name
+  white- or blacklist; `--allow` stays in force.
+- **Selection**: the `,tls` host option on a separate port; port 3632 stays
+  plain and a TLS host is never retried in plaintext.
+- **Config**: `tls-*` keys in `distcc.conf`/`distccd.conf` through the
+  existing parser, overridable by environment variables and command-line
+  options.
+
 ## Status
 
-Design/scoping only as of this entry — see
-[wiki-mod/distcc-ng#248](https://github.com/wiki-mod/distcc-ng/issues/248)
-for the live discussion and any follow-up PRs.
+Implemented on `dev/issue248_tls-transport-audit`, not yet merged. The
+status against each acceptance criterion is in Appendix E of
+`doc/tls-transport-design.md`.

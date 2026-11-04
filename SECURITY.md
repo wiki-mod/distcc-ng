@@ -50,11 +50,11 @@ This section documents intentional security design decisions and known tradeoffs
 
 **Mitigation**: review `doc/seccomp-sandbox.md` and `/etc/distcc/seccomp.conf` before relying on the sandbox as a primary control.
 
-### 3. TLS transport is not yet implemented
+### 3. Native TLS is optional; plain TCP stays unencrypted
 
-**Design**: distcc-ng's wire protocol is not encrypted by default (see `doc/tls-transport-design.md` for the in-progress design). Traffic between `distcc` and `distccd` should be treated as plaintext on the network.
+**Design**: distcc-ng's wire protocol is not encrypted by default. Builds with GnuTLS (`./configure --with-gnutls`) offer an optional native TLS 1.3 transport with mutual certificate authentication on a separate port: hosts marked `,tls` on the client, `distccd --tls` (or `tls-enabled = true`) on the server. A TLS host is never retried in plaintext, and port 3632 stays plain. Traffic to every other host, including all traffic on port 3632, is plaintext on the network. Design, operator guide and test results: `doc/tls-transport-design.md`.
 
-**Mitigation**: run distcc-ng only on networks you trust (LAN, VPN, or otherwise isolated), same as upstream distcc's own long-standing deployment model.
+**Mitigation**: use the TLS transport (or SSH mode) where the network is not trusted; otherwise run distcc-ng only on networks you trust (LAN, VPN, or otherwise isolated), same as upstream distcc's own long-standing deployment model.
 
 ### 4. Continuous static and supply-chain analysis
 

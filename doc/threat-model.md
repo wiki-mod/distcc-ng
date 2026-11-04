@@ -32,7 +32,9 @@ distributed-build boilerplate.
 - **On-path network attacker** — anyone who can observe or inject on the
   network path between `distcc` and `distccd`. Relevant because of one fact
   stated plainly in `SECURITY.md`: **the wire protocol is not encrypted by
-  default** (`doc/tls-transport-design.md` is a design, not yet shipped).
+  default**. The optional native TLS transport (`doc/tls-transport-design.md`)
+  encrypts and mutually authenticates connections to hosts selected with
+  `,tls`; every other connection stays plaintext.
 - **Malicious/compromised build input** — a source file, header, or build
   script that a legitimate `distcc` client is asked to compile. This is a
   different actor from "malicious client": here the *client itself* is
@@ -199,7 +201,8 @@ network-reachable, protocol-speaking client can and cannot make `distccd` do.
 
 **Residual risk, stated plainly:**
 
-- **No transport encryption or authentication of client identity.** The
+- **No transport encryption or authentication of client identity on plain
+  TCP.** The
   entire model above assumes an on-path network attacker is *out of scope*
   because `distccd` is deployed on a trusted LAN, per `SECURITY.md`. If
   that assumption is violated — `distccd` exposed to the internet, or run
@@ -216,12 +219,14 @@ network-reachable, protocol-speaking client can and cannot make `distccd` do.
      *entire* access-control story with no secondary factor, so exposing
      the port to an untrusted network is equivalent to granting compile-job
      submission to anyone who can reach it, not merely "anyone on our LAN".
-  This is not a gap this document is claiming to close — it's `doc/tls-
-  transport-design.md`'s explicitly *planned, not-yet-shipped* work, and
-  the honest current answer for "what if someone exposes distccd to the
-  internet" is: don't; if you must, put it behind a VPN/tunnel that
-  provides the encryption and authentication this project's own wire
-  protocol does not yet provide itself.
+  The optional native TLS transport (`doc/tls-transport-design.md`,
+  Appendix C) closes both points for the connections that use it: TLS 1.3
+  encryption, a CA-signed certificate on each side, and an optional
+  client-name white- or blacklist on top of `--allow`. It does not change
+  the classic plaintext port 3632. The honest answer for "what if someone
+  exposes distccd beyond a trusted network" is therefore: only through a
+  TLS-only `distccd`, SSH mode, or a VPN/tunnel, never through the plain
+  port.
 - **seccomp's fail-open default.** As described above, the out-of-the-box
   configuration prioritizes farm availability over strict sandboxing on a
   sandbox-install failure. An operator relying on seccomp as a hard
@@ -246,7 +251,7 @@ network-reachable, protocol-speaking client can and cannot make `distccd` do.
 - `SECURITY.md` — the top-level tradeoffs this document extends with
   concrete attack-surface detail.
 - `doc/seccomp-sandbox.md` — full seccomp configuration reference.
-- `doc/tls-transport-design.md` — the planned transport-encryption work
-  referenced under "Residual risk" above.
+- `doc/tls-transport-design.md` — the native TLS transport (design,
+  operator guide and test results) referenced under "Residual risk" above.
 - `CHANGELOG.md`'s dated sections — the full, ongoing record of fixed
   vulnerabilities this document draws its concrete examples from.

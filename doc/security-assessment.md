@@ -17,12 +17,12 @@ ever exposed beyond a trusted LAN. Not duplicated here.
 
 - **Client (`distcc`) / server (`distccd`) / include-server (`pump` mode)**
   and their trust boundaries: `SECURITY.md`'s "Known Security Tradeoffs and
-  Design Decisions" section (LAN-oriented deployment model, no TLS yet,
+  Design Decisions" section (LAN-oriented deployment model for plain TCP, optional native TLS,
   seccomp as defense-in-depth rather than a hard guarantee).
 - **Wire protocol and external interfaces**: `doc/protocol-1.txt` through
   `doc/protocol-5000.txt` document every protocol version's actors, message
   flow, and format in full.
-- **Planned transport hardening**: `doc/tls-transport-design.md`.
+- **Native TLS transport**: `doc/tls-transport-design.md`.
 - **Sandboxing**: `doc/seccomp-sandbox.md`.
 
 ## Vulnerability exploitability exchange (VEX)

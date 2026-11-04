@@ -2,7 +2,7 @@
 
 Tracking issue: [wiki-mod/distcc-ng#248](https://github.com/wiki-mod/distcc-ng/issues/248).
 
-Status: Phase 0 transport and protocol audit recorded in [Appendix A](#appendix-a-phase-0-transport-and-protocol-audit) (static source audit at `current_dev` `b5fb3d2`); not yet implemented.
+Status: implemented for the direct `distcc`-to-`distccd` channel (Phases 0 to 7; Phase 8 is future work). Phase 0 audit in [Appendix A](#appendix-a-phase-0-transport-and-protocol-audit) (static source audit at `current_dev` `b5fb3d2`), library check in [Appendix B](#appendix-b-phase-2-tls-library-fit-check), operator guide in [Appendix C](#appendix-c-operating-native-tls), test and measurement results in [Appendix D](#appendix-d-phase-5-to-7-results), status against the §27 acceptance criteria in [Appendix E](#appendix-e-acceptance-status).
 
 This is version 2 of the design document. It deliberately revisits the earlier design from first principles rather than treating previous implementation sketches as requirements. The previous document selected mbedTLS, proposed a dedicated TLS module, and stated that TLS would require a new distcc protocol version. Those were useful investigation results, but they were not sufficiently grounded in a complete audit of the existing transport and I/O boundaries.
 
@@ -11,6 +11,8 @@ The central question of v2 is therefore not "how do we add mbedTLS?" but:
 > Can native TLS be introduced as a secure transport below the existing distcc application protocol without changing the compile wire protocol?
 
 That question must be answered from the actual code and protocol behavior before implementation begins.
+
+Answer: yes. The Phase 0 audit answered it from the code (Appendix A.8), and Phase 5 confirmed it by running every supported protocol version through TLS (Appendix D.1).
 
 ## 1. Motivation
 
@@ -90,16 +92,16 @@ This register separates what is fixed from what is proposed and what is still op
 - `sendfile()` must not be used on a TLS connection, and every raw `read()` on a network fd must go through the transport layer (Appendix A.3).
 - `TCP_CORK` and `TCP_DEFER_ACCEPT` remain valid under TLS because they act on the underlying TCP socket (Appendix A.3).
 
-**Open questions** (decided in the named phase):
+**Phase decisions** (each was open until the named phase):
 
-- Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
-- Phase 2: library fit against the Phase 1 interface. Closed in Appendix B: GnuTLS selected; Phase 3 adds pending-data and wait-direction operations to the transport.
+- Phase 1 (decided): Option 2 of Appendix A.9, a descriptor-keyed transport in `src/io.c` (`struct dcc_transport`). Plain TCP runs through it unchanged.
+- Phase 2 (decided): library fit against the Phase 1 interface. Closed in Appendix B: GnuTLS selected; Phase 3 adds pending-data and wait-direction operations to the transport.
+- Phase 3 (decided): the server ends a TLS handshake after `tls-handshake-timeout` seconds (default 10). Existing plain server reads still have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
+- Phase 3/5 (decided): TLS and authentication failures need no classification of their own. A failed TLS host is backed off like any failed host (`DISTCC_BACKOFF_PERIOD`, 60 s by default) and the job moves on to other hosts or to a local compile, which is the intended behavior for a host whose TLS setup is broken. A finer classification remains with [#228](https://github.com/wiki-mod/distcc-ng/issues/228) and [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §12.7.
 - Phase 4 (decided): host option `,tls` with an explicit port (no default TLS port; 3632 refused on both sides), client credentials from `DISTCC_TLS_CA`/`DISTCC_TLS_CERT`/`DISTCC_TLS_KEY`, daemon options `--tls`, `--tls-ca`, `--tls-cert`, `--tls-key`. A `--tls` daemon is a TLS-only listener; plain and TLS service run as two instances. `--tls` with `--zeroconf` and `--tls-*` without `--tls` are refused. Documented in `distcc(1)` and `distccd(1)`.
-- Phase 5 (CRL optional and all settings configurable: maintainer decisions 2026-11-04; role model following the maintainer's suggestion to build on #237 §8): role separation comes from separate CAs (the `tls-ca` a daemon trusts decides which role may connect) plus extended key usage checks (serverAuth/clientAuth). A CRL is optional (`tls-crl`; `tls-require-crl` makes it mandatory, default off). Every TLS setting is configurable through the existing config files, overridden by environment variables or command-line options. Done: config keys, CRL, EKU checks, key-file permission check. Also done: identity white- or blacklist (`--tls-whitelist`/`--tls-blacklist`, `tls-whitelist`/`tls-blacklist`) matching the client certificate CN, sharing the list code with the GSS-API `--whitelist`/`--blacklist` (`dcc_config_load_name_list()` in `src/config-parser.c`); `tls-port`. Failure handling needs no TLS-specific change: a failed TLS host is backed off like any failed host (60 s by default) and the client moves on to other hosts, which is the intended behavior for a host whose TLS setup is broken.
-- Phase 6: whether session resumption is needed.
-- Phase 7: credential reload and ticket-key lifecycle.
-- Phase 3 (done in the prototype): the server ends a TLS handshake after 10 seconds (`DCC_TLS_SERVER_HANDSHAKE_TIMEOUT` in `src/tls.c`). Existing plain server reads still have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
-- Phase 3/5: how TLS and authentication failures are classified against the host backoff. Today every failure backs off the whole `host:port` for 60 s ([#228](https://github.com/wiki-mod/distcc-ng/issues/228); [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §12.7 classifies TLS/auth failures as security failures).
+- Phase 5 (CRL optional and all settings configurable: maintainer decisions 2026-11-04; role model following the maintainer's suggestion to build on #237 §8): role separation comes from separate CAs (the `tls-ca` a daemon trusts decides which role may connect) plus extended key usage checks (serverAuth/clientAuth). A CRL is optional (`tls-crl`; `tls-require-crl` makes it mandatory, default off). Every TLS setting is configurable through the existing config files, overridden by environment variables or command-line options. Done: config keys, CRL, EKU checks, key-file permission check. Also done: identity white- or blacklist (`--tls-whitelist`/`--tls-blacklist`, `tls-whitelist`/`tls-blacklist`) matching the client certificate CN, sharing the list code with the GSS-API `--whitelist`/`--blacklist` (`dcc_config_load_name_list()` in `src/config-parser.c`); `tls-port`.
+- Phase 6 (decided): session resumption is not needed; the full handshake is not measurable against the job time (Appendix D.2). Session tickets are disabled (`GNUTLS_NO_TICKETS`), so there are no ticket keys to manage (§14).
+- Phase 7 (decided): there is no reload. Credentials, CRL and lists are read when `distccd` starts and when a client starts a job; a `distccd` restart aborts running jobs (Appendix C.4). Ticket-key lifecycle: not applicable (Phase 6).
 
 ## 3. Transport versus compile protocol
 
@@ -188,7 +190,7 @@ The design should first establish an explicit transport-selection model. Candida
 ```text
 plain
 ssh
- tls
+tls
 ```
 
 or an equivalent explicit host specification/configuration mechanism.
@@ -211,6 +213,8 @@ TLS explicitly selected
 Automatic "try TLS, then silently try plaintext" behavior is not acceptable for a secure configuration.
 
 If a future feature intentionally implements capability discovery, that discovery must be designed as a separate security-sensitive protocol decision and must not create a downgrade path.
+
+**Decision (Phase 4):** the host option `,tls` on a TCP host with an explicit port other than 3632 (`distcc(1)`, Appendix C.2). There is no capability probe. A failed TLS host is backed off and the job goes to another host or to a local compile; it is never sent in plaintext (Appendix C.5, D.3).
 
 ## 6. Existing compile protocol remains the preferred invariant
 
@@ -433,6 +437,18 @@ At minimum the final design must answer:
 
 A certificate being cryptographically valid must not automatically mean that the peer is authorized for every distcc role.
 
+**Decision (Phase 5)**, following the role model of [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §8:
+
+- **Client:** a certificate from the CA that the daemon's `tls-ca` names, with extended key usage clientAuth. Its common name (CN) is the identity for the optional white- or blacklist.
+- **Worker:** a certificate from the CA that the client's `tls-ca` names, with extended key usage serverAuth and a subject alternative name (DNS or IP) for every name clients use in their host list.
+- **Future scheduler:** outside #248 (§23); #237 §8 gives it its own intermediate CA.
+- **Trusted CA:** each side trusts exactly the CA certificates in its `tls-ca` file, so role separation comes from which CA each side trusts.
+- **Issuer:** the operator's private CA (Appendix C.1).
+- **Removing a compromised identity:** a CRL (`tls-crl`) or the blacklist (Appendix C.3).
+- **Rotation:** §13 and Appendix C.4.
+
+Certificate pinning is not implemented.
+
 ## 13. Certificate rotation
 
 Certificate rotation must be a normal operational workflow.
@@ -461,6 +477,14 @@ Questions include:
 - Can CA generations overlap?
 - How is a compromised certificate immediately removed?
 - What happens when a certificate expires while the daemon remains running?
+
+**Answers from the implementation** (procedure in Appendix C.4, tests in Appendix D.3):
+
+- **Reload without dropping active jobs:** not supported. `distccd` reads its credentials, CRL and lists at start. A restart terminates the daemon's whole process group, so jobs that are running are aborted; their clients back the host off and fall back to a local compile (or fail with `DISTCC_FALLBACK=0`). Rotate in a quiet period.
+- **Clients:** every `distcc` run is a new process that reads `distcc.conf` and the `DISTCC_TLS_*` variables again, so client credentials rotate without any restart.
+- **Overlapping CA generations:** yes. A `tls-ca` file can hold several CA certificates; certificates from any of them are accepted.
+- **Removing a compromised certificate:** add it to the CRL or the blacklist and restart `distccd`.
+- **Expiry while running:** validity is checked by the peer at every handshake. Once a server certificate has expired, clients reject new connections to it; jobs already running are not affected. distcc gives no advance warning.
 
 ## 14. Session resumption and ticket-key rotation
 
@@ -495,6 +519,8 @@ Ticket-key rotation must not require a rebuild. It must also not silently become
 
 A ticket-key compromise must be treated separately from compromise of the server's certificate/private key because the security consequences and recovery procedures differ.
 
+**Decision (Phase 6):** session resumption is not implemented and session tickets are disabled (`GNUTLS_NO_TICKETS` on both sides; verified in Appendix D.3: `distccd` issues no ticket). Every connection performs a full authenticated handshake, which Appendix D.2 shows is not a measurable cost per job. Without tickets there are no ticket keys, so the lifecycle questions above do not arise. If resumption is added later, this section applies in full.
+
 ## 15. Configuration model
 
 Configuration must be designed around transport and role semantics before exact option names are finalized.
@@ -522,6 +548,8 @@ The existing configuration parser and precedence model should be reused rather t
 
 Exact names and environment-variable mappings remain open until the parser and documentation conventions have been audited.
 
+**Decision (Phases 4 and 5):** every TLS setting is a `tls-*` key read by the existing parser (`src/config-parser.c`) from `distcc.conf` (client) and `distccd.conf` (daemon). Client environment variables `DISTCC_TLS_CA`, `DISTCC_TLS_CERT`, `DISTCC_TLS_KEY` and `DISTCC_TLS_CRL` override the file; daemon command-line options `--tls` and `--tls-*` override the file. The keys are listed in `distcc(1)` and `distccd(1)`; Appendix C.2 shows a complete setup.
+
 ## 16. Port and listener strategy
 
 Port strategy must be decided from migration and deployment requirements rather than assumed.
@@ -547,6 +575,8 @@ plaintext client -> TLS-only endpoint
 A stock plaintext distccd must not receive an opaque TLS stream merely because a client guessed incorrectly, and a TLS client must receive a clear failure when the selected transport is unavailable.
 
 Constraint from [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §2.3: the classic endpoint on port 3632 stays classic, and native TLS discovery traffic must not be sent to it. Same-port protocol sniffing on 3632 is therefore excluded; the remaining candidates are a separate TLS listener or a TLS-only listener on a separately configured port.
+
+**Decision (Phase 4):** a `distccd` started with `--tls` (or `tls-enabled = true`) is a TLS-only listener on a separately configured port (`--port` or `tls-port`); port 3632 is refused for TLS on both sides. A host that serves plain and TLS clients runs two `distccd` instances. The behavior for each pair above is in Appendix A.7; the mismatched pairs are tested in Appendix D.3.
 
 ## 17. Security invariants
 
@@ -749,6 +779,8 @@ Introduce the smallest abstraction necessary to demonstrate that existing plain 
 
 No cryptographic implementation is required for this proof.
 
+Done: `struct dcc_transport` in `src/io.c` (§2.1).
+
 ### Phase 2: TLS library decision
 
 Validate the library against the concrete requirements from Phases 0 and 1. Done: GnuTLS selected (§9, Appendix B).
@@ -767,21 +799,31 @@ Implement the secure transport, including:
 - explicit transport selection
 - no implicit plaintext downgrade
 
+Done: `src/tls.c`.
+
 ### Phase 4: identity and authorization
 
 Integrate certificate identity with the existing authorization model and define the private CA/identity workflow.
+
+Done: §12, Appendix C.1 to C.3.
 
 ### Phase 5: protocol compatibility
 
 Prove that the logical distcc application stream remains correct above TLS. Only if the audit or implementation proves an application-level protocol change is necessary should a new `DCC_VER_*` be introduced.
 
+Done: Appendix D.1; no new `DCC_VER_*`.
+
 ### Phase 6: performance and lifecycle
 
 Measure real workloads. Add session resumption only if justified. Define and test ticket-key rotation if session tickets are enabled.
 
+Done: Appendix D.2; no session resumption, tickets disabled (§14).
+
 ### Phase 7: operational hardening
 
 Complete credential rotation, reload behavior, diagnostics, package/build integration, portability, documentation, and failure recovery.
+
+Done except portability beyond Linux: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, CI and release packages build with GnuTLS, `distcc(1)` and `distccd(1)`. Portability status in Appendix E.
 
 ### Phase 8: future managed transport reuse
 
@@ -789,17 +831,17 @@ Reuse the transport layer for scheduler/worker communication when the managed ar
 
 ## 25. Decisions explicitly deferred
 
-The following must remain open until the relevant evidence exists:
+The following stayed open until the relevant evidence existed. Each is now decided:
 
-- exact transport-selection syntax
-- same-port versus separate-port TLS
-- exact TLS configuration key names
-- exact certificate identity encoding
-- pinned certificates as an initial feature versus later addition
-- exact private-CA operational workflow
-- whether session resumption is needed in the initial release
-- ticket-key management API and rotation interval
-- whether TLS should interact directly with existing `--allow` or remain orthogonal
+- exact transport-selection syntax: `,tls` host option (§5)
+- same-port versus separate-port TLS: separate TLS-only port (§16)
+- exact TLS configuration key names: `tls-*` keys (§15)
+- exact certificate identity encoding: server SAN (DNS or IP), client CN for the lists (§12)
+- pinned certificates as an initial feature versus later addition: not in the initial feature (§12)
+- exact private-CA operational workflow: Appendix C.1
+- whether session resumption is needed in the initial release: no (§14)
+- ticket-key management API and rotation interval: not applicable, tickets are disabled (§14)
+- whether TLS should interact directly with existing `--allow` or remain orthogonal: orthogonal; `--allow` is checked before the handshake (Appendix A.4, C.2)
 
 Whether a new protocol version is necessary and which TLS library is used are no longer deferred; see §2.1.
 
@@ -826,6 +868,8 @@ The following are not acceptable as substitutes for the proper design:
 ## 27. Acceptance criteria
 
 The feature is ready for production consideration only when all of the following are demonstrated.
+
+Appendix E records for each criterion whether it is met, not applicable, or not yet demonstrated.
 
 ### Architecture
 
@@ -1127,10 +1171,10 @@ The protocol version is derived as follows:
 |---|---|---|
 | old or new client, plaintext host entry | classic 3632 (old or new `distccd`) | unchanged |
 | new client, TLS host entry | TLS listener of a new `distccd` | TLS handshake, then the unchanged protocol |
-| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | the TLS ClientHello reaches the server. It carries no job data: no source, no arguments, and no client certificate, which is only sent after the server has answered. The stock server reads its first 12 bytes as the `DIST` token (`src/srvrpc.c:63`), logs `protocol derailment: expected token "DIST"` (`src/rpc.c:213`), reads up to 187 further bytes for its error context (`src/rpc.c:155-185`) and closes. The client sees the connection reset before any ServerHello (measured: `MBEDTLS_ERR_NET_CONN_RESET`, Appendix B). It must report this as a TLS handshake failure that names the host and states that the endpoint is probably not a TLS listener. The job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
-| plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake and closes; the client sees a protocol error or EOF |
+| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | the TLS ClientHello reaches the server. It carries no job data: no source, no arguments, and no client certificate, which is only sent after the server has answered. The stock server reads its first 12 bytes as the `DIST` token (`src/srvrpc.c:63`), logs `protocol derailment: expected token "DIST"` (`src/rpc.c:213`), reads up to 187 further bytes for its error context (`src/rpc.c:155-185`) and closes. The client sees the connection closed before any ServerHello (measured: `GNUTLS_E_PULL_ERROR`, Appendix B.2) and logs `TLS handshake with H:P failed: ...; the endpoint is probably not a distccd TLS listener` (Appendix C.5, D.3). The job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
+| plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake, logs `TLS handshake failed: ...; the client is probably not using TLS` and closes; the client sees a protocol error or EOF (D.3) |
 | SSH host entry | any | unchanged; TLS not applicable |
-| client built without TLS, TLS host entry | any | explicit configuration error; no plaintext fallback |
+| client built without TLS, TLS host entry | any | explicit configuration error (`tls support not built`); no plaintext fallback |
 
 ### A.8 Answers to the twelve Phase 0 questions
 
@@ -1333,9 +1377,15 @@ export DISTCC_HOSTS='build1.example.org:3633,tls,lzo'
 
 ### C.4 Rotation and reload
 
-Credentials, CRL and lists are read when `distccd` starts and when a client starts a job. There is no reload signal (`SIGHUP` still terminates `distccd`); restart `distccd` after replacing files. Jobs that are already running keep their connection.
+Credentials, CRL and lists are read when `distccd` starts and when a client starts a job. There is no reload signal (`SIGHUP` still terminates `distccd`); restart `distccd` after replacing files.
 
-To rotate a CA: put the old and the new CA certificate into the `tls-ca` file, restart, issue new leaf certificates from the new CA, and remove the old CA once no old certificate is in use.
+A restart aborts the jobs `distccd` is running: on `SIGTERM`, `SIGINT` or `SIGHUP` the parent terminates its whole process group (`src/dsignal.c`). The affected clients back the host off and compile locally, or fail with `DISTCC_FALLBACK=0`. Restart in a quiet period. Clients need no restart: each `distcc` run reads its credentials again.
+
+To rotate a CA (tested in Appendix D.3):
+
+1. Put the old and the new CA certificate into the `tls-ca` file on both sides and restart `distccd`. Certificates from either CA are now accepted.
+2. Issue new server and client certificates from the new CA and install them; restart `distccd` after replacing its certificate.
+3. Remove the old CA certificate from the `tls-ca` files once no old certificate is in use, and restart `distccd`.
 
 ### C.5 Diagnostics
 
@@ -1347,15 +1397,21 @@ To rotate a CA: put the old and the new CA certificate into the `tls-ca` file, r
 | `... The certificate issuer is unknown.` | the certificate is not signed by the configured CA |
 | `... does not match the intended purpose.` | wrong extended key usage (role) |
 | `... The certificate chain is revoked.` | the certificate is listed in the CRL |
+| `... The certificate chain uses expired certificate.` | the certificate has expired |
+| `... The certificate chain uses not yet valid certificate.` | the certificate is not valid yet (or the clock is wrong) |
+| `TLS handshake failed: No supported cipher suites have been found.` | the peer offered only TLS 1.2 or older |
 | `TLS handshake failed: Certificate is required.` | the client has no certificate from a CA the server accepts |
+| client: `TLS write failed: The TLS connection was non-properly terminated.` | the server rejected the client certificate after the handshake (TLS 1.3); the reason is in the `distccd` log |
 | `TLS access denied - client "CN" ...` | white- or blacklist |
 | `TLS handshake failed: The operation timed out` | the client did not finish the handshake within `tls-handshake-timeout` |
 
 A failed TLS host is backed off like any failed host (`DISTCC_BACKOFF_PERIOD`, 60 s by default); the job goes to another host or falls back to a local compile. It is never sent in plaintext.
 
-## Appendix D: Phase 6 and Phase 8 results
+The logs name files, certificate subjects and GnuTLS error texts, never key material (checked in Appendix D.3 at debug level). GnuTLS itself writes TLS session secrets to the file named by the `SSLKEYLOGFILE` environment variable when that variable is set. This is a GnuTLS debugging aid that lets Wireshark decrypt captured traffic; distcc does not set it, and it must not be set in production.
 
-Measured on Debian trixie (GnuTLS 3.8.9) with the installed binaries, client and server on one machine over loopback.
+## Appendix D: Phase 5 to 7 results
+
+Measured in Debian trixie containers (GnuTLS 3.8.9) with the installed binaries, client and server on one machine over loopback. The test scripts are evaluation programs and not part of the repository.
 
 ### D.1 Protocol matrix through TLS
 
@@ -1375,14 +1431,120 @@ The decrypted stream is the unchanged protocol: every version and both compressi
 
 ### D.2 Performance
 
-200 one-function source files, compiled through one host.
+200 source files, each including `<stdio.h>` and `<string.h>`, compiled through one host over loopback on a 12-CPU machine. Plain mode sends the preprocessed file; pump mode (`,cpp,lzo`) sends the sources and headers. Plain TCP and TLS ran interleaved in three rounds; the table gives the mean time per job and, in brackets, the range of the three rounds. SSH ran once, with sshd's `MaxStartups` raised for the parallel case.
 
-| Transport | 1 job at a time | 16 jobs in parallel |
+| Workload | plain TCP | TLS | SSH |
+|---|---|---|---|
+| plain mode, 1 job at a time | 35.3 ms (33.7–36.4) | 36.0 ms (34.0–38.9) | 1173 ms |
+| pump mode, 1 job at a time | 31.1 ms (30.4–31.5) | 34.6 ms (34.2–34.9) | 1148 ms |
+| plain mode, 16 jobs in parallel | 13.7 ms (11.8–16.5) | 13.2 ms (10.4–14.8) | 76.5 ms |
+| pump mode, 16 jobs in parallel | 12.5 ms (10.3–14.0) | 12.6 ms (7.8–15.1) | 76.5 ms |
+
+Connection setup and small-job latency: a minimal job (an empty `main`, no headers), run 5 × 10 times interleaved, took 41 ms for plain TCP and 41 ms for TLS. On Alpine edge with GnuTLS 3.8.13, 2 × 20 interleaved jobs of the `<stdio.h>` source took 33 ms for both. The full TLS 1.3 handshake with mutual ECDSA P-256 authentication is therefore below the 1 ms resolution of these measurements on loopback. On a real network it adds one round trip per job to the TCP connection setup.
+
+Results:
+
+- **One job at a time:** TLS costs about 1 ms per job in plain mode and about 3.5 ms in pump mode, where every job sends all headers through TLS.
+- **16 jobs in parallel:** no difference beyond the spread between rounds. The per-job TLS connections run concurrently; the transport does not serialize the worker.
+- **SSH** is about 30 times slower one job at a time and about 6 times slower in parallel, because every job starts an `ssh` connection and a `distccd --inetd`.
+- **Session resumption and connection reuse** are not needed (§14).
+
+Before `TCP_NODELAY` was set on TLS connections, TLS cost about 35 ms more per job than plain TCP: every small TLS record after the first waited for the peer's delayed ACK.
+
+Not measured: medium and large compile jobs, client and worker CPU time, memory, network throughput on a real network, and many simultaneous clients.
+
+### D.3 Security and lifecycle tests
+
+Debian trixie container, GnuTLS 3.8.9, one CA (`ca`), a second CA for rotation (`newca`) and an unrelated CA (`otherca`). Client-side results are the exit code and the client log; server-side reasons are from the `distccd` log. "Rejected" means the job was not compiled remotely; no case sent job data in plaintext.
+
+| Case | Result | Reason logged |
 |---|---|---|
-| plain TCP | 9.98 s | 1.05 s |
-| TLS | 5.33 s | 1.05 s |
-| SSH | 227.2 s | 15.0 s (some jobs failed: sshd's `MaxStartups` default limits concurrent new connections) |
+| valid client and server, by IP and by DNS name | compiled | — |
+| name not in the server certificate | rejected by the client (exit 103) | `The name in the certificate does not match the expected.` |
+| client trusts another CA | rejected by the client (103) | `The certificate issuer is unknown.` |
+| server certificate expired | rejected by the client (103) | `The certificate chain uses expired certificate.` |
+| server certificate with clientAuth only | rejected by the client (103) | `does not match the intended purpose.` |
+| client certificate from another CA | rejected by the server (client 107) | server: `Certificate is required.` (the client offers no certificate from an accepted CA) |
+| client certificate with serverAuth only | rejected by the server (107) | server: `does not match the intended purpose.` |
+| client certificate not yet valid | rejected by the server (107) | server: `The certificate chain uses not yet valid certificate.` |
+| client certificate revoked in the CRL | rejected by the server (107) | server: `The certificate chain is revoked.` |
+| client not on the whitelist / on the blacklist | rejected by the server (107) | server: `TLS access denied - client "client-b" ...` |
+| client without TLS credentials | refused before connecting (101) | `TLS needs a CA file, a certificate file and a key file` |
+| TLS client to a plain `distccd` | rejected by the client (103) | `... the endpoint is probably not a distccd TLS listener`; the plain server logs `protocol derailment: expected token "DIST"` |
+| plain client to a TLS `distccd` | connection reset (107) | server: `... the client is probably not using TLS` |
+| TLS 1.2 client (`openssl s_client -tls1_2`) | no handshake; the server sends nothing back | server: `No supported cipher suites have been found.` |
+| `distcc` to a TLS 1.2-only server (`openssl s_server -tls1_2`) | rejected by the client (103) | `A TLS fatal alert has been received.` |
+| client that never finishes the handshake | ended by the server after `tls-handshake-timeout` | server: `The operation timed out` |
+| session tickets | `distccd` issued none; `openssl s_server` as a control issued 2 | — |
+| `,tls` on port 3632, without a port, or on an SSH host | refused while parsing the host list (116) | `tls host needs an explicit port other than 3632`, `tls cannot be used with an ssh host` |
+| `,tls` with a client built without GnuTLS | refused while parsing the host list | `tls support not built: ,tls` |
 
-Before `TCP_NODELAY` was set on TLS connections, TLS cost about 35 ms more per job than plain TCP: every small TLS record after the first waited for the peer's delayed ACK. With it, an interleaved run of 5 × 10 sequential jobs measured 38 ms per job for plain TCP and 39 ms for TLS. The faster sequential TLS result in the table suggests that plain TCP may be affected by the same delayed-ACK interaction; that is outside #248.
+When the server rejects a client certificate, TLS 1.3 reports this to the client only after the client's handshake has completed. The client therefore logs `TLS write failed: The TLS connection was non-properly terminated.`, and the reason is in the server log.
 
-Conclusion: the per-job handshake is not a measurable cost at these job sizes, and SSH is one to two orders of magnitude slower. Session resumption and connection reuse are not needed (§14 stays deferred).
+**Failure during an active compile.** While the compiler was running on the server, the `distccd` children were killed. The client logged `unexpected eof` and backed the host off. With `DISTCC_BACKOFF_PERIOD=60` and `DISTCC_FALLBACK=0` it then failed (exit 116). With `DISTCC_BACKOFF_PERIOD=0` it retried the same host over a new TLS connection (two handshakes, one `COMPILE_OK` on the server).
+
+**Rotation** (procedure in C.4):
+
+| Step | Result |
+|---|---|
+| daemon `tls-ca` holds old and new CA; client with an old-CA certificate / a new-CA certificate | both compiled |
+| server certificate renewed from the new CA; client trusts only the old CA | rejected: `The certificate issuer is unknown.` |
+| same, client trusts old and new CA | compiled |
+| old CA removed from the daemon; old-CA client / new-CA client | rejected by the server / compiled |
+| `distccd` restarted while a job runs (default fallback) | the job was aborted (`unexpected eof`), the client compiled locally, exit 0 |
+
+**Startup refusals:** `--tls-*` without `--tls`, `--tls` on port 3632, `--tls` with `--zeroconf`, a whitelist together with a blacklist, a key file readable by group or others, and `tls-require-crl` without a CRL each stop `distccd` with an error that names the problem.
+
+**Credential material in logs:** a daemon at `--log-level debug` and a client with `DISTCC_VERBOSE=1` ran one successful job and one rejected job (262 log lines). None of the 9 base64 lines of the three private keys and no `PRIVATE KEY` marker appeared in the logs. With `SSLKEYLOGFILE` set, GnuTLS wrote the session secrets to that file (C.5).
+
+**Test suite:** `make check` of a `--with-gnutls` build: 166 OK, 0 failed, 48 not run (tests that need other platforms or tools); `SSHMode_Case` ran and passed. A `--with-gnutls --with-auth` build fails to link `h_srvrpc` in `make check`; this is not caused by TLS, and the fix is on the separate branch `dev/fix_auth-make-check-link`.
+
+## Appendix E: Acceptance status
+
+Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the reason; **Open** has not been demonstrated yet.
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| **Architecture** | | |
+| transport and compile protocol boundaries are documented | Met | A.1 to A.6 |
+| the TLS insertion point is justified from the actual code | Met | A.4, A.8 |
+| the transport abstraction supports both plain TCP and TLS cleanly | Met | §2.1 Phase 1, A.9; `struct dcc_transport` in `src/io.c` |
+| the decision about a new protocol version is evidence-backed | Met | §4, A.8, D.1 |
+| TLS does not unnecessarily alter compile protocol semantics | Met | D.1 |
+| **Security** | | |
+| mutual authentication works | Met | D.3 |
+| peer identity is verified | Met | D.3 (name, CA, purpose, validity) |
+| authorization is explicit | Met | `--allow` plus the optional white- or blacklist (§12, D.3) |
+| invalid certificates fail closed | Met | D.3 |
+| unauthorized identities fail authorization | Met | D.3 (whitelist, blacklist, CRL) |
+| no TLS-to-plaintext downgrade occurs | Met | §5, D.3: every failed TLS case either fails or compiles locally |
+| certificate rotation works operationally | Met | C.4, D.3; a `distccd` restart aborts running jobs |
+| ticket-key rotation works if session resumption is enabled | N/A | session tickets are disabled (§14, D.3) |
+| credentials are protected with safe permissions | Met | key files readable by group or others are refused (D.3) |
+| **Compatibility** | | |
+| existing non-TLS functionality remains operational | Met | `make check` (D.3); build without GnuTLS |
+| Plain mode remains correct | Met | D.1 |
+| Pump mode remains correct | Met | D.1 |
+| compression modes remain correct | Met | D.1 (LZO, Zstd) |
+| existing supported protocol versions remain correct | Met | D.1 (1, 2, 3, 4000, 5000, 6000, 6001) |
+| SSH remains functional | Met | `SSHMode_Case` (D.3), D.2 |
+| malformed and incompatible peers fail clearly | Met | D.3 (plain to TLS, TLS to plain, TLS 1.2, silent client) |
+| **Performance** | | |
+| multiple TLS connections execute concurrently | Met | D.2 |
+| worker CPU utilization is not artificially serialized by the transport | Met | D.2: 16 parallel jobs as fast as plain TCP; CPU time itself not measured |
+| throughput is measured against plain TCP and SSH | Met | D.2 |
+| small-job latency is measured | Met | D.2 |
+| Pump workload is measured | Met | D.2 |
+| connection setup cost is measured | Met | D.2: below 1 ms on loopback |
+| session resumption is justified by data if included | N/A | not included (§14) |
+| **Operational behavior** | | |
+| TLS can be configured explicitly | Met | §15, C.2 |
+| missing TLS support produces an explicit error when TLS is required | Met | D.3; `distccd --tls` without GnuTLS: `--tls: unknown option` |
+| credentials can be rotated according to the documented procedure | Met | C.4, D.3 |
+| ticket keys can be rotated according to the documented procedure when applicable | N/A | no session tickets |
+| diagnostics distinguish TLS failures from protocol failures | Met | C.5, D.3 |
+| sensitive credential material is not logged | Met | D.3; `SSLKEYLOGFILE` is a GnuTLS opt-in (C.5) |
+| **Portability** | | |
+| supported target platforms are tested | Open | Tested: Debian trixie (glibc, GnuTLS 3.8.9, gcc and clang) and Alpine edge (musl, GnuTLS 3.8.13). The macOS CI job installs GnuTLS but has not run on this branch yet. FreeBSD and Cygwin are not tested. |
+| optional dependency behavior is tested | Met | builds with and without GnuTLS; D.3 |
+| supported build configurations remain reproducible | Met | CI detects GnuTLS; release images and packages pass `--with-gnutls`; the release image links `libgnutls.so.30` |

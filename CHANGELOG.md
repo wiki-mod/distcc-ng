@@ -40,7 +40,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `tls-port` to set the TLS listener port from `distccd.conf`. TLS
   connections set `TCP_NODELAY`; without it every small TLS record waited
   for the delayed ACK and TLS cost about 35 ms more per job than plain
-  TCP.
+  TCP. Operator guide, security and performance test results, and the
+  status against each acceptance criterion are in
+  `doc/tls-transport-design.md` (Appendices C to E); `SECURITY.md` and
+  `doc/threat-model.md` now describe the optional TLS transport.
 - **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
   profile for the verification container -- Docker's default profile plus a
   single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable
