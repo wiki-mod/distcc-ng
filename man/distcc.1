@@ -291,6 +291,9 @@ handshake.  The client checks that the server certificate is signed by
 and names the host from the host list; the server checks that the client
 certificate is signed by its
 .BR --tls-ca .
+Each side also requires the matching extended key usage (serverAuth for
+the server, clientAuth for the client) and, if a CRL is configured,
+rejects revoked certificates.
 The unchanged distcc protocol, including compression and pump mode, then
 runs inside the encrypted connection.  A certificate is not an
 authorization by itself: the server's
@@ -871,6 +874,24 @@ Required for hosts marked
 PEM file with the private key of the client certificate.
 Required for hosts marked
 .BR ,tls .
+distcc refuses a key file that group or others can access.
+.TP
+.B "DISTCC_TLS_CRL"
+Optional PEM file with certificate revocation lists; a server whose
+certificate is listed there is rejected.
+.PP
+The four TLS files can also be set in
+.B /etc/distcc/distcc.conf
+as
+.BR tls-ca ,
+.BR tls-cert ,
+.B tls-key
+and
+.BR tls-crl ,
+plus
+.B tls-require-crl = true
+to refuse TLS without a CRL.  The environment variables take precedence
+over the file.
 .TP
 .B "DISTCC_IO_TIMEOUT"
 Specifies how long (in seconds) distcc will wait before deciding a

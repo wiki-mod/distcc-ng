@@ -47,6 +47,7 @@
 #include <errno.h>
 
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -58,11 +59,26 @@
 #include "trace.h"
 #include "exitcode.h"
 #include "util.h"
+#include "config-parser.h"
+#include "client-config.h"
+#include "sandbox-config.h"
 
-/* How long a server waits for a client to complete the handshake.  The
- * accepted socket is blocking, so without this a client that connects and
- * sends nothing would hold a server process forever. */
-#define DCC_TLS_SERVER_HANDSHAKE_TIMEOUT 10 /* seconds */
+/* TLS settings: compiled-in defaults, overridden by the tls-* keys of the
+ * config file (distcc.conf for the client, distccd.conf for the daemon),
+ * overridden in turn by environment variables (client) or command-line
+ * options (daemon). */
+static struct {
+    int enabled;                /* daemon only: serve TLS */
+    char *ca;
+    char *cert;
+    char *key;
+    char *crl;
+    int require_crl;
+    /* How long a server waits for a client to complete the handshake.
+     * The accepted socket is blocking, so without a limit a client that
+     * connects and sends nothing would hold a server process forever. */
+    int handshake_timeout;      /* seconds */
+} dcc_tls_cfg = { 0, NULL, NULL, NULL, NULL, 0, 10 };
 
 /* Both ends are distcc-ng, so only TLS 1.3 is offered. */
 static const char dcc_tls_priority_append[] = "-VERS-ALL:+VERS-TLS1.3";
@@ -158,18 +174,103 @@ static const struct dcc_transport dcc_transport_tls = {
 
 
 /**
- * Load the CA, certificate and key used for every TLS connection of this
- * process.
+ * Replace the setting @p *slot with a copy of @p value, if @p value is set.
  **/
-static int dcc_tls_load_credentials(const char *ca, const char *cert,
-                                    const char *key)
+static void dcc_tls_set(char **slot, const char *value)
 {
-    int r;
+    if (!value || !*value)
+        return;
+    free(*slot);
+    *slot = strdup(value);
+}
+
+
+/**
+ * Config-file handler for the tls-* keys.  Other keys in the same file
+ * belong to other readers and are skipped here.
+ **/
+static void dcc_tls_apply_kv(void *log_prefix, const char *key,
+                             const char *value)
+{
+    int b;
+
+    if (strncmp(key, "tls-", 4) != 0)
+        return;
+
+    if (strcmp(key, "tls-enabled") == 0
+        || strcmp(key, "tls-require-crl") == 0) {
+        if (!dcc_config_parse_bool(value, &b))
+            rs_log_warning("%s: invalid boolean '%s' for '%s' (expected "
+                           "true/false); ignoring", (char *) log_prefix,
+                           value, key);
+        else if (key[4] == 'e')
+            dcc_tls_cfg.enabled = b;
+        else
+            dcc_tls_cfg.require_crl = b;
+    } else if (strcmp(key, "tls-ca") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.ca, value);
+    } else if (strcmp(key, "tls-cert") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.cert, value);
+    } else if (strcmp(key, "tls-key") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.key, value);
+    } else if (strcmp(key, "tls-crl") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.crl, value);
+    } else if (strcmp(key, "tls-handshake-timeout") == 0) {
+        int seconds = atoi(value);
+        if (seconds <= 0)
+            rs_log_warning("%s: invalid tls-handshake-timeout '%s'; "
+                           "keeping %d", (char *) log_prefix, value,
+                           dcc_tls_cfg.handshake_timeout);
+        else
+            dcc_tls_cfg.handshake_timeout = seconds;
+    } else {
+        rs_log_warning("%s: unknown key '%s'; ignoring",
+                       (char *) log_prefix, key);
+    }
+}
+
+
+/**
+ * Refuse a private key that group or others can access, as ssh does.
+ **/
+static int dcc_tls_check_key_mode(const char *key)
+{
+    struct stat st;
+
+    if (stat(key, &st) != 0) {
+        rs_log_error("cannot access TLS key %s: %s", key, strerror(errno));
+        return EXIT_BAD_ARGUMENTS;
+    }
+    if (st.st_mode & 077) {
+        rs_log_error("TLS key %s is accessible by group or others (mode "
+                     "%#o); restrict it, e.g. with chmod 600", key,
+                     (unsigned) (st.st_mode & 07777));
+        return EXIT_BAD_ARGUMENTS;
+    }
+    return 0;
+}
+
+
+/**
+ * Load the CA, certificate, key and optional CRL from dcc_tls_cfg; they
+ * are used for every TLS connection of this process.
+ **/
+static int dcc_tls_load_credentials(void)
+{
+    const char *ca = dcc_tls_cfg.ca, *cert = dcc_tls_cfg.cert;
+    const char *key = dcc_tls_cfg.key, *crl = dcc_tls_cfg.crl;
+    int r, ret;
 
     if (!ca || !cert || !key) {
         rs_log_error("TLS needs a CA file, a certificate file and a key file");
         return EXIT_BAD_ARGUMENTS;
     }
+    if (dcc_tls_cfg.require_crl && !crl) {
+        rs_log_error("tls-require-crl is set but no CRL file is configured");
+        return EXIT_BAD_ARGUMENTS;
+    }
+    if ((ret = dcc_tls_check_key_mode(key)))
+        return ret;
     if ((r = gnutls_certificate_allocate_credentials(&dcc_tls_cred)) < 0) {
         rs_log_error("TLS credentials: %s", gnutls_strerror(r));
         return EXIT_OUT_OF_MEMORY;
@@ -188,18 +289,61 @@ static int dcc_tls_load_credentials(const char *ca, const char *cert,
                      cert, key, gnutls_strerror(r));
         return EXIT_BAD_ARGUMENTS;
     }
+    if (crl) {
+        r = gnutls_certificate_set_x509_crl_file(dcc_tls_cred, crl,
+                                                 GNUTLS_X509_FMT_PEM);
+        if (r < 0) {
+            rs_log_error("failed to load TLS CRL %s: %s", crl,
+                         gnutls_strerror(r));
+            return EXIT_BAD_ARGUMENTS;
+        }
+        rs_trace("loaded %d CRL(s) from %s", r, crl);
+    }
     return 0;
 }
 
 
 /**
- * Load the daemon's TLS credentials.  Called before distccd gives up root,
+ * Read the tls-* keys of distccd.conf.  Returns true if the file sets
+ * tls-enabled.
+ **/
+int dcc_tls_server_config_load(void)
+{
+    dcc_config_load(DCC_DAEMON_CONFIG_DEFAULT_PATH, "distccd config",
+                    dcc_tls_apply_kv, (void *) "distccd config");
+    return dcc_tls_cfg.enabled;
+}
+
+
+/**
+ * Load the daemon's TLS credentials.  Non-NULL arguments (command-line
+ * options) override distccd.conf.  Called before distccd gives up root,
  * so that a key file readable only by root can be used.
  **/
 int dcc_tls_load_server_credentials(const char *ca, const char *cert,
-                                    const char *key)
+                                    const char *key, const char *crl)
 {
-    return dcc_tls_load_credentials(ca, cert, key);
+    dcc_tls_set(&dcc_tls_cfg.ca, ca);
+    dcc_tls_set(&dcc_tls_cfg.cert, cert);
+    dcc_tls_set(&dcc_tls_cfg.key, key);
+    dcc_tls_set(&dcc_tls_cfg.crl, crl);
+    return dcc_tls_load_credentials();
+}
+
+
+/**
+ * Load the client's TLS credentials: distcc.conf first, then the
+ * DISTCC_TLS_* environment variables.
+ **/
+static int dcc_tls_load_client_credentials(void)
+{
+    dcc_config_load(DCC_CLIENT_CONFIG_DEFAULT_PATH, "distcc config",
+                    dcc_tls_apply_kv, (void *) "distcc config");
+    dcc_tls_set(&dcc_tls_cfg.ca, getenv("DISTCC_TLS_CA"));
+    dcc_tls_set(&dcc_tls_cfg.cert, getenv("DISTCC_TLS_CERT"));
+    dcc_tls_set(&dcc_tls_cfg.key, getenv("DISTCC_TLS_KEY"));
+    dcc_tls_set(&dcc_tls_cfg.crl, getenv("DISTCC_TLS_CRL"));
+    return dcc_tls_load_credentials();
 }
 
 
@@ -279,7 +423,7 @@ static int dcc_is_ip_literal(const char *host)
 /**
  * Client side: run the TLS handshake on a connected socket to
  * @p hostname:@p port and bind it to the TLS transport.  The server
- * certificate must be signed by DISTCC_TLS_CA and name @p hostname.
+ * certificate must be signed by the configured CA and name @p hostname.
  **/
 int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
                     int port)
@@ -287,10 +431,9 @@ int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
     gnutls_session_t session;
     int r, ret;
 
-    if (!dcc_tls_cred
-        && (ret = dcc_tls_load_credentials(getenv("DISTCC_TLS_CA"),
-                                           getenv("DISTCC_TLS_CERT"),
-                                           getenv("DISTCC_TLS_KEY"))))
+    gnutls_typed_vdata_st verify[2];
+
+    if (!dcc_tls_cred && (ret = dcc_tls_load_client_credentials()))
         return ret;
 
     if ((ret = dcc_tls_new_session(&session,
@@ -303,7 +446,15 @@ int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
     if (!dcc_is_ip_literal(hostname))
         gnutls_server_name_set(session, GNUTLS_NAME_DNS, hostname,
                                strlen(hostname));
-    gnutls_session_set_verify_cert(session, hostname, 0);
+    /* The server certificate must name the host and be meant for a TLS
+     * server, so a client certificate of the same CA is not accepted. */
+    verify[0].type = GNUTLS_DT_DNS_HOSTNAME;
+    verify[0].data = (unsigned char *) hostname;
+    verify[0].size = 0;
+    verify[1].type = GNUTLS_DT_KEY_PURPOSE_OID;
+    verify[1].data = (unsigned char *) GNUTLS_KP_TLS_WWW_SERVER;
+    verify[1].size = 0;
+    gnutls_session_set_verify_cert2(session, verify, 2, 0);
     gnutls_transport_set_int2(session, from_net_fd, to_net_fd);
 
     r = dcc_tls_handshake(session, from_net_fd, dcc_get_io_timeout());
@@ -340,19 +491,25 @@ int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
 int dcc_tls_accept(int in_fd, int out_fd)
 {
     gnutls_session_t session;
+    gnutls_typed_vdata_st verify;
     int r, ret;
 
     if ((ret = dcc_tls_new_session(&session,
                                    GNUTLS_SERVER | GNUTLS_NO_TICKETS)))
         return ret;
 
+    /* The client certificate must be meant for a TLS client, so a server
+     * certificate of the same CA is not accepted. */
+    verify.type = GNUTLS_DT_KEY_PURPOSE_OID;
+    verify.data = (unsigned char *) GNUTLS_KP_TLS_WWW_CLIENT;
+    verify.size = 0;
     gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUIRE);
-    gnutls_session_set_verify_cert(session, NULL, 0);
+    gnutls_session_set_verify_cert2(session, &verify, 1, 0);
     gnutls_handshake_set_timeout(session,
-                                 DCC_TLS_SERVER_HANDSHAKE_TIMEOUT * 1000);
+                                 dcc_tls_cfg.handshake_timeout * 1000);
     gnutls_transport_set_int2(session, in_fd, out_fd);
 
-    r = dcc_tls_handshake(session, in_fd, DCC_TLS_SERVER_HANDSHAKE_TIMEOUT);
+    r = dcc_tls_handshake(session, in_fd, dcc_tls_cfg.handshake_timeout);
     if (r == 0) {
         char *desc = gnutls_session_get_desc(session);
         rs_log_info("TLS: %s", desc);

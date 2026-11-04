@@ -227,8 +227,11 @@ int main(int argc, char *argv[])
     }
 
 #ifdef HAVE_GNUTLS
-    if (!opt_tls && (arg_tls_ca || arg_tls_cert || arg_tls_key)) {
-        rs_log_error("--tls-ca, --tls-cert and --tls-key need --tls");
+    /* tls-enabled in distccd.conf has the same effect as --tls. */
+    if (dcc_tls_server_config_load())
+        opt_tls = 1;
+    if (!opt_tls && (arg_tls_ca || arg_tls_cert || arg_tls_key || arg_tls_crl)) {
+        rs_log_error("--tls-ca, --tls-cert, --tls-key and --tls-crl need --tls");
         dcc_exit(EXIT_BAD_ARGUMENTS);
     }
 #ifdef HAVE_AVAHI
@@ -250,7 +253,8 @@ int main(int argc, char *argv[])
         /* Load the key before giving away root, so a key file readable
          * only by root works. */
         if ((ret = dcc_tls_load_server_credentials(arg_tls_ca, arg_tls_cert,
-                                                   arg_tls_key)) != 0)
+                                                   arg_tls_key,
+                                                   arg_tls_crl)) != 0)
             dcc_exit(ret);
     }
 #endif

@@ -130,6 +130,8 @@ static void dcc_seccomp_apply_kv(void *cfg_ptr, const char *key,
                 free(old[i]);
             free(old);
         }
+    } else if (strncmp(key, "tls-", 4) == 0) {
+        /* TLS settings are read by src/tls.c from the same file. */
     } else {
         rs_log_warning("distccd config: unknown key '%s'; ignoring", key);
     }

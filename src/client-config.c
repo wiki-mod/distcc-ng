@@ -63,6 +63,8 @@ static void dcc_client_apply_kv(void *cfg_ptr, const char *key,
                             cfg->local_lto ? "true" : "false");
         else
             cfg->local_lto = parsed;
+    } else if (strncmp(key, "tls-", 4) == 0) {
+        /* TLS settings are read by src/tls.c from the same file. */
     } else {
         rs_log_warning("distcc config: unknown key '%s'; ignoring", key);
     }

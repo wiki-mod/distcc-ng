@@ -146,6 +146,7 @@ int opt_tls = 0;
 const char *arg_tls_ca = NULL;
 const char *arg_tls_cert = NULL;
 const char *arg_tls_key = NULL;
+const char *arg_tls_crl = NULL;
 #endif
 
 /* Enumeration values for options that don't have single-letter name.  These
@@ -223,6 +224,7 @@ const struct poptOption options[] = {
     { "tls-ca", 0,       POPT_ARG_STRING, &arg_tls_ca, 0, 0, 0 },
     { "tls-cert", 0,     POPT_ARG_STRING, &arg_tls_cert, 0, 0, 0 },
     { "tls-key", 0,      POPT_ARG_STRING, &arg_tls_key, 0, 0, 0 },
+    { "tls-crl", 0,      POPT_ARG_STRING, &arg_tls_crl, 0, 0, 0 },
 #endif
     { 0, 0, 0, 0, 0, 0, 0 }
 };
@@ -262,10 +264,13 @@ static void distccd_show_usage(void)
 #endif
 #ifdef HAVE_GNUTLS
 "    --tls                      accept only TLS connections (needs --port\n"
-"                               other than 3632 and the three files below)\n"
+"                               other than 3632, CA, certificate and key)\n"
 "    --tls-ca FILE              CA certificate that signs client certificates\n"
 "    --tls-cert FILE            server certificate\n"
 "    --tls-key FILE             server private key\n"
+"    --tls-crl FILE             revoked client certificates (optional)\n"
+"                               (all tls-* settings can also be set in\n"
+"                               /etc/distcc/distccd.conf)\n"
 #endif
 "    --sysroot=DIR              search resource file in this directory\n"
 "    --stats                    enable statistics reporting via HTTP server\n"

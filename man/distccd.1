@@ -277,7 +277,34 @@ list.
 .B --tls-key FILE
 PEM file with the private key of the server certificate.  The key is
 read before distccd gives up root privileges, so it may be readable by
-root only.
+root only.  distccd refuses to start if group or others can access the
+key file.
+.TP
+.B --tls-crl FILE
+Optional PEM file with certificate revocation lists.  A client whose
+certificate is listed there is rejected during the handshake.
+.PP
+Client certificates must carry the clientAuth extended key usage and the
+server certificate the serverAuth one, so a certificate issued for one
+role cannot be used for the other.
+.PP
+All TLS settings can also be given in
+.BR /etc/distcc/distccd.conf ;
+command-line options take precedence:
+.RS
+.nf
+# same as --tls
+tls-enabled = true
+tls-ca = /etc/distcc/tls/ca.crt
+tls-cert = /etc/distcc/tls/server.crt
+tls-key = /etc/distcc/tls/server.key
+tls-crl = /etc/distcc/tls/clients.crl
+# true: refuse to start without tls-crl (default false)
+tls-require-crl = false
+# seconds a client gets to finish the handshake (default 10)
+tls-handshake-timeout = 10
+.fi
+.RE
 .TP
 .B --show-principal
 Displays the name of the distccd security principal extracted from the

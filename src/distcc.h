@@ -451,8 +451,9 @@ int dcc_transport_allows_sendfile(int fd);
 
 /* tls.c */
 #ifdef HAVE_GNUTLS
+int dcc_tls_server_config_load(void);
 int dcc_tls_load_server_credentials(const char *ca, const char *cert,
-                                    const char *key);
+                                    const char *key, const char *crl);
 int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
                     int port);
 int dcc_tls_accept(int in_fd, int out_fd);

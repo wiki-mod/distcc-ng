@@ -25,7 +25,15 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `--tls-cert` and `--tls-key`. distccd refuses `--tls` on port 3632,
   together with `--zeroconf`, and `--tls-*` files without `--tls`. The
   server ends a handshake that takes longer than 10 seconds. Documented
-  in `distcc(1)` and `distccd(1)`.
+  in `distcc(1)` and `distccd(1)`. Every TLS setting can also be set in
+  the existing config files (`tls-*` keys in `/etc/distcc/distcc.conf`
+  and `/etc/distcc/distccd.conf`, including `tls-enabled` and
+  `tls-handshake-timeout`); environment variables and command-line
+  options take precedence. Optional certificate revocation lists
+  (`--tls-crl`, `DISTCC_TLS_CRL`, `tls-crl`; `tls-require-crl = true`
+  makes one mandatory), extended key usage checks (server certificates
+  need serverAuth, client certificates clientAuth), and a refusal to use
+  a private key that group or others can access.
 - **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
   profile for the verification container -- Docker's default profile plus a
   single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable
