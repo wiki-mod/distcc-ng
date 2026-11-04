@@ -823,7 +823,7 @@ Done: Appendix D.2; no session resumption, tickets disabled (§14).
 
 Complete credential rotation, reload behavior, diagnostics, package/build integration, portability, documentation, and failure recovery.
 
-Done except portability beyond Linux: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, CI and release packages build with GnuTLS, `distcc(1)` and `distccd(1)`. Portability status in Appendix E.
+Done except portability beyond Linux and the CI and package builds: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, CI and release packaging configured for GnuTLS, `distcc(1)` and `distccd(1)`. Portability and build status in Appendix E.
 
 ### Phase 8: future managed transport reuse
 
@@ -1440,6 +1440,8 @@ The decrypted stream is the unchanged protocol: every version and both compressi
 | plain mode, 16 jobs in parallel | 13.7 ms (11.8–16.5) | 13.2 ms (10.4–14.8) | 76.5 ms |
 | pump mode, 16 jobs in parallel | 12.5 ms (10.3–14.0) | 12.6 ms (7.8–15.1) | 76.5 ms |
 
+A first, single run of the same workload, not interleaved, measured 61 ms per job for TLS against 39 ms for plain TCP in plain mode one job at a time. That difference did not reproduce in the three interleaved rounds or on Alpine, so the table uses the interleaved rounds; the SSH figures come from that first run.
+
 Connection setup and small-job latency: a minimal job (an empty `main`, no headers), run 5 × 10 times interleaved, took 41 ms for plain TCP and 41 ms for TLS. On Alpine edge with GnuTLS 3.8.13, 2 × 20 interleaved jobs of the `<stdio.h>` source took 33 ms for both. The full TLS 1.3 handshake with mutual ECDSA P-256 authentication is therefore below the 1 ms resolution of these measurements on loopback. On a real network it adds one round trip per job to the TCP connection setup.
 
 Results:
@@ -1491,7 +1493,7 @@ When the server rejects a client certificate, TLS 1.3 reports this to the client
 | server certificate renewed from the new CA; client trusts only the old CA | rejected: `The certificate issuer is unknown.` |
 | same, client trusts old and new CA | compiled |
 | old CA removed from the daemon; old-CA client / new-CA client | rejected by the server / compiled |
-| `distccd` restarted while a job runs (default fallback) | the job was aborted (`unexpected eof`), the client compiled locally, exit 0 |
+| `distccd` stopped while a job runs (default fallback) | the job was aborted (`unexpected eof`, `server provided no answer`); the client exited 0, which with fallback enabled means it compiled locally (the fallback log line was not captured) |
 
 **Startup refusals:** `--tls-*` without `--tls`, `--tls` on port 3632, `--tls` with `--zeroconf`, a whitelist together with a blacklist, a key file readable by group or others, and `tls-require-crl` without a CRL each stop `distccd` with an error that names the problem.
 
@@ -1547,4 +1549,4 @@ Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the
 | **Portability** | | |
 | supported target platforms are tested | Open | Tested: Debian trixie (glibc, GnuTLS 3.8.9, gcc and clang) and Alpine edge (musl, GnuTLS 3.8.13). The macOS CI job installs GnuTLS but has not run on this branch yet. FreeBSD and Cygwin are not tested. |
 | optional dependency behavior is tested | Met | builds with and without GnuTLS; D.3 |
-| supported build configurations remain reproducible | Met | CI detects GnuTLS; release images and packages pass `--with-gnutls`; the release image links `libgnutls.so.30` |
+| supported build configurations remain reproducible | Open | Built locally: with and without GnuTLS, gcc and clang, Debian trixie and Alpine edge, and the release Docker image (links `libgnutls.so.30`). CI has not run on this branch yet. The RPM and deb builds pass `--with-gnutls` but stop in `%prep` on rpm 4.20, a problem that exists without TLS too. The Alpine APKBUILDs are configured for GnuTLS but were not built. |
