@@ -93,7 +93,7 @@ This register separates what is fixed from what is proposed and what is still op
 **Open questions** (decided in the named phase):
 
 - Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
-- Phase 2: mbedTLS fit against the Phase 1 interface, including the API calls named in Appendix A.8 question 12.
+- Phase 2: mbedTLS fit against the Phase 1 interface. Result in Appendix B: mbedTLS 3.6.6 fits; three interface additions are needed in Phase 3.
 - Phase 4: exact transport-selection syntax and TLS listener port.
 - Phase 5: certificate identity model; Appendix A.8 question 8 recommends reusing the #237 role model.
 - Phase 6: whether session resumption is needed.
@@ -1120,7 +1120,7 @@ The protocol version is derived as follows:
 |---|---|---|
 | old or new client, plaintext host entry | classic 3632 (old or new `distccd`) | unchanged |
 | new client, TLS host entry | TLS listener of a new `distccd` | TLS handshake, then the unchanged protocol |
-| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | the TLS ClientHello reaches the server. It carries no job data: no source, no arguments, and no client certificate, which is only sent after the server has answered. The stock server reads its first 12 bytes as the `DIST` token (`src/srvrpc.c:63`), logs `protocol derailment: expected token "DIST"` (`src/rpc.c:213`), reads up to 187 further bytes for its error context (`src/rpc.c:155-185`) and closes. The client sees the connection closed before any ServerHello. It must report this as a TLS handshake failure that names the host and states that the endpoint is probably not a TLS listener. The job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
+| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | the TLS ClientHello reaches the server. It carries no job data: no source, no arguments, and no client certificate, which is only sent after the server has answered. The stock server reads its first 12 bytes as the `DIST` token (`src/srvrpc.c:63`), logs `protocol derailment: expected token "DIST"` (`src/rpc.c:213`), reads up to 187 further bytes for its error context (`src/rpc.c:155-185`) and closes. The client sees the connection reset before any ServerHello (measured: `MBEDTLS_ERR_NET_CONN_RESET`, Appendix B). It must report this as a TLS handshake failure that names the host and states that the endpoint is probably not a TLS listener. The job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
 | plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake and closes; the client sees a protocol error or EOF |
 | SSH host entry | any | unchanged; TLS not applicable |
 | client built without TLS, TLS host entry | any | explicit configuration error; no plaintext fallback |
@@ -1209,3 +1209,26 @@ Result:
 - The design in this document matches the Redis model (selected by configuration, separate port) and the PostgreSQL direct-TLS model (handshake first, disconnect on mismatch).
 - The PostgreSQL default model needs a server that can answer the request. A stock `distccd` cannot answer anything before `DIST`, so an in-band request would fail against it in the same way as a direct handshake. It would also add the plaintext continuation that §17 forbids.
 - No design can stop a misconfigured client from sending a ClientHello to a stock `distccd`. What the design controls is that this costs no data and fails with a clear message (A.7).
+## Appendix B: Phase 2 mbedTLS fit check
+
+A probe program tested mbedTLS against the Phase 1 transport shape: a TCP connection that already exists, a nonblocking client socket (as `src/clinet.c:105`), a blocking accepted server socket (as `src/prefork.c:175`), and mutual certificates from one CA. Environment: Debian trixie, `libmbedtls-dev` 3.6.6 (meets the `>= 3.6.3` default), TLS 1.3 and `MBEDTLS_SSL_KEEP_PEER_CERTIFICATE` enabled in the distribution build. The probe is an evaluation program and not part of the repository.
+
+| Case | Result |
+|---|---|
+| mTLS, 8 MiB client to server, 4 MiB back | TLS 1.3 handshake succeeds; server verify flags 0; the client certificate subject is available on the server. Data arrives complete. |
+| Wrapping an existing descriptor | `mbedtls_net_context.fd` set to the connected descriptor plus `mbedtls_ssl_set_bio()`; no socket creation by mbedTLS. |
+| Nonblocking client | Handshake and reads return `MBEDTLS_ERR_SSL_WANT_READ` (1 during the handshake, 44 during 4 MiB of reads); `WANT_WRITE` did not occur. |
+| Buffered data | After a 100-byte read, `mbedtls_ssl_get_bytes_avail()` reported 16283 bytes and `mbedtls_ssl_check_pending()` 1, while the socket itself had nothing left to read. |
+| Orderly close | `mbedtls_ssl_close_notify()` on the client; the server read returns `MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY`. |
+| Client without certificate, server requires one | The server fails with `MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE` (-0x7480). The client handshake reports success; the client sees the failure only on its first write (`MBEDTLS_ERR_NET_CONN_RESET`). |
+| TLS client against a stock `distccd` | The stock server reads `0x16` as the first `DIST` byte and closes; the client handshake fails with `MBEDTLS_ERR_NET_CONN_RESET` (-0x0050). |
+| Plaintext client against a TLS server | The server handshake fails at once with `MBEDTLS_ERR_SSL_INVALID_RECORD` (-0x7200); the client sees a connection reset. |
+| Silent peer, blocking server | With `mbedtls_ssl_conf_read_timeout(2000)` and `mbedtls_net_recv_timeout` as receive callback, the server handshake fails after 2.00 s with `MBEDTLS_ERR_SSL_TIMEOUT`. |
+
+Result: mbedTLS fits the Phase 1 interface. `WANT_READ`/`WANT_WRITE` map to `EAGAIN`, which `dcc_readx()` and `dcc_writex()` already handle. Phase 3 needs three additions:
+
+1. **Pending data.** `dcc_select_for_read()` and the disconnect probe in `src/exec.c:582` wait on the socket. With TLS, data can sit decrypted in mbedTLS while the socket is idle, so the transport needs a `pending` operation backed by `mbedtls_ssl_get_bytes_avail()`.
+2. **Server handshake timeout.** The open Phase 3 requirement (§2.1) is met with mbedTLS's own read timeout on the blocking server socket; no new timer code is needed.
+3. **Failure classification.** In TLS 1.3 a rejected client certificate surfaces on the client as an I/O error after a successful handshake, not as a handshake error. The #228 failure classification must not rely on the client seeing authentication failures during the handshake. An immediate connection reset during the handshake is the signal for "probably not a TLS listener" (A.7).
+
+`WANT_WRITE` during a read (possible in TLS 1.3 after a key update) did not occur in the probe. Phase 3 either reports the wanted direction through the transport or runs TLS connections on a blocking socket with the read timeout above. The default TLS 1.3 negotiation selected `TLS1-3-CHACHA20-POLY1305-SHA256`; cipher suite policy stays a Phase 6 question (§9, §21).
