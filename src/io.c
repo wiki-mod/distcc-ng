@@ -22,9 +22,17 @@
  */
 
 
-/*
- * What: Low-level descriptor I/O and job transport binding.
- * Why: Keeps the RPC code independent of the byte transport.
+/**
+ * @file
+ *
+ * Common low-level IO utilities.
+ *
+ * This code is not meant to know about our protocol, only to provide
+ * a more comfortable layer on top of Unix IO.
+ *
+ * @todo Perhaps write things out using writev() to reduce the number
+ * of system calls, and the risk of small packets when not using
+ * TCP_CORK.
  */
 
 #include <config.h>
@@ -53,11 +61,11 @@
 #include "exitcode.h"
 
 
-/*
- * What: Descriptors of the job connection and its transport.
- * Why: inetd mode carries one connection on fd 0 and fd 1.
- * From: Issue #248
- */
+/**
+ * The job connection and the transport it is bound to.  A process has at
+ * most one job connection at a time.  In inetd mode it uses two
+ * descriptors (stdin and stdout) for the same connection.
+ **/
 static struct {
     int in_fd;
     int out_fd;
@@ -66,11 +74,6 @@ static struct {
 } dcc_conn = { -1, -1, NULL, NULL };
 
 
-/*
- * What: Reads once from fd through read(2).
- * Why: Plain TCP uses the same dispatch path as TLS.
- * From: Issue #248
- */
 static ssize_t dcc_plain_read(void *UNUSED(ctx), int fd, void *buf,
                               size_t len)
 {
@@ -78,11 +81,6 @@ static ssize_t dcc_plain_read(void *UNUSED(ctx), int fd, void *buf,
 }
 
 
-/*
- * What: Writes once to fd through write(2).
- * Why: Plain TCP uses the same dispatch path as TLS.
- * From: Issue #248
- */
 static ssize_t dcc_plain_write(void *UNUSED(ctx), int fd, const void *buf,
                                size_t len)
 {
@@ -90,11 +88,9 @@ static ssize_t dcc_plain_write(void *UNUSED(ctx), int fd, const void *buf,
 }
 
 
-/*
- * What: Transport for plain TCP and pipe connections.
- * Why: Makes plain connections use the bound dispatch path.
- * From: Issue #248
- */
+/**
+ * Plain transport: unencrypted TCP, SSH pipes and inetd descriptors.
+ **/
 const struct dcc_transport dcc_transport_plain = {
     dcc_plain_read,
     dcc_plain_write,
@@ -103,11 +99,10 @@ const struct dcc_transport dcc_transport_plain = {
 };
 
 
-/*
- * What: Binds the job connection descriptors to a transport.
- * Why: Network I/O on them must pass through ops.
- * From: Issue #248
- */
+/**
+ * Bind the job connection descriptors to a transport.  All network I/O on
+ * @p in_fd and @p out_fd then goes through @p ops.
+ **/
 void dcc_transport_bind(int in_fd, int out_fd,
                         const struct dcc_transport *ops, void *ctx)
 {
@@ -118,11 +113,10 @@ void dcc_transport_bind(int in_fd, int out_fd,
 }
 
 
-/*
- * What: Returns the transport bound to fd, or NULL.
- * Why: Unbound descriptors are local files and pipes.
- * From: Issue #248
- */
+/**
+ * Return the transport bound to @p fd, or NULL for unbound descriptors
+ * such as local files and pipes to the compiler.
+ **/
 static const struct dcc_transport *dcc_transport_of(int fd)
 {
     if (dcc_conn.ops && (fd == dcc_conn.in_fd || fd == dcc_conn.out_fd))
@@ -131,11 +125,9 @@ static const struct dcc_transport *dcc_transport_of(int fd)
 }
 
 
-/*
- * What: Reads once from fd with read(2) result semantics.
- * Why: Single entry point for every network read.
- * From: Issue #248
- */
+/**
+ * Read once from @p fd, with the same return convention as read().
+ **/
 ssize_t dcc_transport_read(int fd, void *buf, size_t len)
 {
     const struct dcc_transport *ops = dcc_transport_of(fd);
@@ -146,11 +138,9 @@ ssize_t dcc_transport_read(int fd, void *buf, size_t len)
 }
 
 
-/*
- * What: Writes once to fd with write(2) result semantics.
- * Why: Single entry point for every network write.
- * From: Issue #248
- */
+/**
+ * Write once to @p fd, with the same return convention as write().
+ **/
 ssize_t dcc_transport_write(int fd, const void *buf, size_t len)
 {
     const struct dcc_transport *ops = dcc_transport_of(fd);
@@ -161,11 +151,10 @@ ssize_t dcc_transport_write(int fd, const void *buf, size_t len)
 }
 
 
-/*
- * What: Returns 1 if sendfile() may write to fd directly.
- * Why: sendfile() bypasses a transport that frames bytes.
- * From: Issue #248
- */
+/**
+ * Return true if sendfile() may write directly to @p fd.  A transport
+ * that frames or encrypts the stream must not be bypassed.
+ **/
 int dcc_transport_allows_sendfile(int fd)
 {
     const struct dcc_transport *ops = dcc_transport_of(fd);
@@ -174,13 +163,11 @@ int dcc_transport_allows_sendfile(int fd)
 }
 
 
-/*
- * What: Returns the I/O timeout, DISTCC_IO_TIMEOUT or 300s.
- * Why: A compile can take far longer than a connect.
- */
 int dcc_get_io_timeout(void)
 {
-    static const int default_dcc_io_timeout = 300;
+    /** Timeout for all IO other than opening connections.  Much longer,
+     * because compiling files can take a long time. **/
+    static const int default_dcc_io_timeout = 300; /* seconds */
     static int current_timeout = 0;
 
     if (current_timeout > 0)
@@ -200,10 +187,10 @@ int dcc_get_io_timeout(void)
     return current_timeout;
 }
 
-/*
- * What: Waits until fd is readable or timeout seconds pass.
- * Why: Bounds waits on nonblocking descriptors.
- */
+/**
+ * @todo Perhaps only apply the timeout for initial connections, not when
+ * doing regular IO.
+ **/
 int dcc_select_for_read(int fd,
                         int timeout)
 {
@@ -218,8 +205,11 @@ int dcc_select_for_read(int fd,
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
 
-        /* What: Retries select() with tv as the OS left it.
-         * Why: Only Linux updates tv, so others may wait longer. */
+        /* Linux updates the timeval to reflect the remaining time, but other
+         * OSs may not.  So on other systems, we may wait a bit too long if
+         * the client is interrupted -- but that won't happen very often so
+         * it's no big deal.
+         */
 
         rs_trace("select for read on fd%d for %ds", fd, (int) tv.tv_sec);
         rs = select(fd+1, &fds, NULL, NULL, &tv);
@@ -236,7 +226,7 @@ int dcc_select_for_read(int fd,
             rs_log_error("how did fd not get set?");
             continue;
         } else {
-            break;
+            break;              /* woot */
         }
     }
     return 0;
@@ -244,8 +234,8 @@ int dcc_select_for_read(int fd,
 
 
 /*
- * What: Waits until fd is writable, errored, or timed out.
- * Why: The next write() reports an error state with errno.
+ * Calls select() to block until the specified fd becomes writeable
+ * or has an error condition, or the timeout expires.
  */
 int dcc_select_for_write(int fd, int timeout)
 {
@@ -279,6 +269,15 @@ int dcc_select_for_write(int fd, int timeout)
         } else {
             if (FD_ISSET(fd, &except_fds)) {
               rs_trace("error condition on fd%d", fd);
+              /*
+               * Don't fail here; we couldn't give a good error
+               * message, because we don't know what the error
+               * condition is.  Instead just return 0 (success),
+               * indicating that the select has successfully finished.
+               * The next call to write() for that fd will fail but
+               * will also set errno properly so that we can give a
+               * good error message at that point.
+               */
             }
             return 0;
         }
@@ -287,10 +286,9 @@ int dcc_select_for_write(int fd, int timeout)
 
 
 
-/*
- * What: Reads exactly len bytes from fd.
- * Why: Protocol tokens and bodies have fixed lengths.
- */
+/**
+ * Read exactly @p len bytes from a file.
+ **/
 int dcc_readx(int fd, void *buf, size_t len)
 {
     ssize_t r;
@@ -322,10 +320,12 @@ int dcc_readx(int fd, void *buf, size_t len)
 }
 
 
-/*
- * What: Writes all len bytes to fd; returns 0 or exit code.
- * Why: write() may accept only part of the buffer.
- */
+/**
+ * Write bytes to an fd.  Keep writing until we're all done or something goes
+ * wrong.
+ *
+ * @returns 0 or exit code.
+ **/
 int dcc_writex(int fd, const void *buf, size_t len)
 {
     ssize_t r;
@@ -353,10 +353,12 @@ int dcc_writex(int fd, const void *buf, size_t len)
     return 0;
 }
 
-/*
- * What: Sets TCP_CORK on fd where available and enabled.
- * Why: Lets the kernel coalesce small protocol writes.
- */
+/**
+ * Stick a TCP cork in the socket.  It's not clear that this will help
+ * performance, but it might.
+ *
+ * This is a no-op if we don't think this platform has corks.
+ **/
 int tcp_cork_sock(int POSSIBLY_UNUSED(fd), int POSSIBLY_UNUSED(corked))
 {
 #if defined(TCP_CORK) && defined(SOL_TCP)
@@ -368,20 +370,22 @@ int tcp_cork_sock(int POSSIBLY_UNUSED(fd), int POSSIBLY_UNUSED(corked))
         if (errno == ENOSYS || errno == ENOTSUP) {
             if (corked)
                 rs_trace("no corks allowed on fd%d", fd);
+            /* no need to complain about not uncorking */
         } else {
             rs_log_warning("setsockopt(corked=%d) failed: %s",
                            corked, strerror(errno));
+            /* continue anyhow */
         }
     }
-#endif
+#endif /* def TCP_CORK */
     return 0;
 }
 
-/*
- * What: Closes fd; closing either fd ends the job connection.
- * Why: No transport I/O may follow the first close.
- * From: Issue #248
- */
+/**
+ * Close @p fd.  Closing either descriptor of the bound job connection ends
+ * the connection: the transport's close hook runs and the binding is
+ * cleared, so no transport I/O can follow.
+ **/
 int dcc_close(int fd)
 {
     const struct dcc_transport *ops = dcc_transport_of(fd);

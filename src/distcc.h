@@ -427,9 +427,9 @@ int dcc_want_mmap(void);
 int dcc_select_for_write(int fd, int timeout);
 int dcc_select_for_read(int fd, int timeout);
 
-/* What: Byte transport operations of a job connection.
- * Why: TLS and plain TCP share every RPC caller.
- * From: Issue #248 */
+/* Byte transport of a job connection.  The RPC code reads and writes
+ * through it, so another transport can replace plain TCP without
+ * changing the callers. */
 struct dcc_transport {
     ssize_t (*read)(void *ctx, int fd, void *buf, size_t len);
     ssize_t (*write)(void *ctx, int fd, const void *buf, size_t len);
