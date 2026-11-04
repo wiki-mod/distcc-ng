@@ -199,6 +199,11 @@ See `doc/release-versioning.md` for the full versioning and release process.
   used only when the bound transport allows it. Plain TCP, SSH and inetd
   connections use the plain transport, so the wire behavior is unchanged.
   This is the hook for native TLS.
+- **`.github/actions/install-build-deps/action.yml`, `.github/workflows/c-build.yml`**
+  (issue #248): CI installs GnuTLS (`libgnutls28-dev` in the shared apt
+  list and in the coverage and sanitizer jobs, `gnutls` for macOS), so the
+  TLS transport is built and covered by `make check` on Ubuntu and macOS
+  instead of only the build without TLS.
 
 ### Documentation
 

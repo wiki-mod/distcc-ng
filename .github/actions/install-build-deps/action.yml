@@ -27,7 +27,7 @@ inputs:
     required: false
     default: >-
       clang libavahi-client-dev libpopt-dev gdb python3-dev
-      python3-setuptools ccache libzstd-dev libelf-dev
+      python3-setuptools ccache libzstd-dev libelf-dev libgnutls28-dev
   brew:
     description: >-
       Optional Homebrew package list, passed through unchanged for macOS
