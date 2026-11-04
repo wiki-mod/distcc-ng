@@ -85,6 +85,9 @@ int arg_max_jobs = 0;
 #ifdef HAVE_GSSAPI
 /* If true perform GSS-API based authentication. */
 int opt_auth_enabled = 0;
+/* Simple boolean, with a non-zero value indicating that the */
+/* --auth option was specified. */
+int dcc_auth_enabled = 0;
 /* Control access through a specified list file. */
 int opt_blacklist_enabled = 0;
 int opt_whitelist_enabled = 0;

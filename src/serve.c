@@ -96,10 +96,6 @@
 /* Global security context in case confidentiality/integrity */
 /* type services are needed in the future. */
 extern gss_ctx_id_t distccd_ctx_handle;
-
-/* Simple boolean, with a non-zero value indicating that the */
-/* --auth option was specified. */
-int dcc_auth_enabled = 0;
 #endif
 
 /**

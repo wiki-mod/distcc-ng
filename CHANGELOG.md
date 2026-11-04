@@ -84,6 +84,13 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/dopt.c`, `src/serve.c`, `src/h_dopt.c`**: `make check` with
+  `./configure --with-auth` failed to link the `h_srvrpc` test helper
+  (`undefined reference to dcc_auth_enabled`): `dopt.c` sets the flag but
+  it was defined in `serve.c`, which the helper does not link, and
+  `h_dopt.c` carried a local stub for the same reason. The flag is now
+  defined once in `dopt.c` next to the other option globals; the stub and
+  a duplicate declaration in `dopt.h` are removed.
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
   (this fork's own maintained fork of `rpm-software-management/popt`,
   pinned to an exact commit) instead of that project's four-year-old
