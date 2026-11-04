@@ -21,7 +21,10 @@
  */
 
 
-/* pump.c - Transfer of bulk data (source, object code) */
+/*
+ * What: Moves file bodies between local files and peers.
+ * Why: Bodies may be sent plain or compressed.
+ */
 
 
 #include <config.h>
@@ -54,7 +57,8 @@
 
 
 /*
- * Receive either compressed or uncompressed bulk data.
+ * What: Receives f_size bytes, decompressing if needed.
+ * Why: The protocol version selects the body compression.
  */
 int dcc_r_bulk(int ofd,
                int ifd,
@@ -63,7 +67,7 @@ int dcc_r_bulk(int ofd,
                enum dcc_compress compression)
 {
     if (f_size == 0)
-        return 0;               /* don't decompress nothing */
+        return 0;
 
     if (compression == DCC_COMPRESS_NONE) {
         return dcc_pump_readwrite(ofd, ifd, f_size);
@@ -74,7 +78,9 @@ int dcc_r_bulk(int ofd,
         return dcc_r_bulk_zstd(ofd, ifd, f_size, f_size_uncompr);
 #else
         rs_log_error("Zstd compression not included in this build");
-        f_size_uncompr = f_size_uncompr;/*make gcc shut up*/
+        /* What: Marks f_size_uncompr as used without Zstd.
+         * Why: Avoids an unused-parameter compiler warning. */
+        f_size_uncompr = f_size_uncompr;
         return ENOTSUP;
 #endif
     } else {
@@ -85,28 +91,16 @@ int dcc_r_bulk(int ofd,
 
 
 
-/**
- * Copy @p n bytes from @p ifd to @p ofd.
- *
- * Does not use sendfile(), so either one may be a socket.
- *
- * In the current code at least one of the files will always be a regular
- * (disk) file, even though it may not be mmapable.  That should mean that
- * writes to it will always complete immediately.  That in turn means that on
- * each pass through the main loop we ought to either completely fill our
- * buffer, or completely drain it, depending on which one is the disk.
- *
- * In future we may put back the ability to feed the compiler from a fifo, in
- * which case it may be that the writes don't complete.
- *
- * We might try selecting on both buffers and handling whichever is ready.
- * This would require some approximation to a circular buffer though, which
- * might be more complex.
- **/
+/*
+ * What: Copies n bytes from ifd to ofd via read and write.
+ * Why: Unlike sendfile(), either side may be a socket.
+ */
 int
 dcc_pump_readwrite(int ofd, int ifd, size_t n)
 {
-    static char buf[262144];    /* we're not recursive */
+    /* What: One copy buffer shared by all calls.
+     * Why: The function never recurses or runs concurrently. */
+    static char buf[262144];
     char *p;
     ssize_t r_in, r_out, wanted;
     int ret;
@@ -133,9 +127,6 @@ dcc_pump_readwrite(int ofd, int ifd, size_t n)
 
         n -= r_in;
         p = buf;
-
-        /* We now have r_in bytes waiting to go out, starting at p.  Keep
-         * going until they're all written out. */
 
         while (r_in > 0) {
             r_out = dcc_transport_write(ofd, p, (size_t) r_in);
