@@ -171,8 +171,10 @@ See `doc/release-versioning.md` for the full versioning and release process.
   protocol audit added as Appendix A (client/server connection lifecycle,
   network I/O inventory with classified call sites, access-control order,
   protocol and compatibility matrices, answers to the twelve Phase 0
-  questions, Phase 1 interface options, and the finding that server-side
-  reads have no I/O timeout unless `--job-lifetime` is set), plus a
+  questions, Phase 1 interface options, the finding that server-side
+  reads have no I/O timeout unless `--job-lifetime` is set, the exact
+  behavior of a stock `distccd` that receives a TLS handshake, and a
+  comparison with other TLS implementations), plus a
   decision register. Drift
   corrected: mbedTLS `>= 3.6.3` is the standing default, the
   "Model A/B" labels are replaced by descriptive names,

@@ -1072,7 +1072,7 @@ connect -> GSSAPI (if requested for the host) -> DIST ...
 
 `dcc_check_client()` (`src/srvnet.c:231`) allows a connection without a peer address (pipe or SSH case, `src/srvnet.c:247`). It also allows every connection when no `--allow` list is configured (`src/srvnet.c:253`).
 
-GSSAPI is an existing precedent: an authentication exchange already runs on the connection before the `DIST` header, without any protocol version announcing it.
+GSSAPI is a precedent only for the wire contract: an authentication exchange already runs on the connection before the `DIST` header, without any protocol version announcing it. It is not a precedent for compatibility. A GSSAPI client sends `TLEN` first (`src/auth_common.c:189`), and a server without `--auth` reads it where it expects `DIST` and rejects it (`src/srvrpc.c:63`, `src/rpc.c:213`). GSSAPI has no negotiation either; both sides must be configured to match. Appendix A.11 compares the TLS approach with other implementations.
 
 Proposed order with TLS:
 
@@ -1120,7 +1120,7 @@ The protocol version is derived as follows:
 |---|---|---|
 | old or new client, plaintext host entry | classic 3632 (old or new `distccd`) | unchanged |
 | new client, TLS host entry | TLS listener of a new `distccd` | TLS handshake, then the unchanged protocol |
-| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | server reads handshake bytes where it expects `DIST` and rejects the token; client sees a handshake failure; the job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
+| new client, TLS host entry | plaintext endpoint (old `distccd`, or 3632 by mistake) | the TLS ClientHello reaches the server. It carries no job data: no source, no arguments, and no client certificate, which is only sent after the server has answered. The stock server reads its first 12 bytes as the `DIST` token (`src/srvrpc.c:63`), logs `protocol derailment: expected token "DIST"` (`src/rpc.c:213`), reads up to 187 further bytes for its error context (`src/rpc.c:155-185`) and closes. The client sees the connection closed before any ServerHello. It must report this as a TLS handshake failure that names the host and states that the endpoint is probably not a TLS listener. The job fails for that host; no plaintext retry. Today's failure path then marks the host as disliked through `bad_host()` (`src/compile.c:79`, `:1246`), which applies the 60-second backoff (`src/backoff.c:53`), and falls back to a local compile unless `DISTCC_FALLBACK=0` (`src/compile.c:1248`). A local compile is not a plaintext downgrade: no job data is sent over the network unencrypted. |
 | plaintext client | TLS-only listener | the TLS server sees bytes that are not a handshake and closes; the client sees a protocol error or EOF |
 | SSH host entry | any | unchanged; TLS not applicable |
 | client built without TLS, TLS host entry | any | explicit configuration error; no plaintext fallback |
@@ -1191,3 +1191,21 @@ Phase 1 implements Option 2 for plain TCP only and must show unchanged behavior 
 - Platform-specific `sendfile()` variants in `src/sendfile.c` were classified by call site, not by platform behavior.
 - `src/lsdistcc.c` (host probing) and `src/zeroconf.c` (service advertisement) were classified as outside the per-job transport. Whether TLS endpoints need advertising or probing is open for Phase 4.
 - The statistics HTTP listener (`src/stats.c`) is a separate plaintext service and outside #248.
+
+### A.11 Comparison with other implementations
+
+How comparable systems handle a TLS client meeting a plaintext endpoint:
+
+| System | How TLS is selected | TLS client meets plaintext endpoint | Source |
+|---|---|---|---|
+| upstream distcc | no native TLS; a search of its issues and pull requests for TLS found no implementation; SSH or external tunnels | not applicable | [distcc/distcc#155](https://github.com/distcc/distcc/issues/155) (open: plain TCP mode as a security risk) |
+| Redis | separate `tls-port`; plain `port` and `tls-port` can run at the same time; `port 0` disables plain | client configured with `--tls` fails against a plain port | [Redis TLS documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/) |
+| PostgreSQL, default | in-band `SSLRequest`; the server answers `S` or `N`; after `N` the client may continue unencrypted | client decides; plaintext continuation is possible | [PostgreSQL protocol flow](https://www.postgresql.org/docs/current/protocol-flow.html) |
+| PostgreSQL, direct TLS | client starts the TLS handshake immediately, with ALPN | the server disconnects; no plaintext continuation | same page |
+| sccache-dist | HTTPS; build-server certificates are generated at start and distributed through the scheduler; the scheduler's own TLS is left to a reverse proxy | not described | [sccache `docs/Distributed.md`](https://docs.rs/crate/sccache/latest/source/docs/Distributed.md) |
+
+Result:
+
+- The design in this document matches the Redis model (selected by configuration, separate port) and the PostgreSQL direct-TLS model (handshake first, disconnect on mismatch).
+- The PostgreSQL default model needs a server that can answer the request. A stock `distccd` cannot answer anything before `DIST`, so an in-band request would fail against it in the same way as a direct handshake. It would also add the plaintext continuation that §17 forbids.
+- No design can stop a misconfigured client from sending a ClientHello to a stock `distccd`. What the design controls is that this costs no data and fails with a clear message (A.7).
