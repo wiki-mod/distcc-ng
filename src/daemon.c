@@ -230,8 +230,9 @@ int main(int argc, char *argv[])
     /* tls-enabled in distccd.conf has the same effect as --tls. */
     if (dcc_tls_server_config_load())
         opt_tls = 1;
-    if (!opt_tls && (arg_tls_ca || arg_tls_cert || arg_tls_key || arg_tls_crl)) {
-        rs_log_error("--tls-ca, --tls-cert, --tls-key and --tls-crl need --tls");
+    if (!opt_tls && (arg_tls_ca || arg_tls_cert || arg_tls_key || arg_tls_crl
+                     || arg_tls_whitelist || arg_tls_blacklist)) {
+        rs_log_error("the --tls-* options need --tls");
         dcc_exit(EXIT_BAD_ARGUMENTS);
     }
 #ifdef HAVE_AVAHI
@@ -243,18 +244,22 @@ int main(int argc, char *argv[])
     }
 #endif
     if (opt_tls) {
+        /* tls-port in distccd.conf applies unless --port was given. */
+        if (arg_port == DISTCC_DEFAULT_PORT && dcc_tls_config_port())
+            arg_port = dcc_tls_config_port();
         /* The classic port only ever carries the plain protocol (issue
          * #237, section 2.3). */
         if (!dcc_should_be_inetd() && arg_port == DISTCC_DEFAULT_PORT) {
-            rs_log_error("--tls needs a --port other than %d",
+            rs_log_error("--tls needs a --port or tls-port other than %d",
                          DISTCC_DEFAULT_PORT);
             dcc_exit(EXIT_BAD_ARGUMENTS);
         }
         /* Load the key before giving away root, so a key file readable
          * only by root works. */
         if ((ret = dcc_tls_load_server_credentials(arg_tls_ca, arg_tls_cert,
-                                                   arg_tls_key,
-                                                   arg_tls_crl)) != 0)
+                                                   arg_tls_key, arg_tls_crl,
+                                                   arg_tls_whitelist,
+                                                   arg_tls_blacklist)) != 0)
             dcc_exit(ret);
     }
 #endif

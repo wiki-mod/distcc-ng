@@ -65,6 +65,8 @@ extern const char *arg_tls_ca;
 extern const char *arg_tls_cert;
 extern const char *arg_tls_key;
 extern const char *arg_tls_crl;
+extern const char *arg_tls_whitelist;
+extern const char *arg_tls_blacklist;
 #endif
 
 #ifdef HAVE_GSSAPI

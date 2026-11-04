@@ -147,6 +147,8 @@ const char *arg_tls_ca = NULL;
 const char *arg_tls_cert = NULL;
 const char *arg_tls_key = NULL;
 const char *arg_tls_crl = NULL;
+const char *arg_tls_whitelist = NULL;
+const char *arg_tls_blacklist = NULL;
 #endif
 
 /* Enumeration values for options that don't have single-letter name.  These
@@ -225,6 +227,8 @@ const struct poptOption options[] = {
     { "tls-cert", 0,     POPT_ARG_STRING, &arg_tls_cert, 0, 0, 0 },
     { "tls-key", 0,      POPT_ARG_STRING, &arg_tls_key, 0, 0, 0 },
     { "tls-crl", 0,      POPT_ARG_STRING, &arg_tls_crl, 0, 0, 0 },
+    { "tls-whitelist", 0, POPT_ARG_STRING, &arg_tls_whitelist, 0, 0, 0 },
+    { "tls-blacklist", 0, POPT_ARG_STRING, &arg_tls_blacklist, 0, 0, 0 },
 #endif
     { 0, 0, 0, 0, 0, 0, 0 }
 };
@@ -269,6 +273,10 @@ static void distccd_show_usage(void)
 "    --tls-cert FILE            server certificate\n"
 "    --tls-key FILE             server private key\n"
 "    --tls-crl FILE             revoked client certificates (optional)\n"
+"    --tls-whitelist FILE       accept only client certificates whose CN\n"
+"                               is listed in FILE\n"
+"    --tls-blacklist FILE       reject client certificates whose CN is\n"
+"                               listed in FILE\n"
 "                               (all tls-* settings can also be set in\n"
 "                               /etc/distcc/distccd.conf)\n"
 #endif

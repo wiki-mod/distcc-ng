@@ -87,4 +87,22 @@ char **dcc_config_parse_list(const char *value);
 void dcc_config_load(const char *path, const char *log_prefix,
                       dcc_config_apply_kv_fn *apply_kv, void *cfg);
 
+/**
+ * Read @p path, one name per line, into a sorted array for
+ * dcc_config_name_listed().  Shared by the GSS-API principal lists and the
+ * TLS identity lists.  Returns 0, EXIT_IO_ERROR if the file cannot be
+ * opened, or EXIT_OUT_OF_MEMORY.
+ **/
+int dcc_config_load_name_list(const char *path, char ***list, int *count);
+
+/**
+ * Return true if @p name is in a list read by dcc_config_load_name_list().
+ **/
+int dcc_config_name_listed(char **list, int count, const char *name);
+
+/**
+ * Free a list read by dcc_config_load_name_list().
+ **/
+void dcc_config_free_name_list(char **list, int count);
+
 #endif /* _DISTCC_CONFIG_PARSER_H */

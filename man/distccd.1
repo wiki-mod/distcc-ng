@@ -259,6 +259,9 @@ and
 .BR --tls-key .
 In standalone mode a
 .B --port
+(or
+.B tls-port
+in distccd.conf)
 other than 3632 is required, because port 3632 only carries the plain
 protocol; to serve plain and TLS clients, run two distccd instances on
 different ports.  Cannot be combined with
@@ -283,6 +286,20 @@ key file.
 .B --tls-crl FILE
 Optional PEM file with certificate revocation lists.  A client whose
 certificate is listed there is rejected during the handshake.
+.TP
+.B --tls-whitelist FILE
+Accept only clients whose certificate common name (CN) is listed in
+FILE, one name per line.
+.TP
+.B --tls-blacklist FILE
+Reject clients whose certificate common name (CN) is listed in FILE, one
+name per line.  Only one of
+.B --tls-whitelist
+and
+.B --tls-blacklist
+can be used, as with the GSS-API lists.  Both work in addition to
+.BR --allow ,
+which still filters by address first.
 .PP
 Client certificates must carry the clientAuth extended key usage and the
 server certificate the serverAuth one, so a certificate issued for one
@@ -295,10 +312,14 @@ command-line options take precedence:
 .nf
 # same as --tls
 tls-enabled = true
+# listener port when --port is not given (not 3632)
+tls-port = 3633
 tls-ca = /etc/distcc/tls/ca.crt
 tls-cert = /etc/distcc/tls/server.crt
 tls-key = /etc/distcc/tls/server.key
 tls-crl = /etc/distcc/tls/clients.crl
+# one of the two, file with one certificate CN per line
+tls-whitelist = /etc/distcc/tls/allowed-clients
 # true: refuse to start without tls-crl (default false)
 tls-require-crl = false
 # seconds a client gets to finish the handshake (default 10)

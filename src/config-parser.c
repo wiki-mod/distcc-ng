@@ -46,6 +46,8 @@
 #include "distcc.h"
 #include "trace.h"
 #include "config-parser.h"
+#include "exitcode.h"
+#include "util.h"
 
 char *dcc_config_trim(char *s)
 {
@@ -218,4 +220,79 @@ void dcc_config_load(const char *path, const char *log_prefix,
     }
 
     fclose(fp);
+}
+
+
+static int dcc_config_compare_names(const void *a, const void *b)
+{
+    return strcmp(*(char * const *) a, *(char * const *) b);
+}
+
+
+/**
+ * See config-parser.h.  Each line, without its newline, is one name.
+ **/
+int dcc_config_load_name_list(const char *path, char ***list, int *count)
+{
+    FILE *file;
+    char *line = NULL;
+    size_t length = 0;
+    char **names = NULL, **grown;
+    int n = 0;
+    char *pos;
+
+    if (!(file = fopen(path, "r"))) {
+        rs_log_error("Failed to open list file: %s: %s.", path,
+                     strerror(errno));
+        return EXIT_IO_ERROR;
+    }
+
+    while (getline(&line, &length, file) != -1) {
+        if ((pos = strchr(line, '\n')) != NULL)
+            *pos = '\0';
+        if (!(grown = realloc(names, (n + 1) * sizeof(char *)))
+            || !(grown[n] = strdup(line))) {
+            rs_log_error("out of memory reading list file %s", path);
+            names = grown ? grown : names;
+            dcc_config_free_name_list(names, n);
+            free(line);
+            fclose(file);
+            return EXIT_OUT_OF_MEMORY;
+        }
+        names = grown;
+        n++;
+    }
+    free(line);
+    fclose(file);
+
+    if (n > 0)
+        qsort(names, n, sizeof(char *), dcc_config_compare_names);
+    *list = names;
+    *count = n;
+    return 0;
+}
+
+
+/**
+ * See config-parser.h.
+ **/
+int dcc_config_name_listed(char **list, int count, const char *name)
+{
+    if (count <= 0)
+        return 0;
+    return bsearch(&name, list, count, sizeof(char *),
+                   dcc_config_compare_names) != NULL;
+}
+
+
+/**
+ * See config-parser.h.
+ **/
+void dcc_config_free_name_list(char **list, int count)
+{
+    int i;
+
+    for (i = 0; i < count; i++)
+        free(list[i]);
+    free(list);
 }

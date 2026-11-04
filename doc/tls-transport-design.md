@@ -95,7 +95,7 @@ This register separates what is fixed from what is proposed and what is still op
 - Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
 - Phase 2: library fit against the Phase 1 interface. Closed in Appendix B: GnuTLS selected; Phase 3 adds pending-data and wait-direction operations to the transport.
 - Phase 4 (decided): host option `,tls` with an explicit port (no default TLS port; 3632 refused on both sides), client credentials from `DISTCC_TLS_CA`/`DISTCC_TLS_CERT`/`DISTCC_TLS_KEY`, daemon options `--tls`, `--tls-ca`, `--tls-cert`, `--tls-key`. A `--tls` daemon is a TLS-only listener; plain and TLS service run as two instances. `--tls` with `--zeroconf` and `--tls-*` without `--tls` are refused. Documented in `distcc(1)` and `distccd(1)`.
-- Phase 5 (CRL optional and all settings configurable: maintainer decisions 2026-11-04; role model following the maintainer's suggestion to build on #237 §8): role separation comes from separate CAs (the `tls-ca` a daemon trusts decides which role may connect) plus extended key usage checks (serverAuth/clientAuth). A CRL is optional (`tls-crl`; `tls-require-crl` makes it mandatory, default off). Every TLS setting is configurable through the existing config files, overridden by environment variables or command-line options. Done: config keys, CRL, EKU checks, key-file permission check. Open: identity white/blacklist on the GSSAPI `--whitelist`/`--blacklist` pattern, and the #228 failure classification for TLS errors.
+- Phase 5 (CRL optional and all settings configurable: maintainer decisions 2026-11-04; role model following the maintainer's suggestion to build on #237 §8): role separation comes from separate CAs (the `tls-ca` a daemon trusts decides which role may connect) plus extended key usage checks (serverAuth/clientAuth). A CRL is optional (`tls-crl`; `tls-require-crl` makes it mandatory, default off). Every TLS setting is configurable through the existing config files, overridden by environment variables or command-line options. Done: config keys, CRL, EKU checks, key-file permission check. Also done: identity white- or blacklist (`--tls-whitelist`/`--tls-blacklist`, `tls-whitelist`/`tls-blacklist`) matching the client certificate CN, sharing the list code with the GSS-API `--whitelist`/`--blacklist` (`dcc_config_load_name_list()` in `src/config-parser.c`); `tls-port`. Failure handling needs no TLS-specific change: a failed TLS host is backed off like any failed host (60 s by default) and the client moves on to other hosts, which is the intended behavior for a host whose TLS setup is broken.
 - Phase 6: whether session resumption is needed.
 - Phase 7: credential reload and ticket-key lifecycle.
 - Phase 3 (done in the prototype): the server ends a TLS handshake after 10 seconds (`DCC_TLS_SERVER_HANDSHAKE_TIMEOUT` in `src/tls.c`). Existing plain server reads still have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
@@ -1260,3 +1260,129 @@ The same five cases ran against GnuTLS 3.8.13, the newest release (2026-04-29), 
 Decision (maintainer, 2026-11-04): GnuTLS. Besides passing every case, it reports the wait direction, which the measurement shows is needed, and the Mbed TLS maintenance announcement removes mbedTLS as a long-term base (§9). The transport therefore has two operations beyond read, write and close: `pending` (`gnutls_record_check_pending()`) and `wants_write` (`gnutls_record_get_direction()`); `dcc_select_for_read()` and `dcc_select_for_write()` use them.
 
 The disconnect probe in `src/exec.c:582` selects on the raw socket and then reads one byte through the transport. On the blocking server socket such a read could wait for the rest of a partial TLS record. This is acceptable because a client sends nothing after its request until it reads the result; only the peer closing the connection makes the socket readable.
+
+## Appendix C: Operating native TLS
+
+This appendix is the operator guide for the implementation. `distcc(1)` and `distccd(1)` describe each option and config key.
+
+### C.1 Certificates
+
+The role model of [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §8 applies: one offline root CA and one intermediate CA per role. A daemon's `tls-ca` names the CA whose certificates it accepts from clients, and a client's `tls-ca` names the CA that signs the servers. Role separation therefore comes from which CA each side trusts; the extended key usage check (serverAuth for servers, clientAuth for clients) stops a certificate of one role from acting as the other.
+
+Requirements checked by distcc:
+
+| Certificate | Extended key usage | Subject alternative name | Used for lists |
+|---|---|---|---|
+| server (`distccd`) | serverAuth | every DNS name and IP address clients use in their host list | — |
+| client (`distcc`) | clientAuth | not checked | common name (CN) |
+
+Example with OpenSSL, a single CA and one server and one client:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -days 3650 -keyout ca.key -out ca.crt -subj "/CN=distcc-ng CA"
+
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout server.key -out server.csr -subj "/CN=build1"
+printf 'subjectAltName=DNS:build1.example.org\nextendedKeyUsage=serverAuth\n' > server.ext
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 30 -out server.crt -extfile server.ext
+
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout client.key -out client.csr -subj "/CN=ci-runner-1"
+printf 'extendedKeyUsage=clientAuth\n' > client.ext
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 30 -out client.crt -extfile client.ext
+
+chmod 600 server.key client.key
+```
+
+Private keys must not be accessible by group or others; distcc and distccd refuse to start otherwise.
+
+### C.2 Configuration
+
+Server, `/etc/distcc/distccd.conf`:
+
+```text
+tls-enabled = true
+tls-port = 3633
+tls-ca = /etc/distcc/tls/ca.crt
+tls-cert = /etc/distcc/tls/server.crt
+tls-key = /etc/distcc/tls/server.key
+```
+
+Client, `/etc/distcc/distcc.conf` or the `DISTCC_TLS_*` environment variables, plus `,tls` on each host:
+
+```text
+tls-ca = /etc/distcc/tls/ca.crt
+tls-cert = /etc/distcc/tls/client.crt
+tls-key = /etc/distcc/tls/client.key
+```
+
+```sh
+export DISTCC_HOSTS='build1.example.org:3633,tls,lzo'
+```
+
+`--allow` stays in force; a valid certificate does not replace the address filter. A server that should keep serving plain clients runs a second `distccd` on port 3632 without TLS.
+
+### C.3 Removing a compromised peer
+
+- **CRL (standard way):** revoke the certificate at the CA, publish the CRL and point `tls-crl` (server) or `DISTCC_TLS_CRL`/`tls-crl` (client) at it. `tls-require-crl = true` makes a missing CRL a startup error; it is off by default.
+- **Blacklist:** add the client's CN to the file named by `tls-blacklist`.
+- **Whitelist:** remove the client's CN from the file named by `tls-whitelist`.
+
+### C.4 Rotation and reload
+
+Credentials, CRL and lists are read when `distccd` starts and when a client starts a job. There is no reload signal (`SIGHUP` still terminates `distccd`); restart `distccd` after replacing files. Jobs that are already running keep their connection.
+
+To rotate a CA: put the old and the new CA certificate into the `tls-ca` file, restart, issue new leaf certificates from the new CA, and remove the old CA once no old certificate is in use.
+
+### C.5 Diagnostics
+
+| Log message | Meaning |
+|---|---|
+| `TLS handshake with H:P failed: ...; the endpoint is probably not a distccd TLS listener` | the client reached a plain `distccd` or another service |
+| `TLS handshake failed: ...; the client is probably not using TLS` | a plain client connected to the TLS listener |
+| `TLS certificate of X rejected: ... The name in the certificate does not match the expected.` | the server certificate lacks the host name or IP from the host list |
+| `... The certificate issuer is unknown.` | the certificate is not signed by the configured CA |
+| `... does not match the intended purpose.` | wrong extended key usage (role) |
+| `... The certificate chain is revoked.` | the certificate is listed in the CRL |
+| `TLS handshake failed: Certificate is required.` | the client has no certificate from a CA the server accepts |
+| `TLS access denied - client "CN" ...` | white- or blacklist |
+| `TLS handshake failed: The operation timed out` | the client did not finish the handshake within `tls-handshake-timeout` |
+
+A failed TLS host is backed off like any failed host (`DISTCC_BACKOFF_PERIOD`, 60 s by default); the job goes to another host or falls back to a local compile. It is never sent in plaintext.
+
+## Appendix D: Phase 6 and Phase 8 results
+
+Measured on Debian trixie (GnuTLS 3.8.9) with the installed binaries, client and server on one machine over loopback.
+
+### D.1 Protocol matrix through TLS
+
+Each case compiled the same source with `-MD` once through a TLS host and once through a plain host; the protocol version is the `DIST` token in the client trace.
+
+| Protocol | Host options | Result | TLS output vs. plain output |
+|---|---|---|---|
+| `DCC_VER_1` | `,tls` | OK | `.o` and `.d` identical |
+| `DCC_VER_2` | `,tls,lzo` | OK | identical |
+| `DCC_VER_4000` | `,tls,zstd` | OK | identical |
+| `DCC_VER_3` (pump) | `,tls,lzo,cpp` | OK | identical |
+| `DCC_VER_5000` (pump) | `,tls,zstd,cpp` | OK | identical |
+| `DCC_VER_6000` (pump, split DWARF) | `,tls,lzo,cpp`, `-gsplit-dwarf` | OK | `.o`/`.dwo` differ, as they do between two plain runs: the object embeds the server's per-job `.dwo` path (`/tmp/distccd_<random>.dwo`) |
+| `DCC_VER_6001` (pump, split DWARF) | `,tls,zstd,cpp`, `-gsplit-dwarf` | OK | same as 6000 |
+
+The decrypted stream is the unchanged protocol: every version and both compression methods and preprocessing locations work through TLS, and wherever the output is deterministic it is byte-identical to plain TCP.
+
+### D.2 Performance
+
+200 one-function source files, compiled through one host.
+
+| Transport | 1 job at a time | 16 jobs in parallel |
+|---|---|---|
+| plain TCP | 9.98 s | 1.05 s |
+| TLS | 5.33 s | 1.05 s |
+| SSH | 227.2 s | 15.0 s (some jobs failed: sshd's `MaxStartups` default limits concurrent new connections) |
+
+Before `TCP_NODELAY` was set on TLS connections, TLS cost about 35 ms more per job than plain TCP: every small TLS record after the first waited for the peer's delayed ACK. With it, an interleaved run of 5 × 10 sequential jobs measured 38 ms per job for plain TCP and 39 ms for TLS. The faster sequential TLS result in the table suggests that plain TCP may be affected by the same delayed-ACK interaction; that is outside #248.
+
+Conclusion: the per-job handshake is not a measurable cost at these job sizes, and SSH is one to two orders of magnitude slower. Session resumption and connection reuse are not needed (§14 stays deferred).

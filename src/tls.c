@@ -51,6 +51,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #include <gnutls/gnutls.h>
 #include <gnutls/x509.h>
@@ -78,7 +79,16 @@ static struct {
      * The accepted socket is blocking, so without a limit a client that
      * connects and sends nothing would hold a server process forever. */
     int handshake_timeout;      /* seconds */
-} dcc_tls_cfg = { 0, NULL, NULL, NULL, NULL, 0, 10 };
+    int port;                   /* daemon only: listener port, 0 = --port */
+    /* daemon only: files of client identities (certificate CN), one per
+     * line; at most one of them is used, as with GSS-API's lists. */
+    char *whitelist;
+    char *blacklist;
+} dcc_tls_cfg = { 0, NULL, NULL, NULL, NULL, 0, 10, 0, NULL, NULL };
+
+/* The loaded white- or blacklist. */
+static char **dcc_tls_list;
+static int dcc_tls_list_count;
 
 /* Both ends are distcc-ng, so only TLS 1.3 is offered. */
 static const char dcc_tls_priority_append[] = "-VERS-ALL:+VERS-TLS1.3";
@@ -215,6 +225,17 @@ static void dcc_tls_apply_kv(void *log_prefix, const char *key,
         dcc_tls_set(&dcc_tls_cfg.key, value);
     } else if (strcmp(key, "tls-crl") == 0) {
         dcc_tls_set(&dcc_tls_cfg.crl, value);
+    } else if (strcmp(key, "tls-whitelist") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.whitelist, value);
+    } else if (strcmp(key, "tls-blacklist") == 0) {
+        dcc_tls_set(&dcc_tls_cfg.blacklist, value);
+    } else if (strcmp(key, "tls-port") == 0) {
+        int port = atoi(value);
+        if (port <= 0 || port > 65535)
+            rs_log_warning("%s: invalid tls-port '%s'; ignoring",
+                           (char *) log_prefix, value);
+        else
+            dcc_tls_cfg.port = port;
     } else if (strcmp(key, "tls-handshake-timeout") == 0) {
         int seconds = atoi(value);
         if (seconds <= 0)
@@ -316,18 +337,94 @@ int dcc_tls_server_config_load(void)
 
 
 /**
- * Load the daemon's TLS credentials.  Non-NULL arguments (command-line
- * options) override distccd.conf.  Called before distccd gives up root,
- * so that a key file readable only by root can be used.
+ * The tls-port of distccd.conf, or 0 if it is not set.
+ **/
+int dcc_tls_config_port(void)
+{
+    return dcc_tls_cfg.port;
+}
+
+
+/**
+ * Load the daemon's TLS credentials and identity list.  Non-NULL arguments
+ * (command-line options) override distccd.conf.  Called before distccd
+ * gives up root, so that a key file readable only by root can be used.
  **/
 int dcc_tls_load_server_credentials(const char *ca, const char *cert,
-                                    const char *key, const char *crl)
+                                    const char *key, const char *crl,
+                                    const char *whitelist,
+                                    const char *blacklist)
 {
+    const char *list;
+    int ret;
+
     dcc_tls_set(&dcc_tls_cfg.ca, ca);
     dcc_tls_set(&dcc_tls_cfg.cert, cert);
     dcc_tls_set(&dcc_tls_cfg.key, key);
     dcc_tls_set(&dcc_tls_cfg.crl, crl);
-    return dcc_tls_load_credentials();
+    dcc_tls_set(&dcc_tls_cfg.whitelist, whitelist);
+    dcc_tls_set(&dcc_tls_cfg.blacklist, blacklist);
+
+    if (dcc_tls_cfg.whitelist && dcc_tls_cfg.blacklist) {
+        rs_log_error("can't use both a TLS whitelist and a TLS blacklist");
+        return EXIT_BAD_ARGUMENTS;
+    }
+    if ((ret = dcc_tls_load_credentials()))
+        return ret;
+
+    list = dcc_tls_cfg.whitelist ? dcc_tls_cfg.whitelist
+                                 : dcc_tls_cfg.blacklist;
+    if (list) {
+        if ((ret = dcc_config_load_name_list(list, &dcc_tls_list,
+                                             &dcc_tls_list_count)))
+            return ret == EXIT_IO_ERROR ? EXIT_BAD_ARGUMENTS : ret;
+        rs_log_info("using %s as TLS %slist (%d names)", list,
+                    dcc_tls_cfg.whitelist ? "white" : "black",
+                    dcc_tls_list_count);
+    }
+    return 0;
+}
+
+
+/**
+ * Apply the TLS white- or blacklist to the client certificate's common
+ * name.  Returns 0 if the client may proceed.
+ **/
+static int dcc_tls_check_identity(gnutls_session_t session)
+{
+    const gnutls_datum_t *peers;
+    unsigned n_peers = 0;
+    gnutls_x509_crt_t crt;
+    char cn[256];
+    size_t cn_size = sizeof cn;
+    int listed, r;
+
+    if (!dcc_tls_cfg.whitelist && !dcc_tls_cfg.blacklist)
+        return 0;
+
+    cn[0] = '\0';
+    peers = gnutls_certificate_get_peers(session, &n_peers);
+    if (n_peers > 0 && gnutls_x509_crt_init(&crt) == 0) {
+        r = gnutls_x509_crt_import(crt, &peers[0], GNUTLS_X509_FMT_DER);
+        if (r == 0)
+            r = gnutls_x509_crt_get_dn_by_oid(crt, GNUTLS_OID_X520_COMMON_NAME,
+                                              0, 0, cn, &cn_size);
+        if (r != 0)
+            cn[0] = '\0';
+        gnutls_x509_crt_deinit(crt);
+    }
+
+    listed = cn[0] && dcc_config_name_listed(dcc_tls_list,
+                                             dcc_tls_list_count, cn);
+    if (dcc_tls_cfg.whitelist ? listed : (cn[0] && !listed)) {
+        rs_log_info("TLS access granted - %s %s", cn,
+                    dcc_tls_cfg.whitelist ? "whitelisted" : "not blacklisted");
+        return 0;
+    }
+    rs_log_warning("TLS access denied - client \"%s\" %s", cn,
+                   dcc_tls_cfg.whitelist ? "not whitelisted" : "blacklisted");
+    gnutls_alert_send(session, GNUTLS_AL_FATAL, GNUTLS_A_ACCESS_DENIED);
+    return EXIT_ACCESS_DENIED;
 }
 
 
@@ -411,6 +508,23 @@ static void dcc_tls_log_verify_failure(gnutls_session_t session,
 }
 
 
+/**
+ * Turn off Nagle's algorithm on a TLS connection.  The protocol writes each
+ * token as its own small TLS record; with Nagle, every record after the
+ * first waits for the peer's delayed ACK (up to 40 ms on Linux), which
+ * measured as about 35 ms extra per job.  TCP_CORK, where the code sets
+ * it, still batches the request.  Not a socket (a pipe in inetd mode): no
+ * effect.
+ **/
+static void dcc_tls_set_nodelay(int fd)
+{
+    int one = 1;
+
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) != 0)
+        rs_trace("TCP_NODELAY not set on fd%d: %s", fd, strerror(errno));
+}
+
+
 static int dcc_is_ip_literal(const char *host)
 {
     unsigned char addr[sizeof(struct in6_addr)];
@@ -462,6 +576,7 @@ int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
         char *desc = gnutls_session_get_desc(session);
         rs_log_info("TLS to %s:%d: %s", hostname, port, desc);
         gnutls_free(desc);
+        dcc_tls_set_nodelay(to_net_fd);
         dcc_transport_bind(from_net_fd, to_net_fd, &dcc_transport_tls,
                            session);
         return 0;
@@ -514,6 +629,11 @@ int dcc_tls_accept(int in_fd, int out_fd)
         char *desc = gnutls_session_get_desc(session);
         rs_log_info("TLS: %s", desc);
         gnutls_free(desc);
+        if ((ret = dcc_tls_check_identity(session))) {
+            gnutls_deinit(session);
+            return ret;
+        }
+        dcc_tls_set_nodelay(out_fd);
         dcc_transport_bind(in_fd, out_fd, &dcc_transport_tls, session);
         return 0;
     }

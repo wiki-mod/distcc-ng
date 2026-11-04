@@ -33,7 +33,14 @@ See `doc/release-versioning.md` for the full versioning and release process.
   (`--tls-crl`, `DISTCC_TLS_CRL`, `tls-crl`; `tls-require-crl = true`
   makes one mandatory), extended key usage checks (server certificates
   need serverAuth, client certificates clientAuth), and a refusal to use
-  a private key that group or others can access.
+  a private key that group or others can access. Client identity white-
+  or blacklist by certificate CN (`--tls-whitelist`, `--tls-blacklist`,
+  `tls-whitelist`, `tls-blacklist`; the list code is now shared with the
+  GSS-API `--whitelist`/`--blacklist` in `src/config-parser.c`), and
+  `tls-port` to set the TLS listener port from `distccd.conf`. TLS
+  connections set `TCP_NODELAY`; without it every small TLS record waited
+  for the delayed ACK and TLS cost about 35 ms more per job than plain
+  TCP.
 - **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
   profile for the verification container -- Docker's default profile plus a
   single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable
