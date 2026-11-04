@@ -267,6 +267,15 @@ static int dcc_parse_options(const char **psrc,
             rs_log_error("zstd support not built: %s", started);
             return EXIT_BAD_HOSTSPEC;
 #endif
+        } else if (str_startswith("tls", p)) {
+#ifdef HAVE_GNUTLS
+            rs_trace("got TLS option");
+            host->tls = 1;
+            p += 3;
+#else
+            rs_log_error("tls support not built: %s", started);
+            return EXIT_BAD_HOSTSPEC;
+#endif
         } else if (str_startswith("down", p)) {
             /* if "hostid,down", mark it down, and strip down from hostname */
             host->is_up = 0;
@@ -347,6 +356,12 @@ static int dcc_parse_ssh_host(struct dcc_hostdef *hostdef,
     if ((ret = dcc_parse_options(&token, hostdef)))
         return ret;
 
+    if (hostdef->tls) {
+        rs_log_error("tls cannot be used with an ssh host: \"%s\"",
+                     token_start);
+        return EXIT_BAD_HOSTSPEC;
+    }
+
     hostdef->mode = DCC_MODE_SSH;
     return 0;
 }
@@ -406,6 +421,14 @@ static int dcc_parse_tcp_host(struct dcc_hostdef *hostdef,
 
     if ((ret = dcc_parse_options(&token, hostdef)))
         return ret;
+
+    /* The classic port only ever carries the plain protocol (issue #237,
+     * section 2.3), so a TLS host must name its TLS listener's port. */
+    if (hostdef->tls && hostdef->port == dcc_default_port) {
+        rs_log_error("tls host needs an explicit port other than %d: \"%s\"",
+                     dcc_default_port, token_start);
+        return EXIT_BAD_HOSTSPEC;
+    }
 
     hostdef->mode = DCC_MODE_TCP;
     return 0;

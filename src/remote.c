@@ -301,7 +301,15 @@ int dcc_compile_remote(char **argv,
     if ((ret = dcc_remote_connect(host, &to_net_fd, &from_net_fd, &ssh_pid)))
         goto out;
 
-    dcc_transport_bind(from_net_fd, to_net_fd, &dcc_transport_plain, NULL);
+#ifdef HAVE_GNUTLS
+    if (host->tls) {
+        if ((ret = dcc_tls_connect(to_net_fd, from_net_fd, host->hostname,
+                                   host->port)))
+            goto out;
+    } else
+#endif
+        dcc_transport_bind(from_net_fd, to_net_fd, &dcc_transport_plain,
+                           NULL);
 
 #ifdef HAVE_GSSAPI
     /* Perform requested security. */

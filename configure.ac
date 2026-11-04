@@ -213,6 +213,27 @@ if test x"$with_zstd" != xno; then
 fi
 AC_SUBST(HAVE_ZSTD)
 
+dnl Native TLS transport (issue #248), using GnuTLS.  Enabled whenever
+dnl GnuTLS >= 3.6.5 (the first release with TLS 1.3) is found, like zstd
+dnl above; --with-gnutls makes it mandatory, --without-gnutls disables it.
+AC_ARG_WITH(gnutls,
+        AS_HELP_STRING([--with-gnutls], [build the native TLS transport (requires GnuTLS >= 3.6.5)]))
+
+if test x"$with_gnutls" != xno; then
+    PKG_CHECK_MODULES([GNUTLS], [gnutls >= 3.6.5],
+                      [have_gnutls_pkg=yes],
+                      [have_gnutls_pkg=no])
+    if test x"$have_gnutls_pkg" = xyes; then
+        AC_DEFINE([HAVE_GNUTLS], [1], [Define to 1 if the native TLS transport is enabled.])
+        CFLAGS="$CFLAGS $GNUTLS_CFLAGS"
+        LIBS="$LIBS $GNUTLS_LIBS"
+    elif test x"$with_gnutls" = xyes; then
+        AC_MSG_ERROR([Cannot find GnuTLS >= 3.6.5])
+    else
+        AC_MSG_NOTICE([TLS support disabled])
+    fi
+fi
+
 dnl distccd sandboxes the compiler processes it forks/execs on behalf of
 dnl remote (potentially malicious) clients using a Linux seccomp syscall
 dnl denylist, if libseccomp is available. Linux-only (see is_linux_host

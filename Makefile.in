@@ -264,6 +264,7 @@ common_obj = src/arg.o src/argutil.o					\
 	src/config-parser.o src/client-config.o			\
 	src/sandbox-config.o src/sandbox-seccomp.o			\
 	src/split_dwarf.o						\
+	src/tls.o							\
 	lzo/minilzo.o                                                   \
 	@ZEROCONF_COMMON_OBJS@						\
 	@AUTH_COMMON_OBJS@
@@ -393,6 +394,7 @@ SRC =	src/stats.c							\
 	src/emaillog.c							\
 	src/fix_debug_info.c						\
 	src/split_dwarf.c						\
+	src/tls.c							\
 	src/zeroconf.c src/zeroconf-reg.c src/gcc-id.c
 
 

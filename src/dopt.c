@@ -140,6 +140,15 @@ const char *arg_sysroot = NULL;
 
 int opt_job_lifetime = 0;
 
+#ifdef HAVE_GNUTLS
+/* Serve only TLS connections, with these credentials (prototype options,
+ * issue #248). */
+int opt_tls = 0;
+const char *arg_tls_ca = NULL;
+const char *arg_tls_cert = NULL;
+const char *arg_tls_key = NULL;
+#endif
+
 /* Enumeration values for options that don't have single-letter name.  These
  * must be numerically above all the ascii letters. */
 enum {
@@ -210,6 +219,12 @@ const struct poptOption options[] = {
     { "make-me-a-botnet", 0, POPT_ARG_NONE, &opt_enable_tcp_insecure, 0, 0, 0 },
     { "enable-tcp-insecure", 0, POPT_ARG_NONE, &opt_enable_tcp_insecure, 0, 0, 0 },
     { "sysroot", 0,   POPT_ARG_STRING, &arg_sysroot, 0, 0, 0 },
+#ifdef HAVE_GNUTLS
+    { "tls", 0,          POPT_ARG_NONE, &opt_tls, 0, 0, 0 },
+    { "tls-ca", 0,       POPT_ARG_STRING, &arg_tls_ca, 0, 0, 0 },
+    { "tls-cert", 0,     POPT_ARG_STRING, &arg_tls_cert, 0, 0, 0 },
+    { "tls-key", 0,      POPT_ARG_STRING, &arg_tls_key, 0, 0, 0 },
+#endif
     { 0, 0, 0, 0, 0, 0, 0 }
 };
 
@@ -245,6 +260,13 @@ static void distccd_show_usage(void)
 "    --auth                     enable GSS-API based mutual authenticaton\n"
 "    --blacklist=FILE           control client access through a blacklist\n"
 "    --whitelist=FILE           control client access through a whitelist\n"
+#endif
+#ifdef HAVE_GNUTLS
+"    --tls                      accept only TLS connections (needs --port\n"
+"                               other than 3632 and the three files below)\n"
+"    --tls-ca FILE              CA certificate that signs client certificates\n"
+"    --tls-cert FILE            server certificate\n"
+"    --tls-key FILE             server private key\n"
 #endif
 "    --sysroot=DIR              search resource file in this directory\n"
 "    --stats                    enable statistics reporting via HTTP server\n"

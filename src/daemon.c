@@ -226,6 +226,23 @@ int main(int argc, char *argv[])
         /* continue anyhow */
     }
 
+#ifdef HAVE_GNUTLS
+    if (opt_tls) {
+        /* The classic port only ever carries the plain protocol (issue
+         * #237, section 2.3). */
+        if (!dcc_should_be_inetd() && arg_port == DISTCC_DEFAULT_PORT) {
+            rs_log_error("--tls needs a --port other than %d",
+                         DISTCC_DEFAULT_PORT);
+            dcc_exit(EXIT_BAD_ARGUMENTS);
+        }
+        /* Load the key before giving away root, so a key file readable
+         * only by root works. */
+        if ((ret = dcc_tls_load_server_credentials(arg_tls_ca, arg_tls_cert,
+                                                   arg_tls_key)) != 0)
+            dcc_exit(ret);
+    }
+#endif
+
     if ((ret = dcc_discard_root()) != 0)
         dcc_exit(ret);
 

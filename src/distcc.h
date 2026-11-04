@@ -435,6 +435,11 @@ struct dcc_transport {
     ssize_t (*write)(void *ctx, int fd, const void *buf, size_t len);
     int (*close)(void *ctx, int fd);
     int allows_sendfile;
+    /* Bytes already received and decrypted but not yet read. */
+    size_t (*pending)(void *ctx);
+    /* True if the last EAGAIN was caused by waiting to send, even during
+     * a read. */
+    int (*wants_write)(void *ctx);
 };
 
 extern const struct dcc_transport dcc_transport_plain;
@@ -443,6 +448,15 @@ void dcc_transport_bind(int in_fd, int out_fd,
 ssize_t dcc_transport_read(int fd, void *buf, size_t len);
 ssize_t dcc_transport_write(int fd, const void *buf, size_t len);
 int dcc_transport_allows_sendfile(int fd);
+
+/* tls.c */
+#ifdef HAVE_GNUTLS
+int dcc_tls_load_server_credentials(const char *ca, const char *cert,
+                                    const char *key);
+int dcc_tls_connect(int to_net_fd, int from_net_fd, const char *hostname,
+                    int port);
+int dcc_tls_accept(int in_fd, int out_fd);
+#endif
 
 /* loadfile.c */
 int dcc_load_file_string(const char *filename,

@@ -95,7 +95,9 @@ const struct dcc_transport dcc_transport_plain = {
     dcc_plain_read,
     dcc_plain_write,
     NULL,
-    1
+    1,
+    NULL,
+    NULL
 };
 
 
@@ -190,6 +192,10 @@ int dcc_get_io_timeout(void)
 /**
  * @todo Perhaps only apply the timeout for initial connections, not when
  * doing regular IO.
+ *
+ * For a bound transport this waits until a read can make progress: it
+ * returns at once if decrypted data is already buffered, and waits for
+ * writability if the transport must send before it can read.
  **/
 int dcc_select_for_read(int fd,
                         int timeout)
@@ -197,6 +203,12 @@ int dcc_select_for_read(int fd,
     fd_set fds;
     int rs;
     struct timeval tv;
+    const struct dcc_transport *ops = dcc_transport_of(fd);
+
+    if (ops && ops->pending && ops->pending(dcc_conn.ctx) > 0)
+        return 0;
+    if (ops && ops->wants_write && ops->wants_write(dcc_conn.ctx))
+        return dcc_select_for_write(fd, timeout);
 
     tv.tv_sec = timeout;
     tv.tv_usec = 0;
@@ -236,14 +248,21 @@ int dcc_select_for_read(int fd,
 /*
  * Calls select() to block until the specified fd becomes writeable
  * or has an error condition, or the timeout expires.
+ *
+ * For a bound transport that must receive before it can send, this waits
+ * for readability instead.
  */
 int dcc_select_for_write(int fd, int timeout)
 {
     fd_set write_fds;
     fd_set except_fds;
     int rs;
+    const struct dcc_transport *ops = dcc_transport_of(fd);
 
     struct timeval tv;
+
+    if (ops && ops->wants_write && !ops->wants_write(dcc_conn.ctx))
+        return dcc_select_for_read(fd, timeout);
 
     tv.tv_sec = timeout;
     tv.tv_usec = 0;

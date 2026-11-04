@@ -77,7 +77,7 @@ This register separates what is fixed from what is proposed and what is still op
 - No implicit TLS-to-plaintext retry and no plaintext capability probe before TLS (§5, §17).
 - A valid certificate is not application authorization; `--allow` remains a separate control (§11).
 - No project-specific CPU or cipher capability detection (§9).
-- mbedTLS `>= 3.6.3` is the project's standing TLS library default ([#248 comment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252809516), [#237 Phase-0 supplement §8](https://github.com/wiki-mod/distcc-ng/issues/237#issuecomment-5238840686)); its technical fit is validated in Phase 2 (§9).
+- GnuTLS `>= 3.6.5` is the TLS library (maintainer decision after the Phase 2 check, Appendix B). The earlier mbedTLS default was a tool-made selection, not a maintainer decision, and was dropped after the Mbed TLS maintenance announcement (§9).
 - TLS support is an optional build feature; explicitly required but unavailable TLS fails visibly (§10).
 - The classic listener on port 3632 stays classic and never receives TLS or managed-protocol detection traffic ([#237](https://github.com/wiki-mod/distcc-ng/issues/237) §2.3).
 - A new feature does not by itself imply a new protocol version (`[AG-PROTO-001]`).
@@ -93,12 +93,12 @@ This register separates what is fixed from what is proposed and what is still op
 **Open questions** (decided in the named phase):
 
 - Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
-- Phase 2: mbedTLS fit against the Phase 1 interface. Result in Appendix B: mbedTLS 3.6.6 fits; three interface additions are needed in Phase 3.
+- Phase 2: library fit against the Phase 1 interface. Closed in Appendix B: GnuTLS selected; Phase 3 adds pending-data and wait-direction operations to the transport.
 - Phase 4: exact transport-selection syntax and TLS listener port.
 - Phase 5: certificate identity model; Appendix A.8 question 8 recommends reusing the #237 role model.
 - Phase 6: whether session resumption is needed.
 - Phase 7: credential reload and ticket-key lifecycle.
-- Phase 3: a server-side TLS handshake timeout. Existing server reads have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
+- Phase 3 (done in the prototype): the server ends a TLS handshake after 10 seconds (`DCC_TLS_SERVER_HANDSHAKE_TIMEOUT` in `src/tls.c`). Existing plain server reads still have no I/O timeout unless `--job-lifetime` is set (Appendix A.3).
 - Phase 3/5: how TLS and authentication failures are classified against the host backoff. Today every failure backs off the whole `host:port` for 60 s ([#228](https://github.com/wiki-mod/distcc-ng/issues/228); [#237](https://github.com/wiki-mod/distcc-ng/issues/237) §12.7 classifies TLS/auth failures as security failures).
 
 ## 3. Transport versus compile protocol
@@ -329,7 +329,14 @@ The evaluation criteria include:
 - memory footprint
 - vulnerability and maintenance history
 
-mbedTLS `>= 3.6.3` is the project's standing TLS library default ([#248 comment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252809516), [amendment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252950732)). The general library comparison is closed. What remains open is the technical fit check in Phase 2 against the transport interface proven in Phase 1; only a concrete technical blocker found there reopens the choice. Appendix A.8 question 12 lists the interface requirements that check must cover.
+**Decision: GnuTLS `>= 3.6.5`** (the first GnuTLS release with TLS 1.3). Reasons, from Appendix B:
+
+- The Mbed TLS team announced on 2026-10-08 that its current maintainers stop work on Mbed TLS from April 2027 and that security fixes and releases for the TLS and X.509 libraries stop then unless new maintainers join ([announcement](https://lists.trustedfirmware.org/archives/list/mbed-tls-announce@lists.trustedfirmware.org/thread/YPIGCB7WN6GCHOGEGKOJXUYAP7OK527W/)). The earlier mbedTLS default ([#248 comment](https://github.com/wiki-mod/distcc-ng/issues/248#issuecomment-5252809516)) was a tool-made selection, not a maintainer decision.
+- GnuTLS passed every Phase 2 case and reports the wait direction (`gnutls_record_get_direction()`), which the transport needs and mbedTLS lacks.
+- License: LGPL-2.1-or-later, compatible with distcc's GPL-2.0-or-later. OpenSSL 3 (Apache-2.0) would make the combined work GPLv3-only.
+- GnuTLS is packaged on every Linux distribution, on Alpine/musl, FreeBSD and macOS (Homebrew).
+
+The implementation is tested against the newest release (3.8.13, 2026-04-29) and the Debian stable package.
 
 ## 10. Optional dependency policy
 
@@ -744,7 +751,7 @@ No cryptographic implementation is required for this proof.
 
 ### Phase 2: TLS library decision
 
-Validate the standing default, mbedTLS `>= 3.6.3`, against the concrete requirements from Phases 0 and 1. The general library comparison is not repeated; only a concrete technical blocker reopens the choice (§9).
+Validate the library against the concrete requirements from Phases 0 and 1. Done: GnuTLS selected (§9, Appendix B).
 
 ### Phase 3: TLS transport
 
@@ -808,7 +815,7 @@ The following are not acceptable as substitutes for the proper design:
 4. Silently retrying a TLS failure over plaintext.
 5. Funnel all compile jobs through one serialized TLS stream.
 6. Introduce application-level multiplexing merely to compensate for TLS.
-7. Make mbedTLS a hard dependency before the build/compatibility decision is complete.
+7. Make the TLS library a hard dependency before the build/compatibility decision is complete.
 8. Treat certificate validity as application authorization.
 9. Replace `--allow` without analyzing the distinct security properties first.
 10. Make session resumption mandatory for successful connections.
@@ -881,8 +888,8 @@ This v2 document intentionally supersedes the earlier architectural assumptions 
 
 In particular:
 
-- mbedTLS `>= 3.6.3` is the standing project default; its technical fit is validated in Phase 2 (§9)
-- a dedicated `src/tls.c` module remains a possible implementation detail, not a fixed architecture
+- GnuTLS replaces mbedTLS as the TLS library (§9)
+- the TLS code lives in a dedicated `src/tls.c`, as SSH lives in `src/ssh.c`
 - a new distcc protocol version is no longer assumed
 - transport selection is treated as an independent design problem
 - the existing compile protocol is presumed unchanged unless the audit proves otherwise
@@ -1209,7 +1216,9 @@ Result:
 - The design in this document matches the Redis model (selected by configuration, separate port) and the PostgreSQL direct-TLS model (handshake first, disconnect on mismatch).
 - The PostgreSQL default model needs a server that can answer the request. A stock `distccd` cannot answer anything before `DIST`, so an in-band request would fail against it in the same way as a direct handshake. It would also add the plaintext continuation that §17 forbids.
 - No design can stop a misconfigured client from sending a ClientHello to a stock `distccd`. What the design controls is that this costs no data and fails with a clear message (A.7).
-## Appendix B: Phase 2 mbedTLS fit check
+## Appendix B: Phase 2 TLS library fit check
+
+### B.1 mbedTLS 3.6.6
 
 A probe program tested mbedTLS against the Phase 1 transport shape: a TCP connection that already exists, a nonblocking client socket (as `src/clinet.c:105`), a blocking accepted server socket (as `src/prefork.c:175`), and mutual certificates from one CA. Environment: Debian trixie, `libmbedtls-dev` 3.6.6 (meets the `>= 3.6.3` default), TLS 1.3 and `MBEDTLS_SSL_KEEP_PEER_CERTIFICATE` enabled in the distribution build. The probe is an evaluation program and not part of the repository.
 
@@ -1225,10 +1234,29 @@ A probe program tested mbedTLS against the Phase 1 transport shape: a TCP connec
 | Plaintext client against a TLS server | The server handshake fails at once with `MBEDTLS_ERR_SSL_INVALID_RECORD` (-0x7200); the client sees a connection reset. |
 | Silent peer, blocking server | With `mbedtls_ssl_conf_read_timeout(2000)` and `mbedtls_net_recv_timeout` as receive callback, the server handshake fails after 2.00 s with `MBEDTLS_ERR_SSL_TIMEOUT`. |
 
-Result: mbedTLS fits the Phase 1 interface. `WANT_READ`/`WANT_WRITE` map to `EAGAIN`, which `dcc_readx()` and `dcc_writex()` already handle. Phase 3 needs three additions:
+Result for mbedTLS: it fits the Phase 1 interface. `WANT_READ`/`WANT_WRITE` map to `EAGAIN`, which `dcc_readx()` and `dcc_writex()` already handle. Phase 3 needs three additions:
 
 1. **Pending data.** `dcc_select_for_read()` and the disconnect probe in `src/exec.c:582` wait on the socket. With TLS, data can sit decrypted in mbedTLS while the socket is idle, so the transport needs a `pending` operation backed by `mbedtls_ssl_get_bytes_avail()`.
 2. **Server handshake timeout.** The open Phase 3 requirement (§2.1) is met with mbedTLS's own read timeout on the blocking server socket; no new timer code is needed.
 3. **Failure classification.** In TLS 1.3 a rejected client certificate surfaces on the client as an I/O error after a successful handshake, not as a handshake error. The #228 failure classification must not rely on the client seeing authentication failures during the handshake. An immediate connection reset during the handshake is the signal for "probably not a TLS listener" (A.7).
 
 `WANT_WRITE` during a read (possible in TLS 1.3 after a key update) did not occur in the probe. Phase 3 either reports the wanted direction through the transport or runs TLS connections on a blocking socket with the read timeout above. The default TLS 1.3 negotiation selected `TLS1-3-CHACHA20-POLY1305-SHA256`; cipher suite policy stays a Phase 6 question (§9, §21).
+
+### B.2 GnuTLS 3.8.13 and the decision
+
+The same five cases ran against GnuTLS 3.8.13, the newest release (2026-04-29), on Alpine edge. The descriptor is wrapped with `gnutls_transport_set_int()`.
+
+| Case | Result |
+|---|---|
+| mTLS, 8 MiB client to server, 4 MiB back | TLS 1.3 with AES-256-GCM; the client certificate subject is available on the server; data complete. |
+| Nonblocking client | `GNUTLS_E_AGAIN` with `gnutls_record_get_direction()`: 209 waits for reading and 15 for writing during the reads. Waiting for writability inside a read does occur. |
+| Buffered data | After a 100-byte read, `gnutls_record_check_pending()` reported 16284 bytes. |
+| Orderly close | `gnutls_bye(GNUTLS_SHUT_WR)`; the server read returns 0. |
+| Client without certificate | The server fails with `GNUTLS_E_CERTIFICATE_REQUIRED`; as with mbedTLS, the client sees the failure only on its first write (`GNUTLS_E_PREMATURE_TERMINATION`). |
+| TLS client against a stock `distccd` | The client handshake fails at once with `GNUTLS_E_PULL_ERROR`. |
+| Plaintext client against a TLS server | The server fails at once with `GNUTLS_E_UNEXPECTED_PACKET`. |
+| Silent peer, blocking server | `gnutls_handshake_set_timeout(2000)` ends the handshake after 2.00 s with `GNUTLS_E_TIMEDOUT`. |
+
+Decision (maintainer, 2026-11-04): GnuTLS. Besides passing every case, it reports the wait direction, which the measurement shows is needed, and the Mbed TLS maintenance announcement removes mbedTLS as a long-term base (§9). The transport therefore has two operations beyond read, write and close: `pending` (`gnutls_record_check_pending()`) and `wants_write` (`gnutls_record_get_direction()`); `dcc_select_for_read()` and `dcc_select_for_write()` use them.
+
+The disconnect probe in `src/exec.c:582` selects on the raw socket and then reads one byte through the transport. On the blocking server socket such a read could wait for the rest of a partial TLS record. This is acceptable because a client sends nothing after its request until it reads the result; only the peer closing the connection makes the socket readable.

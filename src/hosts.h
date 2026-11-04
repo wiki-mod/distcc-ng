@@ -59,6 +59,9 @@ struct dcc_hostdef {
     /** Where are we doing preprocessing? */
     enum dcc_cpp_where cpp_where;
 
+    /** Use the native TLS transport for this host? */
+    int tls;
+
 #ifdef HAVE_GSSAPI
     /* Are we authenticating with this host? */
     int authenticate;

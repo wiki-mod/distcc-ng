@@ -59,6 +59,13 @@ extern int opt_zeroconf;
 extern int dcc_auth_enabled;
 #endif
 
+#ifdef HAVE_GNUTLS
+extern int opt_tls;
+extern const char *arg_tls_ca;
+extern const char *arg_tls_cert;
+extern const char *arg_tls_key;
+#endif
+
 #ifdef HAVE_GSSAPI
 extern int dcc_auth_enabled;
 extern int opt_blacklist_enabled;

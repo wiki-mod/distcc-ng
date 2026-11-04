@@ -101,6 +101,7 @@ struct dcc_hostdef _dcc_local = {
     DCC_VER_1,                  /* protocol (ignored) */
     DCC_COMPRESS_NONE,          /* compression (ignored) */
     DCC_CPP_ON_CLIENT,          /* where to cpp (ignored) */
+    0,                          /* TLS (ignored) */
 #ifdef HAVE_GSSAPI
     0,                          /* Authentication? */
     NULL,                       /* Authentication name */
@@ -122,6 +123,7 @@ struct dcc_hostdef _dcc_local_cpp = {
     DCC_VER_1,                  /* protocol (ignored) */
     DCC_COMPRESS_NONE,          /* compression (ignored) */
     DCC_CPP_ON_CLIENT,          /* where to cpp (ignored) */
+    0,                          /* TLS (ignored) */
 #ifdef HAVE_GSSAPI
     0,                          /* Authentication? */
     NULL,                       /* Authentication name */
