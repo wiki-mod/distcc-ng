@@ -22,12 +22,6 @@
  */
 
 
-            /* 15 Every one that is found shall be thrust
-             * through; and every one that is joined unto
-             * them shall fall by the sword.
-             *        -- Isaiah 13 */
-
-
 #include <config.h>
 
 #include <stdio.h>
@@ -48,24 +42,16 @@
 #include "snprintf.h"
 
 
-/**
- * @file
- *
- * Very simple RPC-like layer.  Requests and responses are build of
- * little packets each containing a 4-byte ascii token, an 8-byte hex
- * value or length, and optionally data corresponding to the length.
- *
- * 'x' means transmit, and 'r' means receive.
- *
- * This builds on top of io.c and is called by the various routines
- * that handle communication.
- **/
+/*
+ * What: Sends (x) and receives (r) token packets via io.c.
+ * Why: Each packet is a 4-char token plus hex value or data.
+ */
 
 
-/**
- * Transmit token name (4 characters) and value (32-bit int, as 8 hex
- * characters).
- **/
+/*
+ * What: Sends a 4-char token and a value as 8 hex digits.
+ * Why: Fixed-width packets let the reader check its position.
+ */
 int dcc_x_token_int(int ofd, const char *token, unsigned param)
 {
     char buf[13];
@@ -79,9 +65,8 @@ int dcc_x_token_int(int ofd, const char *token, unsigned param)
     }
     memcpy(buf, token, 4);
 
-    /* Quick and dirty int->hex.  The only standard way is to call snprintf
-     * (?), which is undesirably slow for such a frequently-called
-     * function. */
+    /* What: Formats param as 8 hex digits by hand.
+     * Why: snprintf() is slow for this frequently used path. */
     for (shift=28, p = &buf[4];
          shift >= 0;
          shift -= 4, p++) {
@@ -93,9 +78,10 @@ int dcc_x_token_int(int ofd, const char *token, unsigned param)
     return dcc_writex(ofd, buf, 12);
 }
 
-/**
- * Transmit token name (4 characters) and two values (32-bit ints, as 8 hex
- * characters each).
+/*
+ * What: Sends a token and two values as 8 hex digits each.
+ * Why: Zstd bodies carry compressed and plain lengths.
+ * From: Issue #67 | PR #80
  */
 int dcc_x_token_2int(int ofd, const char *token, unsigned param,
                      unsigned param2)
@@ -124,9 +110,10 @@ int dcc_x_token_2int(int ofd, const char *token, unsigned param,
 }
 
 
-/**
- * Send start of a result: DONE <version>
- **/
+/*
+ * What: Sends the DONE token with the protocol version.
+ * Why: Starts every result so the client can check it.
+ */
 int dcc_x_result_header(int ofd,
                         enum dcc_protover protover)
 {
@@ -134,24 +121,30 @@ int dcc_x_result_header(int ofd,
 }
 
 
+/*
+ * What: Sends the compiler exit status as a STAT token.
+ * Why: The client returns the remote compiler's status.
+ */
 int dcc_x_cc_status(int ofd, int status)
 {
     return dcc_x_token_int(ofd, "STAT", (unsigned) status);
 }
 
 
+/*
+ * What: Reads a bare 4-char token without its value.
+ * Why: Exported helper; no caller exists in this tree.
+ */
 int dcc_r_token(int ifd, char *buf)
 {
     return dcc_readx(ifd, buf, 4);
 }
 
 
-/**
- * We got a mismatch on a token, which indicates either a bug in distcc, or
- * that somebody (inetd?) is interfering with our network stream, or perhaps
- * some other network problem.  Whatever's happened, a bit more debugging
- * information would be handy.
- **/
+/*
+ * What: Logs the printable bytes around a mismatched token.
+ * Why: Shows what the peer sent instead of the protocol.
+ */
 int dcc_explain_mismatch(const char *buf,
                          size_t buflen,
                          int ifd)
@@ -163,10 +156,9 @@ int dcc_explain_mismatch(const char *buf,
 
     memcpy(extrabuf, buf, buflen);
 
-    /* Read a bit more context, and find the printable prefix. */
     ret = dcc_transport_read(ifd, extrabuf + buflen, sizeof extrabuf - 1 - buflen);
     if (ret == -1) {
-        ret = 0;                /* pah, use what we've got */
+        ret = 0;
     }
 
     l = buflen + ret;
@@ -180,19 +172,14 @@ int dcc_explain_mismatch(const char *buf,
 
     rs_log_error("error context: \"%s\"", extrabuf);
 
-    return 0;                   /* i just feel really sad... */
+    return 0;
 }
 
 
-/**
- * Read a token and value.  The receiver always knows what token name
- * is expected next -- indeed the names are really only there as a
- * sanity check and to aid debugging.
- *
- * @param ifd      fd to read from
- * @param expected 4-char token that is expected to come in next
- * @param val      receives the parameter value
- **/
+/*
+ * What: Reads an expected token and its 8-hex-digit value.
+ * Why: Token names only check that the stream is in sync.
+ */
 int dcc_r_token_int(int ifd, const char *expected, unsigned *val)
 {
     char buf[13], *bum;
@@ -215,7 +202,7 @@ int dcc_r_token_int(int ifd, const char *expected, unsigned *val)
         return EXIT_PROTOCOL_ERROR;
     }
 
-    buf[12] = '\0';             /* terminate */
+    buf[12] = '\0';
 
     *val = strtoul(&buf[4], &bum, 16);
     if (bum != &buf[12]) {
@@ -231,8 +218,10 @@ int dcc_r_token_int(int ifd, const char *expected, unsigned *val)
 }
 
 
-/**
- * Read a token and two values. The receiver knows the next token name.
+/*
+ * What: Reads an expected token and two hex values.
+ * Why: Zstd bodies carry compressed and plain lengths.
+ * From: Issue #67 | PR #80
  */
 int dcc_r_token_2int(int ifd, const char *expected,
                      unsigned *val,
@@ -284,15 +273,10 @@ int dcc_r_token_2int(int ifd, const char *expected,
     return 0;
 }
 
-/**
- * Read a token and value.  Fill in both token and value;
- * unlike dcc_r_token_int this is for the case when we do not know what
- * the next token will be.
- *
- * @param ifd      fd to read from
- * @param token    receives the 4-char token
- * @param val      receives the parameter value
- **/
+/*
+ * What: Reads any token and its value into token and val.
+ * Why: Used where several different tokens may come next.
+ */
 int dcc_r_sometoken_int(int ifd, char *token, unsigned *val)
 {
     char buf[13], *bum;
@@ -306,7 +290,7 @@ int dcc_r_sometoken_int(int ifd, char *token, unsigned *val)
     memcpy(token, buf, 4);
     token[4] = '\0';
 
-    buf[12] = '\0';             /* terminate */
+    buf[12] = '\0';
 
     *val = strtoul(&buf[4], &bum, 16);
     if (bum != &buf[12]) {
@@ -321,9 +305,11 @@ int dcc_r_sometoken_int(int ifd, char *token, unsigned *val)
     return 0;
 }
 
-/**
- * Read a byte string of length @p l into a newly allocated buffer, returned in @p buf.
- **/
+/*
+ * What: Reads l bytes into a new NUL-terminated buffer.
+ * Why: Peer-supplied lengths are capped before malloc().
+ * From: Issue #224 | PR #230
+ */
 int dcc_r_str_alloc(int fd, unsigned l, char **buf)
 {
      char *s;
@@ -333,8 +319,6 @@ int dcc_r_str_alloc(int fd, unsigned l, char **buf)
                       "%u, rejecting", l, DCC_MAX_RPC_STRING_LEN);
          return EXIT_PROTOCOL_ERROR;
      }
-
-/*      rs_trace("read %d byte string", l); */
 
      s = *buf = malloc((size_t) l + 1);
      if (!s) {
@@ -350,11 +334,10 @@ int dcc_r_str_alloc(int fd, unsigned l, char **buf)
 }
 
 
-/**
- * Write a token, and then the string @p buf.
- *
- * The length of buf is determined by its nul delimiter, but the \0 is not sent.
- **/
+/*
+ * What: Sends a token with the string length, then its bytes.
+ * Why: The NUL terminator is not sent on the wire.
+ */
 int dcc_x_token_string(int fd,
                        const char *token,
                        const char *buf)
@@ -372,6 +355,10 @@ int dcc_x_token_string(int fd,
 }
 
 
+/*
+ * What: Reads an expected token and the string it announces.
+ * Why: Pairs with dcc_x_token_string() on the sender.
+ */
 int dcc_r_token_string(int ifd, const char *expect_token,
                        char **p_str)
 {
@@ -389,9 +376,11 @@ int dcc_r_token_string(int ifd, const char *expect_token,
     return 0;
 }
 
-/**
- * Read an argv-type vector from the network.
- **/
+/*
+ * What: Reads an argc token and that many argv strings.
+ * Why: The argument count from the peer is capped first.
+ * From: Issue #224 | PR #230
+ */
 int dcc_r_argv(int ifd,
                const char *argc_token,
                const char *argv_token,
@@ -415,8 +404,8 @@ int dcc_r_argv(int ifd,
 
     rs_trace("reading %d arguments from job submission", argc);
 
-    /* Have to make the argv one element too long, so that it can be
-     * terminated by a null element. */
+    /* What: Allocates argc + 1 slots.
+     * Why: argv must end with a NULL element. */
     *argv = a = (char **) calloc((size_t) argc+1, sizeof a[0]);
     if (a == NULL) {
         rs_log_error("alloc failed");
