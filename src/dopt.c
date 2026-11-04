@@ -141,8 +141,7 @@ const char *arg_sysroot = NULL;
 int opt_job_lifetime = 0;
 
 #ifdef HAVE_GNUTLS
-/* Serve only TLS connections, with these credentials (prototype options,
- * issue #248). */
+/* Serve only TLS connections, with these credentials (issue #248). */
 int opt_tls = 0;
 const char *arg_tls_ca = NULL;
 const char *arg_tls_cert = NULL;

@@ -47,8 +47,11 @@ For SSH connections distccd must be installed but should
 .B not
 be listening for connections.
 .PP
-TCP connections should only be used on secure networks because there
-is no user authentication or protection of source or object code.  SSH
+Plain TCP connections should only be used on secure networks because
+there is no user authentication or protection of source or object code.
+TLS connections (host option
+.BR ,tls )
+encrypt the traffic and authenticate both sides with certificates.  SSH
 connections are slower.
 .PP
 distcc is intended to be used with GNU Make's
@@ -251,6 +254,48 @@ directories of the compiler installation.
 .PP
 See the \fBinclude_server\fR(1) manual for more information on symptoms and
 causes of violations of distcc-pump mode assumptions.
+
+.SH "QUICKSTART FOR DISTCC-TLS MODE"
+TLS mode encrypts each job and makes client and server prove their
+identity with certificates from a CA you control.
+
+1 Create a CA, a server certificate whose subject alternative names
+contain the name or IP address used in the host list, and one client
+certificate, all signed by that CA.
+
+2 On each server, run a TLS listener on its own port:
+
+.RS
+.nf
+$ distccd --daemon --allow 192.0.2.0/24 --port 3633 --tls \\
+    --tls-ca ca.crt --tls-cert server.crt --tls-key server.key
+.fi
+.RE
+
+3 On the client, name the CA and the client certificate and mark the
+hosts with
+.BR ,tls :
+
+.RS
+.nf
+$ export DISTCC_TLS_CA=ca.crt
+$ export DISTCC_TLS_CERT=client.crt DISTCC_TLS_KEY=client.key
+$ export DISTCC_HOSTS='red:3633,tls,lzo green:3633,tls,lzo'
+.fi
+.RE
+
+.SH "HOW DISTCC-TLS MODE WORKS"
+After the TCP connection is established, client and server run a TLS 1.3
+handshake.  The client checks that the server certificate is signed by
+.B DISTCC_TLS_CA
+and names the host from the host list; the server checks that the client
+certificate is signed by its
+.BR --tls-ca .
+The unchanged distcc protocol, including compression and pump mode, then
+runs inside the encrypted connection.  A certificate is not an
+authorization by itself: the server's
+.B --allow
+list still applies.
 
 .SH "HOW DISTCC-GSSAPI MODE WORKS"
 
@@ -525,7 +570,7 @@ The syntax is
   OLDSTYLE_TCP_HOST = HOSTID[/LIMIT][:PORT][OPTIONS]
   HOSTID = HOSTNAME | IPV4 | IPV6
   OPTIONS = ,OPTION[OPTIONS]
-  OPTION = lzo | zstd | cpp | auth[=AUTH_NAME]
+  OPTION = lzo | zstd | cpp | auth[=AUTH_NAME] | tls
   GLOBAL_OPTION = --randomize
   ZEROCONF = +zeroconf
 .fi
@@ -591,6 +636,15 @@ either ",lzo" or ",zstd" to also be given.
 .TP
 .B ,auth
 Enables GSSAPI-based mutual authentication for this host.
+.TP
+.B ,tls
+Connect to this TCP host over native TLS (see
+.BR "QUICKSTART FOR DISTCC-TLS MODE" ).
+The host entry must name the port of the server's TLS listener; port
+3632 is refused because it only carries the plain protocol.  If the TLS
+handshake fails the job is not sent to that host, and distcc never
+retries it without TLS.  Not valid for SSH hosts.
+.B This option is only available if distcc was built with GnuTLS.
 .TP
 .B AUTH_NAME
 The "canonical" name to use for the service principal name instead
@@ -802,6 +856,21 @@ Specifies how long (in seconds) distcc will avoid trying to use a
 particular compilation server after that server yields a compile
 failure.  By default set to 60 seconds.  To disable the backoff
 behavior altogether, set this to 0.
+.TP
+.B "DISTCC_TLS_CA"
+PEM file with the CA certificate(s) that sign the servers' certificates.
+Required for hosts marked
+.BR ,tls .
+.TP
+.B "DISTCC_TLS_CERT"
+PEM file with the client certificate presented to TLS servers.
+Required for hosts marked
+.BR ,tls .
+.TP
+.B "DISTCC_TLS_KEY"
+PEM file with the private key of the client certificate.
+Required for hosts marked
+.BR ,tls .
 .TP
 .B "DISTCC_IO_TIMEOUT"
 Specifies how long (in seconds) distcc will wait before deciding a

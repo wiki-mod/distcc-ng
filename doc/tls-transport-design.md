@@ -94,7 +94,7 @@ This register separates what is fixed from what is proposed and what is still op
 
 - Phase 1: transport interface shape (Appendix A.9 lists two options with a recommendation).
 - Phase 2: library fit against the Phase 1 interface. Closed in Appendix B: GnuTLS selected; Phase 3 adds pending-data and wait-direction operations to the transport.
-- Phase 4: exact transport-selection syntax and TLS listener port.
+- Phase 4 (decided): host option `,tls` with an explicit port (no default TLS port; 3632 refused on both sides), client credentials from `DISTCC_TLS_CA`/`DISTCC_TLS_CERT`/`DISTCC_TLS_KEY`, daemon options `--tls`, `--tls-ca`, `--tls-cert`, `--tls-key`. A `--tls` daemon is a TLS-only listener; plain and TLS service run as two instances. `--tls` with `--zeroconf` and `--tls-*` without `--tls` are refused. Documented in `distcc(1)` and `distccd(1)`.
 - Phase 5: certificate identity model; Appendix A.8 question 8 recommends reusing the #237 role model.
 - Phase 6: whether session resumption is needed.
 - Phase 7: credential reload and ticket-key lifecycle.

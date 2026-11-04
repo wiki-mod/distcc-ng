@@ -29,7 +29,7 @@
  * and the unchanged compile protocol runs through it.  A failed handshake
  * fails the job for that host; there is never a retry in plaintext.
  *
- * The configuration is a prototype (issue #248, phase 3): the host option
+ * Configuration (issue #248): the host option
  * ",tls" with an explicit port, the client environment variables
  * DISTCC_TLS_CA, DISTCC_TLS_CERT and DISTCC_TLS_KEY, and the daemon options
  * --tls, --tls-ca, --tls-cert and --tls-key.

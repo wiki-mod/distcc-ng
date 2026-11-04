@@ -227,6 +227,18 @@ int main(int argc, char *argv[])
     }
 
 #ifdef HAVE_GNUTLS
+    if (!opt_tls && (arg_tls_ca || arg_tls_cert || arg_tls_key)) {
+        rs_log_error("--tls-ca, --tls-cert and --tls-key need --tls");
+        dcc_exit(EXIT_BAD_ARGUMENTS);
+    }
+#ifdef HAVE_AVAHI
+    /* Clients find zeroconf servers without host options, so they would
+     * never connect to this listener with TLS. */
+    if (opt_tls && opt_zeroconf) {
+        rs_log_error("--tls cannot be combined with --zeroconf");
+        dcc_exit(EXIT_BAD_ARGUMENTS);
+    }
+#endif
     if (opt_tls) {
         /* The classic port only ever carries the plain protocol (issue
          * #237, section 2.3). */

@@ -13,18 +13,19 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Added
 
-- **`src/tls.c`** (issue #248, Phase 3 prototype): native TLS transport
-  using GnuTLS (`>= 3.6.5`, tested with 3.8.13 and Debian's 3.8.9). Built
+- **`src/tls.c`** (issue #248): native TLS transport using GnuTLS
+  (`>= 3.6.5`, tested with 3.8.13 and Debian's 3.8.9). Built
   automatically when GnuTLS is found; `--with-gnutls` makes it mandatory,
   `--without-gnutls` disables it. TLS 1.3 with certificates on both sides
   runs below the unchanged distcc protocol; a failed handshake fails the
-  job for that host and is never retried in plaintext. Prototype
-  configuration: host option `,tls` (TCP hosts only, with an explicit port
-  other than 3632), client files from `DISTCC_TLS_CA`, `DISTCC_TLS_CERT`
-  and `DISTCC_TLS_KEY`, and the daemon options `--tls`, `--tls-ca`,
-  `--tls-cert` and `--tls-key` (`--tls` refuses port 3632). The server
-  ends a handshake that takes longer than 10 seconds. The final
-  configuration syntax follows in Phase 4.
+  job for that host and is never retried in plaintext. Configuration: host
+  option `,tls` (TCP hosts only, with an explicit port other than 3632),
+  client files from `DISTCC_TLS_CA`, `DISTCC_TLS_CERT` and
+  `DISTCC_TLS_KEY`, and the daemon options `--tls`, `--tls-ca`,
+  `--tls-cert` and `--tls-key`. distccd refuses `--tls` on port 3632,
+  together with `--zeroconf`, and `--tls-*` files without `--tls`. The
+  server ends a handshake that takes longer than 10 seconds. Documented
+  in `distcc(1)` and `distccd(1)`.
 - **`docker/verify/seccomp-verify.json`** (issue #285): a narrow seccomp
   profile for the verification container -- Docker's default profile plus a
   single `personality(ADDR_NO_RANDOMIZE)` allow rule, so `gdb` can disable

@@ -246,6 +246,39 @@ Perform GSS-API based mutual authentication.
 .B This option is only available if distccd was compiled with
 .B the --with-auth configure option.
 .TP
+.B --tls
+Accept only TLS connections.  Every client must complete a TLS 1.3
+handshake and present a certificate signed by the CA given with
+.BR --tls-ca ;
+the distcc protocol then runs inside the encrypted connection.  A
+connection that does not start with a TLS handshake, or does not finish
+it within 10 seconds, is closed.  Requires
+.BR --tls-ca ,
+.B --tls-cert
+and
+.BR --tls-key .
+In standalone mode a
+.B --port
+other than 3632 is required, because port 3632 only carries the plain
+protocol; to serve plain and TLS clients, run two distccd instances on
+different ports.  Cannot be combined with
+.BR --zeroconf .
+.B This option is only available if distccd was built with GnuTLS
+.B (configure finds it automatically, or use --with-gnutls).
+.TP
+.B --tls-ca FILE
+PEM file with the CA certificate(s) that sign client certificates.
+.TP
+.B --tls-cert FILE
+PEM file with this server's certificate.  Its subject alternative names
+must contain the host name or IP address that clients use in their host
+list.
+.TP
+.B --tls-key FILE
+PEM file with the private key of the server certificate.  The key is
+read before distccd gives up root privileges, so it may be readable by
+root only.
+.TP
 .B --show-principal
 Displays the name of the distccd security principal extracted from the
 environment.
