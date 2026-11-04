@@ -34,6 +34,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       build-essential \
       ccache \
       libelf-dev \
+      libgnutls28-dev \
       libseccomp-dev \
       libzstd-dev \
       pkg-config \
@@ -49,7 +50,7 @@ COPY . .
 #   unpatched.
 # From: PR #504
 RUN ./autogen.sh && \
-    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt && \
+    ./configure PYTHON=python3 --prefix=/usr/local --enable-Werror --without-system-popt --with-gnutls && \
     make -j"$(nproc)" && \
     install -D distcc /out/usr/local/bin/distcc && \
     install -D distccd /out/usr/local/bin/distccd && \
@@ -88,6 +89,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libelf1 \
+      libgnutls30t64 \
       libseccomp2 \
       libzstd1 \
       python3 && \
@@ -142,6 +144,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
       build-essential \
       libelf1 \
+      libgnutls30t64 \
       libseccomp2 \
       libzstd1 \
       python3 && \

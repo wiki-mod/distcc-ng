@@ -17,7 +17,7 @@ url="https://github.com/wiki-mod/distcc-ng"
 arch="all"
 license="GPL-2.0-or-later"
 _pump_deps="python3 py3-setuptools"
-makedepends="autoconf automake libtool libseccomp-dev zstd-dev python3-dev $_pump_deps"
+makedepends="autoconf automake libtool gnutls-dev libseccomp-dev zstd-dev python3-dev $_pump_deps"
 # What: tests disabled
 # Why: abuild's fakeroot breaks distccd's privilege-drop test
 # From: #398
@@ -55,6 +55,7 @@ build() {
 		--sysconfdir=/etc \
 		--mandir=/usr/share/man \
 		--with-seccomp \
+		--with-gnutls \
 		--without-system-popt
 
 	make

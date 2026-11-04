@@ -204,6 +204,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
   list and in the coverage and sanitizer jobs, `gnutls` for macOS), so the
   TLS transport is built and covered by `make check` on Ubuntu and macOS
   instead of only the build without TLS.
+- **`docker/release/Dockerfile`, `packaging/`,
+  `.github/actions/install-packaging-deps/action.yml`** (issue #248):
+  released builds include TLS. The release image builds with
+  `--with-gnutls` and ships `libgnutls30t64`; the RPM spec and both Alpine
+  APKBUILDs build with `--with-gnutls` (`gnutls-dev` added to Alpine's
+  `makedepends`); the packaging job installs `libgnutls28-dev`.
 
 ### Documentation
 
