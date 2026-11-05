@@ -823,7 +823,7 @@ Done: Appendix D.2; no session resumption, tickets disabled (§14).
 
 Complete credential rotation, reload behavior, diagnostics, package/build integration, portability, documentation, and failure recovery.
 
-Done except portability beyond Linux and the CI and package builds: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, CI and release packaging configured for GnuTLS, `distcc(1)` and `distccd(1)`. Portability and build status in Appendix E.
+Done except FreeBSD, Cygwin and CI-built Alpine packages: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, `distcc(1)` and `distccd(1)`. CI built and tested the branch on Linux and macOS and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Portability and build status in Appendix E.
 
 ### Phase 8: future managed transport reuse
 
@@ -1367,7 +1367,7 @@ tls-key = /etc/distcc/tls/client.key
 export DISTCC_HOSTS='build1.example.org:3633,tls,lzo'
 ```
 
-`--allow` stays in force; a valid certificate does not replace the address filter. A server that should keep serving plain clients runs a second `distccd` on port 3632 without TLS.
+`--allow` stays in force; a valid certificate does not replace the address filter. The compiler whitelist stays in force as well: a TLS `distccd` needs the masquerade directory, `DISTCC_CMDLIST`, or `--enable-tcp-insecure` exactly like a plain one, and without any of them it exits with code 110 at startup. A server that should keep serving plain clients runs a second `distccd` on port 3632 without TLS.
 
 ### C.3 Removing a compromised peer
 
@@ -1411,7 +1411,7 @@ The logs name files, certificate subjects and GnuTLS error texts, never key mate
 
 ## Appendix D: Phase 5 to 7 results
 
-Measured in Debian trixie containers (GnuTLS 3.8.9) with the installed binaries, client and server on one machine over loopback. The test scripts are evaluation programs and not part of the repository.
+Measured at commit `8e7e891` in the verification image `ghcr.io/wiki-mod/distcc-ng-buildtools` (digest `sha256:2fe8e800…5913c`, Debian 13.6, GnuTLS 3.8.9), started with `--init`. Unless a section says otherwise, client and server ran on one machine over loopback. `make check` ran as the image's unprivileged user `verify` (uid 1000). The other scripts used root only to install files and certificates; every `distcc` and `distccd` ran as an unprivileged user. Earlier runs of the same scripts in `debian:trixie` and on Alpine edge (musl, GnuTLS 3.8.13) gave the same functional results and serve only as cross-checks. The test scripts are evaluation programs and not part of the repository.
 
 ### D.1 Protocol matrix through TLS
 
@@ -1431,24 +1431,22 @@ The decrypted stream is the unchanged protocol: every version and both compressi
 
 ### D.2 Performance
 
-200 source files, each including `<stdio.h>` and `<string.h>`, compiled through one host over loopback on a 12-CPU machine. Plain mode sends the preprocessed file; pump mode (`,cpp,lzo`) sends the sources and headers. Plain TCP and TLS ran interleaved in three rounds; the table gives the mean time per job and, in brackets, the range of the three rounds. SSH ran once, with sshd's `MaxStartups` raised for the parallel case.
+200 source files, each including `<stdio.h>` and `<string.h>`, compiled through one host over loopback on a 12-CPU machine that other workloads shared. Plain mode sends the preprocessed file; pump mode (`,cpp,lzo`) sends the sources and headers. Plain TCP and TLS ran interleaved in five rounds with `DISTCC_FALLBACK=0`; every run compiled all 200 files. The table gives the median time per job and, in brackets, the range of the five rounds. Single rounds up to twice the median occurred on both transports and come from the shared machine. SSH ran once, with sshd's `MaxStartups` raised for the parallel case.
 
 | Workload | plain TCP | TLS | SSH |
 |---|---|---|---|
-| plain mode, 1 job at a time | 35.3 ms (33.7–36.4) | 36.0 ms (34.0–38.9) | 1173 ms |
-| pump mode, 1 job at a time | 31.1 ms (30.4–31.5) | 34.6 ms (34.2–34.9) | 1148 ms |
-| plain mode, 16 jobs in parallel | 13.7 ms (11.8–16.5) | 13.2 ms (10.4–14.8) | 76.5 ms |
-| pump mode, 16 jobs in parallel | 12.5 ms (10.3–14.0) | 12.6 ms (7.8–15.1) | 76.5 ms |
+| plain mode, 1 job at a time | 41.7 ms (39.1–70.2) | 42.5 ms (39.5–76.5) | 1166 ms |
+| pump mode, 1 job at a time | 37.7 ms (35.4–39.6) | 40.8 ms (39.3–55.0) | 1167 ms |
+| plain mode, 16 jobs in parallel | 9.3 ms (5.9–17.7) | 11.4 ms (10.4–15.7) | 74 ms |
+| pump mode, 16 jobs in parallel | 7.9 ms (6.9–15.5) | 8.6 ms (7.7–15.7) | 75 ms |
 
-A first, single run of the same workload, not interleaved, measured 61 ms per job for TLS against 39 ms for plain TCP in plain mode one job at a time. That difference did not reproduce in the three interleaved rounds or on Alpine, so the table uses the interleaved rounds; the SSH figures come from that first run.
-
-Connection setup and small-job latency: a minimal job (an empty `main`, no headers), run 5 × 10 times interleaved, took 41 ms for plain TCP and 41 ms for TLS. On Alpine edge with GnuTLS 3.8.13, 2 × 20 interleaved jobs of the `<stdio.h>` source took 33 ms for both. The full TLS 1.3 handshake with mutual ECDSA P-256 authentication is therefore below the 1 ms resolution of these measurements on loopback. On a real network it adds one round trip per job to the TCP connection setup.
+Connection setup and small-job latency: a minimal job (an empty `main`, no headers), run 5 × 10 times interleaved, took 55 ms for plain TCP and 56 ms for TLS. The full TLS 1.3 handshake with mutual ECDSA P-256 authentication therefore costs about 1 ms on loopback. On a real network it adds one round trip per job to the TCP connection setup.
 
 Results:
 
-- **One job at a time:** TLS costs about 1 ms per job in plain mode and about 3.5 ms in pump mode, where every job sends all headers through TLS.
-- **16 jobs in parallel:** no difference beyond the spread between rounds. The per-job TLS connections run concurrently; the transport does not serialize the worker.
-- **SSH** is about 30 times slower one job at a time and about 6 times slower in parallel, because every job starts an `ssh` connection and a `distccd --inetd`.
+- **One job at a time:** TLS costs about 1 ms per job in plain mode and about 3 ms in pump mode, where every job sends all headers through TLS.
+- **16 jobs in parallel:** the differences lie within the spread between rounds. The per-job TLS connections run concurrently; the transport does not serialize the worker.
+- **SSH** is about 28 times slower one job at a time and about 8 times slower in parallel, because every job starts an `ssh` connection and a `distccd --inetd`.
 - **Session resumption and connection reuse** are not needed (§14).
 
 Before `TCP_NODELAY` was set on TLS connections, TLS cost about 35 ms more per job than plain TCP: every small TLS record after the first waited for the peer's delayed ACK.
@@ -1457,7 +1455,7 @@ Not measured: medium and large compile jobs, client and worker CPU time, memory,
 
 ### D.3 Security and lifecycle tests
 
-Debian trixie container, GnuTLS 3.8.9, one CA (`ca`), a second CA for rotation (`newca`) and an unrelated CA (`otherca`). Client-side results are the exit code and the client log; server-side reasons are from the `distccd` log. "Rejected" means the job was not compiled remotely; no case sent job data in plaintext.
+One CA (`ca`), a second CA for rotation (`newca`) and an unrelated CA (`otherca`). Client-side results are the exit code and the client log; server-side reasons are from the `distccd` log. "Rejected" means the job was not compiled remotely; no case sent job data in plaintext.
 
 | Case | Result | Reason logged |
 |---|---|---|
@@ -1497,9 +1495,65 @@ When the server rejects a client certificate, TLS 1.3 reports this to the client
 
 **Startup refusals:** `--tls-*` without `--tls`, `--tls` on port 3632, `--tls` with `--zeroconf`, a whitelist together with a blacklist, a key file readable by group or others, and `tls-require-crl` without a CRL each stop `distccd` with an error that names the problem.
 
-**Credential material in logs:** a daemon at `--log-level debug` and a client with `DISTCC_VERBOSE=1` ran one successful job and one rejected job (262 log lines). None of the 9 base64 lines of the three private keys and no `PRIVATE KEY` marker appeared in the logs. With `SSLKEYLOGFILE` set, GnuTLS wrote the session secrets to that file (C.5).
+**Credential material in logs:** a daemon at `--log-level debug` and a client with `DISTCC_VERBOSE=1` ran one successful job and one rejected job (261 log lines). None of the 9 base64 lines of the three private keys and no `PRIVATE KEY` marker appeared in the logs. With `SSLKEYLOGFILE` set, GnuTLS wrote the session secrets to that file (C.5).
 
-**Test suite:** `make check` of a `--with-gnutls` build: 166 OK, 0 failed, 48 not run (tests that need other platforms or tools); `SSHMode_Case` ran and passed. A `--with-gnutls --with-auth` build fails to link `h_srvrpc` in `make check`; this is not caused by TLS, and the fix is on the separate branch `dev/fix_auth-make-check-link`.
+**Test suite:** `make check` as uid 1000, with `--cap-add=SYS_PTRACE` and `docker/verify/seccomp-verify.json` for the `Gdb*` cases, ran through both the plain and the pump pass:
+
+| Build | OK | not run | failed |
+|---|---|---|---|
+| this branch, `--with-gnutls` | 187 | 27 | 0 |
+| this branch, `--without-gnutls` | 187 | 27 | 0 |
+| `current_dev` at `b5fb3d2` | 187 | 27 | 0 |
+
+No build produced a compiler warning. `SSHMode_Case` ran and passed. Without the ptrace capability and the seccomp profile the six `Gdb*` cases fail on this branch and on `current_dev` alike, and the pump pass does not start. A `--with-gnutls --with-auth` build fails to link `h_srvrpc` in `make check`; this is not caused by TLS, and the fix is on the separate branch `dev/fix_auth-make-check-link`.
+
+### D.4 Two hosts, configuration and interoperability
+
+Three containers on a private Docker bridge network: a server and a client from the verification image, and a `debian:trixie` container with the stock Debian `distcc` package 3.4+really3.4-12. The server ran a TLS `distccd` and a plain `distccd` as uid 1000, with a masquerade directory for the compiler names (C.2). The workload was Lua 5.4.9 (34 C files, `make -j8 posix`); the SHA-256 of the downloaded tarball matched the value published on lua.org. Every build used `DISTCC_FALLBACK=0` and was compared file by file with a local build of the same sources.
+
+| Case | Result |
+|---|---|
+| TLS, plain mode, credentials from `/etc/distcc/distcc.conf` | 34 `COMPILE_OK` from the client's address in the TLS server's log; 34 of 34 objects identical |
+| TLS, pump mode (`,tls,cpp,lzo`) | 34 `COMPILE_OK`; 34 of 34 objects identical |
+| distcc-ng client to the stock `distccd`, plain TCP | 34 `COMPILE_OK` in the stock server's log; 34 of 34 objects identical |
+| stock `distcc` client to the distcc-ng `distccd`, plain TCP | 34 `COMPILE_OK` in the distcc-ng server's log |
+| distcc-ng TLS client to the stock `distccd` | refused (116): `the endpoint is probably not a distccd TLS listener`; the stock server logs `protocol derailment` |
+
+Client configuration sources, one job each against the TLS server:
+
+| `DISTCC_TLS_*` | `distcc.conf` | Result |
+|---|---|---|
+| correct credentials | missing | compiled |
+| unset | correct credentials | compiled |
+| correct CA | wrong CA | compiled: the environment wins |
+| wrong CA | correct CA | rejected (103), `The certificate issuer is unknown.`: the environment wins |
+| unset | missing, or empty | refused (101), `TLS needs a CA file, a certificate file and a key file` |
+| unset | correct credentials and an unknown key `tls-bogus` | compiled; in a separate run against a listener the client logged `unknown key 'tls-bogus'; ignoring` |
+
+The client reads its TLS settings when it first connects to a `,tls` host, so a mistyped `tls-*` key is reported only when TLS is used.
+
+### D.5 Builds, packages and CI
+
+CI on this branch, `workflow_dispatch` at `8e7e891`:
+
+- **C build** (run 41984605892):
+  - Passed: `make_check` on `ubuntu-latest` and on `macOS-latest` (Homebrew `gnutls`), coverage, the bundled-popt build, the vendored-popt check, and the two-container end-to-end test.
+  - Failed: the opt-in ASan/UBSan job, with a heap-buffer-overflow in `FindElfSection` (`src/fix_debug_info.c:200`, `FixDebugInfoNonElf_Case`). The scheduled run 41815669732 on `current_dev` at `6df7f2c`, this branch's base, fails in the same test at the same line. This branch does not touch `src/fix_debug_info.c`.
+- **Package release** (run 41984610517, no container push, no release):
+  - `build_check`, `distributed_e2e` and `build_packages` passed.
+  - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
+  - Both `.deb` packages installed in a clean `debian:trixie`, and the installed `distccd --help` lists the `--tls` options.
+
+The RPM `%prep` failure seen earlier came from rpm 4.20 in a local container. The CI runner builds the RPMs without it.
+
+`actionlint`, run from the verification image as the repository's lint workflow runs it, reports no findings for this branch's workflows.
+
+Alpine: the `packaging/Alpine-nightly` recipe, pointed at this branch's source, built with `abuild -r` in `alpine:latest` (Alpine 3.24.3, GnuTLS 3.8.13):
+- The build exited 0 and produced all five packages.
+- The main package depends on `so:libgnutls.so.30`.
+- It installed, and its `distccd` lists the `--tls` options.
+
+No CI job builds APK packages, so this result is a cross-check and not CI evidence.
 
 ## Appendix E: Acceptance status
 
@@ -1524,29 +1578,29 @@ Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the
 | ticket-key rotation works if session resumption is enabled | N/A | session tickets are disabled (§14, D.3) |
 | credentials are protected with safe permissions | Met | key files readable by group or others are refused (D.3) |
 | **Compatibility** | | |
-| existing non-TLS functionality remains operational | Met | `make check` (D.3); build without GnuTLS |
-| Plain mode remains correct | Met | D.1 |
-| Pump mode remains correct | Met | D.1 |
+| existing non-TLS functionality remains operational | Met | `make check` with and without GnuTLS equals `current_dev` (D.3); stock `distcc` 3.4 in both directions (D.4) |
+| Plain mode remains correct | Met | D.1, D.4 |
+| Pump mode remains correct | Met | D.1, D.4 |
 | compression modes remain correct | Met | D.1 (LZO, Zstd) |
 | existing supported protocol versions remain correct | Met | D.1 (1, 2, 3, 4000, 5000, 6000, 6001) |
 | SSH remains functional | Met | `SSHMode_Case` (D.3), D.2 |
-| malformed and incompatible peers fail clearly | Met | D.3 (plain to TLS, TLS to plain, TLS 1.2, silent client) |
+| malformed and incompatible peers fail clearly | Met | D.3 (plain to TLS, TLS to plain, TLS 1.2, silent client), D.4 (TLS to a stock `distccd`) |
 | **Performance** | | |
 | multiple TLS connections execute concurrently | Met | D.2 |
-| worker CPU utilization is not artificially serialized by the transport | Met | D.2: 16 parallel jobs as fast as plain TCP; CPU time itself not measured |
+| worker CPU utilization is not artificially serialized by the transport | Met | D.2: 16 parallel jobs within the spread of plain TCP; CPU time itself not measured |
 | throughput is measured against plain TCP and SSH | Met | D.2 |
 | small-job latency is measured | Met | D.2 |
 | Pump workload is measured | Met | D.2 |
-| connection setup cost is measured | Met | D.2: below 1 ms on loopback |
+| connection setup cost is measured | Met | D.2: about 1 ms on loopback |
 | session resumption is justified by data if included | N/A | not included (§14) |
 | **Operational behavior** | | |
-| TLS can be configured explicitly | Met | §15, C.2 |
+| TLS can be configured explicitly | Met | §15, C.2; configuration sources and precedence (D.4) |
 | missing TLS support produces an explicit error when TLS is required | Met | D.3; `distccd --tls` without GnuTLS: `--tls: unknown option` |
 | credentials can be rotated according to the documented procedure | Met | C.4, D.3 |
 | ticket keys can be rotated according to the documented procedure when applicable | N/A | no session tickets |
 | diagnostics distinguish TLS failures from protocol failures | Met | C.5, D.3 |
 | sensitive credential material is not logged | Met | D.3; `SSLKEYLOGFILE` is a GnuTLS opt-in (C.5) |
 | **Portability** | | |
-| supported target platforms are tested | Open | Tested: Debian trixie (glibc, GnuTLS 3.8.9, gcc and clang) and Alpine edge (musl, GnuTLS 3.8.13). The macOS CI job installs GnuTLS but has not run on this branch yet. FreeBSD and Cygwin are not tested. |
+| supported target platforms are tested | Open | Linux (glibc) in the verification image and on the `ubuntu-latest` CI runner, and macOS on the `macOS-latest` CI runner with Homebrew GnuTLS (D.5). Linux with musl only as a cross-check (Alpine, D.5). FreeBSD and Cygwin are not tested: no CI job or verification image covers them. |
 | optional dependency behavior is tested | Met | builds with and without GnuTLS; D.3 |
-| supported build configurations remain reproducible | Open | Built locally: with and without GnuTLS, gcc and clang, Debian trixie and Alpine edge, and the release Docker image (links `libgnutls.so.30`). CI has not run on this branch yet. The RPM and deb builds pass `--with-gnutls` but stop in `%prep` on rpm 4.20, a problem that exists without TLS too. The Alpine APKBUILDs are configured for GnuTLS but were not built. |
+| supported build configurations remain reproducible | Open | CI on this branch built and tested the Linux and macOS configurations and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Not CI-verified: the Alpine APK packages, built only as a cross-check (D.5). The CI sanitizer job fails in `src/fix_debug_info.c` on this branch and on `current_dev` alike (D.5). |

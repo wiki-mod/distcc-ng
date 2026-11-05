@@ -832,6 +832,52 @@ For Alpine, an explicit source rename such as `localname::url` can establish the
 **Pass criteria:** The packaging tool's own fetch and checksum phase succeeds using the intended local name.
 **Invalid evidence:** Comparing the source and checksum lines visually without running the package tool.
 **References:** Issue #398 Thread A, PR #515.
+## Native TLS transport
+Relevant changes include `src/tls.c`, the transport binding in `src/io.c`, `,tls` host parsing in `src/hosts.c`, the `--tls*` options in `src/dopt.c`, the `tls-*` keys in `distcc.conf` and `distccd.conf`, and the GnuTLS detection in `configure.ac`.
+### **VER-TLS-01** Fail-closed certificate and identity checks
+**Applies when:** Certificate verification, identity lists, the CRL path, or TLS session setup changes.
+**Requirement:** Every rejection case MUST be run against a real `distcc` and `distccd`, and each MUST end without a remote compile.
+The cases MUST include at least:
+* server name not in the server certificate;
+* server certificate from a CA the client does not trust;
+* expired server certificate and not-yet-valid client certificate;
+* server certificate without serverAuth and client certificate without clientAuth;
+* client certificate from a CA the server does not trust;
+* revoked client certificate with a CRL loaded;
+* client not on `tls-whitelist` and client on `tls-blacklist`;
+* a TLS 1.2-only peer in both directions.
+**Pass criteria:** Each case is refused, the client exit code is recorded, and the refusal reason is read from the log of the side that refused.
+**Invalid evidence:** The client log alone for a server-side refusal. Under TLS 1.3 the client learns of a rejected client certificate only after its own handshake has completed and then logs a write failure, not the reason.
+**References:** Issue #248, `doc/tls-transport-design.md` Appendix D.3.
+### **VER-TLS-02** No plaintext downgrade
+**Applies when:** Host parsing, the transport binding, fallback, retry, or backoff behavior changes.
+**Requirement:** A failure on a `,tls` host MUST NOT result in job data being sent to any host without TLS.
+**Procedure:** Run, with `DISTCC_FALLBACK=0`:
+1. a TLS client against a plain `distccd`;
+2. a plain client against a TLS `distccd`;
+3. a TLS job whose `distccd` children are killed while the compiler runs, once with `DISTCC_BACKOFF_PERIOD=0` and once with a non-zero backoff.
+**Pass criteria:** Every case either fails, retries over a new TLS handshake, or compiles locally; the plain server log shows no compile from the TLS client.
+**Known constraints:** With `DISTCC_BACKOFF_PERIOD=0` the client retries the same host and can exit `0`; the server-side handshake and `COMPILE_OK` counts distinguish a TLS retry from any other path.
+### **VER-TLS-03** Protocol matrix through TLS
+**Applies when:** The transport binding or any protocol version, compression method, or pump path changes.
+**Requirement:** Every supported protocol version MUST be compiled once through a `,tls` host and once through a plain host from the same source.
+**Pass criteria:** The `DIST` token in the client trace matches the expected version, and the outputs are byte-identical wherever two plain runs are byte-identical.
+**Known constraints:** Split-DWARF objects embed the server's per-job `.dwo` path and differ between two plain runs as well.
+### **VER-TLS-04** Two-host TLS compile
+**Applies when:** Any TLS change is verified.
+**Requirement:** `VER-DIST-02` MUST be satisfied over a `,tls` host in plain mode and in pump mode, with the client credentials read from a real `distcc.conf`.
+**Pass criteria:** The TLS server's own log shows one `COMPILE_OK` per compiled file from the client's address, and the objects are byte-identical to a local build.
+**Known constraints:** A TLS `distccd` enforces the same compiler whitelist as a plain one. Without a masquerade directory, `DISTCC_CMDLIST`, or `--enable-tcp-insecure` it exits with code 110 at startup.
+### **VER-TLS-05** TLS configuration sources
+**Applies when:** A `tls-*` key, a `--tls*` option, or a `DISTCC_TLS_*` variable changes.
+**Requirement:** `VER-CONFIG-02` and `VER-CONFIG-03` MUST be run for the client's `tls-ca`, `tls-cert`, and `tls-key`, and the daemon's startup refusals MUST be run for every conflicting or unsafe option combination.
+**Pass criteria:** The environment overrides the file in both directions; missing or empty credentials stop the client with `TLS needs a CA file, a certificate file and a key file`; an unknown `tls-*` key logs a warning; each daemon refusal names the problem.
+**Known constraints:** The client reads its TLS settings only when it first connects to a `,tls` host. An unknown `tls-*` key is therefore reported only on that path.
+### **VER-TLS-06** Credential material and build variants
+**Applies when:** Logging, credential loading, or GnuTLS detection changes.
+**Requirement:** A daemon at `--log-level debug` and a client with `DISTCC_VERBOSE=1` MUST run one accepted and one rejected job, and the logs MUST be searched for every base64 line of every private key used. A build with `--without-gnutls` MUST be run as well.
+**Pass criteria:** No private-key line and no `PRIVATE KEY` marker appears in any log. The build without GnuTLS links no GnuTLS library, passes `make check`, refuses `,tls` with `tls support not built`, and rejects `distccd --tls` as an unknown option.
+**Known constraints:** GnuTLS writes session secrets to the file named by `SSLKEYLOGFILE` when that variable is set. That is a GnuTLS debugging feature and not a distcc-ng log.
 # Release readiness
 The release checks below are additional release gates. They do not replace any applicable `VER-*` check. A release MUST execute the applicable development and behavioral checks for every relevant change since the previous release.
 ## Release governance and sign-off
@@ -1148,6 +1194,11 @@ Each item MUST be classified as one of:
 * [ ] Current independently built client and server test sources identified.
 * [ ] Current fallback semantics confirmed.
 * [ ] Current non-trivial workload requirement remains sufficient.
+### **RECERT-28** Native TLS transport checks
+* [ ] Every `VER-TLS-*` item reviewed.
+* [ ] Referenced TLS source paths, options, keys, and environment variables still exist.
+* [ ] Current refusal messages and exit codes confirmed.
+* [ ] Current GnuTLS minimum version and protocol floor confirmed.
 ### **RECERT-09** External source provenance checks
 * [ ] Every `VER-SOURCE-*` item reviewed.
 * [ ] Upstream checksum verification requirement remains sufficient.
