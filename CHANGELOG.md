@@ -123,6 +123,12 @@ See `doc/release-versioning.md` for the full versioning and release process.
 
 ### Fixed
 
+- **`src/hosts.c`** (issue #248): a port in `DISTCC_HOSTS` outside 1 to
+  65535 is now rejected as an invalid host specification. Before, a port
+  such as `host:70000` was accepted and `htons()` truncated it, so the
+  client connected to port 4464 instead; an empty port (`host:,lzo`)
+  became port 0. The host list and `tls-port` now share
+  `dcc_config_parse_port()` in `src/config-parser.c`.
 - **`popt/`**: the bundled fallback tree now vendors from `wiki-mod/popt-ng`
   (this fork's own maintained fork of `rpm-software-management/popt`,
   pinned to an exact commit) instead of that project's four-year-old
