@@ -1563,7 +1563,7 @@ CI on this branch, started with `workflow_dispatch`:
 - **C build** at `3eca319`, after the host list port check (run 42072574315):
   - Passed: `make_check` on `ubuntu-latest`, coverage, both popt checks, and the two-container end-to-end test. The sanitizer job failed with the same finding.
   - Not run: `make_check` on `macOS-latest`. In three attempts GitHub assigned no runner, reporting `The job was not acquired by Runner of type hosted even after multiple attempts`. The same annotation appears on cancelled macOS jobs of `current_dev`.
-  - The last macOS result is therefore the one at `2bdd5a6`. The only code change since then is the port check in `src/hosts.c` and `dcc_config_parse_port()` in `src/config-parser.c`; both are portable C and passed on Linux and in the verification image.
+  - The last macOS result is therefore the one at `2bdd5a6`. The only code change since then is the port check in `src/hosts.c`, `dcc_config_parse_port()` in `src/config-parser.c`, and the one `tls-port` line in `src/tls.c` that now calls it; all are portable C and passed on Linux and in the verification image.
 - **Package release** at `8e7e891` (run 41984610517) and at `5d0e840` (run 42047071696, the same code as `2bdd5a6`), each without container push or release:
   - Each time, `build_check`, `distributed_e2e` and `build_packages` passed.
   - From run 41984610517:
