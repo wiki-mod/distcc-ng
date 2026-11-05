@@ -823,7 +823,7 @@ Done: Appendix D.2; no session resumption, tickets disabled (§14).
 
 Complete credential rotation, reload behavior, diagnostics, package/build integration, portability, documentation, and failure recovery.
 
-Done except FreeBSD and CI-built Alpine packages: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, `distcc(1)` and `distccd(1)`. CI built and tested the branch on Linux and macOS and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Portability and build status in Appendix E.
+Done: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, `distcc(1)` and `distccd(1)`. CI built and tested the branch on Linux and macOS and built the `.deb`, `.rpm` and Alpine `.apk` packages with GnuTLS (D.5). FreeBSD, Cygwin and Windows are not targets. Portability and build status in Appendix E.
 
 ### Phase 8: future managed transport reuse
 
@@ -1561,17 +1561,11 @@ CI on this branch, started with `workflow_dispatch`:
     - The package's masquerade directory lists `c++`, `cc`, `g++` and `gcc`, while the client sends `x86_64-linux-gnu-gcc`, so the first TLS job was refused with `not in /usr/lib/distcc ... whitelist`. The same refusal happens over plain TCP.
     - With `x86_64-linux-gnu-gcc` added to the directory while the same `distccd` kept running, the next job from the packaged `distcc` compiled over TLS (exit 0, one `COMPILE_OK`; `DISTCC_BACKOFF_PERIOD=0`, because after a failure the client otherwise backs off from the host).
     - The packaged `distcc-pump` stops before any connection with `/usr/bin/python: not found`, so pump mode could not be run from the package. This branch changes neither the pump script nor the packaging scripts. Pump mode through TLS is covered by D.1 and D.4.
+- **Alpine packages**: the `build_apk` job of `package-release.yml` at `0e573e0` (run 42055106739) together with `build_check`, `distributed_e2e` and `build_packages`, built both recipes, `packaging/Alpine` and `packaging/Alpine-nightly`, with `abuild -r` from the checked-out source in Alpine 3.24.3. It produced ten packages, and both main packages depend on `so:libgnutls.so.30`. Before that job existed, the nightly recipe also built in `alpine:latest` outside CI; that package installed, and its `distccd` lists the `--tls` options.
 
 The RPM `%prep` failure seen earlier came from rpm 4.20 in a local container. The CI runner builds the RPMs without it.
 
 `actionlint`, run from the verification image as the repository's lint workflow runs it, reports no findings for this branch's workflows.
-
-Alpine: the `packaging/Alpine-nightly` recipe, pointed at this branch's source, built with `abuild -r` in `alpine:latest` (Alpine 3.24.3, GnuTLS 3.8.13):
-- The build exited 0 and produced all five packages.
-- The main package depends on `so:libgnutls.so.30`.
-- It installed, and its `distccd` lists the `--tls` options.
-
-No CI job builds APK packages, so this result is a cross-check and not CI evidence.
 
 ## Appendix E: Acceptance status
 
@@ -1619,6 +1613,6 @@ Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the
 | diagnostics distinguish TLS failures from protocol failures | Met | C.5, D.3 |
 | sensitive credential material is not logged | Met | D.3; `SSLKEYLOGFILE` is a GnuTLS opt-in (C.5) |
 | **Portability** | | |
-| supported target platforms are tested | Open | Linux (glibc) in the verification image and on the `ubuntu-latest` CI runner, and macOS on the `macOS-latest` CI runner with Homebrew GnuTLS (D.5). Linux with musl only as a cross-check (Alpine, D.5). FreeBSD is not tested: no CI job or verification image covers it. Cygwin and Windows are not targets of `doc/compatibility-policy.md`, so the §9 and §22 items for them do not apply. |
+| supported target platforms are tested | Met | Linux with glibc: build, `make check` and all TLS tests in the verification image and on the `ubuntu-latest` CI runner (D.3 to D.5). macOS: build and `make check` with Homebrew GnuTLS on the `macOS-latest` CI runner (D.5). Linux with musl: Alpine packages built in CI (D.5). TLS connections themselves were tested on glibc only. FreeBSD, Cygwin and Windows are not targets (maintainer decision of 2026-11-05; `doc/compatibility-policy.md` names none of them), so the §9 and §22 items for them do not apply. |
 | optional dependency behavior is tested | Met | builds with and without GnuTLS; D.3 |
-| supported build configurations remain reproducible | Open | CI on this branch built and tested the Linux and macOS configurations and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Not CI-verified: the Alpine APK packages, built only as a cross-check (D.5). The CI sanitizer job fails in `src/fix_debug_info.c` on this branch and on `current_dev` alike (D.5). |
+| supported build configurations remain reproducible | Met | CI on this branch built and tested the Linux and macOS configurations and built the `.deb`, `.rpm` and Alpine `.apk` packages with GnuTLS (D.5). The CI sanitizer job fails in `src/fix_debug_info.c` on this branch and on `current_dev` alike (D.5). |
