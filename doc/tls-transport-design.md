@@ -1569,11 +1569,12 @@ CI on this branch, started with `workflow_dispatch`:
   - From run 41984610517:
     - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
     - Both `.deb` packages installed in a clean `debian:trixie`, and the installed `distccd --help` lists the `--tls` options.
-  - From run 42047071696, installed in the verification image:
+  - From runs 42047071696 and 42088077226, installed in the verification image, with the same results:
     - The packaged `distccd` logged `seccomp sandbox enabled for remote compiler processes`.
     - The package's masquerade directory lists `c++`, `cc`, `g++` and `gcc`, while the client sends `x86_64-linux-gnu-gcc`, so the first TLS job was refused with `not in /usr/lib/distcc ... whitelist`. The same refusal happens over plain TCP.
     - With `x86_64-linux-gnu-gcc` added to the directory while the same `distccd` kept running, the next job from the packaged `distcc` compiled over TLS (exit 0, one `COMPILE_OK`; `DISTCC_BACKOFF_PERIOD=0`, because after a failure the client otherwise backs off from the host).
     - The packaged `distcc-pump` stops before any connection with `/usr/bin/python: not found`, so pump mode could not be run from the package. This branch changes neither the pump script nor the packaging scripts. Pump mode through TLS is covered by D.1 and D.4.
+    - The packaged client of run 42088077226 rejects `DISTCC_HOSTS=127.0.0.1:70000` with `invalid tcp port specification`.
 - **Alpine packages**: the `build_apk` job of `package-release.yml` at `0e573e0` (run 42055106739) and again at `f436563` (run 42088077226), each time together with `build_check`, `distributed_e2e` and `build_packages`, built both recipes, `packaging/Alpine` and `packaging/Alpine-nightly`, with `abuild -r` from the checked-out source in Alpine 3.24.3. It produced ten packages, and both main packages depend on `so:libgnutls.so.30`. The package versions come from the recipes (`3.6.5` and the nightly date), not from the checked-out source, so these artifacts are build checks and not release packages. Before that job existed, the nightly recipe also built in `alpine:latest` outside CI; that package installed, and its `distccd` lists the `--tls` options.
 
 The RPM `%prep` failure seen earlier came from rpm 4.20 in a local container. The CI runner builds the RPMs without it.
