@@ -1532,13 +1532,25 @@ Client configuration sources, one job each against the TLS server:
 
 The client reads its TLS settings when it first connects to a `,tls` host, so a mistyped `tls-*` key is reported only when TLS is used.
 
+Integer values in `distccd.conf`, re-tested at `2bdd5a6` after both keys moved to the shared `dcc_config_parse_int()`:
+
+| Value | Result |
+|---|---|
+| `tls-port = 3700`, `tls-handshake-timeout = 2` | listens on 3700; a client that sends nothing is dropped after the timeout |
+| `tls-port = 3633abc` or `70000` | `invalid tls-port '...'; ignoring`, then `distccd` stops: `--tls needs a --port or tls-port other than 3632` |
+| `tls-handshake-timeout = 10s` or `9999999` | `invalid tls-handshake-timeout '...'; keeping 10`; the default of 10 seconds applies |
+| `tls-handshake-timeout = 2147483` | accepted; this is the largest value that still fits in milliseconds |
+
+`make check` at `2bdd5a6` gave the same 187 OK, 27 not run, 0 failed with and without GnuTLS.
+
 ### D.5 Builds, packages and CI
 
 CI on this branch, `workflow_dispatch` at `8e7e891`:
 
 - **C build** (run 41984605892):
   - Passed: `make_check` on `ubuntu-latest` and on `macOS-latest` (Homebrew `gnutls`), coverage, the bundled-popt build, the vendored-popt check, and the two-container end-to-end test.
-  - Failed: the opt-in ASan/UBSan job, with a heap-buffer-overflow in `FindElfSection` (`src/fix_debug_info.c:200`, `FixDebugInfoNonElf_Case`). The scheduled run 41815669732 on `current_dev` at `6df7f2c`, this branch's base, fails in the same test at the same line. This branch does not touch `src/fix_debug_info.c`.
+  - Failed: the opt-in ASan/UBSan job, with a heap-buffer-overflow in `FindElfSection` (`src/fix_debug_info.c:200`, `FixDebugInfoNonElf_Case`). The scheduled run 42011686838, which checks out `current_dev` at `b5fb3d2`, this branch's base, fails in the same test at the same line. This branch does not touch `src/fix_debug_info.c`.
+- **C build** at `2bdd5a6`, after the shared integer parser (run 42039576794): the same jobs passed, and the sanitizer job failed with the same finding.
 - **Package release** (run 41984610517, no container push, no release):
   - `build_check`, `distributed_e2e` and `build_packages` passed.
   - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
