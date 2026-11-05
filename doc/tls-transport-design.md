@@ -1545,17 +1545,22 @@ Integer values in `distccd.conf`, re-tested at `2bdd5a6` after both keys moved t
 
 ### D.5 Builds, packages and CI
 
-CI on this branch, `workflow_dispatch` at `8e7e891`:
+CI on this branch, started with `workflow_dispatch`:
 
 - **C build** (run 41984605892):
   - Passed: `make_check` on `ubuntu-latest` and on `macOS-latest` (Homebrew `gnutls`), coverage, the bundled-popt build, the vendored-popt check, and the two-container end-to-end test.
   - Failed: the opt-in ASan/UBSan job, with a heap-buffer-overflow in `FindElfSection` (`src/fix_debug_info.c:200`, `FixDebugInfoNonElf_Case`). The scheduled run 42011686838, which checks out `current_dev` at `b5fb3d2`, this branch's base, fails in the same test at the same line. This branch does not touch `src/fix_debug_info.c`.
 - **C build** at `2bdd5a6`, after the shared integer parser (run 42039576794): the same jobs passed, and the sanitizer job failed with the same finding.
-- **Package release** (run 41984610517, no container push, no release):
-  - `build_check`, `distributed_e2e` and `build_packages` passed.
-  - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
-  - Both `.deb` packages installed in a clean `debian:trixie`, and the installed `distccd --help` lists the `--tls` options.
-  - Installed in the verification image, the packaged `distccd` logged `seccomp sandbox enabled for remote compiler processes` and compiled a job from the packaged `distcc` over TLS (exit 0, one `COMPILE_OK`). The package's masquerade directory lists `c++`, `cc`, `g++` and `gcc`, while the client sends `x86_64-linux-gnu-gcc`; that name had to be added to the directory before `distccd` started. Without it the job is refused with `not in /usr/lib/distcc ... whitelist`, over plain TCP as well as over TLS.
+- **Package release** at `8e7e891` (run 41984610517) and at `5d0e840` (run 42047071696, the same code as `2bdd5a6`), each without container push or release:
+  - Each time, `build_check`, `distributed_e2e` and `build_packages` passed.
+  - From run 41984610517:
+    - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
+    - Both `.deb` packages installed in a clean `debian:trixie`, and the installed `distccd --help` lists the `--tls` options.
+  - From run 42047071696, installed in the verification image:
+    - The packaged `distccd` logged `seccomp sandbox enabled for remote compiler processes`.
+    - The package's masquerade directory lists `c++`, `cc`, `g++` and `gcc`, while the client sends `x86_64-linux-gnu-gcc`, so the first TLS job was refused with `not in /usr/lib/distcc ... whitelist`. The same refusal happens over plain TCP.
+    - With `x86_64-linux-gnu-gcc` added to the directory while the same `distccd` kept running, the next job from the packaged `distcc` compiled over TLS (exit 0, one `COMPILE_OK`; `DISTCC_BACKOFF_PERIOD=0`, because after a failure the client otherwise backs off from the host).
+    - The packaged `distcc-pump` stops before any connection with `/usr/bin/python: not found`, so pump mode could not be run from the package. This branch changes neither the pump script nor the packaging scripts. Pump mode through TLS is covered by D.1 and D.4.
 
 The RPM `%prep` failure seen earlier came from rpm 4.20 in a local container. The CI runner builds the RPMs without it.
 

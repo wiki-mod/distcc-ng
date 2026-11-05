@@ -222,6 +222,63 @@ jobs:
             packaging/*.deb
             distcc-ng-*.spdx.json
 
+  # Builds both Alpine recipes (packaging/Alpine and packaging/Alpine-nightly)
+  # with abuild from the checked-out source rather than the tag or commit
+  # tarball their source= lines name, so a recipe change is tested before it
+  # is released. The packages are uploaded as an artifact only, never attached
+  # to the GitHub release. abuild runs in a pinned Alpine image through
+  # docker run, as the job-level container: directive is avoided in this repo.
+  build_apk:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      # Trial run (#58): audit-only egress monitoring, see the setup job's
+      # identical first step for the full rationale.
+      - uses: $/.github/actions/harden-runner
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the Alpine packages with abuild
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/apk"
+          docker run --rm -i \
+            -v "${GITHUB_WORKSPACE}:/src:ro" \
+            -v "${RUNNER_TEMP}/apk:/out" \
+            alpine:3.24.3@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 \
+            sh -eu <<'APK_BUILD'
+          apk update >/dev/null
+          apk add alpine-sdk sudo git >/dev/null
+          adduser -D builder
+          addgroup builder abuild
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          mkdir -p /var/cache/distfiles /work
+          su builder -c "abuild-keygen -a -i -n"
+          for recipe in Alpine Alpine-nightly; do
+            cp -r "/src/packaging/$recipe" "/work/$recipe"
+            eval "$(cd "/work/$recipe" && srcdir=/srcdir && . ./APKBUILD && printf "tarball=%s\ntopdir=%s\n" "${source%%::*}" "${builddir#/srcdir/}")"
+            git -c safe.directory=/src -C /src archive --format=tar.gz --prefix="$topdir/" -o "/var/cache/distfiles/$tarball" HEAD
+            chown -R builder /work /var/cache/distfiles
+            su builder -c "cd /work/$recipe && abuild checksum && abuild -r"
+          done
+          for apk in $(find /home/builder/packages -name "*.apk"); do
+            case "$apk" in */distcc-ng-[0-9]*.apk|*/distcc-ng-nightly-[0-9]*.apk)
+              tar -xzOf "$apk" .PKGINFO | grep -q "^depend = so:libgnutls.so" || { echo "::error::$apk does not depend on libgnutls" >&2; exit 1; }
+              echo "$apk: $(tar -xzOf "$apk" .PKGINFO | grep "^depend = so:libgnutls")";;
+            esac
+          done
+          cp $(find /home/builder/packages -name "*.apk") /out/
+          APK_BUILD
+
+      - name: Upload Alpine packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: distcc-alpine-packages-${{ needs.setup.outputs.version }}
+          path: ${{ runner.temp }}/apk/*.apk
+          if-no-files-found: error
+
   build_container:
     needs: [setup, build_check, distributed_e2e]
     if: needs.setup.outputs.do_container == 'true'
