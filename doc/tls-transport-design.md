@@ -1445,7 +1445,7 @@ Connection setup and small-job latency: a minimal job (an empty `main`, no heade
 Results:
 
 - **One job at a time:** TLS costs about 1 ms per job in plain mode and about 3 ms in pump mode, where every job sends all headers through TLS.
-- **16 jobs in parallel:** the differences lie within the spread between rounds. The per-job TLS connections run concurrently; the transport does not serialize the worker.
+- **16 jobs in parallel:** the medians differ by about 2 ms in plain mode and under 1 ms in pump mode. In the two quietest rounds, plain mode took 6.1 and 5.9 ms per job over plain TCP and 10.4 and 11.4 ms over TLS, so TLS costs up to about 5 ms per job there when the machine is otherwise idle. The per-job TLS connections still run concurrently; 200 jobs on 16 connections finished about four times faster than one at a time, so the transport does not serialize the worker.
 - **SSH** is about 28 times slower one job at a time and about 8 times slower in parallel, because every job starts an `ssh` connection and a `distccd --inetd`.
 - **Session resumption and connection reuse** are not needed (§14).
 
@@ -1543,6 +1543,7 @@ CI on this branch, `workflow_dispatch` at `8e7e891`:
   - `build_check`, `distributed_e2e` and `build_packages` passed.
   - The `.deb` packages depend on `libgnutls30t64 (>= 3.8.1)`, and the `.rpm` packages require `libgnutls.so.30`; `distcc` and `distccd` link `libgnutls.so.30`.
   - Both `.deb` packages installed in a clean `debian:trixie`, and the installed `distccd --help` lists the `--tls` options.
+  - Installed in the verification image, the packaged `distccd` logged `seccomp sandbox enabled for remote compiler processes` and compiled a job from the packaged `distcc` over TLS (exit 0, one `COMPILE_OK`). The package's masquerade directory lists `c++`, `cc`, `g++` and `gcc`, while the client sends `x86_64-linux-gnu-gcc`; that name had to be added to the directory before `distccd` started. Without it the job is refused with `not in /usr/lib/distcc ... whitelist`, over plain TCP as well as over TLS.
 
 The RPM `%prep` failure seen earlier came from rpm 4.20 in a local container. The CI runner builds the RPMs without it.
 
@@ -1587,7 +1588,7 @@ Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the
 | malformed and incompatible peers fail clearly | Met | D.3 (plain to TLS, TLS to plain, TLS 1.2, silent client), D.4 (TLS to a stock `distccd`) |
 | **Performance** | | |
 | multiple TLS connections execute concurrently | Met | D.2 |
-| worker CPU utilization is not artificially serialized by the transport | Met | D.2: 16 parallel jobs within the spread of plain TCP; CPU time itself not measured |
+| worker CPU utilization is not artificially serialized by the transport | Met | D.2: 16 parallel TLS jobs about four times faster than one at a time; up to about 5 ms per job slower than plain TCP in quiet rounds; CPU time itself not measured |
 | throughput is measured against plain TCP and SSH | Met | D.2 |
 | small-job latency is measured | Met | D.2 |
 | Pump workload is measured | Met | D.2 |
