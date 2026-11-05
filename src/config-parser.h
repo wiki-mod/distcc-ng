@@ -55,6 +55,14 @@ char *dcc_config_trim(char *s);
 int dcc_config_parse_bool(const char *value, int *out);
 
 /**
+ * Parse a config integer: the whole of @p value must be a decimal number
+ * between @p min and @p max. Trailing text ("10s", "3633abc") is rejected
+ * like a misspelled boolean. On rejection @p out is left untouched and 0
+ * is returned so the caller can log what was rejected.
+ **/
+int dcc_config_parse_int(const char *value, int min, int max, int *out);
+
+/**
  * Split a comma-separated @p value into a freshly allocated NULL-terminated
  * array of freshly allocated strings, trimming whitespace around each
  * token and dropping empty ones (so "a, ,b" and "a,b" behave identically).

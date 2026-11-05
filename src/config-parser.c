@@ -79,6 +79,19 @@ int dcc_config_parse_bool(const char *value, int *out)
     return 0;
 }
 
+int dcc_config_parse_int(const char *value, int min, int max, int *out)
+{
+    char *end;
+    long n;
+
+    errno = 0;
+    n = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || errno == ERANGE || n < min || n > max)
+        return 0;
+    *out = (int) n;
+    return 1;
+}
+
 /**
  * A NULL-terminated array holding just the terminator -- the "empty list"
  * representation returned by dcc_config_parse_list() for a blank value, so
