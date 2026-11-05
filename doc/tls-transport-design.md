@@ -1543,6 +1543,15 @@ Integer values in `distccd.conf`, re-tested at `2bdd5a6` after both keys moved t
 
 `make check` at `2bdd5a6` gave the same 187 OK, 27 not run, 0 failed with and without GnuTLS.
 
+Since `5c2a1c7` the ports in `DISTCC_HOSTS` go through the same rule as `tls-port`, `dcc_config_parse_port()`. With a listener on port 4464, the client of `b5fb3d2` given `127.0.0.1:70000` connected to port 4464, because `htons()` keeps only the low 16 bits. The client of `5c2a1c7` rejects the entry with `invalid tcp port specification`.
+
+| Host entry | Result at `5c2a1c7` |
+|---|---|
+| `angry:1`, `angry:65535`, `angry:300/44`, `angry/44:300`, `angry:3000,lzo`, `[::1]:4200`, `angry:4200,tls` | parsed with the given port, as before |
+| `angry:0`, `angry:65536`, `angry:70000`, `angry:`, `angry:,lzo`, `angry:3633abc`, `angry:-1`, `angry::`, `[::1]:99999` | rejected (exit 106) |
+
+`make check` at `5c2a1c7`: 187 OK, 27 not run, 0 failed with and without GnuTLS.
+
 ### D.5 Builds, packages and CI
 
 CI on this branch, started with `workflow_dispatch`:
