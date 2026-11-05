@@ -823,7 +823,7 @@ Done: Appendix D.2; no session resumption, tickets disabled (§14).
 
 Complete credential rotation, reload behavior, diagnostics, package/build integration, portability, documentation, and failure recovery.
 
-Done except FreeBSD, Cygwin and CI-built Alpine packages: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, `distcc(1)` and `distccd(1)`. CI built and tested the branch on Linux and macOS and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Portability and build status in Appendix E.
+Done except FreeBSD and CI-built Alpine packages: rotation and reload in Appendix C.4 and D.3, diagnostics in C.5, `distcc(1)` and `distccd(1)`. CI built and tested the branch on Linux and macOS and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Portability and build status in Appendix E.
 
 ### Phase 8: future managed transport reuse
 
@@ -1602,6 +1602,6 @@ Status of each §27 criterion. **Met** points to the evidence; **N/A** gives the
 | diagnostics distinguish TLS failures from protocol failures | Met | C.5, D.3 |
 | sensitive credential material is not logged | Met | D.3; `SSLKEYLOGFILE` is a GnuTLS opt-in (C.5) |
 | **Portability** | | |
-| supported target platforms are tested | Open | Linux (glibc) in the verification image and on the `ubuntu-latest` CI runner, and macOS on the `macOS-latest` CI runner with Homebrew GnuTLS (D.5). Linux with musl only as a cross-check (Alpine, D.5). FreeBSD and Cygwin are not tested: no CI job or verification image covers them. |
+| supported target platforms are tested | Open | Linux (glibc) in the verification image and on the `ubuntu-latest` CI runner, and macOS on the `macOS-latest` CI runner with Homebrew GnuTLS (D.5). Linux with musl only as a cross-check (Alpine, D.5). FreeBSD is not tested: no CI job or verification image covers it. Cygwin and Windows are not targets of `doc/compatibility-policy.md`, so the §9 and §22 items for them do not apply. |
 | optional dependency behavior is tested | Met | builds with and without GnuTLS; D.3 |
 | supported build configurations remain reproducible | Open | CI on this branch built and tested the Linux and macOS configurations and built the `.deb` and `.rpm` packages with GnuTLS (D.5). Not CI-verified: the Alpine APK packages, built only as a cross-check (D.5). The CI sanitizer job fails in `src/fix_debug_info.c` on this branch and on `current_dev` alike (D.5). |
