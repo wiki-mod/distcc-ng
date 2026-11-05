@@ -1560,6 +1560,10 @@ CI on this branch, started with `workflow_dispatch`:
   - Passed: `make_check` on `ubuntu-latest` and on `macOS-latest` (Homebrew `gnutls`), coverage, the bundled-popt build, the vendored-popt check, and the two-container end-to-end test.
   - Failed: the opt-in ASan/UBSan job, with a heap-buffer-overflow in `FindElfSection` (`src/fix_debug_info.c:200`, `FixDebugInfoNonElf_Case`). The scheduled run 42011686838, which checks out `current_dev` at `b5fb3d2`, this branch's base, fails in the same test at the same line. This branch does not touch `src/fix_debug_info.c`.
 - **C build** at `2bdd5a6`, after the shared integer parser (run 42039576794): the same jobs passed, and the sanitizer job failed with the same finding.
+- **C build** at `3eca319`, after the host list port check (run 42072574315):
+  - Passed: `make_check` on `ubuntu-latest`, coverage, both popt checks, and the two-container end-to-end test. The sanitizer job failed with the same finding.
+  - Not run: `make_check` on `macOS-latest`. In three attempts GitHub assigned no runner, reporting `The job was not acquired by Runner of type hosted even after multiple attempts`. The same annotation appears on cancelled macOS jobs of `current_dev`.
+  - The last macOS result is therefore the one at `2bdd5a6`. The only code change since then is the port check in `src/hosts.c` and `dcc_config_parse_port()` in `src/config-parser.c`; both are portable C and passed on Linux and in the verification image.
 - **Package release** at `8e7e891` (run 41984610517) and at `5d0e840` (run 42047071696, the same code as `2bdd5a6`), each without container push or release:
   - Each time, `build_check`, `distributed_e2e` and `build_packages` passed.
   - From run 41984610517:
