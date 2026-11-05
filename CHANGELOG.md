@@ -18,7 +18,8 @@ See `doc/release-versioning.md` for the full versioning and release process.
   `packaging/Alpine-nightly`) with `abuild` from the checked-out source in
   a pinned Alpine image, checks that the main packages depend on
   `libgnutls`, and uploads the `.apk` files as a workflow artifact. They are
-  not attached to the GitHub release.
+  not attached to the GitHub release, and their version comes from the
+  recipe (`pkgver`), not from the checked-out source.
 - **`src/tls.c`** (issue #248): native TLS transport using GnuTLS
   (`>= 3.6.5`, tested with 3.8.13 and Debian's 3.8.9). Built
   automatically when GnuTLS is found; `--with-gnutls` makes it mandatory,
