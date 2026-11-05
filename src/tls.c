@@ -231,7 +231,7 @@ static void dcc_tls_apply_kv(void *log_prefix, const char *key,
     } else if (strcmp(key, "tls-blacklist") == 0) {
         dcc_tls_set(&dcc_tls_cfg.blacklist, value);
     } else if (strcmp(key, "tls-port") == 0) {
-        if (!dcc_config_parse_int(value, 1, 65535, &dcc_tls_cfg.port))
+        if (!dcc_config_parse_port(value, &dcc_tls_cfg.port))
             rs_log_warning("%s: invalid tls-port '%s'; ignoring",
                            (char *) log_prefix, value);
     } else if (strcmp(key, "tls-handshake-timeout") == 0) {

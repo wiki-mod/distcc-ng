@@ -92,6 +92,11 @@ int dcc_config_parse_int(const char *value, int min, int max, int *out)
     return 1;
 }
 
+int dcc_config_parse_port(const char *value, int *out)
+{
+    return dcc_config_parse_int(value, 1, 65535, out);
+}
+
 /**
  * A NULL-terminated array holding just the terminator -- the "empty list"
  * representation returned by dcc_config_parse_list() for a blank value, so

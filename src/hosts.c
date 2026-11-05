@@ -107,6 +107,7 @@
 #include "trace.h"
 #include "util.h"
 #include "hosts.h"
+#include "config-parser.h"
 #include "exitcode.h"
 #include "snprintf.h"
 #include "config.h"
@@ -403,17 +404,20 @@ static int dcc_parse_tcp_host(struct dcc_hostdef *hostdef,
 
     hostdef->port = dcc_default_port;
     if (token[0] == ':') {
-        char *tail;
+        char *port = NULL;
+        int valid;
 
         token++;
-
-        hostdef->port = strtol(token, &tail, 10);
-        if (*tail != '\0' && !isspace((uint8_t)*tail) && *tail != '/' && *tail != ',') {
-            rs_log_error("invalid tcp port specification in \"%s\"", token);
+        if ((ret = dcc_dup_part(&token, &port, "/ \t\n\r\f,")))
+            return ret;
+        valid = port && dcc_config_parse_port(port, &hostdef->port);
+        if (!valid) {
+            rs_log_error("invalid tcp port specification in \"%s\"",
+                         token_start);
+            free(port);
             return EXIT_BAD_HOSTSPEC;
-        } else {
-            token = tail;
         }
+        free(port);
     }
 
     if ((ret = dcc_parse_multiplier(&token, hostdef)) != 0)

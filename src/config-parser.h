@@ -63,6 +63,12 @@ int dcc_config_parse_bool(const char *value, int *out);
 int dcc_config_parse_int(const char *value, int min, int max, int *out);
 
 /**
+ * Parse a TCP port number (1 to 65535) with dcc_config_parse_int(); shared
+ * by tls-port and the ports in the host list so both apply the same rule.
+ **/
+int dcc_config_parse_port(const char *value, int *out);
+
+/**
  * Split a comma-separated @p value into a freshly allocated NULL-terminated
  * array of freshly allocated strings, trimming whitespace around each
  * token and dropping empty ones (so "a, ,b" and "a,b" behave identically).
