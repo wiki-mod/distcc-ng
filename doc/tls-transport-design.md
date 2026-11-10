@@ -1532,6 +1532,8 @@ Client configuration sources, one job each against the TLS server:
 
 The client reads its TLS settings when it first connects to a `,tls` host, so a mistyped `tls-*` key is reported only when TLS is used.
 
+Both tables were measured at `8e7e891` and measured again at `686bb43`, after the integer and host port changes below. Every row gave the same result. The test left no container, network or volume behind.
+
 Integer values in `distccd.conf`, re-tested at `2bdd5a6` after both keys moved to the shared `dcc_config_parse_int()`:
 
 | Value | Result |
