@@ -78,7 +78,7 @@ jobs:
           echo "version=${raw_tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Insert release notes into CHANGELOG.md
-        uses: stefanzweifel/changelog-updater-action@a938690fad7edf25368f37e43a1ed1b34303eb36 # v1.12.0
+        uses: stefanzweifel/changelog-updater-action@dd32e02e4c96d6e729bae24bdbcbb92452dbc9ea # v1.13.1
         with:
           latest-version: ${{ github.event.inputs.tag_name || github.event.release.tag_name }}
           heading-text: ${{ steps.heading.outputs.version }}
