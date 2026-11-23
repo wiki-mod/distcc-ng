@@ -20,7 +20,7 @@ ARG DEBIAN_IMAGE=debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28
 #   binary can carry a stale, CVE-affected stdlib version that only a
 #   fresh source build fixes.
 # From: Issue #267
-FROM golang@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS actionlint-builder
+FROM golang@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf AS actionlint-builder
 ARG ACTIONLINT_VERSION=1.7.12
 # What: Uses `set -eu` instead of `set -eo pipefail`.
 # Why: This stage has no SHELL override, so RUN runs under dash, which
